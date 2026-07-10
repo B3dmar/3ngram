@@ -1,0 +1,34 @@
+# Code ownership routing (FR-003).
+# Syntax: https://docs.github.com/articles/about-code-owners
+# Later matches take precedence over earlier ones.
+#
+# Single-maintainer project (see MAINTAINERS.md): the maintainer owns the repo
+# by default, with the security-, license-, release-, and CI-sensitive paths
+# called out explicitly so review routing is unambiguous.
+
+# Default owner for everything.
+*                           @sebastianebg
+
+# Licensing & legal surface.
+/LICENSE                    @sebastianebg
+/LICENSING.md               @sebastianebg
+/NOTICE                     @sebastianebg
+**/LICENSE                  @sebastianebg
+
+# Security & governance.
+/SECURITY.md                @sebastianebg
+/MAINTAINERS.md             @sebastianebg
+/CODE_OF_CONDUCT.md         @sebastianebg
+/.github/CODEOWNERS         @sebastianebg
+
+# CI, supply-chain guards, and release tooling.
+/.github/workflows/         @sebastianebg
+/scripts/                   @sebastianebg
+/renovate.json              @sebastianebg
+/.changeset/                @sebastianebg
+
+# Release-sensitive manifests.
+/package.json               @sebastianebg
+/pnpm-lock.yaml             @sebastianebg
+/pnpm-workspace.yaml        @sebastianebg
+/turbo.json                 @sebastianebg

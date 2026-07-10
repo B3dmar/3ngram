@@ -1,0 +1,58 @@
+{
+  "name": "@3ngram/sdk",
+  "version": "1.0.0",
+  "description": "Typed TypeScript client for the 3ngram REST API.",
+  "license": "Apache-2.0",
+  "homepage": "https://3ngram.ai",
+  "bugs": {
+    "url": "https://github.com/B3dmar/3ngram/issues"
+  },
+  "keywords": [
+    "3ngram",
+    "ai",
+    "mcp",
+    "memory",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git",
+    "directory": "packages/sdk"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tsconfig.package.json": "./tsconfig.package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "tsconfig.package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude '**/integration/**'"
+  },
+  "dependencies": {
+    "@3ngram/schema": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

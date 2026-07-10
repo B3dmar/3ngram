@@ -1,0 +1,57 @@
+---
+title: "Contributing"
+description: "How to contribute to 3ngram — intake process, DCO sign-off, CI gates, and where to report bugs, security issues, and questions."
+icon: "handshake"
+---
+
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+3ngram is open source (Apache 2.0) and accepts contributions under the Developer Certificate of Origin. This page is the map; the canonical documents live in the repository and are linked below.
+
+## Before you start
+
+3ngram is maintained by a single person, so contributions are managed deliberately:
+
+- **Open an issue before starting a non-trivial PR** so scope and approach are agreed up front. Unsolicited large PRs may be closed without a full review.
+- Small, obvious fixes (typos, clear bugs) are welcome directly.
+- Questions and setup help belong in [GitHub Discussions](https://github.com/B3dmar/3ngram/discussions), not Issues.
+
+The full workflow — development setup, branch naming, PR checklist, and every CI gate your change must pass — is in [CONTRIBUTING.md](https://github.com/B3dmar/3ngram/blob/main/CONTRIBUTING.md).
+
+## DCO sign-off
+
+Every commit needs a `Signed-off-by` trailer ([Developer Certificate of Origin](https://developercertificate.org/)); there is no CLA. Sign off with the `-s` flag:
+
+```bash
+git commit -s -m "feat(scope): add the thing"
+```
+
+CI enforces the trailer on external (fork) PRs. All contributions are made under Apache 2.0, and every new source file carries an SPDX header — see [LICENSING.md](https://github.com/B3dmar/3ngram/blob/main/LICENSING.md).
+
+## Project policies
+
+<CardGroup cols={2}>
+  <Card title="Contributing guide" icon="code-pull-request" href="https://github.com/B3dmar/3ngram/blob/main/CONTRIBUTING.md">
+    Local setup, branch and PR workflow, CI gates, and the PR checklist.
+  </Card>
+  <Card title="Code of conduct" icon="scale-balanced" href="https://github.com/B3dmar/3ngram/blob/main/CODE_OF_CONDUCT.md">
+    The Contributor Covenant applies to all project spaces.
+  </Card>
+  <Card title="Security policy" icon="shield-halved" href="https://github.com/B3dmar/3ngram/blob/main/SECURITY.md">
+    Report vulnerabilities through a private security advisory — never a public issue.
+  </Card>
+  <Card title="Support" icon="circle-question" href="https://github.com/B3dmar/3ngram/blob/main/SUPPORT.md">
+    Where questions, bug reports, and feature requests go, and what response to expect.
+  </Card>
+</CardGroup>
+
+## Where things go
+
+| You want to… | Go to |
+|---|---|
+| Ask a question or discuss an idea | [GitHub Discussions](https://github.com/B3dmar/3ngram/discussions) |
+| Report a reproducible bug | [Bug issue](https://github.com/B3dmar/3ngram/issues/new?template=bug.yml) |
+| Request a feature | [Feature issue](https://github.com/B3dmar/3ngram/issues/new?template=feature.yml) |
+| Report a security vulnerability | [Private security advisory](https://github.com/B3dmar/3ngram/security/advisories/new) |
+
+Issues are reserved for actionable, reproducible bugs and concrete feature requests; question-style issues may be converted to a Discussion. There is no commercial support tier and no SLA — well-scoped, reproducible reports get attention soonest.

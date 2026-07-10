@@ -1,0 +1,54 @@
+{
+  "name": "3ngram",
+  "version": "1.0.0",
+  "description": "Command-line client for the 3ngram typed memory API.",
+  "license": "Apache-2.0",
+  "homepage": "https://3ngram.ai",
+  "bugs": {
+    "url": "https://github.com/B3dmar/3ngram/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "mcp",
+    "memory"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git",
+    "directory": "apps/cli"
+  },
+  "bin": {
+    "3ngram": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude '**/integration/**'"
+  },
+  "dependencies": {
+    "@3ngram/schema": "workspace:*",
+    "@3ngram/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8",
+    "zod": "4.4.3"
+  }
+}

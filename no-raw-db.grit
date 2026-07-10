@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// Ban raw pool/client query access outside packages/db (docs/concepts/data-model.mdx;
+// spike S3: one bare SET through a pooled connection contaminated 32/32
+// subsequent foreign transactions). All tenant data access: withTenant().
+`$obj.query($_)` where {
+  $obj <: or {
+    `pool`,
+    `client`,
+    `pgPool`,
+    `pgClient`
+  },
+  register_diagnostic(span=$obj, message="Raw pool/client access is banned — use withTenant() from @3ngram/db")
+}

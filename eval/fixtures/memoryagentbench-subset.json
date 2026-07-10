@@ -1,0 +1,222 @@
+{
+  "_meta": {
+    "about": "Small MemoryAgentBench (MAB)-shaped subset for the ADR-0006 advisory tier (issue #294, deferred from #37). NOT the official dataset: these are synthetic, license-clean, hand-authored entries that mirror the MAB subset schema for the two ADR-0006 subsets — Conflict Resolution (detect + overwrite outdated facts so only the newest valid value is returned) and Test-Time Learning (ingest a user-supplied rule/label during dialogue, then apply it). They exist so the advisory harness runs deterministically offline with zero deps and zero network in the default path. The official parquet subsets are pinned (url + sha256 + bytes) in download.mjs and fetched only by the gated --download lane; parquet decoding is deferred (no dependency added this batch).",
+    "schema_ref": "https://huggingface.co/datasets/ai-hyz/MemoryAgentBench",
+    "upstream_license": "MIT",
+    "subsets": ["conflict-resolution", "test-time-learning"],
+    "metric": "accuracy-over-turns: per question, the predicted answer (extracted from the answer-bearing turns of the best-ranked session) must contain the gold answer; the subset score is the fraction of questions answered correctly."
+  },
+  "instances": [
+    {
+      "instance_id": "mab_cr_001",
+      "subset": "conflict-resolution",
+      "question": "What is the current primary on-call engineer for the payments service?",
+      "answer": "Priya",
+      "question_date": "2026-04-10",
+      "answer_session_ids": ["cr_s003"],
+      "haystack_sessions": [
+        {
+          "session_id": "cr_s001",
+          "session_date": "2026-03-01",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Set the primary on-call engineer for the payments service to Marcus.",
+              "has_answer": false
+            },
+            { "role": "assistant", "content": "Recorded Marcus as primary on-call for payments." }
+          ]
+        },
+        {
+          "session_id": "cr_s002",
+          "session_date": "2026-03-20",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Update: the primary on-call engineer for payments is now Dana, not Marcus.",
+              "has_answer": false
+            },
+            { "role": "assistant", "content": "Updated payments primary on-call to Dana." }
+          ]
+        },
+        {
+          "session_id": "cr_s003",
+          "session_date": "2026-04-05",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Correction: Priya is now the primary on-call engineer for the payments service, replacing Dana.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Payments primary on-call is now Priya." }
+          ]
+        }
+      ]
+    },
+    {
+      "instance_id": "mab_cr_002",
+      "subset": "conflict-resolution",
+      "question": "Which region is the production database currently hosted in?",
+      "answer": "eu-west-1",
+      "question_date": "2026-04-12",
+      "answer_session_ids": ["cr_s011"],
+      "haystack_sessions": [
+        {
+          "session_id": "cr_s010",
+          "session_date": "2026-02-14",
+          "turns": [
+            {
+              "role": "user",
+              "content": "The production database is hosted in us-east-1.",
+              "has_answer": false
+            },
+            { "role": "assistant", "content": "Noted: production database in us-east-1." }
+          ]
+        },
+        {
+          "session_id": "cr_s011",
+          "session_date": "2026-04-01",
+          "turns": [
+            {
+              "role": "user",
+              "content": "We migrated the production database region; it is now hosted in eu-west-1.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Production database region updated to eu-west-1." }
+          ]
+        }
+      ]
+    },
+    {
+      "instance_id": "mab_cr_003",
+      "subset": "conflict-resolution",
+      "question": "What is the agreed weekly standup time for the team?",
+      "answer": "Thursday 14:00 UTC",
+      "question_date": "2026-04-15",
+      "answer_session_ids": ["cr_s021"],
+      "haystack_sessions": [
+        {
+          "session_id": "cr_s020",
+          "session_date": "2026-03-05",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Let's set the weekly standup to Monday 09:00 UTC.",
+              "has_answer": false
+            },
+            { "role": "assistant", "content": "Weekly standup set to Monday 09:00 UTC." }
+          ]
+        },
+        {
+          "session_id": "cr_s021",
+          "session_date": "2026-04-02",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Change of plan: the weekly standup is now Thursday 14:00 UTC for everyone.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Weekly standup moved to Thursday 14:00 UTC." }
+          ]
+        }
+      ]
+    },
+    {
+      "instance_id": "mab_ttl_001",
+      "subset": "test-time-learning",
+      "question": "Using the routing rule I gave you, which queue does a ticket tagged 'billing' go to?",
+      "answer": "finance-queue",
+      "question_date": "2026-04-20",
+      "answer_session_ids": ["ttl_s001"],
+      "haystack_sessions": [
+        {
+          "session_id": "ttl_s001",
+          "session_date": "2026-04-01",
+          "turns": [
+            {
+              "role": "user",
+              "content": "New routing rule: any ticket tagged 'billing' must be routed to the finance-queue.",
+              "has_answer": true
+            },
+            {
+              "role": "assistant",
+              "content": "Understood: 'billing' tickets route to finance-queue."
+            }
+          ]
+        },
+        {
+          "session_id": "ttl_s002",
+          "session_date": "2026-04-03",
+          "turns": [
+            { "role": "user", "content": "How many open tickets do we have?", "has_answer": false },
+            { "role": "assistant", "content": "There are 12 open tickets right now." }
+          ]
+        }
+      ]
+    },
+    {
+      "instance_id": "mab_ttl_002",
+      "subset": "test-time-learning",
+      "question": "Per the label I taught you, what class is a transaction over 10000 USD?",
+      "answer": "high-risk",
+      "question_date": "2026-04-22",
+      "answer_session_ids": ["ttl_s011"],
+      "haystack_sessions": [
+        {
+          "session_id": "ttl_s010",
+          "session_date": "2026-04-05",
+          "turns": [
+            {
+              "role": "user",
+              "content": "What's a good way to monitor transactions?",
+              "has_answer": false
+            },
+            { "role": "assistant", "content": "Stream them and alert on anomalies." }
+          ]
+        },
+        {
+          "session_id": "ttl_s011",
+          "session_date": "2026-04-06",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Learn this classification: any transaction over 10000 USD is labeled high-risk.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Got it: transactions over 10000 USD are high-risk." }
+          ]
+        }
+      ]
+    },
+    {
+      "instance_id": "mab_ttl_003",
+      "subset": "test-time-learning",
+      "question": "Following the abbreviation I defined, what does 'EOD' mean in my messages?",
+      "answer": "end of day",
+      "question_date": "2026-04-25",
+      "answer_session_ids": ["ttl_s021"],
+      "haystack_sessions": [
+        {
+          "session_id": "ttl_s021",
+          "session_date": "2026-04-10",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Define this for our chats: when I write 'EOD' I mean end of day.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Recorded: 'EOD' means end of day." }
+          ]
+        },
+        {
+          "session_id": "ttl_s022",
+          "session_date": "2026-04-12",
+          "turns": [
+            { "role": "user", "content": "Remind me to send the report EOD.", "has_answer": false },
+            { "role": "assistant", "content": "Reminder set for end of day." }
+          ]
+        }
+      ]
+    }
+  ]
+}

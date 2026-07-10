@@ -1,0 +1,30 @@
+{
+  "name": "3ngram-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Open-source, typed memory for AI agents.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "check": "turbo run check",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration --concurrency=1",
+    "docs:generate": "turbo run docs:generate",
+    "db:migrate": "pnpm --filter @3ngram/db exec drizzle-kit migrate",
+    "seed": "pnpm --filter @3ngram/db run seed"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@changesets/cli": "2.31.0",
+    "jose": "6.2.3",
+    "turbo": "2.9.16"
+  }
+}

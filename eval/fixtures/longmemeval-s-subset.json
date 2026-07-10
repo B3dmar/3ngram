@@ -1,0 +1,189 @@
+{
+  "_meta": {
+    "about": "Small LongMemEval-S-shaped subset for the ADR-0006 advisory tier (issue #37, slice 1). NOT the official dataset: these are synthetic, license-clean, hand-authored entries that mirror the LongMemEval-S schema (question_id, question_type, question, answer, question_date, haystack_sessions, answer_session_ids, with answer-bearing turns flagged has_answer). They exist so the advisory harness runs deterministically offline with zero deps and zero network in the default path. The full 500q LongMemEval-S run and the model-judged answer-synthesis slice are gated behind --download / --judge and remain a TODO referencing #37.",
+    "schema_ref": "https://github.com/xiaowu0162/LongMemEval",
+    "question_types": [
+      "single-session-user",
+      "multi-session",
+      "temporal-reasoning",
+      "knowledge-update",
+      "single-session-preference"
+    ]
+  },
+  "questions": [
+    {
+      "question_id": "lme_s_sub_001",
+      "question_type": "single-session-user",
+      "question": "Which database did I say I picked for the side project?",
+      "answer": "PostgreSQL",
+      "question_date": "2026-03-02",
+      "answer_session_ids": ["s001"],
+      "haystack_sessions": [
+        {
+          "session_id": "s001",
+          "session_date": "2026-02-10",
+          "turns": [
+            {
+              "role": "user",
+              "content": "For my side project I finally decided to go with PostgreSQL over MySQL.",
+              "has_answer": true
+            },
+            {
+              "role": "assistant",
+              "content": "Good call, Postgres gives you strong JSONB and extensions."
+            }
+          ]
+        },
+        {
+          "session_id": "s002",
+          "session_date": "2026-02-12",
+          "turns": [
+            { "role": "user", "content": "What time zone should I store timestamps in?" },
+            { "role": "assistant", "content": "Store everything in UTC and convert at the edge." }
+          ]
+        }
+      ]
+    },
+    {
+      "question_id": "lme_s_sub_002",
+      "question_type": "multi-session",
+      "question": "What framework am I using for the frontend and what styling approach did I settle on?",
+      "answer": "React with Tailwind CSS",
+      "question_date": "2026-03-05",
+      "answer_session_ids": ["s003", "s005"],
+      "haystack_sessions": [
+        {
+          "session_id": "s003",
+          "session_date": "2026-02-15",
+          "turns": [
+            {
+              "role": "user",
+              "content": "I'm building the frontend with React this time instead of Vue.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "React it is. Want help scaffolding components?" }
+          ]
+        },
+        {
+          "session_id": "s004",
+          "session_date": "2026-02-18",
+          "turns": [
+            { "role": "user", "content": "How do I set up routing?" },
+            {
+              "role": "assistant",
+              "content": "Use a file-based router or React Router depending on your setup."
+            }
+          ]
+        },
+        {
+          "session_id": "s005",
+          "session_date": "2026-02-20",
+          "turns": [
+            {
+              "role": "user",
+              "content": "I decided on Tailwind CSS for styling the whole app.",
+              "has_answer": true
+            },
+            {
+              "role": "assistant",
+              "content": "Tailwind pairs nicely with React component-driven UI."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question_id": "lme_s_sub_003",
+      "question_type": "knowledge-update",
+      "question": "What is my current deployment target for the API?",
+      "answer": "Railway",
+      "question_date": "2026-03-10",
+      "answer_session_ids": ["s008"],
+      "haystack_sessions": [
+        {
+          "session_id": "s006",
+          "session_date": "2026-02-22",
+          "turns": [
+            { "role": "user", "content": "I'm going to deploy the API on Heroku for now." },
+            { "role": "assistant", "content": "Heroku is fine for an MVP." }
+          ]
+        },
+        {
+          "session_id": "s008",
+          "session_date": "2026-03-01",
+          "turns": [
+            {
+              "role": "user",
+              "content": "Update: I moved the API deployment from Heroku to Railway because of pricing.",
+              "has_answer": true
+            },
+            {
+              "role": "assistant",
+              "content": "Railway's usage-based pricing should fit a small API well."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question_id": "lme_s_sub_004",
+      "question_type": "temporal-reasoning",
+      "question": "Before I switched my note-taking app, which one was I using?",
+      "answer": "Notion",
+      "question_date": "2026-03-12",
+      "answer_session_ids": ["s009"],
+      "haystack_sessions": [
+        {
+          "session_id": "s009",
+          "session_date": "2026-02-05",
+          "turns": [
+            {
+              "role": "user",
+              "content": "I take all my project notes in Notion right now.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Notion is great for linked databases." }
+          ]
+        },
+        {
+          "session_id": "s010",
+          "session_date": "2026-03-08",
+          "turns": [
+            { "role": "user", "content": "I switched my note-taking over to Obsidian last week." },
+            { "role": "assistant", "content": "Local-first markdown is a solid choice." }
+          ]
+        }
+      ]
+    },
+    {
+      "question_id": "lme_s_sub_005",
+      "question_type": "single-session-preference",
+      "question": "What did I say is my preferred coffee order?",
+      "answer": "Oat milk flat white",
+      "question_date": "2026-03-15",
+      "answer_session_ids": ["s011"],
+      "haystack_sessions": [
+        {
+          "session_id": "s011",
+          "session_date": "2026-02-28",
+          "turns": [
+            {
+              "role": "user",
+              "content": "My go-to coffee is an oat milk flat white, every single morning.",
+              "has_answer": true
+            },
+            { "role": "assistant", "content": "Noted, oat milk flat white it is." }
+          ]
+        },
+        {
+          "session_id": "s012",
+          "session_date": "2026-03-02",
+          "turns": [
+            { "role": "user", "content": "What's a good pour-over ratio?" },
+            { "role": "assistant", "content": "Start around 1:16 coffee to water." }
+          ]
+        }
+      ]
+    }
+  ]
+}

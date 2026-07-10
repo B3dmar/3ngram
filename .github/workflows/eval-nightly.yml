@@ -1,0 +1,322 @@
+# eval-nightly.yml — scheduled ADVISORY eval tier (docs/concepts/testing.mdx evals layer).
+# 2nd of the 3 allowed workflows. Runs LongMemEval advisory slices nightly.
+#
+# ADVISORY, NEVER BLOCKING: this workflow runs only on a schedule (and manual
+# dispatch). It never runs on pull_request and is not a required status check,
+# so it can never block a PR. On regression it opens or updates a tracking
+# issue; a green run closes that issue.
+#
+# RULE: actions pinned by full SHA, never tags (scripts/check-action-pins.sh).
+# Issue create/update uses the preinstalled `gh` CLI with GITHUB_TOKEN — no new
+# third-party action dependency.
+#
+# Slice 1 (issue #37): deterministic LongMemEval-S subset retrieval-oracle.
+# Slice 2 (#37): model-judged answer synthesis (--judge), live when the gateway
+# secret is set.
+# Slice 3 (#37): REAL Phase-1B retriever (--retriever real) over a throwaway
+# Postgres service container (pgvector) + the OpenAI-compatible embedding
+# gateway — the DB needs no secrets; the slice is enabled only when the gateway
+# secret is configured, skipped (green) otherwise.
+# Slice 4 (#37): full 500q LongMemEval-S download lane (--download) over the
+# deterministic oracle — runs every night, streaming the upstream haystack into
+# a gitignored cache (never committed).
+# Slice 5 (#294): MemoryAgentBench (MAB) advisory subsets — the advisory-tier
+# Conflict Resolution + Test-Time Learning subsets, accuracy-over-turns metric
+# (NOT recall@k/MRR). Deterministic offline accuracy oracle over a synthetic,
+# license-clean fixture in the default lane; the official MIT-licensed upstream
+# parquet subsets are pinned (url+sha256+bytes) and fetched only by the gated
+# --download integrity lane (parquet decoding deferred — no dependency added).
+#
+# Each lane writes a per-run JSON metrics file (ids/counts/scores ONLY — never
+# haystack/memory content, hard rule 6) into eval-metrics/, uploaded as a build
+# artifact so week-over-week variance is computable (#172 AC: per-run metrics
+# persisted as JSON instead of text-only step summary).
+name: eval-nightly
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # 06:17 UTC daily — off the top of the hour to dodge runner contention
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write # open/update the advisory regression issue
+
+concurrency:
+  group: eval-nightly
+  cancel-in-progress: false
+
+env:
+  ADVISORY_ISSUE_TITLE: 'eval-nightly: advisory regression'
+
+jobs:
+  longmemeval-advisory:
+    runs-on: ubuntu-latest
+    env:
+      # Owner/migration connection to the throwaway Postgres service (below).
+      # Fork-friendly: fixed, non-secret credentials against a disposable CI DB.
+      DATABASE_URL_UNPOOLED: postgres://postgres:postgres@localhost:5432/threengram_test
+      I_AM_AN_EPHEMERAL_DB: '1'
+    # pgvector-capable Postgres for the real-retriever advisory slice; a
+    # disposable service DB so no maintainer DB secrets are required.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: threengram_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d threengram_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: LongMemEval advisory slice (deterministic, offline)
+        id: eval
+        run: |
+          # Per-run JSON metrics live here and are uploaded as an artifact at job
+          # end (ids/counts/scores only — never haystack/memory content).
+          mkdir -p eval-metrics
+          out=$(node eval/src/longmemeval.mjs --json)
+          echo "result=$out" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$out" > eval-metrics/oracle-subset.json
+          {
+            echo '## eval-nightly (advisory)'
+            echo
+            echo 'LongMemEval-S subset retrieval-oracle (slice 1 of #37).'
+            echo
+            echo '```json'
+            node eval/src/longmemeval.mjs
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Advisory floor: surfaces drift in the deterministic stand-in
+          # retriever. NOT a merge gate. Raise as the live retriever (#77) lands.
+          recall=$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(String(r.metrics.session_recall_at_5))' "$out")
+          mrr=$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(String(r.metrics.session_mrr))' "$out")
+          pass=$(node -e 'const r=JSON.parse(process.argv[1]);process.exit(r.metrics.session_recall_at_5>=1 && r.metrics.session_mrr>=0.9?0:1)' "$out" && echo true || echo false)
+          echo "recall=$recall" >> "$GITHUB_OUTPUT"
+          echo "mrr=$mrr" >> "$GITHUB_OUTPUT"
+          echo "pass=$pass" >> "$GITHUB_OUTPUT"
+
+      # Model-judged answer-synthesis slice (#37). ADVISORY, NEVER BLOCKING and
+      # NEVER required: a wrong answer or a missing secret does not fail the run.
+      # Live-model lane ONLY when LLM_GATEWAY_API_KEY is configured — otherwise
+      # it skips with a clear log line (no silent network dependency). The fake
+      # gateway path runs in PR CI via `pnpm run test`, not here.
+      - name: LongMemEval model-judged slice (advisory, live model when secret set)
+        id: judge
+        continue-on-error: true
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+        run: |
+          if [ -z "${LLM_GATEWAY_API_KEY:-}" ]; then
+            echo "SKIP: LLM_GATEWAY_API_KEY not configured — skipping live model-judged slice (#37). This is advisory and never blocks."
+            {
+              echo
+              echo '### model-judged slice: skipped'
+              echo 'LLM_GATEWAY_API_KEY is not configured; the live model-judged slice (#37) was skipped. Advisory only.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p eval-metrics
+          judge=$(node eval/src/longmemeval.mjs --judge --json)
+          printf '%s\n' "$judge" > eval-metrics/judge-subset.json
+          {
+            echo
+            echo '### model-judged slice (live)'
+            echo
+            echo '```json'
+            printf '%s\n' "$judge"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- REAL-retriever advisory slice (#37) ----------------------------------
+      # ADVISORY, NEVER BLOCKING (continue-on-error on every step). Runs the
+      # LongMemEval oracle through the REAL Phase-1B retriever: seeds each
+      # haystack session as memory via the product write path (core.remember +
+      # the OpenAI-compatible embedding gateway) on the throwaway Postgres service
+      # container (pgvector), then ranks sessions with core.search(). The DB needs
+      # NO secrets (disposable service, fixed credentials); the slice is enabled
+      # ONLY when the embedding-gateway secret (LLM_GATEWAY_API_KEY) is configured,
+      # otherwise every step below skips and the run stays green (no silent
+      # dependency — clear skip log). The service DB is discarded with the runner.
+      - name: Real-retriever preflight (gate on gateway secret)
+        id: real_pre
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+        run: |
+          if [ -n "${LLM_GATEWAY_API_KEY:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP: real-retriever slice (#37) — LLM_GATEWAY_API_KEY not configured. Advisory, never blocks."
+            {
+              echo
+              echo '### real-retriever slice: skipped'
+              echo 'LLM_GATEWAY_API_KEY not configured; the real-retriever slice (#37) was skipped. Advisory only.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build workspace packages (real retriever imports built dist)
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        run: pnpm build
+
+      - name: Migrate + provision roles (owner, Postgres service)
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        # DATABASE_URL_UNPOOLED (owner) is set job-wide; drizzle.config.ts reads it.
+        # Fixed, non-secret app_user password: the whole DB is a disposable CI DB.
+        env:
+          PGURL: postgres://postgres:postgres@localhost:5432/threengram_test
+          APP_USER_PASSWORD: app_user
+        run: |
+          for i in $(seq 1 30); do pg_isready -h localhost -p 5432 -U postgres -d threengram_test && break; echo "Waiting for Postgres ($i/30)..."; sleep 2; done
+          pnpm --filter @3ngram/db exec drizzle-kit migrate
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f scripts/provision-roles.sql
+          echo "ALTER ROLE app_user PASSWORD :'pw';" | psql "$PGURL" -v ON_ERROR_STOP=1 -v pw="$APP_USER_PASSWORD"
+
+      - name: Real-retriever advisory oracle (live DB + embedding gateway)
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+        run: |
+          # Runtime (app_user, RLS, NOBYPASSRLS) connection to the service DB.
+          app_url="postgres://app_user:app_user@localhost:5432/threengram_test"
+          mkdir -p eval-metrics
+          real=$(DATABASE_URL="$app_url" node eval/src/longmemeval.mjs --retriever real --json)
+          printf '%s\n' "$real" > eval-metrics/real-retriever-subset.json
+          {
+            echo
+            echo '### real-retriever slice (live DB + embedding gateway)'
+            echo
+            echo '```json'
+            printf '%s\n' "$real"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- Full 500q download lane (#37 slice 4) --------------------------------
+      # ADVISORY, NEVER BLOCKING (continue-on-error): streams the upstream
+      # LongMemEval-S haystack into a GITIGNORED cache (eval/.cache/, never
+      # committed — large + upstream-licensed) and runs the deterministic oracle
+      # over the full 500 questions. An upstream outage or integrity failure logs
+      # and skips green; it never fails the run. Pin LONGMEMEVAL_S_SHA256 /
+      # _BYTES (config, not code) once a release is selected to enforce integrity.
+      - name: LongMemEval full 500q download lane (advisory, deterministic)
+        id: download
+        continue-on-error: true
+        env:
+          LONGMEMEVAL_S_URL: ${{ vars.LONGMEMEVAL_S_URL }}
+          LONGMEMEVAL_S_SHA256: ${{ vars.LONGMEMEVAL_S_SHA256 }}
+          LONGMEMEVAL_S_BYTES: ${{ vars.LONGMEMEVAL_S_BYTES }}
+        run: |
+          mkdir -p eval-metrics
+          if full=$(node eval/src/longmemeval.mjs --download --json); then
+            printf '%s\n' "$full" > eval-metrics/oracle-500q.json
+            {
+              echo
+              echo '### full 500q download lane (deterministic oracle)'
+              echo
+              echo '```json'
+              printf '%s\n' "$full"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "SKIP: full 500q download lane (#37) — dataset fetch/integrity failed. Advisory, never blocks."
+            {
+              echo
+              echo '### full 500q download lane: skipped'
+              echo 'Upstream LongMemEval-S fetch or integrity check failed; the full 500q lane (#37) was skipped. Advisory only.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # --- MemoryAgentBench advisory slice (#294, slice 5) ----------------------
+      # ADVISORY, NEVER BLOCKING (continue-on-error). The advisory MAB subsets
+      # (Conflict Resolution + Test-Time Learning) scored by a deterministic,
+      # offline accuracy-over-turns oracle over the synthetic, license-clean
+      # fixture (no network, no deps). Reports via STEP_SUMMARY (NOT a PR comment)
+      # and writes a CONTENT-FREE per-run JSON metrics file (subset accuracies +
+      # instance counts ONLY — never haystack content, hard rule 6) into
+      # eval-metrics/ for the shared upload step below.
+      - name: MemoryAgentBench advisory slice (deterministic, offline)
+        id: mab
+        continue-on-error: true
+        run: |
+          mkdir -p eval-metrics
+          mab=$(node eval/src/memoryagentbench.mjs --json)
+          printf '%s\n' "$mab" > eval-metrics/mab-subset.json
+          {
+            echo
+            echo '### MemoryAgentBench advisory slice (#294)'
+            echo
+            echo 'Conflict Resolution + Test-Time Learning subsets, accuracy-over-turns (deterministic offline oracle).'
+            echo
+            echo '```json'
+            node eval/src/memoryagentbench.mjs
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Persist per-run metrics as a build artifact (#172 AC: JSON, not text-only
+      # step summary, so week-over-week variance is computable). Contents are
+      # ids/counts/scores ONLY — recall@k / mrr / accuracy — never haystack or
+      # memory content (hard rule 6). `if: always()` so partial metrics from a
+      # failed lane still upload; `if-no-files-found: ignore` keeps an
+      # all-skipped run green.
+      - name: Upload per-run metrics artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eval-nightly-metrics-${{ github.run_id }}
+          path: eval-metrics/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Open or update advisory issue on regression
+        if: steps.eval.outputs.pass == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RECALL: ${{ steps.eval.outputs.recall }}
+          MRR: ${{ steps.eval.outputs.mrr }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="Advisory LongMemEval-S subset regression on $(date -u +%FT%TZ).
+
+          - session_recall@5: \`${RECALL}\`
+          - session_mrr: \`${MRR}\`
+
+          Run: ${RUN_URL}
+
+          This is **advisory** (issue #37 slice 1) and does **not** block PRs. The deterministic stand-in retriever drifted below the advisory floor. Investigate before raising the floor / wiring the live retriever (#77)."
+          existing=$(gh issue list --state open --search "in:title \"${ADVISORY_ISSUE_TITLE}\"" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ADVISORY_ISSUE_TITLE" --label area:eval --body "$body"
+          fi
+
+      - name: Close advisory issue on green
+        if: steps.eval.outputs.pass == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --state open --search "in:title \"${ADVISORY_ISSUE_TITLE}\"" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Advisory eval green again. Run: ${RUN_URL}"
+          fi

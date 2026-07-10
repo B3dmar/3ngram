@@ -1,0 +1,28 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "env": ["THREENGRAM_API_BASE_URL", "THREENGRAM_MCP_BASE_URL", "THREENGRAM_SIGNUP_ENABLED"],
+      "outputs": ["dist/**"]
+    },
+    "check": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "docs:generate": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["DATABASE_URL", "DATABASE_URL_UNPOOLED", "I_AM_AN_EPHEMERAL_DB"],
+      "cache": false
+    }
+  },
+  "remoteCache": {
+    "signature": true
+  }
+}

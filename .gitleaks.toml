@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# gitleaks config for the 3ngram public repo (spec 009, #442).
+# Extends gitleaks' built-in ruleset and allowlists only the INTENTIONAL
+# self-host dev-default VALUES (not whole files) so the secret-scan gate does
+# not false-positive on documented, non-sensitive local credentials while still
+# catching a real secret accidentally committed to any file.
+#
+# Used by `.github/workflows/secret-scan.yml` for PR-range and protected-branch
+# history scans.
+
+title = "3ngram gitleaks config"
+
+[extend]
+# Start from gitleaks' maintained default rules, then add allowlists below.
+useDefault = true
+
+[allowlist]
+description = "Intentional self-host dev defaults (non-sensitive) — value-scoped, NOT file-scoped"
+
+# IMPORTANT: no whole-file `paths` allowlist. Allowlisting a file makes gitleaks
+# SKIP it entirely, so a real credential accidentally pasted into a high-risk
+# config file (e.g. .env.example, compose) would go undetected and the gate
+# would stay falsely green. Instead we keep every file IN scope and exempt only
+# the SPECIFIC intentional dev-default VALUES below.
+#
+# regexTarget = "line": match the regexes against the whole matched line, so a
+# dev default embedded in a connection string
+# (postgresql://app_user:app-user-dev@…) is exempted, while a line carrying a
+# real secret (no dev-default token) is still flagged.
+regexTarget = "line"
+
+# Documented local dev passwords shipped on purpose for the self-host quickstart
+# and the change-me-* placeholders in .env.selfhost.example. These are not
+# secrets; they are the published defaults (AGENTS.md "env safety",
+# packages/config/src/env.ts denylist). A line WITHOUT one of these tokens
+# (i.e. a genuine pasted credential) is NOT exempted and trips the scan.
+regexes = [
+  '''3ngram-dev''',
+  '''app-user-dev''',
+  '''change-me''',
+]
+
+# Conservative placeholder stopwords (matched against the detected secret value):
+# vanishingly unlikely to occur inside a real credential, so they do not weaken
+# the gate.
+stopwords = [
+  "changeme",
+  "change-me",
+  "placeholder",
+]

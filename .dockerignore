@@ -1,0 +1,56 @@
+# Keep the Docker build context (repo root) lean — the builder reinstalls from
+# the lockfile and rebuilds dist/, so host artifacts must not leak in.
+
+# Dependencies + build output (reinstalled / regenerated in the builder stage)
+**/node_modules
+**/dist
+.pnpm-store
+
+# VCS + worktrees
+.git
+.gitignore
+.worktrees
+
+# Local env + secrets (never bake into the image)
+.env
+.env.*
+!.env.example
+
+# Tests + fixtures (not needed to build or run the server)
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/test
+**/__tests__
+**/__fixtures__
+**/__mocks__
+**/coverage
+**/vitest.config.*
+
+# Non-runtime workspaces + tooling. `eval` is a pnpm workspace project, so its
+# package.json MUST stay in context (a frozen install reads every workspace
+# manifest) — only its heavy non-build contents are excluded. The server build
+# filter (@3ngram/server...) never compiles eval, so its sources aren't needed.
+eval/fixtures
+eval/src
+eval/test
+eval/pipeline
+eval/scripts
+.changeset
+.claude
+.github
+docs
+backlog
+
+# Editor / OS cruft
+**/.DS_Store
+**/*.log
+**/.turbo
+**/.vscode
+**/.idea
+
+# Repo meta docs (not part of the build)
+*.md
+docker-compose.yml
+renovate.json
+no-raw-db.grit

@@ -1,0 +1,44 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "eval"
+
+# Advisory fixes (pnpm audit --fix=override; scoped selectors so unaffected majors stay put).
+# esbuild is split into two non-overlapping selectors: a bare `esbuild` key would shadow the
+# scoped one and leave the 0.28.0 resolution (drizzle-kit → @esbuild-kit) on a vulnerable version.
+overrides:
+  '@opentelemetry/core@<2.8.0': ^2.8.0
+  esbuild@<0.25.0: ">=0.25.0"
+  esbuild@>=0.27.3 <0.28.1: ^0.28.1
+  hono@<4.12.25: ^4.12.25
+  js-yaml@<3.15.0: ^3.15.0
+  nodemailer@<=9.0.0: ^9.0.1
+
+# Supply-chain posture (docs/contributing.mdx — active npm worm era).
+# pnpm 11 reads these from pnpm-workspace.yaml, NOT .npmrc (.npmrc is auth/registry only in v11).
+# Reproducibility:
+saveExact: true
+engineStrict: true
+
+# Lifecycle-script policy: default-deny + fail-closed. strictDepBuilds turns an undeclared
+# build-script dependency into a hard install error (ERR_PNPM_IGNORED_BUILDS) instead of a
+# silent skip, so a NEW dependency that ships a postinstall fails CI until reviewed.
+strictDepBuilds: true
+
+# allowBuilds is the v11 per-dependency build decision (replaces onlyBuiltDependencies, which
+# pnpm 11 no longer honors). Every known build-script dep is explicitly DENIED (false) with a
+# justification — none genuinely needs its build script (each ships a prebuilt platform binary
+# via optionalDependencies). No entry may be
+# `true` without a written justification that the dependency truly requires its build.
+allowBuilds:
+  esbuild: false # prebuilt @esbuild/<platform> binary; no build needed (tsx uses it under ignore-scripts)
+  sharp: false # prebuilt @img/sharp-<platform> binaries; no build needed on supported platforms
+  msgpackr-extract: false # prebuilt @msgpackr-extract/<platform> binary; pure-JS msgpackr fallback exists
+  '@sentry/cli': false # postinstall downloads a prebuilt native binary; @sentry/nextjs source-map upload runs through the bundler plugin's own API uploader (auth-token gated), so the CLI binary is not needed at build
+
+minimumReleaseAgeExclude:
+  - esbuild@0.28.1
+  - '@opentelemetry/core@2.8.0'
+  - hono@4.12.25
+  - nodemailer@9.0.1
+  - js-yaml@3.15.0

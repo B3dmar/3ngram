@@ -1,0 +1,3 @@
+ALTER TABLE "oauth_clients" ADD CONSTRAINT "oauth_clients_auth_method_check" CHECK ("oauth_clients"."token_endpoint_auth_method" IN ('none', 'client_secret_post', 'client_secret_basic'));--> statement-breakpoint
+ALTER TABLE "oauth_clients" ADD CONSTRAINT "oauth_clients_secret_consistency_check" CHECK (("oauth_clients"."token_endpoint_auth_method" = 'none' AND "oauth_clients"."client_secret_hash" IS NULL)
+        OR ("oauth_clients"."token_endpoint_auth_method" <> 'none' AND "oauth_clients"."client_secret_hash" IS NOT NULL));

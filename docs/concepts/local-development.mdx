@@ -1,0 +1,124 @@
+---
+title: "Local development"
+description: "Run 3ngram from a clean clone for development: bring up Postgres and Redis, migrate, provision roles, seed the golden set, and run the test suites."
+icon: "code"
+---
+
+How to run 3ngram locally from a clean clone. The same path serves local development, integration tests, and the current self-host skeleton. For the packaged adopter path (hardened Compose stack, secrets preflight), see [Self-host](/self-host).
+
+Everything below works on stock Postgres: the schema, RLS policies, and role grants have no cloud-specific dependencies (validated by the integration suites).
+
+## Quickstart (full stack in Docker)
+
+The fastest path to a running server with seeded data and a working API key. The compose stack builds the server from `apps/server/Dockerfile`; a one-shot `migrations` init service (behind the `init` profile) migrates, provisions the runtime role, and sets its password before the server starts.
+
+```bash
+git clone https://github.com/B3dmar/3ngram && cd 3ngram
+cp .env.example .env                       # defaults work as-is for local Docker
+
+# 1. Initialize the database: migrate -> provision roles -> set app_user password
+docker compose --profile init up migrations   # runs to completion, then exits
+
+# 2. Bring up the data plane + server
+docker compose up -d postgres redis server
+
+# 3. Seed the dev user + golden set AND mint a demo API key (printed once)
+set -a; source .env; set +a                # see step 2 of the manual setup below
+pnpm install --frozen-lockfile
+pnpm seed                                  # prints: 3ng_<prefix>_<secret>
+
+# 4. Call the API with the printed key
+curl -H "X-API-Key: 3ng_<prefix>_<secret>" \
+  "http://localhost:3000/api/v1/briefing?kind=all"
+# -> 200
+```
+
+Notes:
+
+- The `migrations` service and the `server` service both build from `apps/server/Dockerfile` (the `migrations` build target adds `psql`); `server` exposes **3000:3000** with a Node-`fetch` `/health` probe.
+- `pnpm seed` runs on the host (not in a container) because it loads the committed eval fixtures; it connects to Postgres on the published port **54320**. The demo API key (name `self-host demo`) is minted once and is idempotent — re-running prints "already present" rather than re-issuing.
+- `APP_USER_PASSWORD` defaults to `app-user-dev` (compose) — override it in `.env` for anything beyond a throwaway local stack. Because the host-run `pnpm seed` reads the literal `DATABASE_URL` (it does not derive the password from `APP_USER_PASSWORD` the way compose does for the `server` service), change the password in **both** `APP_USER_PASSWORD` and the password segment of `DATABASE_URL` — overriding one alone desyncs the two and `pnpm seed` fails with an auth error.
+- A **worker** container is not in compose yet (no `apps/worker/Dockerfile`); BullMQ jobs need a separate deployable before they are part of the self-host stack.
+
+## Prerequisites
+
+- Docker (compose v2), Node ≥ 22, pnpm 11.9.0 (`corepack enable` uses the version pinned by the repository)
+- `psql` client
+
+## 1. Start the services
+
+```bash
+docker compose up -d postgres redis
+```
+
+Postgres (pgvector, PG18) listens on **54320**, Redis on **63790** — non-default ports so they never collide with system services. Images are pinned by digest; the tag each digest was resolved from is in the compose comments.
+
+## 2. Configure the environment
+
+Copy `.env.example` to `.env` and set the database keys. **Then load it into your shell** — nothing in the repo auto-loads `.env` (no dotenv dependency, by design), and the migrate/seed/psql commands below read the variables from the environment:
+
+```bash
+set -a; source .env; set +a
+```
+
+| Variable | Value (local) | Role |
+|---|---|---|
+| `DATABASE_URL_UNPOOLED` | `postgresql://postgres:3ngram-dev@localhost:54320/ngram` | **Owner** — migrations, role provisioning, seed user creation. Bypasses RLS; never used by app code. |
+| `DATABASE_URL` | `postgresql://app_user:<password>@localhost:54320/ngram` | **Runtime** — what the app and integration tests use. `app_user` has `NOBYPASSRLS` and append-only grants. |
+| `APP_USER_PASSWORD` | the password you pick in step 3 | |
+| `SENTRY_DSN` | *(empty)* | Empty = error tracking and tracing **fully disabled** — the self-host default; no phone-home. Set it to **your own** Sentry DSN to send errors to your instance; optionally set `SENTRY_ENVIRONMENT` to tag events (defaults to `NODE_ENV`). |
+
+## 3. Migrate
+
+```bash
+pnpm install --frozen-lockfile
+pnpm db:migrate          # drizzle-kit migrate, runs on the unpooled (owner) URL
+```
+
+Migrations are forward-only; re-running is a no-op.
+
+## 4. Provision roles
+
+**After** migrating — the grants reference tables the migrations create (same order as CI).
+
+```bash
+psql "$DATABASE_URL_UNPOOLED" -f scripts/provision-roles.sql
+psql "$DATABASE_URL_UNPOOLED" -c "ALTER ROLE app_user PASSWORD '<password>'"
+```
+
+`provision-roles.sql` is idempotent and is **the only place grants live**. Note what it deliberately does NOT grant the runtime role: `DELETE` anywhere in the memory domain, and anything but `INSERT`/`SELECT` on `memory_events` and `audit_log` — append-only is enforced at the grant level, below the application.
+
+## 5. Seed (optional)
+
+```bash
+pnpm seed
+```
+
+Loads the anonymized eval golden set (158 memories including supersession chains) under a dev user (`dev@localhost`, override with `SEED_EMAIL`). The seed writes through the **runtime** role inside a `set_config('app.user_id', …)` transaction — the same RLS gate the app uses — and is idempotent the append-only way: existing rows (matched by `content_hash`) are skipped, never deleted. Cached fixture vectors are loaded for seeded memories; the seed itself never calls an external API.
+
+Sanity check:
+
+```bash
+psql "$DATABASE_URL_UNPOOLED" -c "SELECT memory_type, count(*) FROM memories GROUP BY 1 ORDER BY 2 DESC"
+```
+
+## 6. Run the test suites against it
+
+```bash
+pnpm test                 # unit (no DB)
+pnpm test:integration     # the mandatory suites, serial (fileParallelism=false)
+```
+
+## Resetting
+
+```bash
+docker compose down -v    # drops the pgdata volume — full reset
+```
+
+Then repeat from step 1. (Dropping the volume is the supported "delete" path; runtime-role deletes don't exist by design.)
+
+## Deployment boundaries and gaps
+
+- **worker container** — the server container exists; the worker needs a separate deployable before it is part of the self-host stack.
+- **hosted dashboard** — the dashboard UI is proprietary and maintained in a separate private repository; the Apache server includes the REST/auth routes clients need, but this repository does not ship that UI.
+- **embedding provider** — seeded memories have cached vectors, but every search query and new write still needs an embedding. Set both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY`; without them, search returns `503 embedding_unavailable` while non-search reads and writes remain available.

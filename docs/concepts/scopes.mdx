@@ -1,0 +1,46 @@
+---
+title: "Scopes"
+description: "Partition your memory space into personal, work, and custom scopes."
+icon: "folder-tree"
+---
+
+Scopes partition your memory space. Every memory belongs to exactly one scope, and retrieval tools filter by it — so consulting work, side projects, and personal life stay separate even though they live under one account.
+
+## Defaults
+
+New accounts start with two scopes:
+
+- **`personal`** — the default. `remember` writes here unless a scope is given.
+- **`work`** — for professional context.
+
+Scopes are user-defined, not a fixed enum. You can create more, rename them, or delete them from the registry as your setup evolves.
+
+## Scope names and aliases
+
+A scope name is a kebab-case string: lowercase letters, digits, and hyphens, up to 64 characters (`client-acme`, `side-project-x`). Each scope can also carry **aliases** — alternative names that resolve to the same scope, useful when different agents or prompts refer to the same area of your life by different words.
+
+## Managing scopes
+
+The `configure_scope` tool covers the scope lifecycle:
+
+| Action | Effect |
+|---|---|
+| `list` | All scopes with their aliases |
+| `create` | Add a scope, optionally with aliases |
+| `rename` | Change a scope's name |
+| `set_aliases` | Replace a scope's alias list |
+| `delete` | Remove the scope from the registry |
+
+Deleting a scope is registry-only: existing memories keep their scope value. Nothing on a write path destroys memory data — see [Memory model](/concepts/memory-model).
+
+## How scopes shape retrieval
+
+- **`search`** accepts a scope filter, so queries can stay inside one area of your life.
+- **`briefing`** requires an explicit selector — a scope, a project, or `all`. There is no firehose default: a briefing for `work` will not pull in personal commitments.
+- **`remember`** takes the scope at write time and defaults to `personal`.
+
+Memories also carry an optional `project` label, which subdivides within a scope — a scope is the broad partition ("work"), a project is the specific effort inside it.
+
+## Binding sessions to a scope
+
+A practical pattern for agents: decide the scope once per session (or per client) and pass it on every write. For example, an agent doing consulting or business tasks writes with `scope: work`, while a life-admin assistant writes with `scope: personal`. Keeping the binding explicit at the call site avoids misfiled memories that are awkward to re-sort later — corrections require revising each memory, since nothing is bulk-rewritten in place.

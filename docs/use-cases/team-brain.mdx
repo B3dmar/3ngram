@@ -1,0 +1,58 @@
+---
+title: "Your company brain"
+description: "Use one 3ngram account as a durable company brain — decisions, commitments, and facts that persist across every tool and project, partitioned with scopes."
+icon: "brain"
+---
+
+A company brain is the institutional memory you wish your tools already had: the decisions you made and why, the commitments outstanding, the facts about clients and systems that usually live in someone's head. With 3ngram, one account holds all of it, reachable from every connected client, and never silently rewritten.
+
+<Note>
+  Today this is a **single-account** pattern: one person (or one shared account) as the
+  source of truth, readable and writable from all of that account's tools. Multi-user team
+  workspaces — separate logins sharing memory — are not yet available. See
+  [Coming soon](/use-cases/overview#coming-soon).
+</Note>
+
+## The shape of it
+
+Everything you want the brain to remember is a typed memory — a `decision`, a `commitment` with an owner and due date, a `blocker`, a `fact`, a `preference`, a `pattern`. Instead of scattering across chat logs, docs, and tickets, it accumulates in one searchable place. See the [memory model](/concepts/memory-model) for how the types behave.
+
+## Partition with scopes
+
+A company brain spans more than one area of work, and you rarely want them mixed. [Scopes](/concepts/scopes) are the partition: each memory belongs to exactly one scope, and retrieval filters by it.
+
+| Scope | What goes here |
+|---|---|
+| `work` | Company-wide decisions, processes, and facts |
+| `client-acme` | Everything specific to one client engagement |
+| `product-x` | A single product line or initiative |
+
+Scopes are user-defined kebab-case strings, so the partition matches how your company is actually organized. A memory also carries an optional `project` label to subdivide within a scope.
+
+## A day in the brain
+
+<Steps>
+  <Step title="Capture as you work">
+    From any connected client (see [Connect other tools](/use-cases/connecting-tools)),
+    decisions and commitments land as you make them:
+
+    ```text
+    Remember (scope work) that we standardized on Stripe for billing and rejected
+    Paddle because of EU invoicing gaps.
+    ```
+  </Step>
+  <Step title="Start oriented">
+    The `briefing` tool returns the open commitments, blockers, and recent decisions
+    for a scope or project — so a new session, or a different teammate's tool on the
+    shared account, starts with the current state instead of a blank slate.
+  </Step>
+  <Step title="Answer 'what did we decide, and why'">
+    Months later, `search` and `get_facts` recover the decision and its rationale —
+    including superseded versions, so you can see not just what is true now but what
+    you believed before. See [Recall and supersession](/use-cases/recall-supersession).
+  </Step>
+</Steps>
+
+## What it is not, yet
+
+Memory is per-account. Two people with separate 3ngram logins do not yet share a memory space; the company-brain pattern above assumes a single account (which a small team can share). True multi-user team workspaces are on the roadmap — see [Coming soon](/use-cases/overview#coming-soon). Until then, do not document team sharing as available.

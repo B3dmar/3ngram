@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose new functionality, framed as a job to be done
+title: "feat: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Frame the request as a job to be done, then state explicit acceptance criteria.
+        Optionally pick an `area:*` label after filing to route the work.
+  - type: textarea
+    id: job
+    attributes:
+      label: Job to be done
+      description: When <situation>, I want to <motivation>, so I can <expected outcome>.
+      placeholder: |
+        When I am dogfooding via the MCP write channel, I want to ...,
+        so I can ...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / why now
+      description: What is painful today and why this matters now.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Explicit, checkable conditions that define "done". One per line.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed and why you rejected them.
+    validations:
+      required: false

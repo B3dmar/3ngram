@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+# codeql.yml — CodeQL code scanning for the JS/TS codebase.
+# Workflow-file equivalent of GitHub's "default setup"; lets us SHA-pin the
+# action (supply-chain rule) and keep least-privilege permissions. Runs on
+# push to protected branches, on PRs, and on a weekly schedule so new advisories
+# surface without a code change.
+# RULE: actions pinned by full SHA, never tags (scripts/check-action-pins.sh).
+name: codeql
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+  schedule:
+    # Weekly, Monday 07:13 UTC (off-peak, offset minute to avoid the rush).
+    - cron: "13 7 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Resolve repo visibility via the API so the gate works on ALL triggers.
+  # github.event.repository.visibility is only populated on push/pull_request —
+  # the `schedule` webhook payload is "Not applicable", so an event-payload check
+  # would wrongly skip the weekly scan even after the repo is public. The API
+  # lookup is trigger-independent. (gh is preinstalled on GitHub-hosted runners;
+  # github.token has repo-metadata read access even on private repos.)
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      visibility: ${{ steps.vis.outputs.visibility }}
+    steps:
+      - id: vis
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Assign in its own command so a nonzero `gh api` exit aborts the step
+        # (steps run under `bash -eo pipefail`). Folding it into the `echo`
+        # argument would mask the failure (echo succeeds, output empties) and
+        # silently disable CodeQL. The explicit empty-check guards the edge case
+        # of a zero-exit-but-empty result.
+        run: |
+          visibility="$(gh api repos/${{ github.repository }} --jq .visibility)"
+          if [ -z "$visibility" ]; then
+            echo "::error::could not resolve repo visibility" >&2
+            exit 1
+          fi
+          echo "visibility=$visibility" >> "$GITHUB_OUTPUT"
+
+  analyze:
+    name: Analyze (javascript-typescript)
+    needs: preflight
+    # Code-scanning SARIF upload requires the repo to be public (CodeQL is free
+    # once public) or to have GitHub Advanced Security. While the repo is still
+    # PRIVATE (before the public launch) the upload step errors out, so skip the job
+    # until then. Gating on the preflight API result (not the event payload)
+    # means the gate self-enables on the flip across push, PR, AND schedule —
+    # no separate human action.
+    if: needs.preflight.outputs.visibility == 'public'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # required: CodeQL uploads SARIF results
+      actions: read # required for workflow runs on private repos
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality adds maintainability queries on top of the
+          # default security set.
+          queries: security-and-quality
+      # autobuild is sufficient for an interpreted JS/TS codebase (no compile step).
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          category: "/language:${{ matrix.language }}"

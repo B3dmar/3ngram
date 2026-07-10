@@ -1,0 +1,1 @@
+ALTER TABLE "llm_usage" ALTER COLUMN "cost_usd" SET DATA TYPE numeric(20, 12);

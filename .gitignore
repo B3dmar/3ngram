@@ -1,0 +1,35 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+!.env.selfhost.example
+.DS_Store
+.worktrees/
+
+# Vercel local project-link metadata (org/project ids); not source. Vercel recommends ignoring.
+.vercel/
+
+# LongMemEval-S full dataset cache (eval --download, issue #37): large +
+# upstream-licensed; fetched on demand, NEVER committed.
+eval/.cache/
+
+# Per-run eval-nightly metrics (uploaded as a CI artifact, issue #37/#172).
+# Ids/counts/scores only; written at job runtime, never committed.
+eval-metrics/
+
+# Local-only tooling workspace (never committed)
+/tools/local/
+
+# Relocated point-in-time reference material (pre-OSS migration artifacts):
+# kept locally and in git history, dropped from the public tree.
+/docs/research/private/
+
+# Local AI-assistant and tooling context (kept on disk, never published).
+CLAUDE.local.md
+.claude/
+.agents/
+.specify/

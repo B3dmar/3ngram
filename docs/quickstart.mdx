@@ -1,0 +1,99 @@
+---
+title: "Quickstart"
+description: "Connect an MCP client to the 3ngram platform, complete the OAuth flow, and save your first memory."
+icon: "rocket"
+---
+
+This guide connects an MCP client (Claude, ChatGPT, or Cursor) to the 3ngram platform and walks through your first `remember` and `search`. To run your own instance instead, see [Self-host](/self-host).
+
+## Prerequisites
+
+- A 3ngram account — the email and password you use for the dashboard at `https://app.3ngram.ai`.
+- An MCP client that supports remote servers over Streamable HTTP with OAuth: Claude (web, desktop, or Claude Code), ChatGPT, or Cursor.
+
+## Connect your client
+
+The MCP endpoint is:
+
+```text
+https://mcp.3ngram.ai/mcp
+```
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    claude mcp add --transport http 3ngram https://mcp.3ngram.ai/mcp
+    ```
+
+    Then run `/mcp` inside a session and pick **3ngram** to start authentication.
+  </Tab>
+  <Tab title="Claude (web/desktop)">
+    Go to **Settings → Connectors → Add custom connector** and paste the MCP endpoint URL.
+  </Tab>
+  <Tab title="ChatGPT">
+    Go to **Settings → Connectors → Create** (developer mode) and paste the MCP endpoint URL.
+  </Tab>
+  <Tab title="Cursor">
+    Add the server to `.cursor/mcp.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "3ngram": {
+          "url": "https://mcp.3ngram.ai/mcp"
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Complete the OAuth flow
+
+3ngram is its own OAuth 2.1 authorization server — there is no third-party identity provider in the token path. The flow is automatic from the client's side:
+
+<Steps>
+  <Step title="The client registers itself">
+    Your MCP client discovers the server's OAuth metadata and registers via dynamic
+    client registration. No manual client IDs or secrets.
+  </Step>
+  <Step title="Sign in and consent">
+    A browser window opens with the 3ngram consent page. Sign in with your account
+    email and password, check the redirect host shown on the page, and approve the
+    requested scopes — `memory:read` and `memory:write` are the only two.
+  </Step>
+  <Step title="Tokens are issued">
+    The client exchanges the authorization code for a short-lived access token plus a
+    rotating refresh token. You will not need to sign in again until the grant is
+    revoked.
+  </Step>
+</Steps>
+
+## Save your first memory
+
+Ask your client to remember something:
+
+```text
+Remember that we decided to use Postgres full-text search instead of
+Elasticsearch for the v1 search backend.
+```
+
+The client calls the `remember` tool, which appends a typed memory (here a `decision`) to your default scope. Writes never merge or overwrite existing memories — see [Memory model](/concepts/memory-model).
+
+## Search it back
+
+In a later session — or a different client connected to the same account — ask:
+
+```text
+What did we decide about the search backend?
+```
+
+The client calls `search`, which fuses semantic similarity, full-text matching, and recency, and returns currently-valid memories by default.
+
+## Next steps
+
+- Start sessions oriented: the `briefing` tool returns your open commitments, blockers, and recent decisions for a scope or project.
+- Browse the MCP surface: [10 tools](/reference/tools) and [2 prompts](/reference/prompts).
+- For coding agents and scripts, install the CLI with `npm install -g 3ngram` (or run one-off commands via `npx 3ngram`) and pass an API key — see the [CLI reference](/reference/cli).
+- For typed TypeScript integrations, `npm install @3ngram/sdk` — see the [SDK reference](/reference/sdk); the full tool and REST API reference starts at [MCP tools](/reference/tools), with generated endpoint pages under the Reference tab (`X-API-Key` header).
+- Organize memories with [scopes](/concepts/scopes).

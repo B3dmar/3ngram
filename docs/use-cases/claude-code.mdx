@@ -1,0 +1,151 @@
+---
+title: "Persistent memory in Claude Code"
+description: "Give Claude Code memory that survives the session: connect over MCP, add the read-side hooks with an API key, and confirm a memory is captured and recalled across sessions."
+icon: "rectangle-terminal"
+---
+
+By the end of this guide, Claude Code will start each session oriented with your open work, surface relevant memories before it edits files, and let you save and recall typed memories from any session. There are two layers, and you can stop after the first:
+
+1. **MCP connection** (OAuth) — the `remember`, `search`, and `briefing` tools, available inside a session.
+2. **Hooks** (API key) — a read-side context feed. The `SessionStart` briefing injects your open work into the model's context at the start of every session; an optional `PreToolUse` precheck runs before edits. Both are fire-and-forget so they never block you.
+
+## Prerequisites
+
+- A 3ngram account — the email and password you use for the dashboard at `https://app.3ngram.ai`.
+- Claude Code installed and signed in.
+
+## Layer 1 — Connect over MCP
+
+<Steps>
+  <Step title="Add the server">
+    ```bash
+    claude mcp add --transport http 3ngram https://mcp.3ngram.ai/mcp
+    ```
+  </Step>
+  <Step title="Authenticate">
+    Run `/mcp` inside a session and pick **3ngram**. A browser opens the 3ngram
+    consent page; sign in, check the redirect host, and approve the two scopes
+    (`memory:read`, `memory:write`). The client registers itself and stores a
+    rotating refresh token — you will not sign in again until the grant is revoked.
+    See the [Quickstart](/quickstart) for the full OAuth walkthrough.
+  </Step>
+  <Step title="Save your first memory">
+    In a session, ask Claude Code:
+
+    ```text
+    Remember that we decided to use Postgres full-text search instead of
+    Elasticsearch for the v1 search backend.
+    ```
+
+    It calls `remember`, appending a typed `decision` to your default scope. Writes
+    never overwrite — see [Memory model](/concepts/memory-model).
+  </Step>
+</Steps>
+
+## Layer 2 — Add the hooks
+
+The hooks are a small static binary, `3ngram-hook`, that reads from the REST API so each Claude Code session starts with context. They are read-only: high-value write capture stays with the `remember` tool and the `/debrief` skill, never a mechanical hook.
+
+<Steps>
+  <Step title="Build the binary">
+    Build `3ngram-hook` from source (Go 1.24+; prebuilt release binaries follow
+    post-launch) and place it on your `PATH`:
+
+    ```bash
+    git clone https://github.com/B3dmar/3ngram && cd 3ngram/cmd/3ngram-hook
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o 3ngram-hook .
+    install -D -m 0755 3ngram-hook ~/.local/bin/3ngram-hook   # or any directory on your PATH
+    3ngram-hook --version
+    ```
+  </Step>
+  <Step title="Create an API key">
+    In the dashboard, open **Settings → API keys** and create a key. The full key is
+    shown once, in the form `3ng_<prefix>_<secret>`. Copy it immediately.
+  </Step>
+  <Step title="Give the hook the key">
+    Either export it in your shell profile or the `env` block of
+    `~/.claude/settings.json`:
+
+    ```bash
+    export THREENGRAM_API_KEY=3ng_<prefix>_<secret>
+    ```
+
+    or write it to `~/.config/3ngram/api-key` (one line, no quotes). The hook talks
+    to the REST API at `https://api.3ngram.ai` by default, so no host configuration
+    is needed.
+  </Step>
+  <Step title="Wire the hook events">
+    Add the `SessionStart` briefing to `~/.claude/settings.json`. Its output is
+    injected into the model's context at the start of every session:
+
+    ```json
+    {
+      "hooks": {
+        "SessionStart": [
+          { "hooks": [{ "type": "command", "command": "3ngram-hook briefing" }] }
+        ]
+      }
+    }
+    ```
+
+    <Note>
+      You can also wire `3ngram-hook precheck` to `PreToolUse` (matcher `Write|Edit`)
+      to look up related memories before edits. In current Claude Code its output
+      appears in the hook transcript (view with `Ctrl-R`) rather than being injected
+      into the model's context automatically — `PreToolUse` plain stdout is not added
+      as context the way `SessionStart` is. Treat precheck as a diagnostic aid, not a
+      guaranteed model-visible feed.
+    </Note>
+
+    By default the briefing orients by the current project when you are in a git
+    checkout, and falls back to your whole account otherwise. To orient from a
+    specific scope instead, set **both** env vars: `THREENGRAM_BRIEFING_KIND=scope`
+    and `THREENGRAM_SCOPE=work`. Setting `THREENGRAM_SCOPE` alone has no effect
+    unless the kind is `scope`.
+  </Step>
+  <Step title="Verify the pipeline">
+    ```bash
+    3ngram-hook verify
+    #   API base: https://api.3ngram.ai
+    #   API key:  3ng_abcd… (N chars)
+    #   briefing: 200
+    # OK — briefing pipeline is configured.
+    ```
+
+    Exit code `0` means configured and reachable. `1` means no key was found; `2`
+    means the key was rejected or the service was unreachable.
+
+    <Note>
+      The binary's usage line also lists a `sync` subcommand. It is a deferred
+      placeholder — currently a no-op that prints "not yet supported" and exits
+      `0`; the sync API routes do not exist yet. Do not wire it to a hook event.
+    </Note>
+  </Step>
+</Steps>
+
+## Confirm capture and recall across sessions
+
+<Steps>
+  <Step title="Capture in one session">
+    Ask Claude Code to remember a decision (Layer 1). Confirm it landed:
+
+    ```text
+    Search your memory for the v1 search backend decision.
+    ```
+
+    `search` returns the memory you just saved.
+  </Step>
+  <Step title="Recall in a new session">
+    Quit and start a fresh Claude Code session, then ask the same `search` question.
+    The memory is still there — that is the cross-session proof, and `search` finds
+    it regardless of scope or project.
+
+    The `SessionStart` briefing also runs automatically, but it is scoped: inside a
+    git checkout it orients by the current project, so it surfaces this memory only
+    if you saved it with that project. To see unscoped memories in the briefing,
+    capture them with a `project`, or set `THREENGRAM_BRIEFING_KIND=all` (or `scope`)
+    as covered above.
+  </Step>
+</Steps>
+
+You now have memory that outlives the session. Next: connect your other tools in [Connect other tools](/use-cases/connecting-tools), or learn what makes recall trustworthy in [Recall and supersession](/use-cases/recall-supersession).

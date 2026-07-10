@@ -1,0 +1,1 @@
+CREATE INDEX "memories_recorded_at_idx" ON "memories" USING btree ("user_id","recorded_at" DESC NULLS FIRST,"id");

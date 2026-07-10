@@ -1,0 +1,85 @@
+{
+  "name": "@3ngram/server",
+  "version": "1.0.0",
+  "description": "MCP server and REST API for persistent, typed AI-agent memory.",
+  "license": "Apache-2.0",
+  "homepage": "https://3ngram.ai",
+  "bugs": {
+    "url": "https://github.com/B3dmar/3ngram/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "memory",
+    "model-context-protocol",
+    "postgresql"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git",
+    "directory": "apps/server"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "comment:exports": "Side-effect-free seams ONLY. `./app` exposes createApp so a downstream composition root can compose the server; `./boot` exposes the shared fail-closed bootstrap() (initObservability -> loadEnv -> metered-op + OAuth key checks -> dynamic-import createApp + listen) so both entrypoints run the IDENTICAL boot and cannot drift. `./mailer` exposes the SMTP sender (loadSmtpConfig + nodemailer, degrade-to-noop) so one mail transport is reused for dunning instead of re-wiring nodemailer. Importing any of these has NO side effects -- transports/boot run only when their function is called. src/index.ts stays the sole side-effectful entry and is intentionally NOT exported.",
+  "exports": {
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
+    "./boot": {
+      "types": "./dist/boot.d.ts",
+      "default": "./dist/boot.js"
+    },
+    "./middleware": {
+      "types": "./dist/middleware/index.d.ts",
+      "default": "./dist/middleware/index.js"
+    },
+    "./mailer": {
+      "types": "./dist/mailer.d.ts",
+      "default": "./dist/mailer.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude '**/integration/**' --fileParallelism=false --testTimeout=15000 --hookTimeout=30000",
+    "test:integration": "vitest run test/integration --fileParallelism=false --testTimeout=30000",
+    "docs:generate": "tsx scripts/generate-openapi.ts && tsx scripts/generate-mcp-reference.ts && tsx ../../apps/cli/scripts/generate-cli-reference.ts && tsx ../../packages/sdk/scripts/generate-sdk-reference.ts",
+    "dev": "node --watch dist/index.js",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@3ngram/config": "workspace:*",
+    "@3ngram/core": "workspace:*",
+    "@3ngram/llm": "workspace:*",
+    "@3ngram/schema": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "express": "5.2.1",
+    "ioredis": "5.11.1",
+    "nodemailer": "9.0.1",
+    "rate-limiter-flexible": "11.2.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "25.9.1",
+    "@types/nodemailer": "8.0.1",
+    "ioredis-mock": "8.13.1",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

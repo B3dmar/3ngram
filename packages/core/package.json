@@ -1,0 +1,57 @@
+{
+  "name": "@3ngram/core",
+  "version": "0.5.0",
+  "description": "Domain services (auth, memory write path, retrieval). The apps->core->db layer; never imports express/MCP types (docs/concepts/architecture.mdx).",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/B3dmar/3ngram#readme",
+  "bugs": {
+    "url": "https://github.com/B3dmar/3ngram/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "default": "./dist/auth/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude '**/integration/**'",
+    "test:integration": "vitest run test/integration --fileParallelism=false --testTimeout=30000"
+  },
+  "dependencies": {
+    "@3ngram/db": "workspace:*",
+    "@3ngram/llm": "workspace:*",
+    "@3ngram/schema": "workspace:*",
+    "@node-rs/argon2": "2.0.2",
+    "jose": "6.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

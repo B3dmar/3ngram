@@ -1,0 +1,74 @@
+---
+title: "Observability"
+description: "Structured logging, error tracking, tracing, and domain telemetry — wired in from day one, with a hard rule that memory content never enters logs, traces, or metrics."
+icon: "chart-line"
+---
+
+Principle: **observability is wired in from day one, not retrofitted.** Debugging production issues (data corruption among the worst) without distributed tracing or structured event context lets silent failures stay silent — nothing makes them loud. Wiring observability in from the start is the countermeasure.
+
+Tool picks: [pino](https://getpino.io) for logging, [Sentry](https://sentry.io) for error tracking (DSN-gated, so self-host runs clean without it), OpenTelemetry for tracing and metrics. Self-host posture is deliberately strict: **no telemetry by default, opt-in only.**
+
+## 1. Structured logging
+
+- **JSON logs everywhere**, one logger module in `packages/config` (pino); `console.*` is lint-banned outside it.
+- **Every log line carries context**: `request_id`, `user_id` (hashed), `surface` (mcp/rest/worker), `operation`, and for MCP: `tool_name`, `session_id`. Context flows via AsyncLocalStorage from the transport layer — set once in middleware, never passed by hand.
+- **Workers log per-job**: `job_id`, `queue`, attempt number. A BullMQ job that fails logs the full serialized error — fire-and-forget without error handling is a flagged anti-pattern.
+- Log levels are operational signals: `error` = something needs a human, `warn` = degraded but handled, `info` = state change worth auditing, `debug` = off in prod. No log-and-continue on data-integrity errors — those throw.
+- **Memory content never enters logs, traces, or metrics** (hard rule 6 in `AGENTS.md`). This product stores people's most sensitive work context; leaking it through telemetry is a first-order failure. Log memory **IDs, types, lengths, hashes** — never `content`/`topic` bodies. The logger's serializers strip known content fields by construction (redaction at the logger, not at call sites), Sentry event scrubbing is configured for the same fields, and a test asserts that a logged memory object comes out redacted. `debug`-level local development is the only exception, gated by an env flag that refuses to enable outside `NODE_ENV=development`.
+- Logs go to stdout; log shipping is the operator's choice by design.
+
+## 2. Error tracking
+
+- Tool: **Sentry**, wired in server and worker with release tagging tied to the git SHA.
+- **DSN-gated everywhere.** Error tracking is active only when `SENTRY_DSN` is set. Each deployment sets `SENTRY_ENVIRONMENT` to keep events distinguishable; the tag resolves `SENTRY_ENVIRONMENT` → `RAILWAY_ENVIRONMENT_NAME` → `NODE_ENV`.
+- **Self-host: disabled unless the operator sets a DSN.** No phone-home by default — an OSS trust requirement.
+- Sentry events pass through the same content-scrubbing contract as logs: memory content fields are stripped before anything leaves the process.
+- Unhandled rejection / uncaught exception handlers are registered explicitly; a worker crash is an event, not a silent restart.
+
+## 3. Tracing
+
+- **OpenTelemetry SDK wired from the start** with `request_id` as the correlation key: auto-instrumentation for HTTP, Postgres, BullMQ, and fetch (gateway calls).
+- Traces export to Sentry's OTel ingest when a DSN is configured; the vendor-neutral OTel wiring is the exit door if that changes. Even with no backend attached, the instrumentation cost is near-zero and retrofitting it later is the expensive path.
+- The spans that matter most: MCP tool call → core service → DB query → gateway call. The "why is `search` slow" question must be answerable from a trace, not from print-debugging.
+
+## 4. Domain telemetry
+
+Already in the schema, treated as first-class observability surfaces:
+
+| Table | Answers |
+|---|---|
+| `llm_usage` | what does each LLM operation cost, per user |
+| `memory_events` | what happened to every memory, by whom (append-only audit) |
+| `eval_runs` | is memory quality moving |
+| `audit_log` | security-relevant actions |
+
+Plus **metrics counters** (vendor-neutral `@opentelemetry/api` instruments; export deliberately deferred — until an OTLP target is wired behind the same DSN/env gate in `initObservability()`, the counters are API no-ops): memories written/superseded per day, search latency p50/p95, consolidation proposals proposed/accepted/rejected, MCP tool call counts + error rates per tool. The consolidation accept-rate is the early-warning signal the advisory consolidation model depends on (see [Memory model](/concepts/memory-model)).
+
+## 5. Usage telemetry posture
+
+**No telemetry by default in self-host.** If anonymous usage pings are ever added, they will be opt-in, documented, with the payload published. This decision is recorded here so it never gets slipped in under release pressure.
+
+## 6. MCP-specific observability
+
+- Per-tool error-rate and latency labels (tool_name × client UA) — version skew between MCP clients (different clients ship different spec vintages) is a known operational hazard; per-client breakdowns are how we see it.
+- Tool-call rejections (auth, rate limit, validation) are logged with reason codes — a spike in validation rejections after a client update is the skew alarm.
+- Structured-output validation failures are `warn`-logged with the schema name — silent retry loops hide contract drift.
+
+## 7. Operator triage
+
+Use telemetry in this order during incidents:
+
+1. **Health and discovery**: `/health`, OAuth authorization-server metadata, protected-resource metadata, and JWKS prove the process is up and the auth discovery surface is coherent.
+2. **Structured logs**: filter by `request_id`, hashed `user_id`, `surface`, `operation`, and for MCP `tool_name`. Never add ad hoc memory content to a log line to debug.
+3. **Sentry/OTel**: inspect exception grouping and request traces for server and worker failures when a DSN is configured (filter by the `environment` tag).
+4. **Domain tables**: use `audit_log`, `memory_events`, `llm_usage`, and `eval_runs` for product history. These are durable signals, not log substitutes.
+
+See [Operating 3ngram](/operate) for the day-2 runbook this feeds into.
+
+## Where this lives in the code
+
+1. `packages/config/src/logger.ts` — pino logger + content-field redaction serializers; `console.*` lint ban.
+2. `packages/config/src/context.ts` — AsyncLocalStorage request-context propagation.
+3. `packages/config/src/otel.ts` — OTel SDK bootstrap for server/worker (import-first module).
+4. `packages/config/src/metrics.ts` — the §4 counter instruments.
+5. `packages/config/src/redaction.ts` — the shared scrub contract used by both the logger and Sentry event scrubbing.

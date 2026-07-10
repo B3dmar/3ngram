@@ -1,0 +1,54 @@
+---
+title: "Benchmarks"
+sidebarTitle: "Benchmarks"
+description: "How 3ngram measures retrieval quality, the numbers it holds itself to, and how to reproduce them — a deterministic, blocking golden-set eval that runs in CI on every change."
+icon: "chart-line"
+---
+
+Retrieval quality is invisible to code review: you cannot eyeball whether a change made recall better or worse. So 3ngram treats its benchmark as the goal function. A golden-set eval runs in CI on every change, and a pull request that regresses it does not merge — and you do not "fix" the eval to make it pass.
+
+## The numbers
+
+These are the recorded gate floors. They only ratchet upward — a CI run below any floor fails the gate and blocks the merge — so every committed eval run clears them. They measure the offline retrieval harness (see [How it is measured](#how-it-is-measured)), not a live-traffic SLA.
+
+| Metric | Floor | What it measures |
+|---|---|---|
+| **recall@5** | 0.9773 | The right memory is in the top 5 results |
+| **MRR@5** | 0.9697 | How highly the right memory ranks (1.0 = always first) |
+| **Supersession correctness** | 0.9474 | A correction ranks above the memory it superseded, with the old row still in the index |
+| **Abstention precision** | 1.0000 | When the answer genuinely is not stored, the system declines instead of returning a false match |
+| **Answerable above τ** | 0.9545 | Answerable queries clear the calibrated similarity threshold (τ = 0.4663) |
+
+These are the exact floor values from `eval/fixtures/floors.json` — the same values CI compares against, not rounded summaries.
+
+Supersession and abstention are the two that a plain vector store usually gets wrong. Supersession is scored with the superseded rows **included** in the index, so it proves ranking, not just filtering. Abstention is scored on topics that are verifiably absent, so a high score means the system knows what it does not know.
+
+## How it is measured
+
+- **Dataset**: 98 queries over 158 anonymized production memories, including real supersession chains.
+- **Slices**: retrieval (recall@5, MRR@5), supersession (successor ranks above its superseded predecessor), and abstention (top-1 similarity below the calibrated threshold τ for absent topics).
+- **Embedding model**: `text-embedding-3-large` at 1536 dimensions.
+- **Method**: deterministic, zero-dependency, no network — exact cosine retrieval over committed cached embeddings. Exact cosine is the retrieval upper bound; approximate-index (HNSW) parity is proven separately by an integration test.
+- **Floors**: recorded from a stable run and ratcheted up only; they never loosen to let a change through.
+
+## Reproduce it
+
+The gate is offline and deterministic, so anyone can run it. From the repository root:
+
+```bash
+node eval/src/run.mjs --model openai-large-1536
+```
+
+or, through the workspace:
+
+```bash
+pnpm --filter @3ngram/eval run gate
+```
+
+This is the exact command CI runs in the `eval-gate` job. It needs no API key, no database, and no network — the embeddings are committed to the repository. A run that falls below any recorded floor exits non-zero, which is what blocks a regressing change from merging.
+
+<Note>
+  This is the blocking gate. A separate, non-blocking advisory tier runs broader
+  benchmarks (LongMemEval- and MemoryAgentBench-shaped slices) nightly; those never
+  gate a pull request and are not reflected in the floors above.
+</Note>

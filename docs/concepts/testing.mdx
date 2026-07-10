@@ -1,0 +1,70 @@
+---
+title: "Testing strategy"
+description: "The four-layer test pyramid plus evals: a real database, no skipped tests, and the eval harness as the correctness gate for memory semantics."
+icon: "flask"
+---
+
+Test *health* matters more than test *volume*: skip/xfail markers, a chronically red multi-job CI, and correctness that is never encoded as a gate let the bugs that matter (write-side merge corruption is the classic one) slip through even a large suite. This suite optimizes for: few layers, a real database, no skipped tests, and the eval harness as the correctness gate for memory semantics.
+
+## The pyramid (4 layers + evals)
+
+| Layer | Tool | DB | LLM | Runs |
+|---|---|---|---|---|
+| 1. Unit | Vitest | none | none | local + CI, seconds |
+| 2. Integration | Vitest | **real Postgres+pgvector** | fake gateway | local (compose) + CI (disposable service containers) |
+| 3. Contract (MCP + REST) | Vitest + MCP client SDK | real | fake gateway | local + CI |
+| 4. E2E | Playwright | real (staging) | fake gateway | CI on `staging` merges only |
+| Evals | `eval/` harness | real | deterministic slice: cached embeddings, **blocking**; model-judged slices: real models, **advisory** until stability is proven | CI slice per PR + nightly full |
+
+### 1. Unit — `packages/schema`, `packages/core` pure logic
+
+Pure functions only: schema validation, supersession resolution, commitment FSM transitions, retrieval fusion scoring. No DB, no mocks of the DB — if a test wants to mock `packages/db`, it's an integration test in disguise; move it down a layer.
+
+### 2. Integration — the workhorse layer
+
+- Runs against **real Postgres + pgvector** — never a mock, never SQLite. Locally: the same `docker-compose.yml` Postgres as self-host (test database). CI: each selected `integration (...)` shard gets its own disposable `pgvector/pgvector:pg18` service container, aggregated by `test`, with the heavy DB package split into `db-structure`, `db-search`, `db-auth`, and `db-memory` slices. This path requires no hosted-database credentials and works for fork PRs.
+- **Two isolation strategies, used deliberately** (`packages/db/test/integration/helpers.ts`):
+  - *Savepoint pattern* — `withTestTransaction()` for tests that own their SQL: rolled back, fast, parallel-safe.
+  - *Truncate-based cleanup* — `resetDomainTables()` for suites exercising the **real `withTenant()`** path: `withTenant` commits on its own pool, so cross-connection visibility makes savepoints inapplicable there. Honest trade: those suites serialize on cleanup. Because these global TRUNCATEs are not isolated *across packages* on a shared database (`--fileParallelism=false` only serializes within a package), the root `test:integration` script pins turbo `--concurrency=1` for local/single-database runs. CI keeps package-internal serialization and gives each selected shard its own Postgres service container. DB sub-shards therefore cannot collide with one another.
+- **RLS tests run as the runtime role**, not the owner role (owner bypasses RLS — a green isolation test as superuser proves nothing). The test harness provisions roles via the same `scripts/provision-roles.sql` as production.
+- Mandatory suites that exist from the start (`packages/db/test/integration/`):
+  - **Tenant isolation**: user A writes, user B queries — across every query path including edges, facts, commitments, proposals. Mirrors the eval slice but as fast deterministic tests.
+  - **`withTenant` discipline**: concurrent pooled connections cannot leak `app.user_id`.
+  - **Append-only enforcement**: UPDATE/DELETE on `memory_events`/`audit_log` fails at the grant level; no DELETE anywhere in the memory domain.
+  - **Migration round-trip**: fresh DB → all migrations → structure parity (tables, policies+NULLIF, FSM trigger, HNSW index, SECURITY DEFINER resolvers).
+  - **HNSW parity**: pgvector vs the eval gate's exact cosine on the real golden-set embeddings — the bridge between the eval gate's upper bound and what production serves. Two-regime (see [Data model & RLS](/concepts/data-model)): natural plan asserted index-driven (selective tenants get btree+exact — correct), plus a forced-HNSW arm (`enable_sort=off`, `hnsw.iterative_scan`) with EXPLAIN-asserted index use; both ≥ 0.95 overlap.
+
+### 3. Contract — MCP and REST surfaces
+
+- Spin up the express app in-process (SDK 1.x + express); drive MCP tools through the **official MCP client SDK** (not hand-rolled JSON-RPC) so transport, session, and structured-output semantics are actually exercised.
+- Every tool: happy path + auth-missing + cross-tenant + output-schema validation (the response must parse against the tool's declared `outputSchema` — enforced as plain tests, not a bespoke CI job).
+- REST mirrors: generated OpenAPI is diffed in CI; a contract change shows up in the PR.
+
+### 4. E2E — minimal by design
+
+Playwright against the staging deployment after `staging` merges: login → remember via MCP → see it in dashboard → revise → search. One critical-path spec file, not a sprawling E2E suite. E2E failures page the author; they do not gate feature PRs.
+
+## LLM policy in tests
+
+- **Layers 1–4 never call a real model.** `packages/llm` ships a `FakeGateway` (deterministic embeddings via seeded hash → vector; canned completions per operation key). Tests assert on *our* logic, not model behavior.
+- **Model behavior is the eval harness's job** — that's the separation: tests prove the machine is wired right; evals prove the memory is good. A PR can't compensate for a golden-set regression with passing unit tests, and vice versa.
+- Recorded-fixture mode (capture a real gateway response once, replay) is allowed for extraction-shaped logic, stored under `__fixtures__/`, refreshed deliberately — never auto-recorded in CI.
+
+## Test health policy
+
+1. **No skipped tests on `main`.** `it.skip`/`todo` fails the lint step. A test that can't pass is either fixed in the PR or deleted with a linked issue — a pile of dormant markers is how a suite rots.
+2. **No flake tolerance**: a test that fails intermittently is quarantined *by deletion + issue*, not retry-until-green. CI has no retry-on-failure config.
+3. **Coverage is observed, not gated.** Vitest coverage reported on PRs for review judgment; no threshold ratchet (thresholds breed assertion-free tests). The mandatory-suite list above is the real floor.
+4. **Speed budgets are enforced**: unit `<30s`, integration `<3min`, contract `<2min`, total `ci.yml` `<10min` wall. A PR that blows the budget fixes it or splits the suite — slow CI is how the job sprawl started.
+5. **Tests-with-the-change**: every behavior PR carries its tests; there is no "test backfill" epic, ever.
+
+## Local developer loop
+
+```bash
+pnpm test              # unit only — no services needed
+docker compose up -d postgres redis
+pnpm test:integration  # integration + contract against local PG
+pnpm --filter @3ngram/eval run gate   # the exact per-PR blocking slice (no network)
+```
+
+One command per layer, same package entry points CI uses. The local root integration command is serial on one database; CI invokes package scripts and DB file groups against separate disposable Postgres service containers for safe parallelism.

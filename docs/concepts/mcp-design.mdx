@@ -1,0 +1,56 @@
+---
+title: "MCP server design"
+description: "How the MCP tool surface is scoped from jobs to be done, capped at a small tool count, and kept a thin adapter over the shared service layer."
+icon: "wrench"
+---
+
+The MCP surface is designed from **jobs to be done** and capped at **10 tools** in v1 — deliberately small, because tool sprawl across tools, prompts, and resources is a leading complexity source. Adding a tool requires: (a) a JTBD no existing tool covers, (b) evidence an agent actually needs it (transcript/eval), (c) removing or absorbing a tool if the count would exceed the hard ceiling of 12 (the v1 surface is 10; 12 is the absolute cap, not the target).
+
+## Jobs to be done
+
+| JTBD | Tool(s) |
+|---|---|
+| "Persist something worth keeping" | `remember` |
+| "Find what I know" (memories + facts, supersession-aware, time-travel) | `search` |
+| "Correct the record" (supersede, extend, resolve, archive) | `revise`, `resolve` |
+| "Start my session oriented" | `briefing` |
+| "Carry context to another tool/agent" | `handoff` |
+| "What is currently true about X" | `get_facts` |
+| "Organize my memory space" | `configure_scope` |
+| "Review what the consolidator proposes" | `review_proposals` |
+| "Know what this server can do / how I'm set up" | `describe_environment` |
+
+## v1 tools (10)
+
+1. **`remember`** — append a memory (type, scope, project). Never merges. Returns the created memory + any consolidation proposals it triggered (advisory).
+2. **`search`** — unified retrieval: semantic + FTS + recency fusion; filters (type/scope/project/status); `as_of` for bi-temporal time travel; `memory_ids` for direct lookup; returns coverage envelope. One unified retrieval tool in place of several specialist search tools. The web UI exposes a user-selectable result limit (5 / 10 / 25, defaulting to 5); the hard ceiling is `MAX_SEARCH_LIMIT = 25` (packages/schema `mcp.ts`).
+3. **`revise`** — the correction surface: create a `supersedes`/`updates`/`extends` edge with new content, or archive. Unifies update and supersession logic in one tool. Never edits in place destructively.
+4. **`resolve`** / unresolve (flag) — commitment/blocker FSM transitions.
+5. **`briefing`** — structured: commitments, blockers, overdue, stale, recent decisions, preferences. Requires explicit selector (scope/project/all) — carry forward the no-firehose rule. `brief` mode default.
+6. **`handoff`** — export structured context for another provider/agent.
+7. **`get_facts`** — currently-valid facts for a subject (bi-temporal aware).
+8. **`configure_scope`** — scope CRUD + aliases + mappings.
+9. **`review_proposals`** — list/accept/reject consolidation proposals (the human-in-the-loop side of background consolidation).
+10. **`describe_environment`** — capabilities, config, scopes, stats.
+
+## Server architecture
+
+- Official **TS SDK pinned `1.29.0`** + **express**. Streamable HTTP, stateless. Hono revisited at SDK v2 GA as a deliberate bump.
+- **Strict OAuth resource server**: validate JWT `aud` + RFC 8707 resource indicators. No token proxying (the FastMCP CVE class).
+- Every tool: Zod input schema + `outputSchema` (structured output) from `packages/schema` — same types the REST API and SDK use.
+- Output size discipline: structured, `brief` modes, pagination — oversized responses are an easy trap, so design the size discipline in from the start.
+- MCP and REST are thin adapters over the same `packages/core` service layer — no logic in the transport layer, no MCP↔API drift.
+- Prompts: start with 2 (`briefing`, `debrief`) as code-defined templates. Resources: defer until a client demonstrably uses them.
+- **`GET /api/v1/memories/facets`**: returns `{ scopes: string[], projects: string[] }` — DISTINCT live-corpus values for the browse filter UI. Registered before `GET /api/v1/memories/:id` to prevent Express matching "facets" as an `:id` param. Also extends `GET /api/v1/memories` to accept repeated `?project=` params for multi-project IN filtering.
+
+## Search — fusion detail
+
+The `search` tool runs a weighted-sum fusion of three legs (vector, FTS, recency). Weights are policy-owned by `packages/core`; the SQL is owned by `packages/db`.
+
+Short queries (≤2 whitespace tokens) activate a topic entity-match bonus (topicMatch weight 0.5): memories whose topic contains the query string score +0.5. This surfaces person-identity facts for first-name searches without affecting long-query MRR (all golden-set queries are 6+ tokens).
+
+## Rate limiting & sessions
+
+Redis-backed, per-user + per-key. Session binding to authenticated principal per SDK ≥1.27 semantics.
+
+**Sessions are stateless by design**: all MCP session state lives in Postgres/Redis, never in-process — any server instance serves any request. This makes redeploys non-events. `.well-known/mcp` server metadata (SEP-1649) is tracked but **deferred until the SEP stabilizes**.

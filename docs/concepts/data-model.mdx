@@ -1,0 +1,100 @@
+---
+title: "Data model & RLS"
+description: "The v1 table layout, the append-and-supersede write path, and the tenant-isolation invariants enforced by row-level security."
+icon: "table"
+---
+
+Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · ops 3). The scope guard is the physical count — every table beyond 17 needs a one-line justification in the PR description referencing a JTBD.
+
+## Design rules
+
+1. **Single validation boundary**: every enum/constraint is defined once in `packages/schema` (Zod); DB CHECKs are generated from it; services never re-validate.
+2. **Append-and-supersede**: no destructive merge anywhere. `memory_events` is append-only (INSERT-only grant for the runtime role).
+3. **Tenant isolation**: app-layer scoping is the primary path (`user_id` as the **leading column of every composite index**); RLS is defense-in-depth on every user-owned table from day 1.
+   - **Every user-owned table carries `user_id` explicitly — including relation tables** (`memory_edges`, `facts`, `commitments`, `consolidation_proposals`, `memory_events`). No relation table derives its tenant through a join; RLS must be evaluable on the row alone.
+   - **Cross-tenant references are structurally impossible**: composite FKs `(user_id, memory_id)` so an edge/fact/commitment can only point at memories of the same `user_id`. An edge linking two tenants' memories must be unrepresentable, not merely forbidden.
+   - **Tenant-invariant checklist** (applied to every table in the schema PR, and to every future table): owns `user_id`? · RLS policy present? · composite FKs tenant-qualified? · indexes lead with `user_id`? · isolation test covers its query paths (including edges and facts, not just `memories`)?
+4. **Bi-temporal facts**: `valid_from`/`valid_to` (world time) + `recorded_at` (system time).
+
+## Tables (v1)
+
+### Identity & access (7)
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `users` | Account, email, argon2id hash | No RLS (system table) |
+| `user_sessions` | Dashboard sessions | RLS |
+| `api_keys` | Hashed, prefix-indexed, revocable | RLS |
+| `oauth_clients` / `oauth_codes` / `oauth_tokens` | 3ngram's own OAuth 2.1 AS+RS: DCR clients (public AND confidential — `client_secret_hash` nullable column, since Claude requires `client_secret_post`), short-lived PKCE codes, rotating access/refresh state | Device flow cut; revocation surfaces in dashboard. `oauth_codes`/`oauth_tokens` are RLS tables |
+| `password_reset_tokens` | Single-use, time-boxed forgotten-password reset tokens (hashed) | RLS |
+
+**Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
+
+### Memory core (7)
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `memories` | topic, content, `memory_type` (decision/commitment/blocker/fact/preference/pattern/note/event), `scope`, `project`, `embedding vector(1536)`, `valid_from`, `valid_to`, `recorded_at`, `status` | **No commitment columns** — see `commitments` |
+| `memory_edges` | `from_id`, `to_id`, `edge_type` (`supersedes`/`updates`/`extends`/`derives`), `created_by` (user/consolidator) | The typed-edge relationship model |
+| `memory_events` | Append-only lifecycle audit: `event_kind`, `actor_kind`, payload | INSERT-only grant; first-class actor taxonomy on every event |
+| `commitments` | Own entity with explicit FSM: `open → waiting → resolved/expired`, owner, due, recurrence, `next_surfacing_at`, FK → `memories` | Commitments modeled as their own entity, not columns on `memories` |
+| `facts` | Structured projection: subject, predicate, value, confidence, bi-temporal cols, FK → source memory | |
+| `consolidation_proposals` | Background-worker output: candidate edge + rationale + status (proposed/applied/rejected) + **`similarity` and `memory_type`** so the per-type precision bar is auditable | Advisory, type-aware; `event` type never auto-applies. **Edge direction is the locked contract**: `from_id`/`to_id` are materialized verbatim into `memory_edges`, so for a `supersedes`/`updates` proposal the successor is `from_id` and the **predecessor (the superseded row whose `valid_to` closes on accept) is `to_id`** — the same `successor → predecessor` convention `revise`/`search` rely on. The consolidator MUST emit rows in this orientation. |
+| `scopes` | User scope config + aliases (personal/work/custom) | Unifies scope config and aliases in one table |
+
+### Operations (3)
+
+| Table | Purpose |
+|---|---|
+| `llm_usage` | Per-operation token/cost tracking |
+| `eval_runs` | Benchmark run results (golden set, LongMemEval scores) — benchmarks are first-class data |
+| `audit_log` | Security audit (actor, action, resource, IP) |
+
+**Deliberately absent in v1** (schema must not preclude them): teams/sharing (when added: 2 tables max — `shares` + `share_denials` with a mode column, not a multi-table matrix), documents/chunks, integrations, billing, agent schedules/triggers, plans, work contexts, notifications.
+
+## RLS pattern
+
+```sql
+-- per user-owned table. NULLIF guard is mandatory: on a pooled connection,
+-- current_setting(..., true) returns '' (not NULL) once the GUC has ever been
+-- set-and-reset on that backend, and ''::uuid makes the policy THROW.
+CREATE POLICY tenant_isolation ON memories
+  USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid)
+  WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+```
+
+**The one true access path** — all DB access goes through:
+
+```ts
+// packages/db — the ONLY exported query entry point
+await withTenant(userId, async (tx) => {
+  // tx has already run: SET LOCAL app.user_id = $userId
+  // all queries here are RLS-scoped AND explicitly WHERE-scoped
+});
+```
+
+- `SET LOCAL` inside a transaction, per request — never bare `SET` (a pooled connection leaks session state otherwise).
+- Raw pool access outside `withTenant` fails lint (custom Biome/ESLint rule).
+- Defense-in-depth: queries still carry explicit `WHERE user_id = ...`; RLS catches the one you forget.
+- Migrations/seeds: unpooled URL only.
+- Roles/GRANTs: one idempotent `scripts/provision-roles.sql`, never per-migration guards.
+
+## Schema PR definition of done
+
+The table sketches above are conceptual. The schema PR (`packages/db`) is the binding artifact, and it must define — per table:
+
+1. Full column list with types, nullability, defaults
+2. Unique constraints — including **edge uniqueness**: `UNIQUE (user_id, from_id, to_id, edge_type)` so duplicate edges are unrepresentable
+3. Tenant-invariant checklist (above) applied and ticked per table in the PR description
+4. FSM transition enforcement for `commitments`: legal transitions encoded as a CHECK or trigger (`open → waiting → resolved | expired`), illegal transitions rejected by the DB, not just the service
+5. Fact validity constraints: `valid_from <= valid_to` CHECK; supersession sets `valid_to` atomically with edge creation (one transaction)
+6. **Zod → CHECK generation strategy**: the codegen path from `packages/schema` enums to DB CHECK constraints, with a CI assertion that schema and CHECKs cannot drift (the migration round-trip test covers it)
+7. Migration lint rules wired (forward-safe checks in CI): no `NOT NULL` without default, no blocking rewrites, unpooled-URL guard
+
+## Archived status in `GET /api/v1/stats`
+
+The `GET /api/v1/stats` endpoint surfaces `archivedMemories` — the count of memories where `status = 'archived' AND valid_to IS NULL`. This is distinct from `supersededMemories` (which counts any row with `valid_to` set, regardless of status). A revise of an archived memory closes its `valid_to` window, moving it into the superseded bucket and out of archived; the two counts are mutually exclusive.
+
+## Embeddings
+
+One column, one model: `vector(1536)` via gateway `text-embedding-3-large` with `dimensions: 1536`. Index: HNSW (PG18/pgvector ≥0.8 default choice over ivfflat). **Filtered retrieval**: two legitimate plan regimes — (A) selective tenant: planner uses the `user_id` btree + exact sort, perfect recall, the right plan at per-tenant scale; (B) large tenant: HNSW with `SET LOCAL hnsw.iterative_scan = relaxed_order` so post-filtering doesn't starve results. Retrieval code sets `iterative_scan` unconditionally (harmless in regime A) and never forces the index choice — the planner flips regimes at the right scale. A `content_hash` column enables idempotent backfill (so backfill jobs can detect already-processed rows).

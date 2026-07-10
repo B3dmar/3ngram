@@ -1,0 +1,10 @@
+3ngram
+Copyright 2026 B3dmar ApS
+
+This product includes software developed as part of the 3ngram project
+(https://github.com/B3dmar/3ngram).
+
+Licensed under the Apache License, Version 2.0 — see LICENSE and
+LICENSING.md. All code in this repository is Apache-2.0. The hosted
+service runs additional proprietary cloud-operations code (billing) that
+is not part of this repository. The project is open source.

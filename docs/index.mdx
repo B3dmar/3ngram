@@ -1,0 +1,71 @@
+---
+title: "3ngram documentation"
+sidebarTitle: "Welcome"
+description: "Persistent, typed memory for AI agents — decisions, commitments, blockers, and facts that survive the session."
+icon: "house"
+---
+
+3ngram gives Claude, ChatGPT, Cursor, and your own agents a memory that outlives the conversation. Decisions, commitments, blockers, preferences, and facts are stored as typed memories, searchable from any connected client, and never silently rewritten.
+
+It is MCP-first: connect any MCP client to the 3ngram platform, or run the whole stack yourself with Docker Compose.
+
+## What makes it different
+
+<CardGroup cols={3}>
+  <Card title="Append-and-supersede" icon="layers">
+    Writes never destroy data. Corrections create typed edges between memories, so the old record stays queryable — including "what did I believe on date X".
+  </Card>
+  <Card title="Typed memories" icon="tags">
+    Decisions, commitments, blockers, facts, preferences, patterns, notes, and events each keep their own lifecycle instead of flattening into chat history.
+  </Card>
+  <Card title="Bi-temporal facts" icon="clock">
+    Facts track both when they were true in the world and when the system learned them, so retrieval can answer "what is true now" and "what was true then".
+  </Card>
+</CardGroup>
+
+## The surface
+
+The MCP server exposes 10 tools and 2 prompts over Streamable HTTP — a deliberately small surface designed around jobs to be done, not feature count. The same operations are mirrored on a REST API (`/api/v1`) for scripts, SDKs, and dashboards.
+
+| Job | Tool |
+|---|---|
+| Persist something worth keeping | `remember` |
+| Find what you know | `search` |
+| Correct the record | `revise`, `resolve` |
+| Start a session oriented | `briefing` |
+| Carry context to another agent | `handoff` |
+| What is currently true about X | `get_facts` |
+| Organize your memory space | `configure_scope` |
+| Review consolidation proposals | `review_proposals` |
+| Inspect capabilities and config | `describe_environment` |
+
+See the [tool reference](/reference/tools) and [prompt reference](/reference/prompts) for full schemas.
+
+## Open source
+
+3ngram is **open source** (Apache 2.0). The memory engine, MCP server, API, and SDK are all Apache 2.0 and fully self-hostable. The 3ngram platform runs additional proprietary cloud-operations code (billing) that is not part of this repository.
+
+The full license map lives in [LICENSING.md](https://github.com/B3dmar/3ngram/blob/main/LICENSING.md). To get involved, see [Contributing](/contributing).
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect an MCP client to the 3ngram platform and save your first memory.
+  </Card>
+  <Card title="Self-host" icon="server" href="/self-host">
+    Run the full stack locally with Docker Compose — Postgres, Redis, and the server.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/reference/cli">
+    Use API-key auth from scripts and coding agents.
+  </Card>
+  <Card title="SDK reference" icon="braces" href="/reference/sdk">
+    Call the REST-backed TypeScript client from your own code.
+  </Card>
+  <Card title="Memory model" icon="database" href="/concepts/memory-model">
+    How append-and-supersede, typed memories, and bi-temporal facts work.
+  </Card>
+  <Card title="Scopes" icon="folder-tree" href="/concepts/scopes">
+    Partition memories into personal, work, and custom scopes.
+  </Card>
+</CardGroup>

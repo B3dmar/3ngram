@@ -1,0 +1,1522 @@
+// SPDX-License-Identifier: Apache-2.0
+// MCP tool CONTRACT tests (no DB, no network): every tool schema-validates its
+// input (rejecting bad payloads) and produces schema-valid structured output.
+// The tools call the COMPLETE core through a stubbed module so the contract is
+// exercised without a database; the schema boundary (packages/schema/mcp.ts) is
+// the assertion target, plus the tool-count discipline (hard rule 8).
+//
+// Mocking @3ngram/core lets us assert the THIN-ADAPTER contract: the tool passes
+// the validated args to core, shapes the result against outputSchema, and maps
+// typed errors to isError — all without a Postgres dependency.
+
+import { runWithContext } from '@3ngram/config'
+import { fakeEmbedding } from '@3ngram/llm'
+import {
+  briefingToolOutputSchema,
+  configureScopeOutputSchema,
+  describeEnvironmentOutputSchema,
+  factsToolOutputSchema,
+  handoffToolOutputSchema,
+  rememberToolOutputSchema,
+  resolveToolOutputSchema,
+  reviewProposalsOutputSchema,
+  reviseToolOutputSchema,
+  searchQuerySchema,
+  searchToolOutputSchema,
+} from '@3ngram/schema'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { SERVER_VERSION } from '../src/version.js'
+
+const remember = vi.fn()
+const search = vi.fn()
+const getFacts = vi.fn()
+const revise = vi.fn()
+const resolveByMemoryId = vi.fn()
+const briefing = vi.fn()
+const handoff = vi.fn()
+// D3 admin-tool core fns (configure_scope / describe_environment / review_proposals).
+const listScopes = vi.fn()
+const createScope = vi.fn()
+const renameScope = vi.fn()
+const setScopeAliases = vi.fn()
+const deleteScope = vi.fn()
+const describeEnvironment = vi.fn()
+const listProposals = vi.fn()
+const rejectProposal = vi.fn()
+const applyProposal = vi.fn()
+
+// Real typed error classes so the runTool instanceof mapping is exercised.
+class InvalidEmbeddingError extends Error {}
+// Mirrors the real @3ngram/db class: carries the colliding content_hash (a hash,
+// never the content) so the conflict mapping can name it.
+class DuplicateMemoryError extends Error {
+  readonly contentHash: string
+  constructor(contentHash: string) {
+    super('memory with this content already exists for this tenant')
+    this.name = 'DuplicateMemoryError'
+    this.contentHash = contentHash
+  }
+}
+// Revise/commitment typed errors — id/state fields only, never content (rule 6).
+class PredecessorNotFoundError extends Error {
+  readonly predecessorId: string
+  constructor(predecessorId: string) {
+    super('predecessor memory not found for this tenant')
+    this.name = 'PredecessorNotFoundError'
+    this.predecessorId = predecessorId
+  }
+}
+class PredecessorAlreadySupersededError extends Error {
+  readonly predecessorId: string
+  constructor(predecessorId: string) {
+    super('predecessor memory is already superseded')
+    this.name = 'PredecessorAlreadySupersededError'
+    this.predecessorId = predecessorId
+  }
+}
+class EdgeConflictError extends Error {
+  constructor() {
+    super('edge already exists')
+    this.name = 'EdgeConflictError'
+  }
+}
+// Over-budget denial: carries the bounded operation key only.
+class BudgetExceededError extends Error {
+  readonly operation: string
+  constructor(operation: string) {
+    super(`operation '${operation}' would exceed the usage budget`)
+    this.name = 'BudgetExceededError'
+    this.operation = operation
+  }
+}
+// Access denial: bounded access kind only.
+class AccessDeniedError extends Error {
+  constructor(readonly access: 'read' | 'write') {
+    super(`${access} access is forbidden`)
+    this.name = 'AccessDeniedError'
+  }
+}
+class ResourceLimitExceededError extends Error {
+  constructor(readonly resource: 'live_memories' | 'active_mcp_clients') {
+    super('resource limit reached')
+    this.name = 'ResourceLimitExceededError'
+  }
+}
+class CommitmentNotFoundError extends Error {
+  readonly commitmentId: string
+  constructor(commitmentId: string) {
+    super('commitment not found for this tenant')
+    this.name = 'CommitmentNotFoundError'
+    this.commitmentId = commitmentId
+  }
+}
+class CommitmentExistsError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a commitment already exists for this memory')
+    this.name = 'CommitmentExistsError'
+    this.memoryId = memoryId
+  }
+}
+class NotCommitmentMemoryError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('parent memory is not a live commitment-type memory')
+    this.name = 'NotCommitmentMemoryError'
+    this.memoryId = memoryId
+  }
+}
+class InvalidCommitmentTransitionError extends Error {
+  readonly from: string
+  readonly to: string
+  constructor(from: string, to: string) {
+    super(`commitment transition not permitted: ${from} -> ${to}`)
+    this.name = 'InvalidCommitmentTransitionError'
+    this.from = from
+    this.to = to
+  }
+}
+class IllegalCommitmentTransitionError extends Error {
+  readonly from: string
+  readonly to: string
+  constructor(from: string, to: string) {
+    super(`illegal commitment transition: ${from} -> ${to}`)
+    this.name = 'IllegalCommitmentTransitionError'
+    this.from = from
+    this.to = to
+  }
+}
+// Orientation typed error — the no-firehose guard. Carries no fields.
+class MissingSelectorError extends Error {
+  constructor(message = 'a briefing requires an explicit selector (scope, project, or all)') {
+    super(message)
+    this.name = 'MissingSelectorError'
+  }
+}
+// D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
+class ScopeNameConflictError extends Error {
+  readonly scopeName: string
+  constructor(scopeName: string) {
+    super(`a scope named "${scopeName}" already exists for this tenant`)
+    this.name = 'ScopeNameConflictError'
+    this.scopeName = scopeName
+  }
+}
+class ScopeNotFoundError extends Error {
+  readonly scopeName: string
+  constructor(scopeName: string) {
+    super(`no scope named "${scopeName}" for this tenant`)
+    this.name = 'ScopeNotFoundError'
+    this.scopeName = scopeName
+  }
+}
+class ProposalNotFoundError extends Error {
+  readonly proposalId: string
+  constructor(proposalId: string) {
+    super(`no open proposal ${proposalId} for this tenant`)
+    this.name = 'ProposalNotFoundError'
+    this.proposalId = proposalId
+  }
+}
+class EpisodicSupersessionError extends Error {
+  readonly proposalId: string
+  readonly memoryType: string
+  constructor(proposalId: string, memoryType: string) {
+    super(
+      'event-type memories cannot be superseded/updated via a proposal (docs/concepts/memory-model.mdx "Consolidation is advisory")',
+    )
+    this.name = 'EpisodicSupersessionError'
+    this.proposalId = proposalId
+    this.memoryType = memoryType
+  }
+}
+class SuccessorNotLiveError extends Error {
+  readonly proposalId: string
+  readonly fromId: string
+  constructor(proposalId: string, fromId: string) {
+    super('proposed successor is no longer live; re-propose against the live successor chain')
+    this.name = 'SuccessorNotLiveError'
+    this.proposalId = proposalId
+    this.fromId = fromId
+  }
+}
+vi.mock('@3ngram/core', () => ({
+  remember,
+  search,
+  getFacts,
+  revise,
+  resolveByMemoryId,
+  briefing,
+  handoff,
+  BudgetExceededError,
+  AccessDeniedError,
+  ResourceLimitExceededError,
+  DuplicateMemoryError,
+  InvalidEmbeddingError,
+  PredecessorNotFoundError,
+  PredecessorAlreadySupersededError,
+  EdgeConflictError,
+  CommitmentNotFoundError,
+  CommitmentExistsError,
+  NotCommitmentMemoryError,
+  InvalidCommitmentTransitionError,
+  IllegalCommitmentTransitionError,
+  MissingSelectorError,
+  // D3 admin tools
+  listScopes,
+  createScope,
+  renameScope,
+  setScopeAliases,
+  deleteScope,
+  describeEnvironment,
+  listProposals,
+  rejectProposal,
+  applyProposal,
+  ScopeNameConflictError,
+  ScopeNotFoundError,
+  ProposalNotFoundError,
+  EpisodicSupersessionError,
+  SuccessorNotLiveError,
+}))
+
+const { TOOLS, MAX_TOOLS, runTool } = await import('../src/mcp/tools.js')
+type ToolContext = import('../src/mcp/tools.js').ToolContext
+
+const UID = crypto.randomUUID()
+const MEMO_ID = crypto.randomUUID()
+
+function toolByName(name: string) {
+  const tool = TOOLS.find((t) => t.name === name)
+  if (tool === undefined) throw new Error(`tool ${name} not registered`)
+  return tool
+}
+
+const fakeGateway = {
+  embed: (texts: readonly string[]) => Promise.resolve(texts.map((t) => fakeEmbedding(t))),
+  complete: () => Promise.reject(new Error('not implemented')),
+}
+
+// Default test ctx carries BOTH scopes so existing tool tests exercise the happy
+// path; scope-gate tests override `scopes` explicitly.
+function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
+  return {
+    userId: UID,
+    scopes: ['memory:read', 'memory:write'],
+    gateway: fakeGateway,
+    ...overrides,
+  }
+}
+
+async function call(name: string, args: unknown, context: ToolContext) {
+  return runWithContext({ requestId: 'test', surface: 'mcp' }, () =>
+    runTool(toolByName(name), args, context),
+  )
+}
+
+beforeEach(() => vi.clearAllMocks())
+
+describe('MCP tool registry discipline', () => {
+  it('registers exactly 10 tools (D1 5 + D2 orient 2 + D3 admin 3), under the cap', () => {
+    // MERGED truth: the 5 existing tools (remember, search, get_facts, revise,
+    // resolve) + D2 orientation (briefing, handoff) + D3 admin (configure_scope,
+    // describe_environment, review_proposals) -> the 10-tool v1 surface. The cap
+    // (<=12, docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling.
+    expect(TOOLS).toHaveLength(10)
+    expect(TOOLS.map((t) => t.name)).toEqual([
+      'remember',
+      'search',
+      'get_facts',
+      'revise',
+      'resolve',
+      'briefing',
+      'handoff',
+      'configure_scope',
+      'describe_environment',
+      'review_proposals',
+    ])
+    expect(TOOLS.length).toBeLessThanOrEqual(MAX_TOOLS)
+  })
+
+  it('every tool declares input + output schema shapes (input may be empty for a no-arg tool)', () => {
+    // A tool's input shape MAY be empty (a parameterless tool like
+    // describe_environment, whose strict empty-object input takes no args); its
+    // OUTPUT shape must always carry fields. The shapes are still real Zod raw
+    // shapes the SDK registers and validates against.
+    const NO_ARG_TOOLS = new Set(['describe_environment'])
+    for (const tool of TOOLS) {
+      if (!NO_ARG_TOOLS.has(tool.name)) {
+        expect(Object.keys(tool.config.inputSchema).length).toBeGreaterThan(0)
+      }
+      expect(Object.keys(tool.config.outputSchema).length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('remember tool', () => {
+  it('ACKs without awaiting the embed: reports `pending`, never blocks on settle', async () => {
+    // A settle handle that NEVER resolves: if the handler awaited it the call
+    // would hang. It returns immediately because ack-before-embed does not await.
+    remember.mockResolvedValue({
+      id: MEMO_ID,
+      embed: { settled: new Promise<boolean>(() => undefined) },
+    })
+    const result = await Promise.race([
+      call(
+        'remember',
+        { memoryType: 'decision', topic: 'pin sdk', content: 'pin mcp sdk at 1.29.0' },
+        ctx(),
+      ),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('handler blocked on embed')), 50),
+      ),
+    ])
+    expect((result as { isError?: boolean }).isError).toBeFalsy()
+    expect(remember).toHaveBeenCalledOnce()
+    const parsed = rememberToolOutputSchema.parse(
+      (result as { structuredContent: unknown }).structuredContent,
+    )
+    expect(parsed.memory.id).toBe(MEMO_ID)
+    expect(parsed.memory.scope).toBe('personal') // default applied
+    expect(parsed.embedded).toBe('pending') // gateway configured: embed in flight
+  })
+
+  it('reports `off` when no embedding gateway is configured', async () => {
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'remember',
+      { memoryType: 'decision', topic: 'pin sdk', content: 'pin mcp sdk at 1.29.0' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = rememberToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.embedded).toBe('off')
+  })
+
+  it('surfaces the auto-created commitmentId for a commitment-type memory', async () => {
+    const commitmentId = crypto.randomUUID()
+    remember.mockResolvedValue({
+      id: MEMO_ID,
+      commitmentId,
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'remember',
+      { memoryType: 'commitment', topic: 'ship d1', content: 'open the d1 PR by friday' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = rememberToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.commitmentId).toBe(commitmentId)
+  })
+
+  it('omits commitmentId for a non-commitment memory', async () => {
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      ctx({ gateway: undefined }),
+    )
+    const parsed = rememberToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.commitmentId).toBeUndefined()
+  })
+
+  it('rejects a bad input (missing required content) without calling core', async () => {
+    const result = await call('remember', { memoryType: 'decision', topic: 'x' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('round-trips an explicit scope + project to core AND echoes them (#284)', async () => {
+    // The tool registers the FULL `.strict()` schema, so the SDK no longer wraps
+    // it non-strict and strips supplied keys before the handler runs: an explicit
+    // scope:'work'/project:'3ngram' reaches core and is echoed in the structured
+    // output — NOT the scope:'personal'/project:null defaults of an omitted axis.
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'remember',
+      {
+        memoryType: 'decision',
+        topic: 'pin sdk',
+        content: 'pin mcp sdk at 1.29.0',
+        scope: 'work',
+        project: '3ngram',
+      },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(remember).toHaveBeenCalledOnce()
+    const coreInput = remember.mock.calls[0]?.[1] as { scope: string; project: string }
+    expect(coreInput.scope).toBe('work')
+    expect(coreInput.project).toBe('3ngram')
+    const parsed = rememberToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.memory.scope).toBe('work')
+    expect(parsed.memory.project).toBe('3ngram')
+  })
+
+  it('still rejects an UNKNOWN key rather than silently dropping it (strict, #284)', async () => {
+    // Mirrors the search strict-reject test: the `.strict()` schema rejects
+    // an unrecognised key at the boundary, never strips it before core runs.
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y', bogusKey: 'oops' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('maps a re-submitted duplicate to a conflict result, not internal_error', async () => {
+    // Core throws the documented DuplicateMemoryError when live content with the
+    // same hash already exists for the tenant. The tool must surface a typed
+    // conflict naming ONLY the content_hash — never the content, never a 500.
+    const contentHash = 'a'.repeat(64)
+    remember.mockRejectedValue(new DuplicateMemoryError(contentHash))
+    const result = await call(
+      'remember',
+      { memoryType: 'decision', topic: 'pin sdk', content: 'pin mcp sdk at 1.29.0' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('duplicate_memory')
+    expect(text).toContain(contentHash)
+    // Observability hard rule 6: the original content must never leak into the result.
+    expect(text).not.toContain('pin mcp sdk at 1.29.0')
+    expect(remember).toHaveBeenCalledOnce()
+  })
+
+  it('maps a live-memory cap denial to resource_limit_exceeded', async () => {
+    remember.mockRejectedValue(new ResourceLimitExceededError('live_memories'))
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'cap', content: 'one over' },
+      ctx(),
+    )
+
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toBe(
+      'resource_limit_exceeded: live_memories limit reached',
+    )
+  })
+})
+
+describe('search tool', () => {
+  it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
+    search.mockResolvedValue([
+      {
+        id: MEMO_ID,
+        memoryType: 'decision',
+        topic: 'pin',
+        content: 'pinned',
+        contentLength: 'pinned'.length,
+        truncated: false,
+        score: 0.9,
+      },
+    ])
+    const result = await call('search', { query: 'sdk pin' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.count).toBe(1)
+    expect(parsed.hits[0]?.id).toBe(MEMO_ID)
+    // The excerpt metadata rides every hit.
+    expect(parsed.hits[0]?.contentLength).toBe('pinned'.length)
+    expect(parsed.hits[0]?.truncated).toBe(false)
+  })
+
+  it('labels an over-cap hit as invalid_output (a SERVER fault), never invalid_input (#238)', async () => {
+    // Force core to break its own contract (an unexcerpted long row). The tool
+    // must label the failure as an OUTPUT fault — blaming the caller's input
+    // for a server-side shape bug is the dishonest label this fix removes.
+    search.mockResolvedValue([
+      {
+        id: MEMO_ID,
+        memoryType: 'note',
+        topic: 't',
+        content: 'z'.repeat(5000),
+        contentLength: 5000,
+        truncated: false,
+        score: 0.5,
+      },
+    ])
+    const result = await call('search', { query: 'epic' }, ctx())
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('invalid_output')
+    expect(text).not.toContain('invalid input')
+    // Hard rule 6: the label carries NO memory content.
+    expect(text).not.toContain('zzz')
+  })
+
+  it('returns a typed error when no embedding gateway is configured', async () => {
+    const result = await call('search', { query: 'sdk pin' }, ctx({ gateway: undefined }))
+    expect(result.isError).toBe(true)
+    expect(result.content[0]).toMatchObject({ text: 'embedding gateway not configured' })
+    expect(search).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty query without calling core', async () => {
+    const result = await call('search', { query: '   ' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(search).not.toHaveBeenCalled()
+  })
+
+  it('caps the limit at the no-firehose ceiling', () => {
+    expect(searchQuerySchema.safeParse({ query: 'x', limit: 999 }).success).toBe(false)
+  })
+
+  it('accepts a supported filter and threads it into the core SearchOptions (#166)', async () => {
+    // The MCP search tool now EXPOSES the candidate-narrowing filters: a `scope`
+    // filter validates and reaches core as SearchOptions.filters, never dropped.
+    expect(searchQuerySchema.safeParse({ query: 'x', scope: 'work' }).success).toBe(true)
+    search.mockResolvedValue([])
+    const result = await call('search', { query: 'sdk pin', scope: 'work' }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(search).toHaveBeenCalledOnce()
+    const [, query, , options] = search.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { limit: number; filters: Record<string, unknown> },
+    ]
+    expect(query).toBe('sdk pin')
+    expect(options.filters).toMatchObject({ scope: 'work' })
+    // An absent axis is stripped (defined()): only the supplied filter rides.
+    expect(Object.keys(options.filters)).toEqual(['scope'])
+  })
+
+  it('threads memoryType, project, status and asOf filters together (#166)', async () => {
+    search.mockResolvedValue([])
+    await call(
+      'search',
+      {
+        query: 'q',
+        memoryType: 'decision',
+        project: '3ngram',
+        status: 'active',
+        asOf: { validAt: '2026-01-01T00:00:00.000Z' },
+      },
+      ctx(),
+    )
+    const [, , , options] = search.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { filters: { memoryType?: string; project?: string; status?: string; asOf?: unknown } },
+    ]
+    expect(options.filters.memoryType).toBe('decision')
+    expect(options.filters.project).toBe('3ngram')
+    expect(options.filters.status).toBe('active')
+    // ISO strings are coerced to Date at the transport boundary for the core query.
+    expect(options.filters.asOf).toEqual({ validAt: new Date('2026-01-01T00:00:00.000Z') })
+  })
+
+  it('still rejects an UNKNOWN filter key rather than silently dropping it (strict)', async () => {
+    // The schema stays `.strict()`: an unrecognised key is a clear validation
+    // error, never silently ignored (a silent drop on a filter reads as a leak).
+    expect(searchQuerySchema.safeParse({ query: 'x', bogusFilter: 'oops' }).success).toBe(false)
+    const result = await call('search', { query: 'sdk pin', bogusFilter: 'oops' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(search).not.toHaveBeenCalled()
+  })
+})
+
+describe('get_facts tool', () => {
+  it('validates input, calls core, returns schema-valid facts', async () => {
+    getFacts.mockResolvedValue([
+      {
+        id: MEMO_ID,
+        memoryId: MEMO_ID,
+        subject: 'sdk',
+        predicate: 'version',
+        value: '1.29.0',
+        confidence: null,
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        recordedAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ])
+    const result = await call('get_facts', { subject: 'sdk' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = factsToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.count).toBe(1)
+    expect(parsed.facts[0]?.value).toBe('1.29.0')
+  })
+
+  it('rejects a blank subject filter without calling core', async () => {
+    const result = await call('get_facts', { subject: '  ' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('forwards the default limit on a bare list-mode call (no-firehose)', async () => {
+    getFacts.mockResolvedValue([])
+    await call('get_facts', {}, ctx())
+    expect(getFacts).toHaveBeenCalledOnce()
+    // The strict schema applies DEFAULT_FACTS_LIMIT (50); the tool forwards it so
+    // list mode never returns the whole table.
+    expect(getFacts.mock.calls[0]?.[1]).toMatchObject({ limit: 50 })
+  })
+
+  it('honors a caller-supplied limit and rejects one over the ceiling', async () => {
+    getFacts.mockResolvedValue([])
+    await call('get_facts', { limit: 10 }, ctx())
+    expect(getFacts.mock.calls[0]?.[1]).toMatchObject({ limit: 10 })
+
+    const overCap = await call('get_facts', { limit: 999 }, ctx())
+    expect(overCap.isError).toBe(true)
+    expect(getFacts).toHaveBeenCalledOnce() // the over-cap call never reached core
+  })
+
+  // ACCESS GATE ENFORCEMENT: get_facts is a READ, so the handler asserts
+  // ctx.access.assertRead BEFORE the core op. A denying gate must reject (isError
+  // access_denied) AND getFacts must NEVER be reached. The other get_facts tests
+  // run with no access gate (ctx() omits it), the back-compat / allow-all proof.
+  it('denies get_facts under a denying access gate BEFORE core runs (#429)', async () => {
+    const denyingAccess = {
+      assertRead: async () => {
+        throw new AccessDeniedError('read')
+      },
+      assertWrite: async () => {
+        throw new AccessDeniedError('write')
+      },
+    }
+    const result = await call(
+      'get_facts',
+      { subject: 'sdk' },
+      ctx({ access: denyingAccess as unknown as ToolContext['access'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('access_denied')
+    // The gate blocked BEFORE the db op — core was never invoked.
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+})
+
+describe('revise tool', () => {
+  const validReviseArgs = () => ({
+    memoryType: 'decision',
+    topic: 'sdk pin',
+    content: 'pin mcp sdk at 1.30.0',
+    predecessorId: MEMO_ID,
+    edgeIntent: 'supersedes',
+  })
+
+  it('ACKs without awaiting the embed: reports `pending`, returns the successor id', async () => {
+    const successorId = crypto.randomUUID()
+    revise.mockResolvedValue({
+      id: successorId,
+      embed: { settled: new Promise<boolean>(() => undefined) },
+    })
+    const result = await Promise.race([
+      call('revise', validReviseArgs(), ctx()),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('handler blocked on embed')), 50),
+      ),
+    ])
+    expect((result as { isError?: boolean }).isError).toBeFalsy()
+    const parsed = reviseToolOutputSchema.parse(
+      (result as { structuredContent: unknown }).structuredContent,
+    )
+    expect(parsed.memory.id).toBe(successorId)
+    expect(parsed.memory.scope).toBe('personal') // default applied at the boundary
+    expect(parsed.embedded).toBe('pending')
+  })
+
+  it('reports `off` when no gateway is configured', async () => {
+    revise.mockResolvedValue({
+      id: crypto.randomUUID(),
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call('revise', validReviseArgs(), ctx({ gateway: undefined }))
+    const parsed = reviseToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.embedded).toBe('off')
+  })
+
+  it('rejects a missing predecessorId without calling core', async () => {
+    const { predecessorId: _drop, ...noPred } = validReviseArgs()
+    const result = await call('revise', noPred, ctx())
+    expect(result.isError).toBe(true)
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('round-trips an explicit scope + project to core AND echoes them (#284)', async () => {
+    // FULL `.strict()` registration: a supplied scope:'work'/project:'3ngram'
+    // survives to the handler and is echoed, not stripped to personal/null.
+    revise.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'revise',
+      { ...validReviseArgs(), scope: 'work', project: '3ngram' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(revise).toHaveBeenCalledOnce()
+    const coreInput = revise.mock.calls[0]?.[1] as { scope: string; project: string }
+    expect(coreInput.scope).toBe('work')
+    expect(coreInput.project).toBe('3ngram')
+    const parsed = reviseToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.memory.scope).toBe('work')
+    expect(parsed.memory.project).toBe('3ngram')
+  })
+
+  it('still rejects an UNKNOWN key rather than silently dropping it (strict, #284)', async () => {
+    const result = await call('revise', { ...validReviseArgs(), bogusKey: 'oops' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('rejects an out-of-family edge intent (extends) without calling core', async () => {
+    const result = await call('revise', { ...validReviseArgs(), edgeIntent: 'extends' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('maps PredecessorNotFoundError to not_found, naming the id only', async () => {
+    revise.mockRejectedValue(new PredecessorNotFoundError(MEMO_ID))
+    const result = await call('revise', validReviseArgs(), ctx())
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('not_found')
+    expect(text).toContain(MEMO_ID)
+    expect(text).not.toContain('pin mcp sdk at 1.30.0')
+  })
+
+  it('maps PredecessorAlreadySupersededError to a conflict', async () => {
+    revise.mockRejectedValue(new PredecessorAlreadySupersededError(MEMO_ID))
+    const result = await call('revise', validReviseArgs(), ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('conflict')
+  })
+
+  it('maps DuplicateMemoryError to duplicate_memory, naming the hash only', async () => {
+    const contentHash = 'b'.repeat(64)
+    revise.mockRejectedValue(new DuplicateMemoryError(contentHash))
+    const result = await call('revise', validReviseArgs(), ctx())
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('duplicate_memory')
+    expect(text).toContain(contentHash)
+    expect(text).not.toContain('pin mcp sdk at 1.30.0')
+  })
+
+  it('maps EdgeConflictError to a conflict', async () => {
+    revise.mockRejectedValue(new EdgeConflictError())
+    const result = await call('revise', validReviseArgs(), ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('conflict')
+  })
+})
+
+describe('resolve tool', () => {
+  it('validates input, calls core, returns the new commitment status', async () => {
+    const commitmentId = crypto.randomUUID()
+    resolveByMemoryId.mockResolvedValue({ id: commitmentId, status: 'resolved' })
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'resolved' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = resolveToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.commitmentId).toBe(commitmentId)
+    expect(parsed.status).toBe('resolved')
+    // Keys on the MEMORY id the agent holds, not a commitment id.
+    expect(resolveByMemoryId.mock.calls[0]?.[1]).toBe(MEMO_ID)
+    expect(resolveByMemoryId.mock.calls[0]?.[2]).toBe('resolved')
+  })
+
+  it('serves unresolve: resolved -> open is a legal target the tool forwards', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: crypto.randomUUID(), status: 'open' })
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'open' }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(resolveToolOutputSchema.parse(result.structuredContent).status).toBe('open')
+  })
+
+  it('rejects an unknown status enum without calling core', async () => {
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'done' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-uuid memoryId without calling core', async () => {
+    const result = await call('resolve', { memoryId: 'not-a-uuid', status: 'resolved' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('maps CommitmentNotFoundError to not_found, naming the id only', async () => {
+    resolveByMemoryId.mockRejectedValue(new CommitmentNotFoundError(MEMO_ID))
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'resolved' }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('maps InvalidCommitmentTransitionError to invalid_transition (from/to only)', async () => {
+    resolveByMemoryId.mockRejectedValue(new InvalidCommitmentTransitionError('resolved', 'expired'))
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'expired' }, ctx())
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('invalid_transition')
+    expect(text).toContain('resolved -> expired')
+  })
+
+  it('maps the DB backstop IllegalCommitmentTransitionError to invalid_transition too', async () => {
+    resolveByMemoryId.mockRejectedValue(new IllegalCommitmentTransitionError('open', 'open'))
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'open' }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid_transition')
+  })
+
+  // ACCESS GATE ENFORCEMENT: resolve mutates a commitment/blocker, so the handler
+  // asserts ctx.access.assertWrite BEFORE the core op. A denying gate must reject
+  // (isError access_denied) AND resolveByMemoryId must NEVER be reached — proving
+  // the gate blocks BEFORE the db op. The other resolve tests run with no access
+  // gate (ctx() omits it), which is the back-compat / allow-all proof.
+  it('denies resolve under a denying access gate BEFORE core runs (#429)', async () => {
+    const denyingAccess = {
+      assertRead: async () => {
+        throw new AccessDeniedError('write')
+      },
+      assertWrite: async () => {
+        throw new AccessDeniedError('write')
+      },
+    }
+    const result = await call(
+      'resolve',
+      { memoryId: MEMO_ID, status: 'resolved' },
+      ctx({ access: denyingAccess as unknown as ToolContext['access'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('access_denied')
+    // The gate blocked BEFORE the db op — core was never invoked.
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+})
+
+describe('briefing tool (D2 orientation)', () => {
+  const briefSection = () => ({ count: 0, items: [] })
+  const fakeBriefing = (overrides: Record<string, unknown> = {}) => ({
+    selector: { kind: 'all' },
+    mode: 'brief',
+    generatedAt: '2026-06-06T00:00:00.000Z',
+    commitments: briefSection(),
+    overdue: briefSection(),
+    blockers: briefSection(),
+    staleCandidates: briefSection(),
+    recentDecisions: briefSection(),
+    preferences: briefSection(),
+    ...overrides,
+  })
+
+  it('requires a selector: a missing selector is a schema rejection, never core', async () => {
+    const result = await call('briefing', {}, ctx())
+    expect(result.isError).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
+  })
+
+  it('validates the selector + mode, calls core, returns a schema-valid briefing', async () => {
+    briefing.mockResolvedValue(fakeBriefing({ selector: { kind: 'scope', scope: 'work' } }))
+    const result = await call(
+      'briefing',
+      { selector: { kind: 'scope', scope: 'work' }, mode: 'brief' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = briefingToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.mode).toBe('brief')
+    // The tool forwards the selector to core (no-firehose discipline).
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({
+      selector: { kind: 'scope', scope: 'work' },
+    })
+  })
+
+  it('defaults mode to brief and injects a now Date at the transport edge', async () => {
+    briefing.mockResolvedValue(fakeBriefing())
+    await call('briefing', { selector: { kind: 'all' } }, ctx())
+    const arg = briefing.mock.calls[0]?.[1] as { mode: string; now: Date }
+    expect(arg.mode).toBe('brief')
+    expect(arg.now).toBeInstanceOf(Date)
+  })
+
+  it('rejects an unknown mode and a scope selector missing its value', async () => {
+    expect(
+      (await call('briefing', { selector: { kind: 'all' }, mode: 'verbose' }, ctx())).isError,
+    ).toBe(true)
+    expect((await call('briefing', { selector: { kind: 'scope' } }, ctx())).isError).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
+  })
+
+  it('maps a core MissingSelectorError to an invalid input result', async () => {
+    briefing.mockRejectedValue(new MissingSelectorError())
+    // The schema would normally catch this; force the core path to prove the map.
+    const result = await call('briefing', { selector: { kind: 'all' } }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid input')
+  })
+})
+
+describe('handoff tool (D2 orientation)', () => {
+  const fakeHandoff = (overrides: Record<string, unknown> = {}) => ({
+    selector: { kind: 'all' },
+    generatedFor: null,
+    generatedAt: '2026-06-06T00:00:00.000Z',
+    decisions: [],
+    commitments: [],
+    preferences: [],
+    notes: [],
+    ...overrides,
+  })
+
+  it('requires a selector', async () => {
+    const result = await call('handoff', {}, ctx())
+    expect(result.isError).toBe(true)
+    expect(handoff).not.toHaveBeenCalled()
+  })
+
+  it('validates input, calls core, returns a schema-valid handoff (content included)', async () => {
+    handoff.mockResolvedValue(
+      fakeHandoff({
+        decisions: [
+          {
+            id: MEMO_ID,
+            memoryType: 'decision',
+            topic: 'sdk pin',
+            content: 'pin mcp sdk at 1.29.0',
+            contentLength: 'pin mcp sdk at 1.29.0'.length,
+            truncated: false,
+            scope: 'work',
+            project: null,
+          },
+        ],
+      }),
+    )
+    const result = await call(
+      'handoff',
+      { selector: { kind: 'all' }, generatedFor: 'agent-b' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = handoffToolOutputSchema.parse(result.structuredContent)
+    // Content IS included by design (a handoff transports context).
+    expect(parsed.decisions[0]?.content).toBe('pin mcp sdk at 1.29.0')
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({
+      selector: { kind: 'all' },
+      generatedFor: 'agent-b',
+    })
+  })
+
+  it('omits generatedFor from the core call when not supplied', async () => {
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' } }, ctx())
+    const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('generatedFor' in arg).toBe(false)
+    expect(arg.now).toBeInstanceOf(Date)
+  })
+})
+
+describe('per-tool OAuth scope enforcement (fail-closed)', () => {
+  it('every registered tool declares a valid scope floor (single scope or anyOf)', () => {
+    const valid = ['memory:read', 'memory:write']
+    for (const tool of TOOLS) {
+      const floor = tool.requiredScope
+      if (typeof floor === 'string') {
+        expect(valid).toContain(floor)
+      } else {
+        expect(floor.anyOf.length).toBeGreaterThan(0)
+        for (const scope of floor.anyOf) expect(valid).toContain(scope)
+      }
+    }
+  })
+
+  it('a read-only token can search but remember returns the scope error', async () => {
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    search.mockResolvedValue([])
+    const searched = await call('search', { query: 'x' }, readOnly)
+    expect(searched.isError).toBeFalsy()
+
+    const written = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      readOnly,
+    )
+    expect(written.isError).toBe(true)
+    expect(written.content[0]).toMatchObject({
+      text: expect.stringContaining('insufficient scope'),
+    })
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('a read-only token is rejected on revise (write-scoped) before core', async () => {
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    const result = await call(
+      'revise',
+      {
+        memoryType: 'note',
+        topic: 'x',
+        content: 'y',
+        predecessorId: MEMO_ID,
+        edgeIntent: 'supersedes',
+      },
+      readOnly,
+    )
+    expect(result.isError).toBe(true)
+    expect(result.content[0]).toMatchObject({ text: expect.stringContaining('insufficient scope') })
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('a read-only token is rejected on resolve (write-scoped) before core', async () => {
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'resolved' }, readOnly)
+    expect(result.isError).toBe(true)
+    expect(result.content[0]).toMatchObject({ text: expect.stringContaining('insufficient scope') })
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('every write tool declares the write scope', () => {
+    for (const name of ['remember', 'revise', 'resolve']) {
+      expect(toolByName(name).requiredScope).toBe('memory:write')
+    }
+  })
+
+  it('briefing and handoff are read-scoped: a read-only token can call them', async () => {
+    for (const name of ['briefing', 'handoff']) {
+      expect(toolByName(name).requiredScope).toBe('memory:read')
+    }
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    briefing.mockResolvedValue({
+      selector: { kind: 'all' },
+      mode: 'brief',
+      generatedAt: '2026-06-06T00:00:00.000Z',
+      commitments: { count: 0, items: [] },
+      overdue: { count: 0, items: [] },
+      blockers: { count: 0, items: [] },
+      staleCandidates: { count: 0, items: [] },
+      recentDecisions: { count: 0, items: [] },
+      preferences: { count: 0, items: [] },
+    })
+    const result = await call('briefing', { selector: { kind: 'all' } }, readOnly)
+    expect(result.isError).toBeFalsy()
+  })
+
+  it('a write-scoped token can do both', async () => {
+    const full = ctx({ scopes: ['memory:read', 'memory:write'] })
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    search.mockResolvedValue([])
+    expect(
+      (await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, full)).isError,
+    ).toBeFalsy()
+    expect((await call('search', { query: 'x' }, full)).isError).toBeFalsy()
+  })
+
+  it('FAILS CLOSED: a scopeless token reaches no tool', async () => {
+    const none = ctx({ scopes: [] })
+    const searched = await call('search', { query: 'x' }, none)
+    expect(searched.isError).toBe(true)
+    expect(searched.content[0]).toMatchObject({
+      text: expect.stringContaining('insufficient scope'),
+    })
+    expect(search).not.toHaveBeenCalled()
+
+    const written = await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, none)
+    expect(written.isError).toBe(true)
+    expect(remember).not.toHaveBeenCalled()
+  })
+})
+
+// ===========================================================================
+// D3 admin tools: configure_scope, describe_environment, review_proposals.
+// ===========================================================================
+
+const SCOPE_ID = crypto.randomUUID()
+function scopeRecord(name: string, aliases: string[] = []) {
+  return { id: SCOPE_ID, name, aliases, createdAt: new Date('2026-01-01T00:00:00.000Z') }
+}
+const PROPOSAL_ID = crypto.randomUUID()
+function proposalRecord(status = 'proposed') {
+  return {
+    id: PROPOSAL_ID,
+    fromId: crypto.randomUUID(),
+    toId: crypto.randomUUID(),
+    edgeType: 'supersedes',
+    memoryType: 'fact',
+    similarity: 0.91,
+    rationale: null,
+    status,
+    decidedAt:
+      status === 'rejected' || status === 'applied' ? new Date('2026-02-01T00:00:00.000Z') : null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  }
+}
+
+describe('configure_scope tool', () => {
+  it('list: read-only token validates, calls core, returns schema-valid records', async () => {
+    listScopes.mockResolvedValue([scopeRecord('work', ['job'])])
+    const result = await call(
+      'configure_scope',
+      { action: 'list' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    expect(parsed.action).toBe('list')
+    if (parsed.action === 'list') {
+      expect(parsed.count).toBe(1)
+      expect(parsed.scopes[0]?.name).toBe('work')
+    }
+    expect(listScopes).toHaveBeenCalledWith(UID)
+  })
+
+  it('create: write token round-trips, echoes the upserted record', async () => {
+    createScope.mockResolvedValue(scopeRecord('research', ['r']))
+    const result = await call(
+      'configure_scope',
+      { action: 'create', name: 'research', aliases: ['r'] },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    expect(parsed.action).toBe('upserted')
+    if (parsed.action === 'upserted') expect(parsed.scope.name).toBe('research')
+    expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
+  })
+
+  it('rename / set_aliases / delete dispatch to the right core fn', async () => {
+    renameScope.mockResolvedValue(scopeRecord('renamed'))
+    setScopeAliases.mockResolvedValue(scopeRecord('work', ['alias']))
+    deleteScope.mockResolvedValue(undefined)
+
+    await call('configure_scope', { action: 'rename', name: 'work', newName: 'renamed' }, ctx())
+    expect(renameScope).toHaveBeenCalledWith(UID, 'work', 'renamed')
+
+    await call(
+      'configure_scope',
+      { action: 'set_aliases', name: 'work', aliases: ['alias'] },
+      ctx(),
+    )
+    expect(setScopeAliases).toHaveBeenCalledWith(UID, 'work', ['alias'])
+
+    const deleted = await call('configure_scope', { action: 'delete', name: 'work' }, ctx())
+    expect(deleteScope).toHaveBeenCalledWith(UID, 'work')
+    const parsed = configureScopeOutputSchema.parse(deleted.structuredContent)
+    expect(parsed.action).toBe('deleted')
+    if (parsed.action === 'deleted') expect(parsed.name).toBe('work')
+  })
+
+  it('TWO-LAYER SCOPE: a read-only token may list but NOT mutate (handler write-gate)', async () => {
+    // Layer 1 (registry floor): read passes, so the handler runs. Layer 2 (handler
+    // write-gate): a mutating action with only memory:read is rejected BEFORE core.
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    for (const args of [
+      { action: 'create', name: 'x' },
+      { action: 'rename', name: 'x', newName: 'y' },
+      { action: 'set_aliases', name: 'x', aliases: ['a'] },
+      { action: 'delete', name: 'x' },
+    ]) {
+      const result = await call('configure_scope', args, readOnly)
+      expect(result.isError).toBe(true)
+      expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
+    }
+    expect(createScope).not.toHaveBeenCalled()
+    expect(renameScope).not.toHaveBeenCalled()
+    expect(setScopeAliases).not.toHaveBeenCalled()
+    expect(deleteScope).not.toHaveBeenCalled()
+  })
+
+  it('anyOf FLOOR: a WRITE-ONLY token passes the floor and CAN mutate', async () => {
+    // Regression: with a single memory:read floor, runTool rejected a write-only
+    // token BEFORE the handler's write-gate could admit the mutation. The anyOf
+    // floor admits read OR write, so the handler runs and the write succeeds.
+    createScope.mockResolvedValue(scopeRecord('research', ['r']))
+    const writeOnly = ctx({ scopes: ['memory:write'] })
+    const result = await call(
+      'configure_scope',
+      { action: 'create', name: 'research', aliases: ['r'] },
+      writeOnly,
+    )
+    expect(result.isError).toBeFalsy()
+    expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
+  })
+
+  it('anyOf FLOOR: a WRITE-ONLY token CANNOT list (handler read-gate)', async () => {
+    // The floor admits the write-only token, but list needs the EXACT read scope,
+    // so the handler rejects it before core.
+    const writeOnly = ctx({ scopes: ['memory:write'] })
+    const result = await call('configure_scope', { action: 'list' }, writeOnly)
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
+    expect(listScopes).not.toHaveBeenCalled()
+  })
+
+  it('FAILS CLOSED: a scopeless token is rejected at the registry floor (layer 1)', async () => {
+    const none = ctx({ scopes: [] })
+    const result = await call('configure_scope', { action: 'list' }, none)
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
+    expect(listScopes).not.toHaveBeenCalled()
+    // A mutating action is likewise rejected at the floor (no listed scope held).
+    const mutate = await call('configure_scope', { action: 'create', name: 'x' }, none)
+    expect(mutate.isError).toBe(true)
+    expect(createScope).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unknown action without calling core', async () => {
+    const result = await call('configure_scope', { action: 'nuke', name: 'x' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(deleteScope).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed scope name (not kebab-case) without calling core', async () => {
+    const result = await call('configure_scope', { action: 'create', name: 'Bad Name' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(createScope).not.toHaveBeenCalled()
+  })
+
+  it('maps a name conflict to a typed conflict naming the scope only', async () => {
+    createScope.mockRejectedValue(new ScopeNameConflictError('work'))
+    const result = await call('configure_scope', { action: 'create', name: 'work' }, ctx())
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('conflict')
+    expect(text).toContain('work')
+  })
+
+  it('maps a missing scope to not_found', async () => {
+    renameScope.mockRejectedValue(new ScopeNotFoundError('ghost'))
+    const result = await call(
+      'configure_scope',
+      { action: 'rename', name: 'ghost', newName: 'x' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+})
+
+describe('describe_environment tool', () => {
+  it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
+    describeEnvironment.mockResolvedValue({
+      scopes: [scopeRecord('work')],
+      stats: {
+        memoriesByType: { decision: 3, fact: 5 },
+        activeMemories: 8,
+        supersededMemories: 2,
+        archivedMemories: 1,
+        commitmentsByStatus: { open: 1, resolved: 4 },
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBeFalsy()
+    const parsed = describeEnvironmentOutputSchema.parse(result.structuredContent)
+    // Capabilities reflect the FULL registry (merged surface: 10 tools, names included).
+    expect(parsed.capabilities.toolCount).toBe(10)
+    expect(parsed.capabilities.tools).toContain('describe_environment')
+    expect(parsed.capabilities.tools.length).toBe(parsed.capabilities.toolCount)
+    // Derives from apps/server/package.json (see src/version.ts), so this
+    // tracks the package version automatically and never asserts a stale literal.
+    expect(parsed.capabilities.version).toBe(SERVER_VERSION)
+    expect(SERVER_VERSION).toMatch(/^\d+\.\d+\.\d+/)
+    expect(parsed.scopes[0]?.name).toBe('work')
+    expect(parsed.stats.activeMemories).toBe(8)
+    expect(parsed.stats.supersededMemories).toBe(2)
+    expect(parsed.stats.archivedMemories).toBe(1)
+    expect(parsed.stats.commitmentsByStatus.resolved).toBe(4)
+  })
+
+  it('REDACTION: the response never carries a configured secret (sentinel)', async () => {
+    // A sentinel secret placed in the environment must NOT appear anywhere in the
+    // describe_environment response (hard rule 6). The tool reports counts/names
+    // only — it reads no env/DSN/key — so the secret is structurally absent.
+    const SENTINEL = `super-secret-${crypto.randomUUID()}`
+    process.env.DATABASE_URL = `postgres://user:${SENTINEL}@host/db`
+    process.env.OAUTH_PRIVATE_KEYS = SENTINEL
+    try {
+      describeEnvironment.mockResolvedValue({
+        scopes: [scopeRecord('work')],
+        stats: {
+          memoriesByType: {},
+          activeMemories: 0,
+          supersededMemories: 0,
+          archivedMemories: 0,
+          commitmentsByStatus: {},
+        },
+      })
+      const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+      const serialized = JSON.stringify(result)
+      expect(serialized).not.toContain(SENTINEL)
+    } finally {
+      delete process.env.DATABASE_URL
+      delete process.env.OAUTH_PRIVATE_KEYS
+    }
+  })
+
+  it('rejects a request carrying any parameter (strict empty input)', async () => {
+    const result = await call('describe_environment', { verbose: true }, ctx())
+    expect(result.isError).toBe(true)
+    expect(describeEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('FAILS CLOSED: a scopeless token reaches no environment report', async () => {
+    const result = await call('describe_environment', {}, ctx({ scopes: [] }))
+    expect(result.isError).toBe(true)
+    expect(describeEnvironment).not.toHaveBeenCalled()
+  })
+})
+
+describe('review_proposals tool', () => {
+  it('list: read-only token returns bounded schema-valid records', async () => {
+    listProposals.mockResolvedValue([proposalRecord()])
+    const result = await call(
+      'review_proposals',
+      { action: 'list' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    expect(parsed.action).toBe('list')
+    if (parsed.action === 'list') {
+      expect(parsed.count).toBe(1)
+      expect(parsed.proposals[0]?.status).toBe('proposed')
+    }
+    // The schema default limit is forwarded (no-firehose).
+    expect(listProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
+  })
+
+  it('list: forwards a status filter and a caller limit', async () => {
+    listProposals.mockResolvedValue([])
+    await call(
+      'review_proposals',
+      { action: 'list', status: 'rejected', limit: 10 },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(listProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+  })
+
+  it('reject: write token transitions and echoes the updated record', async () => {
+    rejectProposal.mockResolvedValue(proposalRecord('rejected'))
+    const result = await call(
+      'review_proposals',
+      { action: 'reject', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    expect(parsed.action).toBe('rejected')
+    if (parsed.action === 'rejected') expect(parsed.proposal.status).toBe('rejected')
+    expect(rejectProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID)
+  })
+
+  it('accept: write token applies the proposal and echoes the applied record', async () => {
+    applyProposal.mockResolvedValue(proposalRecord('applied'))
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    expect(parsed.action).toBe('applied')
+    if (parsed.action === 'applied') expect(parsed.proposal.status).toBe('applied')
+    // The MCP transport stamps its actor class on the apply.
+    expect(applyProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID, 'user_mcp')
+  })
+
+  it('accept: maps a missing/already-decided proposal to not_found', async () => {
+    applyProposal.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('accept: maps an event-type supersession refusal to conflict (docs/concepts/memory-model.mdx "Consolidation is advisory")', async () => {
+    applyProposal.mockRejectedValue(new EpisodicSupersessionError(PROPOSAL_ID, 'event'))
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('conflict')
+  })
+
+  it('accept: maps a stale (no-longer-live) successor refusal to conflict', async () => {
+    applyProposal.mockRejectedValue(new SuccessorNotLiveError(PROPOSAL_ID, MEMO_ID))
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('conflict')
+  })
+
+  it('anyOf FLOOR: a WRITE-ONLY token passes the floor and CAN reject', async () => {
+    rejectProposal.mockResolvedValue(proposalRecord('rejected'))
+    const writeOnly = ctx({ scopes: ['memory:write'] })
+    const result = await call(
+      'review_proposals',
+      { action: 'reject', proposalId: PROPOSAL_ID },
+      writeOnly,
+    )
+    expect(result.isError).toBeFalsy()
+    expect(rejectProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID)
+  })
+
+  it('anyOf FLOOR: a WRITE-ONLY token CANNOT list (handler read-gate)', async () => {
+    const writeOnly = ctx({ scopes: ['memory:write'] })
+    const result = await call('review_proposals', { action: 'list' }, writeOnly)
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
+    expect(listProposals).not.toHaveBeenCalled()
+  })
+
+  it('TWO-LAYER SCOPE: a read-only token may list but NOT reject/accept', async () => {
+    const readOnly = ctx({ scopes: ['memory:read'] })
+    const rejected = await call(
+      'review_proposals',
+      { action: 'reject', proposalId: PROPOSAL_ID },
+      readOnly,
+    )
+    expect(rejected.isError).toBe(true)
+    expect((rejected.content[0] as { text: string }).text).toContain('insufficient scope')
+    const accepted = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: PROPOSAL_ID },
+      readOnly,
+    )
+    expect(accepted.isError).toBe(true)
+    expect((accepted.content[0] as { text: string }).text).toContain('insufficient scope')
+    expect(rejectProposal).not.toHaveBeenCalled()
+    expect(applyProposal).not.toHaveBeenCalled()
+  })
+
+  it('maps a missing/already-decided proposal to not_found', async () => {
+    rejectProposal.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
+    const result = await call(
+      'review_proposals',
+      { action: 'reject', proposalId: PROPOSAL_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('rejects a non-uuid proposalId without calling core', async () => {
+    const result = await call('review_proposals', { action: 'reject', proposalId: 'nope' }, ctx())
+    expect(result.isError).toBe(true)
+    expect(rejectProposal).not.toHaveBeenCalled()
+  })
+})
+
+describe('D3 admin tools: registry scope declarations', () => {
+  it('the per-action tools declare an anyOf read|write floor (write-only is admitted)', () => {
+    for (const name of ['configure_scope', 'review_proposals']) {
+      expect(toolByName(name).requiredScope).toEqual({
+        anyOf: ['memory:read', 'memory:write'],
+      })
+    }
+  })
+
+  it('describe_environment is read-only: a single memory:read floor', () => {
+    expect(toolByName('describe_environment').requiredScope).toBe('memory:read')
+  })
+})
+
+// ACCESS GATE ENFORCEMENT: the orientation + admin tools that read or mutate
+// tenant-memory data now assert ctx.access AFTER the scope check but BEFORE the
+// core op. A denying gate must reject (isError access_denied) AND the core fn must
+// NEVER be reached. ctx() carries both scopes, so the scope floor passes and the
+// gate is what rejects. A true no-op under allow-all (the other tool tests wire no
+// access gate, the back-compat proof).
+describe('access gate enforcement: orientation + admin tools (#429)', () => {
+  // Denies BOTH read and write.
+  const denyingAccess = {
+    assertRead: async () => {
+      throw new AccessDeniedError('read')
+    },
+    assertWrite: async () => {
+      throw new AccessDeniedError('write')
+    },
+  }
+  const denyingCtx = () => ctx({ access: denyingAccess as unknown as ToolContext['access'] })
+
+  // [tool, args, access, core spy] — every memory read (assertRead) and
+  // write (assertWrite) on the orientation + admin surface.
+  const GATED: Array<[string, unknown, 'read' | 'write', ReturnType<typeof vi.fn>]> = [
+    ['briefing', { selector: { kind: 'all' } }, 'read', briefing],
+    ['handoff', { selector: { kind: 'all' } }, 'read', handoff],
+    ['describe_environment', {}, 'read', describeEnvironment],
+    ['configure_scope', { action: 'list' }, 'read', listScopes],
+    ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],
+    ['review_proposals', { action: 'list' }, 'read', listProposals],
+    ['review_proposals', { action: 'reject', proposalId: MEMO_ID }, 'write', rejectProposal],
+  ]
+
+  it.each(
+    GATED,
+  )('denies %s (%o) as a %s and never reaches core', async (tool, args, _access, coreSpy) => {
+    const result = await call(tool, args, denyingCtx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('access_denied')
+    // The gate blocked BEFORE the db op — core was never invoked.
+    expect(coreSpy).not.toHaveBeenCalled()
+  })
+})

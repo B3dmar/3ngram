@@ -1,0 +1,11 @@
+{
+  "model": "openai-large-1536",
+  "recorded": {
+    "recall_at_5": 0.9773,
+    "mrr_at_5": 0.9697,
+    "supersession_correct": 0.9474,
+    "abstention_precision": 1,
+    "answerable_above_tau": 0.9545,
+    "tau": 0.4663
+  }
+}

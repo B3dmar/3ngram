@@ -1,0 +1,2 @@
+ALTER TABLE "memory_events" DROP CONSTRAINT "memory_events_kind_check";--> statement-breakpoint
+ALTER TABLE "memory_events" ADD CONSTRAINT "memory_events_kind_check" CHECK ("memory_events"."event_kind" IN ('create', 'revise', 'supersede', 'resolve', 'unresolve', 'archive', 'import', 'embed_failed'));

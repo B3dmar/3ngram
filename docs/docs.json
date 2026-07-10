@@ -1,0 +1,101 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "luma",
+  "name": "3ngram",
+  "description": "Persistent, typed memory for AI agents — decisions, commitments, blockers, and facts that survive the session.",
+  "colors": {
+    "primary": "#2863ab",
+    "light": "#7fbef3"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "styling": {
+    "defaultTheme": "dark"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/B3dmar/3ngram"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "index",
+              "quickstart",
+              "self-host",
+              "container-image",
+              "operate",
+              "troubleshooting"
+            ]
+          },
+          {
+            "group": "Use cases",
+            "pages": [
+              "use-cases/overview",
+              "use-cases/claude-code",
+              "use-cases/connecting-tools",
+              "use-cases/team-brain",
+              "use-cases/recall-supersession"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/memory-model",
+              "concepts/scopes",
+              "concepts/data-model",
+              "concepts/mcp-design",
+              "concepts/architecture",
+              "concepts/observability",
+              "concepts/local-development",
+              "concepts/testing"
+            ]
+          },
+          {
+            "group": "Benchmarks",
+            "pages": ["benchmarks/index"]
+          },
+          {
+            "group": "Project",
+            "pages": ["contributing"]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "MCP reference",
+            "pages": ["reference/tools", "reference/prompts"]
+          },
+          {
+            "group": "CLI & SDK",
+            "pages": ["reference/cli", "reference/sdk"]
+          },
+          {
+            "group": "API reference",
+            "openapi": "api-reference/openapi.json"
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/B3dmar/3ngram"
+    }
+  }
+}

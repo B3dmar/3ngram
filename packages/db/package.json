@@ -1,0 +1,61 @@
+{
+  "name": "@3ngram/db",
+  "version": "0.5.0",
+  "description": "Drizzle schema, withTenant() access discipline, migrations. The ONLY package that touches Postgres.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/B3dmar/3ngram#readme",
+  "bugs": {
+    "url": "https://github.com/B3dmar/3ngram/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B3dmar/3ngram.git",
+    "directory": "packages/db"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate.d.ts",
+      "default": "./dist/migrate.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "migrations",
+    "NOTICE",
+    "README.md",
+    "provision-roles.sql"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude '**/integration/**'",
+    "generate": "drizzle-kit generate",
+    "test:integration": "vitest run test/integration --fileParallelism=false --testTimeout=30000",
+    "seed": "node scripts/seed.mjs"
+  },
+  "dependencies": {
+    "@3ngram/schema": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "@types/pg": "8.20.0",
+    "drizzle-kit": "0.31.10",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

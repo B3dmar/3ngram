@@ -1,0 +1,88 @@
+---
+title: "Troubleshooting"
+description: "Fixes for the most common self-host failures: the DB-secret preflight abort, runtime-password auth errors, OAuth discovery misconfiguration, and degraded rate limiting."
+icon: "wrench"
+---
+
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+The failure modes below are the ones self-hosters actually hit. Each section gives the symptom, the cause, and the fix. For the deployment steps themselves, see [Self-host](/self-host); for the operator view of a running instance, see [Operate](/operate).
+
+## Migrations abort: DB secret preflight failed
+
+**Symptom:** the one-shot migrations service exits immediately with:
+
+```text
+self-host DB secret preflight FAILED — refusing to run migrations with weak/placeholder credentials
+```
+
+**Cause:** the self-host stack (`compose.selfhost.yml`) runs a fail-closed preflight before migrating or provisioning roles. It refuses to continue when `POSTGRES_PASSWORD` or `APP_USER_PASSWORD` is:
+
+- empty,
+- still a `change-me-*` placeholder from `.env.selfhost.example`,
+- a known public dev default shipped in the repo (`app-user-dev`, `3ngram-dev`), or
+- shorter than 12 characters.
+
+The compose `:?` guards only catch *missing* variables, not unchanged placeholders — the preflight closes that gap.
+
+**Fix:** set strong, URL-safe values for both secrets in `.env.selfhost`, then re-run the init profile:
+
+```bash
+openssl rand -hex 32   # once per secret
+docker compose --env-file .env.selfhost -f compose.selfhost.yml --profile init up migrations
+```
+
+<Note>
+  The local development stack (`docker-compose.yml`) keeps its dev defaults and never runs this preflight. The abort only applies to the self-host compose file.
+</Note>
+
+## Auth error after changing the runtime password
+
+**Symptom:** the server or the host-run seed fails with a Postgres password-authentication error for `app_user` right after you changed `APP_USER_PASSWORD`.
+
+**Cause:** two consumers read the runtime password from different places. Compose derives the server's connection string from `APP_USER_PASSWORD`, while anything running on the host (the seed, a manual `psql`) reads `DATABASE_URL` literally. Updating one without the other leaves the two out of sync. A related variant: a shell you sourced *before* editing the env file still carries the old password in its exported `DATABASE_URL`.
+
+**Fix:** update both places, then re-source your shell before running host-side commands:
+
+```bash
+set -a; source .env.selfhost; set +a
+export DATABASE_URL="postgresql://app_user:${APP_USER_PASSWORD}@localhost:54320/ngram"
+```
+
+Keep passwords URL-safe — they are interpolated into connection URLs.
+
+## MCP clients cannot authenticate: OAuth discovery misconfigured
+
+**Symptom:** one of the following:
+
+- the server is unhealthy at boot under `NODE_ENV=production`,
+- an MCP client fails during the OAuth flow (discovery or token-audience errors),
+- `/mcp` returns `401` even though your API key works on `/api/v1`.
+
+**Cause:** the MCP endpoint authenticates with OAuth 2.1 only, and the server derives its OAuth issuer and RFC 8707 resource identifier from `BASE_URL`. In production the config fails closed at boot: `BASE_URL` and `OAUTH_JWKS` are both required, and a `BASE_URL` that is not an absolute `http(s)` URL is treated as *not configured*. If `BASE_URL` does not exactly match the public origin your clients connect to (for example, the server sits behind a TLS proxy but `BASE_URL` still points at the internal address), discovery metadata and token audiences will not line up and the flow fails.
+
+**Fix:**
+
+1. Set `BASE_URL` to the public HTTPS origin clients actually use (the reverse-proxy origin, not the container address).
+2. Set `OAUTH_JWKS` to a JSON array of RS256 signing keys. Bootstrap or rotate with the shipped script — the first key in the array is the current signing key:
+
+   ```bash
+   node scripts/rotate-oauth-key.mjs                       # bootstrap the first key
+   OAUTH_JWKS='[...]' node scripts/rotate-oauth-key.mjs    # rotate an existing set
+   ```
+
+3. Verify discovery responds at `BASE_URL`: `/.well-known/oauth-protected-resource/mcp` and `/.well-known/jwks.json` should both return `200`.
+
+A `401` from `/mcp` with an `X-API-Key` header is by design, not a misconfiguration: API keys work on the REST surface (`/api/v1`) only, while `/mcp` accepts OAuth Bearer tokens.
+
+## Rate limiting degraded: "store unavailable"
+
+**Symptom:** repeated warnings in the server logs:
+
+```text
+rate-limit: store unavailable
+```
+
+**Cause:** the rate limiter's Redis store is unreachable. By default limiters *fail open*: every request passes unthrottled so the service keeps serving, which means brute-force protection (for example on login) silently lapses while Redis is down — with no `429`s to alert on. A limiter explicitly configured to fail closed returns `503 service_unavailable` on its routes instead.
+
+**Fix:** restore Redis connectivity (`REDIS_URL`), then confirm the warnings stop. Treat repeated occurrences as a degraded-protection incident, not noise — the warning and its failure counter metric are the only signals that throttling is off. See [Operate](/operate#rate-limits) for the limit dimensions.

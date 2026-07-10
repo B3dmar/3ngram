@@ -1,0 +1,711 @@
+{
+  "_meta": {
+    "description": "A fixed, representative coding-agent memory SESSION for the transport-cost advisory slice (#134 E-D). Eight operations with the concrete per-call request + response payloads on the wire for EACH transport (mcp / cli / rest). Hand-authored to mirror the real tool/route/CLI IO; deterministic.",
+    "mix": "3 remember + 2 search + 1 get_facts + 1 revise + 1 resolve = 8 operations.",
+    "mixJustification": "Models one working session of a coding agent using 3ngram as memory: it RECORDS more than it READS (writes dominate during active work — capturing decisions/commitments/blockers as they happen), occasionally SEARCHES prior context, checks a current FACT, and CORRECTS one earlier memory (revise) + CLOSES one commitment (resolve). The write-heavy 5:3 write:read ratio reflects an agent mid-task laying down memory, not a read-only recall session. The mix is intentionally small and concrete so totals are auditable by hand.",
+    "wireNote": "Each operation gives the request body/args + response body each transport puts ON THE WIRE. MCP args == REST request body == CLI parsed args (one core, N transports), but the ENVELOPE differs: MCP wraps args in a JSON-RPC tools/call request and the result in a content+structuredContent envelope; REST is a bare JSON body + status; CLI is an argv line in + the SDK's already-shaped JSON out (or human text — JSON modeled here as the agent-parseable default)."
+  },
+  "operations": [
+    {
+      "op": "remember",
+      "tool": "remember",
+      "args": {
+        "memoryType": "decision",
+        "topic": "auth token storage",
+        "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+        "scope": "work",
+        "project": "checkout-api",
+        "tags": ["auth", "security"]
+      },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+              "name": "remember",
+              "arguments": {
+                "memoryType": "decision",
+                "topic": "auth token storage",
+                "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+                "scope": "work",
+                "project": "checkout-api",
+                "tags": ["auth", "security"]
+              }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"memory\":{\"id\":\"01J8K0RM3W0000000000000001\",\"memoryType\":\"decision\",\"topic\":\"auth token storage\",\"scope\":\"work\",\"project\":\"checkout-api\"},\"embedded\":\"pending\"}"
+                }
+              ],
+              "structuredContent": {
+                "memory": {
+                  "id": "01J8K0RM3W0000000000000001",
+                  "memoryType": "decision",
+                  "topic": "auth token storage",
+                  "scope": "work",
+                  "project": "checkout-api"
+                },
+                "embedded": "pending"
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/memories",
+            "body": {
+              "memoryType": "decision",
+              "topic": "auth token storage",
+              "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+              "scope": "work",
+              "project": "checkout-api",
+              "tags": ["auth", "security"]
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "memory": {
+                "id": "01J8K0RM3W0000000000000001",
+                "memoryType": "decision",
+                "topic": "auth token storage",
+                "scope": "work",
+                "project": "checkout-api"
+              },
+              "embedded": "pending"
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram remember --type decision --topic \"auth token storage\" --content \"Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.\" --scope work --project checkout-api --tags auth --tags security --json",
+          "response": {
+            "memory": {
+              "id": "01J8K0RM3W0000000000000001",
+              "memoryType": "decision",
+              "topic": "auth token storage",
+              "scope": "work",
+              "project": "checkout-api"
+            },
+            "embedded": "pending"
+          }
+        }
+      }
+    },
+    {
+      "op": "remember",
+      "tool": "remember",
+      "args": {
+        "memoryType": "commitment",
+        "topic": "rotate signing key",
+        "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+        "scope": "work",
+        "project": "checkout-api",
+        "tags": ["auth", "release"]
+      },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "remember",
+              "arguments": {
+                "memoryType": "commitment",
+                "topic": "rotate signing key",
+                "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+                "scope": "work",
+                "project": "checkout-api",
+                "tags": ["auth", "release"]
+              }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"memory\":{\"id\":\"01J8K0RM3W0000000000000002\",\"memoryType\":\"commitment\",\"topic\":\"rotate signing key\",\"scope\":\"work\",\"project\":\"checkout-api\"},\"embedded\":\"pending\",\"commitmentId\":\"01J8K0RM3W00000000000000C2\"}"
+                }
+              ],
+              "structuredContent": {
+                "memory": {
+                  "id": "01J8K0RM3W0000000000000002",
+                  "memoryType": "commitment",
+                  "topic": "rotate signing key",
+                  "scope": "work",
+                  "project": "checkout-api"
+                },
+                "embedded": "pending",
+                "commitmentId": "01J8K0RM3W00000000000000C2"
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/memories",
+            "body": {
+              "memoryType": "commitment",
+              "topic": "rotate signing key",
+              "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+              "scope": "work",
+              "project": "checkout-api",
+              "tags": ["auth", "release"]
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "memory": {
+                "id": "01J8K0RM3W0000000000000002",
+                "memoryType": "commitment",
+                "topic": "rotate signing key",
+                "scope": "work",
+                "project": "checkout-api"
+              },
+              "embedded": "pending",
+              "commitmentId": "01J8K0RM3W00000000000000C2"
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram remember --type commitment --topic \"rotate signing key\" --content \"Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.\" --scope work --project checkout-api --tags auth --tags release --json",
+          "response": {
+            "memory": {
+              "id": "01J8K0RM3W0000000000000002",
+              "memoryType": "commitment",
+              "topic": "rotate signing key",
+              "scope": "work",
+              "project": "checkout-api"
+            },
+            "embedded": "pending",
+            "commitmentId": "01J8K0RM3W00000000000000C2"
+          }
+        }
+      }
+    },
+    {
+      "op": "search",
+      "tool": "search",
+      "args": { "query": "how do we store auth tokens", "limit": 5 },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+              "name": "search",
+              "arguments": { "query": "how do we store auth tokens", "limit": 5 }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"hits\":[{\"id\":\"01J8K0RM3W0000000000000001\",\"memoryType\":\"decision\",\"topic\":\"auth token storage\",\"content\":\"Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.\",\"score\":0.91}],\"count\":1}"
+                }
+              ],
+              "structuredContent": {
+                "hits": [
+                  {
+                    "id": "01J8K0RM3W0000000000000001",
+                    "memoryType": "decision",
+                    "topic": "auth token storage",
+                    "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+                    "score": 0.91
+                  }
+                ],
+                "count": 1
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/search",
+            "body": { "query": "how do we store auth tokens", "limit": 5 }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "hits": [
+                {
+                  "id": "01J8K0RM3W0000000000000001",
+                  "memoryType": "decision",
+                  "topic": "auth token storage",
+                  "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+                  "score": 0.91
+                }
+              ],
+              "count": 1
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram search \"how do we store auth tokens\" --limit 5 --json",
+          "response": {
+            "hits": [
+              {
+                "id": "01J8K0RM3W0000000000000001",
+                "memoryType": "decision",
+                "topic": "auth token storage",
+                "content": "Store the refresh token in an httpOnly, Secure, SameSite=Strict cookie rather than localStorage to remove the XSS exfiltration path; access token stays in memory only.",
+                "score": 0.91
+              }
+            ],
+            "count": 1
+          }
+        }
+      }
+    },
+    {
+      "op": "remember",
+      "tool": "remember",
+      "args": {
+        "memoryType": "blocker",
+        "topic": "staging redis unavailable",
+        "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+        "scope": "work",
+        "project": "checkout-api",
+        "tags": ["infra"]
+      },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+              "name": "remember",
+              "arguments": {
+                "memoryType": "blocker",
+                "topic": "staging redis unavailable",
+                "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+                "scope": "work",
+                "project": "checkout-api",
+                "tags": ["infra"]
+              }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"memory\":{\"id\":\"01J8K0RM3W0000000000000003\",\"memoryType\":\"blocker\",\"topic\":\"staging redis unavailable\",\"scope\":\"work\",\"project\":\"checkout-api\"},\"embedded\":\"pending\"}"
+                }
+              ],
+              "structuredContent": {
+                "memory": {
+                  "id": "01J8K0RM3W0000000000000003",
+                  "memoryType": "blocker",
+                  "topic": "staging redis unavailable",
+                  "scope": "work",
+                  "project": "checkout-api"
+                },
+                "embedded": "pending"
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/memories",
+            "body": {
+              "memoryType": "blocker",
+              "topic": "staging redis unavailable",
+              "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+              "scope": "work",
+              "project": "checkout-api",
+              "tags": ["infra"]
+            }
+          },
+          "response": {
+            "status": 201,
+            "body": {
+              "memory": {
+                "id": "01J8K0RM3W0000000000000003",
+                "memoryType": "blocker",
+                "topic": "staging redis unavailable",
+                "scope": "work",
+                "project": "checkout-api"
+              },
+              "embedded": "pending"
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram remember --type blocker --topic \"staging redis unavailable\" --content \"Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.\" --scope work --project checkout-api --tags infra --json",
+          "response": {
+            "memory": {
+              "id": "01J8K0RM3W0000000000000003",
+              "memoryType": "blocker",
+              "topic": "staging redis unavailable",
+              "scope": "work",
+              "project": "checkout-api"
+            },
+            "embedded": "pending"
+          }
+        }
+      }
+    },
+    {
+      "op": "get_facts",
+      "tool": "get_facts",
+      "args": { "subject": "checkout-api", "limit": 10 },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+              "name": "get_facts",
+              "arguments": { "subject": "checkout-api", "limit": 10 }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"facts\":[{\"id\":\"01J8K0RM3W00000000000000F1\",\"subject\":\"checkout-api\",\"predicate\":\"runtime\",\"value\":\"node 22\",\"confidence\":0.95,\"validFrom\":\"2026-05-01T00:00:00.000Z\",\"validTo\":null}],\"count\":1}"
+                }
+              ],
+              "structuredContent": {
+                "facts": [
+                  {
+                    "id": "01J8K0RM3W00000000000000F1",
+                    "subject": "checkout-api",
+                    "predicate": "runtime",
+                    "value": "node 22",
+                    "confidence": 0.95,
+                    "validFrom": "2026-05-01T00:00:00.000Z",
+                    "validTo": null
+                  }
+                ],
+                "count": 1
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "GET",
+            "path": "/api/v1/facts?subject=checkout-api&limit=10",
+            "body": null
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "facts": [
+                {
+                  "id": "01J8K0RM3W00000000000000F1",
+                  "subject": "checkout-api",
+                  "predicate": "runtime",
+                  "value": "node 22",
+                  "confidence": 0.95,
+                  "validFrom": "2026-05-01T00:00:00.000Z",
+                  "validTo": null
+                }
+              ],
+              "count": 1
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram facts --subject checkout-api --limit 10 --json",
+          "response": {
+            "facts": [
+              {
+                "id": "01J8K0RM3W00000000000000F1",
+                "subject": "checkout-api",
+                "predicate": "runtime",
+                "value": "node 22",
+                "confidence": 0.95,
+                "validFrom": "2026-05-01T00:00:00.000Z",
+                "validTo": null
+              }
+            ],
+            "count": 1
+          }
+        }
+      }
+    },
+    {
+      "op": "search",
+      "tool": "search",
+      "args": { "query": "open release blockers for checkout-api", "limit": 5 },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+              "name": "search",
+              "arguments": { "query": "open release blockers for checkout-api", "limit": 5 }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"hits\":[{\"id\":\"01J8K0RM3W0000000000000003\",\"memoryType\":\"blocker\",\"topic\":\"staging redis unavailable\",\"content\":\"Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.\",\"score\":0.88},{\"id\":\"01J8K0RM3W0000000000000002\",\"memoryType\":\"commitment\",\"topic\":\"rotate signing key\",\"content\":\"Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.\",\"score\":0.71}],\"count\":2}"
+                }
+              ],
+              "structuredContent": {
+                "hits": [
+                  {
+                    "id": "01J8K0RM3W0000000000000003",
+                    "memoryType": "blocker",
+                    "topic": "staging redis unavailable",
+                    "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+                    "score": 0.88
+                  },
+                  {
+                    "id": "01J8K0RM3W0000000000000002",
+                    "memoryType": "commitment",
+                    "topic": "rotate signing key",
+                    "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+                    "score": 0.71
+                  }
+                ],
+                "count": 2
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/search",
+            "body": { "query": "open release blockers for checkout-api", "limit": 5 }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "hits": [
+                {
+                  "id": "01J8K0RM3W0000000000000003",
+                  "memoryType": "blocker",
+                  "topic": "staging redis unavailable",
+                  "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+                  "score": 0.88
+                },
+                {
+                  "id": "01J8K0RM3W0000000000000002",
+                  "memoryType": "commitment",
+                  "topic": "rotate signing key",
+                  "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+                  "score": 0.71
+                }
+              ],
+              "count": 2
+            }
+          }
+        },
+        "cli": {
+          "request": "3ngram search \"open release blockers for checkout-api\" --limit 5 --json",
+          "response": {
+            "hits": [
+              {
+                "id": "01J8K0RM3W0000000000000003",
+                "memoryType": "blocker",
+                "topic": "staging redis unavailable",
+                "content": "Cannot test rate-limit changes: the staging Redis instance is returning CONNREFUSED. Filed INFRA-412.",
+                "score": 0.88
+              },
+              {
+                "id": "01J8K0RM3W0000000000000002",
+                "memoryType": "commitment",
+                "topic": "rotate signing key",
+                "content": "Rotate the JWT signing key in staging before the 2026-06-20 release and re-issue all active sessions.",
+                "score": 0.71
+              }
+            ],
+            "count": 2
+          }
+        }
+      }
+    },
+    {
+      "op": "revise",
+      "tool": "revise",
+      "predecessorId": "01J8K0RM3W0000000000000001",
+      "args": {
+        "predecessorId": "01J8K0RM3W0000000000000001",
+        "edgeIntent": "supersedes",
+        "memoryType": "decision",
+        "topic": "auth token storage",
+        "content": "Store BOTH tokens server-side in a Redis session keyed by an opaque httpOnly cookie id; the browser never holds a JWT. Supersedes the in-memory access-token approach after the XSS review.",
+        "scope": "work",
+        "project": "checkout-api",
+        "tags": ["auth", "security"]
+      },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+              "name": "revise",
+              "arguments": {
+                "predecessorId": "01J8K0RM3W0000000000000001",
+                "edgeIntent": "supersedes",
+                "memoryType": "decision",
+                "topic": "auth token storage",
+                "content": "Store BOTH tokens server-side in a Redis session keyed by an opaque httpOnly cookie id; the browser never holds a JWT. Supersedes the in-memory access-token approach after the XSS review.",
+                "scope": "work",
+                "project": "checkout-api",
+                "tags": ["auth", "security"]
+              }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"memory\":{\"id\":\"01J8K0RM3W0000000000000004\",\"memoryType\":\"decision\",\"topic\":\"auth token storage\",\"scope\":\"work\",\"project\":\"checkout-api\"},\"embedded\":\"pending\"}"
+                }
+              ],
+              "structuredContent": {
+                "memory": {
+                  "id": "01J8K0RM3W0000000000000004",
+                  "memoryType": "decision",
+                  "topic": "auth token storage",
+                  "scope": "work",
+                  "project": "checkout-api"
+                },
+                "embedded": "pending"
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/memories/01J8K0RM3W0000000000000001/revise",
+            "body": {
+              "edgeIntent": "supersedes",
+              "memoryType": "decision",
+              "topic": "auth token storage",
+              "content": "Store BOTH tokens server-side in a Redis session keyed by an opaque httpOnly cookie id; the browser never holds a JWT. Supersedes the in-memory access-token approach after the XSS review.",
+              "scope": "work",
+              "project": "checkout-api",
+              "tags": ["auth", "security"]
+            }
+          },
+          "response": {
+            "status": 200,
+            "body": {
+              "memory": {
+                "id": "01J8K0RM3W0000000000000004",
+                "memoryType": "decision",
+                "topic": "auth token storage",
+                "scope": "work",
+                "project": "checkout-api"
+              },
+              "embedded": "pending"
+            }
+          }
+        },
+        "cli": {
+          "request": "(revise is not exposed by the v1 CLI; the agent falls back to REST/curl for this op — modeled as the REST request+response on the CLI's wire)",
+          "fallbackTo": "rest",
+          "response": {
+            "memory": {
+              "id": "01J8K0RM3W0000000000000004",
+              "memoryType": "decision",
+              "topic": "auth token storage",
+              "scope": "work",
+              "project": "checkout-api"
+            },
+            "embedded": "pending"
+          }
+        }
+      }
+    },
+    {
+      "op": "resolve",
+      "tool": "resolve",
+      "memoryId": "01J8K0RM3W0000000000000002",
+      "args": { "memoryId": "01J8K0RM3W0000000000000002", "status": "resolved" },
+      "transports": {
+        "mcp": {
+          "request": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+              "name": "resolve",
+              "arguments": { "memoryId": "01J8K0RM3W0000000000000002", "status": "resolved" }
+            }
+          },
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"commitmentId\":\"01J8K0RM3W00000000000000C2\",\"status\":\"resolved\"}"
+                }
+              ],
+              "structuredContent": {
+                "commitmentId": "01J8K0RM3W00000000000000C2",
+                "status": "resolved"
+              }
+            }
+          }
+        },
+        "rest": {
+          "request": {
+            "method": "POST",
+            "path": "/api/v1/memories/01J8K0RM3W0000000000000002/resolve",
+            "body": { "status": "resolved" }
+          },
+          "response": {
+            "status": 200,
+            "body": { "commitmentId": "01J8K0RM3W00000000000000C2", "status": "resolved" }
+          }
+        },
+        "cli": {
+          "request": "(resolve is not exposed by the v1 CLI; the agent falls back to REST/curl for this op — modeled as the REST request+response on the CLI's wire)",
+          "fallbackTo": "rest",
+          "response": { "commitmentId": "01J8K0RM3W00000000000000C2", "status": "resolved" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@3ngram/eval",
+  "version": "0.0.7",
+  "private": true,
+  "description": "Golden-set eval harness. Blocking slice: deterministic, zero deps, no network.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "gate": "node src/run.mjs --model openai-large-1536",
+    "record-floors": "node src/run.mjs --model openai-large-1536 --record",
+    "advisory": "node src/longmemeval.mjs",
+    "advisory:real": "node src/longmemeval.mjs --retriever real",
+    "advisory:mab": "node src/memoryagentbench.mjs",
+    "transport-cost": "node src/transport-cost.mjs",
+    "test": "node --test 'test/**/*.test.mjs'"
+  },
+  "dependencies": {
+    "@3ngram/core": "workspace:*",
+    "@3ngram/db": "workspace:*",
+    "@3ngram/llm": "workspace:*",
+    "@3ngram/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "gpt-tokenizer": "3.4.0"
+  }
+}

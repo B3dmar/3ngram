@@ -1,0 +1,98 @@
+# Self-host / local-dev services (Phase 0 item 7; server/worker containers
+# join in Phase 2/3 when deployables exist). Also the local integration-test
+# database (docs/concepts/testing.mdx): `docker compose up -d postgres redis`.
+# Setup walkthrough: docs/concepts/local-development.mdx.
+#
+# Images pinned by digest (supply-chain posture, AGENTS.md hard rule 7) — the tag comment
+# records what the digest was resolved from; bump deliberately.
+services:
+  postgres:
+    # pgvector/pgvector:pg18
+    image: pgvector/pgvector@sha256:2ac2c62ac8f030b414b19ea633a6d1d4d37c03abe52ce91887a4e5b4fbb5c73c
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-3ngram-dev}
+      POSTGRES_DB: ngram
+    ports:
+      - "54320:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      retries: 20
+
+  redis:
+    # redis:7-alpine
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    ports:
+      - "63790:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+
+  # One-shot initializer: migrate (owner URL, drizzle-kit) THEN centralize role
+  # grants from scripts/provision-roles.sql, THEN set the runtime role password
+  # so the `server` service can connect. Same order as CI and docs/concepts/local-development.mdx.
+  # Behind the `init` profile so a plain `docker compose up` never runs it:
+  #   docker compose --profile init up migrations
+  migrations:
+    profiles: ["init"]
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+      target: migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Owner (superuser) connection — bypasses RLS; migrations + grants only.
+      DATABASE_URL_UNPOOLED: postgresql://postgres:${POSTGRES_PASSWORD:-3ngram-dev}@postgres:5432/ngram
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:-app-user-dev}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        pnpm db:migrate
+        psql "$$DATABASE_URL_UNPOOLED" -v ON_ERROR_STOP=1 -f ./scripts/provision-roles.sql
+        psql "$$DATABASE_URL_UNPOOLED" -v ON_ERROR_STOP=1 \
+          -c "ALTER ROLE app_user PASSWORD '$${APP_USER_PASSWORD}'"
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: "3000"
+      # Runtime (app_user) connection — NOBYPASSRLS, append-only grants. The
+      # owner credential (POSTGRES_PASSWORD / DATABASE_URL_UNPOOLED) is
+      # intentionally NOT set here: it belongs to the one-shot `migrations`
+      # service only, never the long-running server (issue #452). This service
+      # also loads no env_file, so no owner secret leaks in by that path.
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD:-app-user-dev}@postgres:5432/ngram
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3000:3000"
+    healthcheck:
+      # Liveness against the server's own /health route, via Node fetch (the
+      # slim image ships no curl/wget). Mirrors the Dockerfile HEALTHCHECK.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  pgdata:

@@ -1,0 +1,105 @@
+---
+title: "Operate"
+description: "Run, verify, and recover a self-hosted 3ngram deployment."
+icon: "activity"
+---
+
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+This page is the operator map for a self-hosted 3ngram. It explains what runs
+where, what to check after a deploy, and which operational guarantees are
+intentionally not promised before v1.0. Operations for the managed 3ngram
+platform are handled by the maintainers and are not covered in this repository.
+
+## Runtime topology
+
+A 3ngram deployment is three portable pieces:
+
+| Layer | Runtime | Purpose |
+|---|---|---|
+| Server | Node.js — one deployable | REST API, OAuth authorization server, OAuth resource server, and MCP endpoint |
+| Database | Postgres + pgvector | Durable identity, memory, audit, eval, and usage data |
+| Redis | Redis | Cross-instance rate limiting and queue-compatible shared state |
+
+Everything runs on stock Postgres and Redis, so deploy to whatever you already
+operate: the bundled Compose stack on a single host, a PaaS such as Railway or
+Fly.io, managed Postgres such as Neon or Supabase, or any Docker-compatible
+runtime. The [Self-host](/self-host) quickstart starts Postgres, Redis, and the
+server with one command.
+
+## Deploy verification
+
+After a server deploy, verify the health and OAuth discovery surfaces against
+your own base URL:
+
+```bash
+BASE=https://3ngram.example.com   # your server's public URL
+curl -fsS "$BASE/health"
+curl -fsS "$BASE/.well-known/oauth-authorization-server"
+curl -fsS "$BASE/.well-known/oauth-protected-resource/mcp"
+curl -fsS "$BASE/.well-known/jwks.json"
+```
+
+## Auth and access
+
+3ngram is its own OAuth 2.1 authorization server and resource server.
+
+- MCP clients use dynamic client registration, PKCE, and OAuth bearer tokens.
+- Scripts, CLI, and SDK integrations use API keys through `X-API-Key`.
+- All user-owned database access is tenant-scoped through RLS and the runtime
+  `app_user` role.
+
+The public API reference describes the REST contract. The MCP tool reference
+describes each tool and its required scope.
+
+## Rate limits
+
+Production deployments require Redis for cross-instance limits. Local
+development can fall back to in-memory buckets, but that is not a production
+limit.
+
+Current limit dimensions are:
+
+- per-user on `/mcp`;
+- per-IP on login and OAuth authorization-server endpoints;
+- per API key/source on `/api/v1`.
+
+If Redis is unavailable, rate limiting fails open so the service keeps serving.
+Operators should treat repeated `rate-limit: store unavailable` warnings as a
+degraded-protection incident.
+
+## Caching
+
+3ngram does not use an application cache for memory data in v1. Postgres is the
+source of truth; Redis is not a memory cache.
+
+## Scaling
+
+The server is stateless across requests, so it can run as multiple replicas
+behind a load balancer once shared-state dependencies are healthy. Before
+scaling replicas, verify Redis is configured and Postgres connection pressure
+is acceptable.
+
+Database scaling is your Postgres provider's operation. Background workers use
+BullMQ; worker packaging and self-host compose support are still follow-up
+work.
+
+## Recovery
+
+Use the smallest recovery action that matches the failure:
+
+| Failure | First action |
+|---|---|
+| Server regression | Redeploy the last good server commit if schema-compatible, otherwise roll forward |
+| OAuth/config failure | Check `BASE_URL`, `WEB_APP_URL`, signing keys, and discovery endpoints |
+| Redis outage | Confirm the server still serves; treat limits as degraded until Redis returns |
+| Database/data incident | Restore from backup — or your provider's point-in-time / branch restore — then repoint runtime credentials only after an explicit operator decision |
+
+After recovery, rerun the deploy verification checks and one authenticated read
+path before declaring the incident closed.
+
+## Current gaps
+
+- Metrics counters are wired, but dashboards and alert policies are not
+  complete.
+- Worker deployment packaging is not complete for self-host.

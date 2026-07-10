@@ -1,0 +1,75 @@
+# Production image for @3ngram/server (REST API + MCP server), the one v1
+# deployable. Build context MUST be the repo root (the build needs the workspace
+# manifests + lockfile + sources of every workspace dependency), e.g.:
+#   docker build -f apps/server/Dockerfile -t 3ngram-server .
+# On Railway: Builder = DOCKERFILE, Root Directory = repo root (blank),
+# Dockerfile Path = apps/server/Dockerfile. See the PR body for the full setting
+# list. The packaged @3ngram/db migrator is available for release automation,
+# but migrations are not part of the served process.
+
+# ---- base: pin Node + pnpm once, reuse in every stage --------------------------
+# Pin the multi-platform OCI index (linux/amd64 + linux/arm64) so builds cannot
+# silently pick up a newly-published base image. Renovate updates this digest.
+ARG NODE_IMAGE=node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf
+FROM ${NODE_IMAGE} AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+# Activate the exact pnpm the repo pins (packageManager: pnpm@11.9.0).
+RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+WORKDIR /repo
+
+# ---- builder: full install, build the server + its workspace deps --------------
+FROM base AS builder
+# Honor the repo supply-chain posture: lifecycle scripts stay off (matches the
+# committed .npmrc; set here too so the flag survives even if .npmrc is filtered).
+ENV npm_config_ignore_scripts=true
+# pnpm fetch + filtered install would need per-package manifests staged first;
+# the simplest correct path for a turbo monorepo is to copy the whole context
+# (the .dockerignore keeps it lean) and run a frozen install once.
+COPY . .
+RUN pnpm install --frozen-lockfile
+# Build apps/server and ITS workspace deps in dependency order (turbo ^build).
+RUN pnpm --filter @3ngram/server... build
+# Produce a self-contained, prod-only deployment of the server: pnpm deploy
+# resolves the workspace graph, copies each dep's published `files` (dist/) and
+# rewrites workspace: links into a flat node_modules. --prod strips devDeps.
+RUN pnpm deploy --filter=@3ngram/server --prod --legacy /app
+
+# ---- migrations: one-shot init image for self-host (compose profile `init`) ----
+# Reuses the builder (full deps incl. drizzle-kit + repo sources) and adds the
+# psql client so a single container can run `pnpm db:migrate` then apply
+# scripts/provision-roles.sql. Never part of the served deployable — the prod
+# runner below copies nothing from here, so psql does not bloat the v1 image.
+FROM builder AS migrations
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
+
+# ---- runner: minimal runtime, non-root, dist + prod node_modules only ----------
+FROM ${NODE_IMAGE} AS runner
+ENV NODE_ENV=production
+# The server binds env.PORT (packages/config default 3000) on all interfaces
+# (Express default host = 0.0.0.0), so Railway's injected PORT is honored.
+ENV PORT=3000
+WORKDIR /app
+LABEL org.opencontainers.image.title="3ngram server" \
+  org.opencontainers.image.description="Persistent, typed memory for AI agents" \
+  org.opencontainers.image.source="https://github.com/B3dmar/3ngram" \
+  org.opencontainers.image.documentation="https://docs.3ngram.ai/container-image" \
+  org.opencontainers.image.vendor="B3dmar ApS" \
+  org.opencontainers.image.licenses="Apache-2.0"
+# node:*-slim ships a non-root `node` user (uid 1000). Run as it.
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+# Redistributable images must carry the Apache license and attribution even
+# though the runtime itself contains only the deployed server closure.
+COPY --from=builder --chown=node:node /repo/LICENSE /usr/share/licenses/3ngram/LICENSE
+COPY --from=builder --chown=node:node /repo/NOTICE /usr/share/licenses/3ngram/NOTICE
+USER node
+EXPOSE 3000
+# Liveness probe against the server's own /health route (apps/server health.ts),
+# using Node so the image needs no extra curl/wget. Honors $PORT.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/index.js"]

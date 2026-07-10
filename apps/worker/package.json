@@ -1,0 +1,25 @@
+{
+  "name": "@3ngram/worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Background BullMQ worker — the consolidation-proposal and surfacing/overdue repeatable jobs. A thin harness: schedule + invoke + shutdown; all business logic lives in @3ngram/core (docs/concepts/architecture.mdx, hard rule 5).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@3ngram/config": "workspace:*",
+    "@3ngram/core": "workspace:*",
+    "bullmq": "5.78.0",
+    "ioredis": "5.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

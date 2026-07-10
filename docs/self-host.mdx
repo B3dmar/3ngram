@@ -1,0 +1,128 @@
+---
+title: "Self-host"
+description: "Run the 3ngram core on your own machine with Docker Compose — Postgres, Redis, and the server, with seeded data and a working API key."
+icon: "server"
+---
+
+Stand up the 3ngram **core** — the MCP server, REST API, and datastore — on your own machine, with no maintainer access and no 3ngram platform account required. The hardened Compose stack (`compose.selfhost.yml`) runs Postgres (with pgvector) and Redis, builds the server from source, and uses a one-shot init service to migrate the database and provision the runtime role before the server starts.
+
+Everything runs on stock Postgres — the schema, row-level-security policies, and role grants have no cloud-specific dependencies.
+
+## Prerequisites
+
+- Docker with Compose v2
+- Node.js 22 or later and pnpm 11.9.0 — the repo pins `pnpm@11.9.0` via the `packageManager` field, so run `corepack enable` to use the pinned version
+- A `psql` client (optional, for sanity checks)
+
+## Quickstart
+
+<Steps>
+  <Step title="Clone and configure">
+    ```bash
+    git clone https://github.com/B3dmar/3ngram && cd 3ngram
+    cp .env.selfhost.example .env.selfhost
+    ```
+
+    Edit `.env.selfhost` and set, at minimum: `POSTGRES_PASSWORD` and
+    `APP_USER_PASSWORD` (both `openssl rand -hex 32` — use URL-safe values, they
+    are interpolated into connection URLs), `BASE_URL`, `OAUTH_JWKS` (generate
+    with the one-liner in the template), and `LOG_HASH_SALT`.
+
+    There are no weak built-in defaults for a networked instance: a fail-closed
+    **preflight service** runs first and refuses to boot the stack on blank,
+    weak, or placeholder secrets — before the database volume is ever
+    initialized. Every other variable is optional and documented inline in the
+    template (LLM gateway for embeddings, SMTP for auth email, Sentry — all off
+    by default, no phone-home).
+  </Step>
+  <Step title="Initialize the database">
+    ```bash
+    docker compose --env-file .env.selfhost -f compose.selfhost.yml run --rm migrations
+    ```
+
+    The one-shot `migrations` service migrates the schema, provisions the
+    append-only runtime role, and sets its password, then exits. A non-zero exit
+    means migrations failed — stop and read the output before starting the
+    stack. Migrations are forward-only; re-running is a no-op.
+  </Step>
+  <Step title="Start the stack">
+    ```bash
+    docker compose --env-file .env.selfhost -f compose.selfhost.yml up -d
+    ```
+
+    This brings up Postgres, Redis, and the server. Postgres is published
+    host-local only on **127.0.0.1:54320** (for the optional host-run seed);
+    Redis is never published. The server exposes port **3000** with a `/health`
+    probe:
+
+    ```bash
+    curl -fsS http://localhost:3000/health   # -> 200
+    ```
+  </Step>
+  <Step title="Seed data and mint an API key">
+    ```bash
+    corepack enable                        # use the pinned pnpm@11.9.0
+    pnpm install --frozen-lockfile
+    set -a; source .env.selfhost; set +a   # exports the passwords set in step 1
+    export DATABASE_URL="postgresql://app_user:${APP_USER_PASSWORD}@localhost:54320/ngram"
+    export DATABASE_URL_UNPOOLED="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:54320/ngram"
+    pnpm seed
+    ```
+
+    The seed loads an anonymized golden set (158 memories, including supersession
+    chains) under a dev user and prints a demo API key once, in the form
+    `3ng_<prefix>_<secret>`. Re-running is idempotent: existing rows are skipped,
+    never deleted, and the key is not re-issued.
+
+    `DATABASE_URL_UNPOOLED` (the owner URL) is exported inline on purpose — it is
+    not a key in `.env.selfhost` because the server refuses to boot in production
+    with it present in its environment.
+  </Step>
+  <Step title="Call the API">
+    ```bash
+    curl -H "X-API-Key: 3ng_<prefix>_<secret>" \
+      "http://localhost:3000/api/v1/briefing?kind=all"
+    ```
+
+    A `200` response means the stack is up end to end: server up, database
+    migrated, runtime role connected, RLS in force.
+  </Step>
+</Steps>
+
+## Configuration notes
+
+- **`pnpm seed` runs on the host**, not in a container, because it loads committed fixtures. It connects to Postgres on the published port 54320.
+- **No phone-home by default**: leaving `SENTRY_DSN` empty fully disables error tracking and tracing. This is the self-host default.
+- **Append-only below the application**: the runtime database role has no `DELETE` grant anywhere in the memory domain. Destructive operations are impossible at the grant level, not just discouraged in code.
+- **Worker container**: background consolidation jobs are not part of the Compose stack yet; the server and data plane run without them.
+- **Seeded embeddings are pre-computed**: the seed loads committed cached vectors (`eval/fixtures/embeddings-openai-large-1536.json`) into the seeded memories, so no external API call is needed to embed the seed data itself. The search endpoint (`POST /api/v1/search`) still requires an embedding provider (`LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY`) to embed the **query** — without one it returns `503 embedding_unavailable`. New writes need the same provider to embed their content.
+
+## Two surfaces: REST/CLI (API key) vs MCP (OAuth)
+
+The memory operations (`remember`, `search`, `revise`, …) are exposed by two surfaces that authenticate differently:
+
+- **REST API + CLI — use the seeded API key.** The REST surface under `/api/v1` and the `3ngram` CLI accept the `3ng_…` key via `X-API-Key`. This is the simplest path for scripts and for verifying the instance, as in the quickstart above.
+- **MCP endpoint (`BASE_URL` + `/mcp`) — OAuth 2.1 Bearer only.** `/mcp` is mounted behind the OAuth Bearer middleware and **rejects `X-API-Key` with a 401** — the seeded API key does not work there. An MCP client authenticates through the OAuth 2.1 flow the server advertises (RFC 9728 / RFC 8414 discovery at `BASE_URL`); clients that support OAuth dynamic registration complete it automatically. This is why `BASE_URL` and `OAUTH_JWKS` are required configuration.
+
+## Hardening notes
+
+- Keep `NODE_ENV=production` for any networked deployment — it enforces `BASE_URL`, `OAUTH_JWKS`, `REDIS_URL`, and `LOG_HASH_SALT` at boot rather than degrading silently.
+- The bundled Postgres is bound to `127.0.0.1` only (host-local), published solely for the optional host-run seed. Comment out the `postgres` `ports:` block in `compose.selfhost.yml` once you have your key to close it entirely. Redis is never published.
+- The server port (`3000`) is published on all interfaces so clients can reach the API/MCP. Put the server behind TLS (a reverse proxy) and set `BASE_URL` to the public HTTPS origin so OAuth issuer/audience values are correct; if the proxy runs on the same host, bind the server to `127.0.0.1:3000:3000` so only the proxy can reach the plaintext port.
+
+## Resetting
+
+```bash
+docker compose --env-file .env.selfhost -f compose.selfhost.yml down -v   # drops the pgdata volume
+```
+
+Dropping the volume is the supported delete path — runtime-role deletes do not exist by design. Then repeat from the initialize step.
+
+## Troubleshooting
+
+- **`server` unhealthy at boot** — check `docker compose --env-file .env.selfhost -f compose.selfhost.yml logs server`; the most common cause is a missing `OAUTH_JWKS` or `LOG_HASH_SALT` under `NODE_ENV=production`.
+- **`pnpm seed` auth error** — re-export `DATABASE_URL` / `DATABASE_URL_UNPOOLED` from the sourced passwords before seeding. They are built from `APP_USER_PASSWORD` / `POSTGRES_PASSWORD`, so a shell sourced before you edited `.env.selfhost` carries the wrong password.
+- **`pnpm seed` says `DATABASE_URL_UNPOOLED must be set`** — export it inline before seeding; it is intentionally not a key in `.env.selfhost` because the server rejects it in its production environment.
+- **Search returns "not configured"** — embeddings are off; set `LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY` to enable vector search.
+
+For the MCP tool contract, see [MCP server design](/concepts/mcp-design); for the contributor local-dev path (integration tests, `pnpm db:migrate`), see [Local development](/concepts/local-development).

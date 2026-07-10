@@ -1,0 +1,184 @@
+# Self-host stack for 3ngram (core: server + datastore).
+#
+# This is the self-hosting entrypoint, separate from the dev/test
+# `docker-compose.yml`. It stands up the Apache-2.0 core — the MCP server, REST
+# API, Postgres/pgvector, and Redis — with no hosted-only billing/metering/admin
+# paths (no `apps/cloud` is built here). Walkthrough: docs/self-host.mdx.
+#
+#   cp .env.selfhost.example .env.selfhost && edit it   # set strong secrets
+#   docker compose --env-file .env.selfhost -f compose.selfhost.yml run --rm migrations
+#   docker compose --env-file .env.selfhost -f compose.selfhost.yml up -d
+#
+# NOTE: `--env-file .env.selfhost` is REQUIRED on every invocation. Compose
+# interpolates ${VAR} in this file only from the shell, --env-file, or a default
+# project `.env` — never from a service's `env_file:`. Without it the `:?` guards
+# below abort before anything starts.
+#
+# Images are pinned by digest (supply-chain posture); the tag comment records
+# what each digest was resolved from. Bump deliberately.
+services:
+  # Fail-closed secret preflight — the FIRST thing the stack runs, gating
+  # Postgres. Postgres bakes POSTGRES_PASSWORD into its persistent `pgdata` volume
+  # on FIRST init and that password cannot be changed afterwards by editing
+  # .env.selfhost; a weak or placeholder secret would poison the volume
+  # permanently. This one-shot service validates the DB secrets
+  # (scripts/check-selfhost-secrets.sh) and `postgres` depends on it completing
+  # successfully — so a weak secret aborts the boot BEFORE the volume is ever
+  # created. It has NO database dependency and only reads env, so it can never be
+  # the thing that triggers pgdata init. It carries NO profile (unlike the
+  # `migrations` init service) on purpose: an always-on `postgres` cannot
+  # depends_on a profile-gated service (Compose rejects the project on a plain
+  # `up`), and gating both the one-shot `run --rm migrations` init AND `up -d` is exactly
+  # what we want. (#462; secret rules: #452.)
+  preflight:
+    # Reuse the already-pinned redis image: its busybox shell ships the POSIX
+    # sh + printf + tr that check-selfhost-secrets.sh needs, so no extra image is
+    # pulled or built (supply-chain posture: everything stays digest-pinned).
+    # redis:7-alpine
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.selfhost}
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:?set APP_USER_PASSWORD in .env.selfhost}
+    volumes:
+      - ./scripts:/scripts:ro
+    command: ["sh", "/scripts/check-selfhost-secrets.sh"]
+    restart: "no"
+
+  postgres:
+    # pgvector/pgvector:pg18
+    image: pgvector/pgvector@sha256:2ac2c62ac8f030b414b19ea633a6d1d4d37c03abe52ce91887a4e5b4fbb5c73c
+    restart: unless-stopped
+    # Gate first init on the secret preflight: pgdata (and the password baked into
+    # it) is only ever created once the secrets are proven strong. (#462)
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.selfhost}
+      POSTGRES_DB: ngram
+    # Bound to LOCALHOST ONLY (127.0.0.1) so the bundled Postgres is never
+    # reachable off the host — Docker publishes ports on ALL interfaces by
+    # default, so the explicit 127.0.0.1 prefix is required. It is exposed at all
+    # only for the optional host-run `pnpm seed` (API-key minting) on
+    # 127.0.0.1:54320; comment this block out to close it entirely once you have
+    # a key. The server reaches Postgres over the internal compose network
+    # regardless of this mapping.
+    ports:
+      - "127.0.0.1:54320:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      retries: 20
+
+  redis:
+    # redis:7-alpine
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+
+  # One-shot initializer (behind the `init` profile so a plain `up` never runs
+  # it): migrate with the owner URL, centralize role grants from
+  # scripts/provision-roles.sql, then set the runtime role's password so the
+  # `server` can connect. Same order as CI and docs/self-host.mdx.
+  #   docker compose --env-file .env.selfhost -f compose.selfhost.yml run --rm migrations
+  migrations:
+    profiles: ["init"]
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+      target: migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Owner (superuser) connection over the internal network — bypasses RLS;
+      # used for migrations + grants only, never by the running app. The owner
+      # password is interpolated into this URL only; it is NOT exported as a
+      # discrete var here anymore, because the secret-strength check moved to the
+      # dedicated `preflight` service that gates `postgres` (#462). This is still
+      # the one-shot init service that legitimately holds the owner credential;
+      # the long-running `server` scrubs it (POSTGRES_PASSWORD: "" below), so
+      # Outcome B (#452, owner cred never reaches the served app) still holds.
+      DATABASE_URL_UNPOOLED: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ngram
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:?set APP_USER_PASSWORD in .env.selfhost}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        # DB secrets are already proven strong by the `preflight` service: it
+        # gates `postgres`, and this service depends on `postgres` being healthy,
+        # so reaching this point means the preflight passed (#462, #452). No
+        # duplicate check here.
+        # Invoke drizzle-kit directly instead of `pnpm db:migrate`: pnpm 11's
+        # pre-run install-state check sees the builder image's `pnpm deploy`
+        # output as a dirty workspace and aborts without a TTY
+        # (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY). The binary is already
+        # installed by the builder stage; no script runner is needed.
+        (cd packages/db && ./node_modules/.bin/drizzle-kit migrate)
+        psql "$$DATABASE_URL_UNPOOLED" -v ON_ERROR_STOP=1 -f ./scripts/provision-roles.sql
+        # Set the runtime role password via a psql variable quoted with :'pw' (a
+        # safe string literal) so an apostrophe or other special char in the
+        # password can't break the SQL. :'var' interpolation applies to stdin/-f
+        # input only (never -c), so the statement is piped in.
+        echo "ALTER ROLE app_user PASSWORD :'pw';" \
+          | psql "$$DATABASE_URL_UNPOOLED" -v ON_ERROR_STOP=1 -v pw="$$APP_USER_PASSWORD"
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    # App-level secrets (NODE_ENV, BASE_URL, OAUTH_JWKS, LOG_HASH_SALT, optional
+    # LLM gateway + SMTP) come from .env.selfhost. DATABASE_URL/REDIS_URL/PORT
+    # are set below from the discrete password var (single source of truth) and
+    # the internal compose hostnames — .env.selfhost defines no DB URL keys.
+    env_file:
+      - .env.selfhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: "3000"
+      # Runtime (app_user) connection — NOBYPASSRLS, append-only grants.
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD:?set APP_USER_PASSWORD}@postgres:5432/ngram
+      REDIS_URL: redis://redis:6379
+      # Scrub the OWNER credential from the long-running server (issue #452).
+      # .env.selfhost is loaded via env_file: above for the app secrets, and it
+      # also carries POSTGRES_PASSWORD (needed only for compose interpolation +
+      # the migrations init). `environment:` overrides `env_file:`, so blank it
+      # here: the owner/superuser secret must NEVER reach this container — only
+      # the one-shot `migrations` service holds it. The server connects as
+      # app_user via DATABASE_URL above and nothing else.
+      POSTGRES_PASSWORD: ""
+    # The HTTP service endpoint (REST API + MCP) — intentionally published on all
+    # interfaces so clients can reach it. In production put it behind a TLS
+    # reverse proxy (see docs/self-host.mdx "Hardening notes"); if the
+    # proxy terminates TLS on this same host, change this to "127.0.0.1:3000:3000"
+    # so only the proxy can reach the plaintext port. Redis is intentionally NOT
+    # published (internal compose network only).
+    ports:
+      - "3000:3000"
+    healthcheck:
+      # Liveness against the server's own /health route via Node fetch (the slim
+      # image ships no curl/wget). Mirrors the Dockerfile HEALTHCHECK.
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  pgdata:

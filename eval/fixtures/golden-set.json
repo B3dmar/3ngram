@@ -1,0 +1,1266 @@
+[
+  {
+    "id": "g001",
+    "type": "pattern",
+    "topic": "recovering wiped memories from Claude Code chat history",
+    "content": "Claude Code stores full conversation transcripts as JSONL files in `~/.claude/projects/-home-jmartinez-projects-dev-workspace/`. Each line is a JSON object with a `message` field containing `content` blocks. Tool calls appear as blocks with `\"type\": \"tool_use\"`. To recover lost `remember` calls: (1) Use `rg -l 'remember' *.jsonl` to find sessions containing remember calls, (2) Parse each JSONL file, iterate lines, look for content blocks where `type == \"tool_use\"` and `\"remember\" in name`, (3) Extract the `input` dict which contains topic, content, memory_type, tags, project, urgency, expires_at, (4) Re-create each memory via the `remember` MCP tool. Filter by file modification date to narrow scope. The JSONL files are named by session UUID. A Python script scanning all files takes seconds even across dozens of sessions.",
+    "replaces": null,
+    "created": "2026-02-06"
+  },
+  {
+    "id": "g002",
+    "type": "decision",
+    "topic": "GitHub API chosen for frontend file access in Phase 8",
+    "content": "For Phase 8 content editing, chose GitHub API as the file access mechanism over three alternatives: (1) local API server \u2014 real-time but requires running a daemon locally, (2) CloudSQL DB as intermediary \u2014 eventual consistency, adds complexity, (3) direct filesystem access \u2014 impossible from Netlify (cloud-hosted). GitHub API lets the Netlify-hosted frontend read raw markdown and commit edits back. The local clone stays in sync via git pull. This preserves git as source of truth while enabling editing from any device. The reindex pipeline already handles file changes \u2014 add a webhook or poll trigger for auto-reindex on commit.",
+    "replaces": null,
+    "created": "2026-02-07"
+  },
+  {
+    "id": "g003",
+    "type": "blocker",
+    "topic": "Azure OpenAI embedding API key failing \u2014 401",
+    "content": "delta-knowledge-search MCP server recall and search tools failing with Azure OpenAI 401 (invalid subscription key or wrong endpoint). Affects all vector-similarity operations. Metadata-based tools (commitments, blockers, overdue, stale_commitments) still work. Need to check: (1) AZURE_OPENAI_API_KEY in .env \u2014 expired or rotated? (2) AZURE_OPENAI_ENDPOINT \u2014 still correct? (3) Azure portal subscription status. First noticed 2026-02-09.",
+    "replaces": null,
+    "created": "2026-02-09"
+  },
+  {
+    "id": "g004",
+    "type": "preference",
+    "topic": "dev environment architecture on GCP VM",
+    "content": "Marcus's development setup as of 2026-02-12: GCP VM (Ubuntu 22.04, x86_64) with Claude Code CLI as primary coding tool. The IDE serves as a code browser/reviewer, not the primary editing surface. zellij (installed 2026-02-12) for persistent terminal sessions \u2014 fire off Claude Code tasks, disconnect, check results later. Currently evaluating JetBrains Gateway to replace VS Code Remote SSH.",
+    "replaces": null,
+    "created": "2026-02-12"
+  },
+  {
+    "id": "g005",
+    "type": "preference",
+    "topic": "colorblind-accessibility",
+    "content": "Marcus is colorblind (specific type unknown). Has difficulty distinguishing slight color nuances \u2014 yellow/green/red/purple can look similar. Needs higher contrast between colors. Prefers terminal themes with clearly distinguishable colors that vary in brightness/luminance, not just hue.",
+    "replaces": null,
+    "created": "2026-02-12"
+  },
+  {
+    "id": "g006",
+    "type": "fact",
+    "topic": "family context \u2014 Meadowbrook house and extended family",
+    "content": "Margaret owns the house in Meadowbrook (by Meadowbrook Lake) \u2014 direct lake access with a boat for water skiing and wakeboarding. Thomas spent most of his summers there as a kid. Previously owned by Aunt Rita (Thomas's grandma Dorothy's sister) and her late husband Frank, who transferred it to Margaret.\n\nExtended family context for guest lists and events:\n- Grandma: Dorothy\n- Aunt Rita: Dorothy's sister (former Meadowbrook house owner)\n- Sasha + partner (+ maybe kids): grandma Dorothy's brother's kid\n- Claire + partner (+ maybe kids): grandma Dorothy's brother's kid\n- Uncle David + wife Jennifer, kids Matthew and Sophie \u2014 live in Pinewood (next to Maplefield)\n- Aunt Rebecca + kids Emily and Olivia\n- Brother James + wife Catherine + kids Emma, Grace, Sophie\n- Margaret + kids Lucas, Noah, +1 (name unknown)\n- Mom: Patricia Ashford\n\nMeadowbrook is ~15 min from Maplefield \u2014 relevant for logistics when visiting David's family in Pinewood.",
+    "replaces": null,
+    "created": "2026-02-12"
+  },
+  {
+    "id": "g007",
+    "type": "note",
+    "topic": "matthewchen.io website-plan.md implementation status as of 2026-02-12",
+    "content": "Compared the Jan 28 2026 website-plan.md recommendations against the live matthewchen.io site on 2026-02-12. Implemented: contact section rewrite (\"Taking on new work\"), replaced \"long time not just good time\" clich\u00e9, added \"How I Work\" engagement model section (Discovery\u2192Build\u2192Maintain), added Google Calendar booking link in contact section, added reading time on case studies, added share button on case studies, added breadcrumb navigation with JSON-LD on case studies, set up Google Search Console, added meta descriptions on all pages, fixed www/non-www redirect (2026-02-09). Still open: favicon (404), Article schema on content pages, per-page OG images (only ai-automation has one), related content sections, cross-linking between case studies and blog posts, Service schema markup, contact form, testimonial placement (blocked on receiving testimonial), making AlexAI widget more prominent.",
+    "replaces": null,
+    "created": "2026-02-12"
+  },
+  {
+    "id": "g008",
+    "type": "blocker",
+    "topic": "Production BYPASSRLS status unverified for 2 consecutive reports",
+    "content": "Nexus kill reports v006 and v007 (both 2026-02-13) flagged Priority 0 action: verify whether the production PostgreSQL database role has BYPASSRLS enabled. If BYPASSRLS is set, FORCE ROW LEVEL SECURITY is effectively disabled and all RLS-dependent queries (classification, orphan detector, budget cleanup) work by accident \u2014 masking the missing set_tenant_context() calls. Required check: run `SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user;` on the production database (CloudHost PostgreSQL). If rolbypassrls=true, RLS provides zero protection and the tenant isolation model is illusory. This has been flagged for 2 consecutive reports without verification.",
+    "replaces": null,
+    "created": "2026-02-13"
+  },
+  {
+    "id": "g009",
+    "type": "fact",
+    "topic": "23 orphaned oauth_tokens with NULL user_id on prod",
+    "content": "Data quality audit 2026-02-18 found 23 oauth_tokens with NULL user_id \u2014 likely pre-authentication tokens or legacy records from before user_id column was added. Also found 128 expired tokens (47% of 272 total) and 103 revoked tokens (38%). All core data tables (interactions, content_blocks, segments, artifacts, memberships) have zero orphaned records. FK constraints intact. RLS policies verified on all data tables \u2014 no cross-user data leakage detected. Full results in audit-report-20260218.md Addendum A.",
+    "replaces": null,
+    "created": "2026-02-18"
+  },
+  {
+    "id": "g010",
+    "type": "pattern",
+    "topic": "Claude Code statusline configuration",
+    "content": "Claude Code statusline script at `~/.claude/statusline-command.sh`, referenced in `~/.claude/settings.json`. Script receives JSON via stdin with fields: `context_window.total_input_tokens`, `total_output_tokens`, `current_usage.cache_read_input_tokens`, `used_percentage`, `cost.total_cost_usd`, `workspace.current_dir`, `session_id`, `model.id`. No built-in daily/weekly aggregation \u2014 would need file-based logging. Current statusline shows: user@host, dir, git branch+dirty, input/output/cache tokens (k/M formatted), context window % (color-coded: green <50%, yellow 50-79%, red 80+%).",
+    "replaces": null,
+    "created": "2026-02-18"
+  },
+  {
+    "id": "g011",
+    "type": "fact",
+    "topic": "thriftcore-auth-lib repo setup and structure",
+    "content": "Private GitHub repo: github.com/michaelchen47/thriftcore-auth-lib. Created 2026-02-19. Python 3.12, uv, hatchling build system. 42 tests passing (pytest + pytest-asyncio, fakeredis for revocation tests).\n\nPackage: src/thriftcore_auth/ with modules:\n- jwt.py: TokenConfig, create_access_token, create_refresh_token, decode_token (HS256, type discrimination, JTI, iss/aud, extra_claims)\n- password.py: hash_password, verify_password, needs_rehash (argon2id, OWASP params)\n- rbac.py: PermissionChecker class with .require(), .require_any(), .require_all() FastAPI dependency factories + standalone functions\n- revocation.py: TokenRevocation with FailureMode.CLOSED/OPEN, per-JTI Redis denylist, bulk revoke\n- rate_limit.py: preconfigured slowapi limiter + standard rate constants\n- schemas.py: TokenPayload, TokenResponse, TokenPairResponse\n\nFour cookbooks in cookbooks/: minimal_admin, content_platform, saas_multitenant, api_platform.\nMigration plan in docs/migration-plan.md.\n\nDependencies: python-jose[cryptography], argon2-cffi, pydantic v2, fastapi, redis, slowapi.",
+    "replaces": null,
+    "created": "2026-02-19"
+  },
+  {
+    "id": "g012",
+    "type": "pattern",
+    "topic": "Docker images need git for uv git+https deps",
+    "content": "When a Python project uses `[tool.uv.sources]` with git+https dependencies, the Docker image must have `git` installed (`apt-get install git`) before `uv sync`. Without it, uv fails during dependency resolution. Applied to both dataflow (Dockerfile.api + Dockerfile.mcp, PR #220) and pathfinder (Dockerfile, PR #146) on 2026-02-19.",
+    "replaces": null,
+    "created": "2026-02-19"
+  },
+  {
+    "id": "g013",
+    "type": "pattern",
+    "topic": "Marcus bypasses GitHub branch protection on staging via admin privileges",
+    "content": "Marcus, as repo admin, bypasses GitHub ruleset protection to push directly to `staging` when needed, rather than always going through PRs. Demonstrated on 2026-02-23 when committing Nexus feature documentation files directly to staging branch.\n\nGitHub response: \"Bypassed rule violations for refs/heads/staging: Changes must be made through a pull request. 3 of 3 required status checks are expected.\" \u2014 push succeeded despite the bypass warning.\n\nWorkflow note: when working in a git worktree where `staging` is already checked out elsewhere (main worktree at `/home/marcustech/projects/nexus`), the approach is to copy files into that worktree, commit there, and push from there. The `feature/invite-only` worktree is at `/home/marcustech/projects/worktrees/nexus-feature/invite-only`.",
+    "replaces": null,
+    "created": "2026-02-23"
+  },
+  {
+    "id": "g014",
+    "type": "fact",
+    "topic": "cleanup_oauth_tokens.py has type bug \u2014 expires_at bigint vs timestamp",
+    "content": "backend/scripts/cleanup_oauth_tokens.py has a bug: SQL uses `expires_at < NOW()` but `expires_at` column is bigint (epoch seconds), not timestamp. Fails with \"operator does not exist: bigint < timestamp with time zone\". Needs `expires_at < EXTRACT(EPOCH FROM NOW())::bigint`. Script was shipped in PR #285 and auto-closed GH #248, but was never successfully run against production. 24 orphaned tokens (NULL user_id, from 2026-02-12/13) were cleaned manually via psql DELETE on 2026-02-24. Post-cleanup: 0 orphaned, 462 total tokens.",
+    "replaces": null,
+    "created": "2026-02-24"
+  },
+  {
+    "id": "g015",
+    "type": "fact",
+    "topic": "memocore-docs-structure-reference",
+    "content": "Documentation structure after 2025-03-18 restructure: Root (6 files): README.md, CONTRIBUTING.md, CHANGELOG.md, CLAUDE.md, AGENTS.md, FEATURES.md. docs/architecture/ (3): README.md (constitution v2.1), DATA.md, SECURITY.md. docs/reference/ (7): api.md, mcp.md, errors.md, sql.md, shared-content.md, testing.md, feature-inventory.md. docs/guides/ (2): memory-tools.md, self-hosting.md. docs/operations/ (4): README.md, deployment.md, cloudhost_runbook.md, NOTIFICATIONS.md, data-retention.md. docs/testing/ (2): governance.md, SMOKE-TEST-PLAN.md. Ownership rules: guides/ \u2192 end users, reference/ \u2192 contributors/AI agents, architecture/ \u2192 reviewers, operations/ \u2192 SREs, testing/ \u2192 CI maintainers.",
+    "replaces": null,
+    "created": "2026-02-25"
+  },
+  {
+    "id": "g016",
+    "type": "blocker",
+    "topic": "GH #512 staging verification: missing migration for archived status",
+    "content": "Batch 2 staging verification (GH #512) found a critical blocker: migration 024 created ck_items_status CHECK constraint with (open, resolved, waiting, scheduled) but PR #467 added 'archived' to Python VALID_STATUSES without a corresponding migration. archive_items() fails on staging with CHECK constraint violation. Fix: add migration 032 to drop/recreate constraint including 'archived'. This blocks staging\u2192main promotion.",
+    "replaces": null,
+    "created": "2026-02-25"
+  },
+  {
+    "id": "g017",
+    "type": "blocker",
+    "topic": "Documents router /count route order bug",
+    "content": "Pre-existing: GET /api/documents/count is registered AFTER /{document_id} in the documents router. FastAPI tries to parse \"count\" as UUID first \u2192 422. Not fixed in PR #8847 since it's unrelated scope. Should be moved above /{document_id} in a follow-up.",
+    "replaces": null,
+    "created": "2026-02-26"
+  },
+  {
+    "id": "g018",
+    "type": "fact",
+    "topic": "v0.4.5-staging-status",
+    "content": "Staging as of 2026-02-26 includes full v0.4.5 integration infrastructure:\n- PR #496: real trigger_sync execution path, migration 039 (source_provider/source_id/source_url on memories + partial unique index), token refresh, SyncTriggerResponse with item counts, integrations_enabled in /api/config\n- PR #497: /settings/integrations page (provider cards, Connected/Syncing/Error/Not connected), GitLab OAuth connect flow, disconnect dialog, sync status, Coming Soon placeholders, OAuth callback page at /settings/integrations/callback\n- GitLab adapter (GitLabAdapter) with OAuth authorize + token exchange; sync() and extract_memories() are still stubs\n\nRemaining for v0.4.5 (#174): actual GitLab data sync (PRs/issues/commits \u2192 memories), APScheduler sync cycle job, memory dedup by source_provider+source_id, tests. Also: link /settings/integrations from main /settings page.\n\nIssue #473 closed. CHANGELOG.md updated and committed directly to staging (2218ab8).",
+    "replaces": null,
+    "created": "2026-02-26"
+  },
+  {
+    "id": "g019",
+    "type": "preference",
+    "topic": "staging-payment-config",
+    "content": "Staging currently has PAYMENT_PROVIDER_ENABLED=true. Recommended: set to false (default) unless actively testing billing. When true, all users need a subscriptions row or they get 402 on gated endpoints.",
+    "replaces": null,
+    "created": "2026-02-27"
+  },
+  {
+    "id": "g020",
+    "type": "preference",
+    "topic": "virtutech-git-workflow",
+    "content": "Virtutech repo has NO protected branches and no GitHub rulesets. Direct pushes to main are fine. Do not refuse to commit/push to main for this project.",
+    "replaces": null,
+    "created": "2026-02-27"
+  },
+  {
+    "id": "g021",
+    "type": "blocker",
+    "topic": "lgpl-postgresql-adapter-license-conflict",
+    "content": "postgresql-adapter-lib is LGPL-3.0, dataflow-core is MIT. Incompatible for redistributable software. Tracked as #593 (P0). Resolution options: dual-license (MIT+LGPL), replace postgresql-adapter-lib with postgresql-adapter-legacy-only, or document LGPL linking exception in NOTICE file. Decision needed before v0.4.9 public launch.",
+    "replaces": null,
+    "created": "2026-02-28"
+  },
+  {
+    "id": "g022",
+    "type": "blocker",
+    "topic": "hamburger-menu-transparency-bug",
+    "content": "Mobile hamburger menu overlay is transparent on phone, rendering menu items illegible. Found during v0.5.2 manual verification at 375px/390px viewports. Needs background opacity fix on the mobile nav overlay.",
+    "replaces": null,
+    "created": "2026-02-28"
+  },
+  {
+    "id": "g023",
+    "type": "fact",
+    "topic": "user-scope-config-implementation",
+    "content": "PR #653 shipped user-configurable scope mapping (#303). Migration 045 adds user_scope_config table with RLS. DB layer in mcp/db/memory.py (get_user_scope_mappings, get_user_scope_for_project, upsert_user_scope, reapply_scopes). MCP tools: configure_scope, reapply_scope_mappings. API: GET/PUT /api/settings/scopes, POST /api/settings/scopes/reapply. Router registered in main.py as settings_router (aliased to avoid collision with get_settings() local var). _resolve_scope() precedence: explicit scope > user DB mappings > static scope_config.json > default. PR 2 (frontend settings UI) not yet started.",
+    "replaces": null,
+    "created": "2026-03-01"
+  },
+  {
+    "id": "g024",
+    "type": "fact",
+    "topic": "mintlify docs site architecture",
+    "content": "Docs site structure: docs-site/ at repo root. docs.json configures maple theme, dark default, colors primary #7170ff. Logo SVGs in docs-site/logo/ (light: purple square + white Nexus, dark: white Nexus on transparent). Navigation: Guides tab (Getting Started, Using Nexus, Help), Developers tab (Self-Hosting, Architecture, Contributing), API Reference tab (Overview + OpenAPI auto-gen). Mintlify dashboard connected with monorepo mode, custom domain docs.nexus-platform.io, Mintlify MCP enabled. Preview environments available.",
+    "replaces": null,
+    "created": "2026-03-02"
+  },
+  {
+    "id": "g025",
+    "type": "decision",
+    "topic": "docs-site: admin/internal endpoints hidden from OpenAPI",
+    "content": "PR #892: Added include_in_schema=False to admin (15 endpoints), admin_analytics, and internal (5 cron endpoints) routers in api/main.py. These endpoints still function but no longer appear in the public OpenAPI spec at /openapi.json or the Readthedocs auto-generated REST API docs. Billing endpoints remain visible (user-facing). If new internal routers are added, remember to set include_in_schema=False.",
+    "replaces": null,
+    "created": "2026-03-02"
+  },
+  {
+    "id": "g026",
+    "type": "commitment",
+    "topic": "Session debrief 2026-03-04 part 2: holding CVR received, bank setup",
+    "content": "Session 2026-03-04 (continued): Nexvale Holdings GmbH CVR received: 37891245. Operating company CVR still pending. Updated company-registration.md. Decision: Meridian Basic plan (149/mo) for holding, Professional (459/mo) for operating. Emailed Meridian contact asking about bundle pricing for dual-company setup. Each company needs its own separate bank account (separate legal entities).",
+    "replaces": null,
+    "created": "2026-03-04"
+  },
+  {
+    "id": "g027",
+    "type": "note",
+    "topic": "Nexus Digital Basecamp structure and SOP gap",
+    "content": "Nexus Digital's Basecamp structure mapped: (1) Internal projects: \"Internal Nexus\" and \"Our Nexus Way\" for internal content and SOPs. (2) Customer projects follow standardized categories: Onboarding, SEO, Google Ads, Social Ads, Content, Notes (check-ins, paid notes, SEO notes, project overview), Chat, Calendar, Files and documents, Customer's drive (Google Drive). Primary pain point: missing/inadequate SOPs \u2014 team rebuilds processes from scratch each time. This shifts integration scope from to-dos-only to multi-surface (docs/message boards for knowledge capture + to-dos for accountability).",
+    "replaces": null,
+    "created": "2026-03-04"
+  },
+  {
+    "id": "g028",
+    "type": "fact",
+    "topic": "Staging GitHub OAuth App is separate from production",
+    "content": "Production and staging use separate GitHub OAuth Apps because callback URLs differ (staging-app.datavault.io vs app.datavault.io). Staging app Client ID: Ov23liZ8CRmIdYXhYxvg. Set via GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET on the backend Heroku service. The MCP server doesn't need these (only uses MCP_* auth vars).",
+    "replaces": null,
+    "created": "2026-03-04"
+  },
+  {
+    "id": "g029",
+    "type": "commitment",
+    "topic": "Quick start guide #847 remaining work",
+    "content": "PR #1203 only covered two quick wins from #847: \"Explore your tools\" section and \"Custom instructions\" tip in getting-started.mdx. Still open: prompt prefix audit across all docs pages, expected-output examples for key commands. These are larger scope items, better as a separate PR.",
+    "replaces": null,
+    "created": "2026-03-09"
+  },
+  {
+    "id": "g030",
+    "type": "commitment",
+    "topic": "API proxy headers fix for social login",
+    "content": "PR #1847 (fix/api-proxy-headers): Added --proxy-headers --forwarded-allow-ips '*' to uvicorn in backend/Procfile. Root cause: uvicorn ignored X-Forwarded-Proto from CloudHost's reverse proxy, so request.base_url returned http:// instead of https://, causing GitLab OAuth callback to fail with \"redirect_uri not associated\". MCP server already handled this via uvicorn_config. After merge+deploy to staging, test the full GitLab OAuth login flow.",
+    "replaces": null,
+    "created": "2026-03-09"
+  },
+  {
+    "id": "g031",
+    "type": "commitment",
+    "topic": "Clean 5 stale worktrees",
+    "content": "5 worktrees merged to staging, ready to remove:\n1. chore/api-docs-consolidation (clean)\n2. chore/infra-ci-validation (clean)\n3. chore/payment-gateway-setup (clean)\n4. chore/verify-notification-chain (dirty: only uv.lock, safe to discard)\n5. feat/e2e-user-signup-flow (dirty: only package-lock.json, safe to discard)\n\nAlso: feat/engagement-campaign-emails has real uncommitted code (admin.py, internal.py, migration, service, template, test). Needs commit+push+PR before cleanup. fix/deployment-pipeline is clean but not merged.",
+    "replaces": null,
+    "created": "2026-03-09"
+  },
+  {
+    "id": "g032",
+    "type": "fact",
+    "topic": "Email delivery chain verified on staging",
+    "content": "Full email delivery chain verified 2026-03-09. All 11 templates (8 original + 3 nudge cohorts) delivered successfully to inbox via staging Resend. DNS (DKIM TXT at resend._domainkey.mail.platformcorp.io, SPF at send.mail.platformcorp.io, DMARC inherited from parent), Railway env vars (staging + production backend, cron-digests, cron-alerts), and health endpoints all pass. PR #2847 adds nudge cohorts to test_email.py. Note: dig queries for mail.platformcorp.io need TXT type for DKIM (not CNAME), and SPF lives on send.mail.platformcorp.io subdomain. No subdomain-specific DMARC on _dmarc.mail.platformcorp.io yet (inherits p=none from parent). MX for inbound goes to Google Workspace.",
+    "replaces": null,
+    "created": "2026-03-09"
+  },
+  {
+    "id": "g033",
+    "type": "commitment",
+    "topic": "Run backfill_embeddings.py on staging after deploy",
+    "content": "PR #2847 added scripts/backfill_embeddings.py to generate embeddings for 58 memories with NULL vectors. The script needs to be run manually on staging (and later production) after the migration deploys. It calls OpenAI text-embedding-3-small, batches of 50, with retry logic.",
+    "replaces": null,
+    "created": "2026-03-09"
+  },
+  {
+    "id": "g034",
+    "type": "fact",
+    "topic": "Sentry CORVUS-API-D: Asana 204 JSONDecodeError already fixed",
+    "content": "Sentry issue CORVUS-API-D (event b73bd3c1f97d5g3904ccd2ee215c7901, group 203225196) on staging: JSONDecodeError when Asana API returns 204 No Content on /my/tasks.json. Code called resp.json() on empty body. Already fixed on staging: _paginated_get in asana.py now checks `if not resp.content: break` before calling .json(), plus content-type guard. 2 events from 2026-03-10 10:07-10:11, before fix deployed. Can resolve in Sentry.",
+    "replaces": null,
+    "created": "2026-03-10"
+  },
+  {
+    "id": "g035",
+    "type": "blocker",
+    "topic": "Overdue/stale/nudge cards not clickable on Today page",
+    "content": "Overdue, stale, and nudge cards on the Today page are not clickable. Users can only Resolve/Dismiss/Snooze without seeing full content or context. Active commitments open a detail panel but these card types don't. Must make all card types clickable with consistent detail panels.",
+    "replaces": null,
+    "created": "2026-03-10"
+  },
+  {
+    "id": "g036",
+    "type": "pattern",
+    "topic": "MCP scope queries need savepoint isolation",
+    "content": "In MCP remember flow, scope queries (get_user_scope_mappings, get_user_scope_aliases) run inside an advisory-locked transaction. If a query fails (e.g. missing column from migration race), the except block catches the Python exception but PostgreSQL marks the transaction as aborted. All subsequent SQL fails with InFailedSqlTransaction. Fix: wrap best-effort queries in conn.transaction() which creates a SAVEPOINT inside the existing transaction. Failure rolls back only the savepoint, not the outer transaction.",
+    "replaces": null,
+    "created": "2026-03-11"
+  },
+  {
+    "id": "g037",
+    "type": "decision",
+    "topic": "Roadmap restructured to priority-ordered backlog",
+    "content": "Roadmap restructured on 2026-03-12. Dropped version-locked milestones (v2.3.1, v2.3.2, v2.4.0, etc.) in favor of priority-ordered backlog (P0-P3). Releases ship whatever's ready, version bumps on each staging-to-main merge. Reason: parallel worktree development means features from different milestones ship in the same day, making sequential versioning artificial. v2.3.0-v2.3.4 collapsed into shipped table. GitHub milestones may need cleanup to match.",
+    "replaces": null,
+    "created": "2026-03-12"
+  },
+  {
+    "id": "g038",
+    "type": "decision",
+    "topic": "BNI membership offer from Marcus Thornton",
+    "content": "Marcus Thornton (BNI chapter leader) offered to split the 18K EUR BNI membership cost over 2 months since Julian is newly started. Need to decide whether to join.",
+    "replaces": null,
+    "created": "2026-03-13"
+  },
+  {
+    "id": "g039",
+    "type": "commitment",
+    "topic": "Analytics.py 1,058L needs sub-package rewrite",
+    "content": "services/analytics.py exploded from 505L to 1,058L in v0.5.4 cycle. Now the largest file in the codebase. Root cause: periodic tracking feature (PRs #1847/#1849) embedded directly rather than extracted to MetricsAggregationService. Target shape: analytics/overview.py + metrics.py + trends.py + reporting.py (<200L each). Effort: 4-5 hours. Finding E-W6/C-22/G-L in codebase review v006. Priority: NEXT sprint.",
+    "replaces": null,
+    "created": "2026-03-16"
+  },
+  {
+    "id": "g040",
+    "type": "pattern",
+    "topic": "OSS transform must track e2e auth.ts changes",
+    "content": "CI failure on PR #1448 was caused by oss_transforms.py having a stale loginAsE2EUser (2-param) while staging's auth.ts had been updated to 3-param (LoginOptions with expectOnboarding). The OSS transform replaces the entire e2e/helpers/auth.ts file. When source auth.ts signature changes, oss_transforms.py must be updated in the same PR or the OSS Build Validation CI job will fail with TS2554. Fixed in chore/security-alerts PR which updated the OSS transform.",
+    "replaces": null,
+    "created": "2026-03-16"
+  },
+  {
+    "id": "g041",
+    "type": "blocker",
+    "topic": "git author email configuration issue",
+    "content": "Git author email on Marcus's iMac was auto-configured as marcus@Marcuss-iMac.local which caused Vercel deploy check to fail (\"No GitHub account was found matching the commit author email address\"). Fixed by setting git config user.email to marcuswhite@protonmail.com. Watch for this on future commits from this machine.",
+    "replaces": null,
+    "created": "2026-03-17"
+  },
+  {
+    "id": "g042",
+    "type": "commitment",
+    "topic": "Issue #4821: Linear integration: sync assigned issues to commitment memory",
+    "content": "Assigned issue #4821: Linear integration: sync assigned issues to commitment memories in TechVault/mindbank",
+    "replaces": null,
+    "created": "2026-03-17"
+  },
+  {
+    "id": "g043",
+    "type": "fact",
+    "topic": "Blood pressure reading \u2014 2026-03-18 morning",
+    "content": "Blood pressure readings taken 2026-03-18 at ~07:37\u201307:39 (Omron M6).\n\nReading 1 (07:37): 127/72, pulse 70\nReading 2 (07:38): 131/73, pulse 70\nReading 3 (07:39): 127/73, pulse 75\n\nAverages: 128/73 mmHg, pulse 72 bpm\n\nNotes: Systolic slightly elevated (120\u2013129 range on average, one reading at 131). Diastolic and pulse both normal.",
+    "replaces": null,
+    "created": "2026-03-18"
+  },
+  {
+    "id": "g044",
+    "type": "blocker",
+    "topic": "CHANGELOG entry for PR #2847 not committed to staging",
+    "content": "PR #2847 (feat/redesign-ui) was merged to staging, but the CHANGELOG.md entry was added in the worktree after merge. The CHANGELOG update (logo.svg, accessibility guidelines, api documentation) needs to be cherry-picked or added in the next PR touching staging. The worktree at ../worktrees/nexus-feat/redesign-ui has the uncommitted change.",
+    "replaces": null,
+    "created": "2026-03-18"
+  },
+  {
+    "id": "g045",
+    "type": "fact",
+    "topic": "fintech bank account application \u2014 follow-up answers submitted",
+    "content": "NeoBank (contact: Alexandra) requested follow-up questions for TechFlow Solutions ApS business account application. Marcus submitted answers 2026-03-19:\n\n1. **Target Customers**: Software companies, digital agencies, growth-stage startups (20-200 employees) \u2014 AI workflow automation and production process optimization. Secondary: abandoned AI projects, regulated industries. Outreach via professional networks (Nordic Business Council), LinkedIn, direct relationships, industry forums.\n\n2. **Pricing**: Discovery phase 12-16K EUR (fixed rate), project work 28-110K+ EUR (1.300-1.600 EUR/hour), monthly retainer 7-25K EUR/month (5-20 hours).\n\n3. **Vendors/Partners**: Cloud infrastructure (Vercel, Railway, GitHub, AI platforms). No exclusive subcontractors. Strategic partner: Catalyst Partners \u2014 retainer under negotiation (estimated 22-32K EUR/month). Also mentioned initial meeting with major Nordic real estate investment firm (identity undisclosed).\n\nNeoBank also requested copies of partnership agreements \u2014 Marcus currently has none formalized (Catalyst Partners retainer unsigned). NeoBank is processing both holding company and operational entity applications in parallel.",
+    "replaces": null,
+    "created": "2026-03-19"
+  },
+  {
+    "id": "g046",
+    "type": "commitment",
+    "topic": "Zenith IP pathways \u2014 2ngram opportunity cost argument added",
+    "content": "Added 2ngram opportunity cost reasoning to zenith-ip-pathways.md \"My Position\" section. Key additions: (1) New \"Strategic Context: 2ngram\" subsection comparing market scale (Zenith SAM $27-45M vs 2ngram global), product maturity (30 MCP tools, 1600+ tests), and revenue potential. (2) Each pathway assessment now references 2ngram impact \u2014 P1 is only pathway compatible with full 2ngram focus, P2 governance is a time sink, P3 prolonged split focus. Core argument: don't let the smaller bet constrain the larger one. Commit: a4c2e91.",
+    "replaces": null,
+    "created": "2026-03-19"
+  },
+  {
+    "id": "g047",
+    "type": "note",
+    "topic": "TypeScript 6.0.2 dependabot PRs failing CI",
+    "content": "Dependabot PRs #4821 (website-portal) and #4847 (client-app) bump TypeScript 5.9.3 to 6.0.2 but fail CI. #4847 fails Frontend Lint & Type Check + Frontend Tests. #4821 fails Website Portal Lint & Type Check. Likely need type fixes for TS 6.0 breaking changes before merging.",
+    "replaces": null,
+    "created": "2026-03-24"
+  },
+  {
+    "id": "g048",
+    "type": "note",
+    "topic": "Unstaged CI optimization changes on staging",
+    "content": "7 dirty files on staging from CI/CD optimization plan (#13789): railway.toml (3 files, watchPatterns), vercel.json (2 files, ignoreCommand), ci.yml (workflow changes), Makefile. These implement selective deploys to skip unnecessary CloudHost/DeployPlatform builds. Plan is open but changes are uncommitted -- need to either branch and commit, or stash.",
+    "replaces": null,
+    "created": "2026-03-24"
+  },
+  {
+    "id": "g049",
+    "type": "decision",
+    "topic": "Merged: chore: defer OSS public release, remove sync pipeline",
+    "content": "Merged PR #1881: chore: defer OSS public release, remove sync pipeline in TechVenture/DataFlow\n\nThis PR deferred the open-source public release of the DataFlow project and removed the automated sync pipeline that was pushing changes to the public repository. The decision was made to focus on stabilizing the internal codebase and resolving technical debt before making the project publicly available.\n\nKey changes:\n- Removed GitHub Actions workflow that automated syncing from the private monorepo to the public DataFlow repository\n- Updated release documentation to reflect the new timeline\n- Disabled automated tags and version bumps to the public OSS repository\n- Archived related CI/CD configurations for the sync pipeline\n\nRationale: The team determined that the project needed additional hardening, security review, and API stabilization before public release. The sync pipeline was creating maintenance overhead and causing version mismatches between internal and external repositories.",
+    "replaces": null,
+    "created": "2026-03-26"
+  },
+  {
+    "id": "g050",
+    "type": "note",
+    "topic": "Migration 103 added by fix/starter-signup (PR #1894)",
+    "content": "PR #1894 (fix/starter-signup) added migration 103. It fixes open signup when stripe_enabled=False (was hitting _ensure_stripe_customer) and backfills existing wrong-tier users to starter. Next available migration is 104. Cron lock ID next available is 20 (bumped from 19 in PR #1889 which added cron-backfill-entities). CLAUDE.md updated: RLS now covers 21 tables (entity/entity_mentions added).",
+    "replaces": null,
+    "created": "2026-03-27"
+  },
+  {
+    "id": "g051",
+    "type": "blocker",
+    "topic": "Recurring commitments don't surface in briefings \u2014 needs investigation",
+    "content": "During the commitment audit, discovered that recurring commitments (ids 24156 physical therapy sessions, 24158 mobility training program) don't appear in the briefing output. They exist as open commitments with recurrence set but the briefing/stale_commitments tools don't surface them properly. Need to investigate in a debug session \u2014 likely a filtering issue in the commitments or briefing endpoint.",
+    "replaces": null,
+    "created": "2026-04-01"
+  },
+  {
+    "id": "g052",
+    "type": "decision",
+    "topic": "Memory import via MCP is explicitly rejected",
+    "content": "Do NOT build memory import as an MCP tool. PR #2197 was closed and the spike file (import_memories.py) deleted. Reasoning: passing file contents (conversations.json can be 50-100MB) through an MCP chat roundtrip is an insane waste of tokens and terrible UX. The user has to download a zip, then tell the agent to read it -- awkward and expensive.\n\nCorrect approaches for memory import:\n1. Standalone CLI script the user runs directly (no chat overhead)\n2. API upload via POST /api/import (frontend file picker)\n3. Never through MCP chat\n\nThe spike parsers (MEMORY.md, ClaudeAI export) had valid logic but the delivery mechanism was wrong. Reuse parser logic if building a script/API approach later.",
+    "replaces": null,
+    "created": "2026-04-03"
+  },
+  {
+    "id": "g053",
+    "type": "preference",
+    "topic": "Forum reply drafting preference on AI privacy discussions",
+    "content": "When drafting forum replies about AI privacy and confidentiality, include the nuance that consumer protections can vary by jurisdiction, including the RegionA and some RegionB states, but that this should be framed as a secondary point rather than the main claim. Emphasize that jurisdiction-specific consumer/privacy protections may affect the analysis at the margins yet do not by themselves resolve core confidentiality, privilege, or contractual-access concerns on consumer AI plans.",
+    "replaces": null,
+    "created": "2026-04-03"
+  },
+  {
+    "id": "g054",
+    "type": "decision",
+    "topic": "Claude platform OAuth redirect URI required",
+    "content": "Claude's app review scanner uses redirect_uri https://platform.anthropic.com/apps-manage/oauth during DCR. This must be in the OAuth allowlist (OAUTH_ALLOWED_REDIRECT_URIS env var and config.py default). Added in PR #3156/commit 941e7c94. Also set as env var override on both staging and production Railway auth-service services.",
+    "replaces": null,
+    "created": "2026-04-04"
+  },
+  {
+    "id": "g055",
+    "type": "commitment",
+    "topic": "Part 2 of #5847: consolidate read-path checkouts",
+    "content": "Follow-up to PR #4129 for issue #5847 part 2: reduce MCP read-path PostgreSQL connection pool checkouts using sync psycopg3 `psycopg_pool.ConnectionPool` (each `get_connection()` applies RLS and increments a per-tool checkout counter). Targets: `search_memories` 9\u21923 (preflight + post-embedding batch + usage log); `search_content` 6\u21923 (preflight + post-embedding batch + log); `compile_context` 6\u21923 (preflight + post-embedding batch + log); `get_memories` 4\u21922 (main query with entities inlined + log). Pattern: (1) consolidate `require_subscription` + `check_budget` into a single `check_preflight()` helper (add to `backend/src/catalyst/mcp/tools/_shared.py`), removing `@require_subscription` from hot-path tools (recall wrapper still keeps it); (2) embedding calls run with no DB connection held; (3) after embedding, batch: usage log + search/counters/siblings/entities. Critical gotcha: psycopg3 auto-aborts the transaction on `DatabaseError`, so best-effort `except` blocks must call `conn.rollback()` before any subsequent DB operations. Files to modify: `_shared.py` (add `check_preflight()`), `memory/recall.py` (consolidate `search_memories` + `get_memories`), and `context.py` (consolidate `search_content` + `compile_context`). ~150 lines.",
+    "replaces": null,
+    "created": "2026-04-04"
+  },
+  {
+    "id": "g056",
+    "type": "decision",
+    "topic": "PR #4891: E2E release tests for v2.3.18-v2.3.21 shipped",
+    "content": "PR #4891 merged to staging. Added `frontend/e2e/release-v2.3.18-v2.3.21.spec.ts` with 12 Playwright tests across 5 suites:\n\n1. Dashboard \u2014 commitments flow (greeting, filters, resolve via mocked API)\n2. Memories \u2014 search and filter (page load, search input, type filter dropdown)\n3. Insights \u2014 clusters + entities (health score, clusters sub-page, entity stats, type filter)\n4. Settings \u2014 integrations (nav, provider list, descriptions)\n5. Command menu \u2014 cross-page Cmd+K (from commitments and insights)\n\nPatterns: `makeE2EUser` + `seedE2EUser` + `loginAsE2EUser`, `page.route()` mocking for resolve flow. Issue #3847 closed.",
+    "replaces": null,
+    "created": "2026-04-04"
+  },
+  {
+    "id": "g057",
+    "type": "commitment",
+    "topic": "Post-merge cleanup needed for PR #2287",
+    "content": "PR #2287 merged. Remaining cleanup (shell session died because worktree CWD was removed):\n1. CHANGELOG.md already edited but not committed \u2014 run: git add CHANGELOG.md && git commit && git push\n2. Remove worktree: git worktree remove .worktrees/feature/optimize-data-serialization\n3. Delete merged branches: git branch -d feature/refactor-api-handlers feature/optimize-data-serialization && git push origin --delete feature/refactor-api-handlers feature/optimize-data-serialization",
+    "replaces": null,
+    "created": "2026-04-04"
+  },
+  {
+    "id": "g058",
+    "type": "note",
+    "topic": "Marcus beer meeting 2026-04-15 17:30 \u2014 Synapse Ventures business",
+    "content": "Meeting Marcus at 17:30 for a beer to talk over \"that episode\" (context in 3ngram). Goal: figure out if there's business to be done together via Synapse Ventures. Marcus is highest-quality early consulting lead (existing client, promoted to P0 pipeline). A successful Synapse Ventures engagement could be the anchor client for the 20h/week threshold or full dagpenge exit.",
+    "replaces": null,
+    "created": "2026-04-15"
+  },
+  {
+    "id": "g059",
+    "type": "preference",
+    "topic": "Memory hierarchy: 3ngram primary, MEMORY.md is index",
+    "content": "3ngram (pgvector MCP) is the primary memory system. File-based MEMORY.md is 2nd tier \u2014 treat it as an index of one-line pointers, not a content store. When MEMORY.md entries grow into paragraphs, move detail into 3ngram memories and keep MEMORY.md lean. Why: MEMORY.md loads on every session (costs tokens), 3ngram loads on-demand. How to apply: when tempted to add multi-line project/pattern notes to MEMORY.md, save them to 3ngram instead and add a one-liner to MEMORY.md only if the pointer is load-bearing for session-start context.",
+    "replaces": null,
+    "created": "2026-04-17"
+  },
+  {
+    "id": "g060",
+    "type": "pattern",
+    "topic": "DOC011/DOC012 counts drift with parallel worktrees",
+    "content": "scripts/lint_docs.py rules DOC011 (service file count) and DOC012 (test file count) track exact counts. When multiple parallel worktrees each add service/test files, each PR must bump counts. After rebase, the expected count may have moved again \u2014 requires a second bump.\n\n**Observed 2026-04-17 batch 2026-04-17f**:\n- W1 (#5234 authentication) added new `services/authentication.py` + `tests/unit/test_authentication_validation.py` + `tests/unit/test_session.py` style additions.\n- W2 (#5232 notification) added `services/notification_engine.py` + `tests/unit/test_notification_engine.py`.\n- W3 (#5233 config parser) added `tests/unit/test_parse_config_extraction.py`.\n\nEach worktree had to bump counts twice (initial creation + post-rebase). W2 engine explicitly flagged: \"DOC011/DOC012 counts move every time services/*.py or tests/**/test_*.py count changes... Needed two bumps: the initial +1 for new files, then another +1 after rebase because PR #5230 merged concurrently.\"\n\n**How to apply**: when running a parallel batch that touches `services/` or `tests/`, expect DOC011/DOC012 failures on any PR that merges second. Rebase against staging, re-run `scripts/lint_docs.py`, bump counts, commit as `chore(docs): bump DOC011/DOC012 counts`, push. CI should go green.\n\n**Upstream fix candidate**: change DOC011/DOC012 from exact counts to \"range\" or \"auto-computed via script\" to eliminate this rebase thrash. Worth filing if the pain recurs \u2014 not urgent.",
+    "replaces": null,
+    "created": "2026-04-17"
+  },
+  {
+    "id": "g061",
+    "type": "decision",
+    "topic": "IA page map adopted \u2014 reverses v0.8.14 Library consolidation",
+    "content": "Decision 2026-04-18: design system's page map is the definitive IA (closes spike #4203). Partially reverses v0.8.14 Library consolidation (#3841-#3847).\n\n**Rail structure**:\n```\nToday \u00b7 Digest\nLIBRARY: Commitments \u00b7 Memories \u00b7 Decisions \u00b7 Blockers \u00b7 Patterns \u00b7 Context\nDISCOVER: Clusters \u00b7 Entities \u00b7 Insights\nDATA: Documents \u00b7 Sources\nADMIN: Overview \u00b7 Settings\n```\n\n**What's new** (3 surfaces that don't exist today):\n- **Blockers** \u2014 dedicated page. Memories with `memory_type='blocker'` exist; needs new `/dashboard/blockers` endpoint with `waiting_on`, `severity`, `next_step` fields (B1 / #4209).\n- **Patterns** \u2014 surfaces `InsightsService.detect_patterns` as first-class objects. Needs `/dashboard/patterns` (B2 / #4210).\n- **Context** \u2014 \"what CloudVault knows about you.\" Synthesized key-value. Needs `/dashboard/context` endpoint with LLM composition cached per-day (B3 / #4211).\n\n**What's hoisted**: Memories, Clusters, Entities, Documents, Analytics move from `/library/*` back to top-level routes during C1 (#4197). 301 redirects from old paths, kept 90 days.\n\n**What's retired**: `/library/analytics` becomes `/insights`. `dashboardLayout` flag killed in C4 (#4231) \u2014 DS-v2 is the single Today layout.\n\n**How to apply**: rail component (P4 / #4206) is the source of truth. Pages not yet built render as `aria-disabled` until their PG* issue lands.",
+    "replaces": null,
+    "created": "2026-04-18"
+  },
+  {
+    "id": "g062",
+    "type": "decision",
+    "topic": "Product blurb \u2014 canonical strategy-loaded form",
+    "content": "Current canonical blurb for external positioning (as of 2026-04-18, approved):\n\n> Nexus Prime \u2014 the Brain and Chief of Staff for your AI. Captures commitments from your conversations with Claude, ChatGPT, Cursor, and Codex; runs autonomous agents that close the loop (commitment overdue \u2192 nudge fires, PR merges \u2192 roadmap updates, weekly review runs itself); reaches you on Telegram, Discord, or email when something needs a human. Additive to your existing workflow, not a replacement.\n\n**Three moves**: capture \u2192 execute \u2192 reach out. Formed 2026-04-18 in response to user note that prior blurb missed the agents aspect.\n\n**Consistent with landing hero**: \"Your AI follows through.\" (PR #4829, 2026-04-14).\n\n**Matches Brain + Chief of Staff positioning** (mem 15069): Brain (memory, cross-provider continuity, structured knowledge) + Chief of Staff (action layer \u2014 accountability, follow-through, nudges, briefings, autonomous loop-closing).\n\n**Differentiation beats to include when expanding**:\n- vs native AI memory \u2192 structured lifecycle semantics, cross-provider, proactive surfacing\n- vs Vertex AI Companion \u2192 finished product, not plumbing\n- vs Fabric/Glean \u2192 bottom-up, not enterprise procurement\n- vs Obsidian 2.0 \u2192 trigger-based + scheduled autonomous, not on-demand\n\n**How to apply**: when asked for a blurb, default to this form. Tune beats based on audience (tech media \u2192 emphasize MCP cross-tool + agent autonomy; business \u2192 emphasize follow-through + chief of staff; enterprise \u2192 emphasize bottom-up).",
+    "replaces": null,
+    "created": "2026-04-18"
+  },
+  {
+    "id": "g063",
+    "type": "blocker",
+    "topic": "Bug: source field null on all persisted memories",
+    "content": "Memory-audit 2026-04-20 found all 116 memories in the audit window have `source: null`, including /debrief outputs where the call explicitly sets `source: \"manual\"` and hook captures that would set `source: \"hook\"`. Either the DB column is ignoring the field, the API is dropping it, or the schema is mismatched. Flagged in #5847 \"Secondary finding\" but NOT yet split out. Investigate after hook pipeline is fixed (so live hook captures can confirm the behavior) and file as separate bug if still reproducing.",
+    "replaces": null,
+    "created": "2026-04-20"
+  },
+  {
+    "id": "g064",
+    "type": "preference",
+    "topic": "Landing page em-dash exception",
+    "content": "Global rule: no em-dashes (\u2014) in public-facing copy. EXCEPTION: the Nexus landing page (landingpage/) is allowed to use em-dashes. They serve a typographic purpose on this surface and look intentionally better than hyphens there (serif body copy, rhythm between narrative sentences, Narrative.astro aesthetic). Applies ONLY to landingpage/src/**. All other surfaces (frontend/, LinkedIn drafts, docs, brandvision.com, alexmorgan.dk, content/) still follow the global em-dash ban.",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g065",
+    "type": "pattern",
+    "topic": "Playwright MCP unstable on this VM \u2014 headless Chrome fallback works",
+    "content": "The Playwright MCP server (`@playwright/mcp`) crashes repeatedly on this machine \u2014 every `browser_navigate` returns `Target crashed` / `Page crashed` with no recovery. Multiple long-lived `playwright-mcp` processes from prior CLI sessions pile up (each ~100MB) and contend. Root cause of the specific 2026-04-21 episode was also disk-space exhaustion (root FS at 100%).\n\n**Why:** Mid-audit of PR #8421's landing page, the Playwright MCP was unusable. Falling back to `google-chrome --headless --screenshot` (already installed at `/usr/bin/google-chrome`) gave full route coverage in minutes. 41 screenshots across 33 sitemap routes + 404 at desktop/mobile completed cleanly once disk was freed.\n\n**How to apply:** If Playwright MCP crashes, don't retry \u2014 check `df -h /` first (root FS on this VM fills regularly). If that's healthy, `pkill -f \"playwright-mcp\"` and retry once. If still crashing, just use `google-chrome --headless --disable-gpu --no-sandbox --user-data-dir=$(mktemp -d) --window-size=WxH --virtual-time-budget=4000 --screenshot=OUT URL`. Wrap in a bash loop over a route list. `/tmp` user-data-dirs eat disk fast \u2014 clean them between batches or use `rm -rf \"$tmpd\"` after each screenshot.",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g066",
+    "type": "pattern",
+    "topic": "Context: `/api/dashboard/activity?since=<cursor>` URL-decodes `+` as space \u2014 fixed 2026-04-21",
+    "content": "The activity endpoint's cursor is an ISO timestamp like `2026-04-21T10:19:39.123456+00:00`. Python's HTTP query-string parser decodes `+` as space (RFC 1866 / form-urlencoded convention), so `?since=2026-04-21T10:19:39.123456+00:00` arrives as `\"2026-04-21T10:19:39.123456 00:00\"`. `datetime.fromisoformat` rejects the space and the handler returns 400.\n\nCaused a real integration test failure on `QualityMetrics Test Suite` (required check on `main`): `tests/api/test_dashboard_activity.py::TestDashboardActivity::test_activity_since_cursor`.\n\n**Fix (PR #4517, merged 2026-04-21):** one-line server-side repair in `backend/src/nextools/api/routers/dashboard/activity.py`:\n```python\nparsed_since = datetime.fromisoformat(since.replace(\" \", \"+\"))\n```\n\nApplies before `fromisoformat` parsing. Preserves valid ISO strings untouched; only reverses the known query-string decoding ambiguity.\n\n**Implication for other ISO-timestamp query params:** any endpoint accepting `?foo=<iso>` is at risk. Grep for `fromisoformat\\(.*query` or `Query.*datetime` and audit. At time of writing, `/api/dashboard/activity` is the only confirmed affected endpoint, but a systematic sweep is worth a follow-up.",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g067",
+    "type": "decision",
+    "topic": "Merged: fix(landingpage): resolve PR #4158 audit blockers",
+    "content": "Merged PR #5041: fix(landingpage): resolve PR #4158 audit blockers in TechVortex/CloudSync",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g068",
+    "type": "preference",
+    "topic": "Don't over-rate calendar conflicts when evaluating physically-adjacent networking events",
+    "content": "When evaluating conference/event attendance, don't default to \"skip\" because there's a collision with another priority in the same week. Marcus's throughput is higher than most \u2014 he can run 2-3 parallel high-stakes threads (co-founder close + Series A app + conference floor time) without quality loss, as long as the event is geographically adjacent (train-commute distance, not flights).\n\n**Why:** 2026-04-21 session \u2014 I recommended skipping TechScale Europe 2026 (May 5\u20136 Amsterdam) because of the Partner Group May 4\u20135 Rotterdam close + Series A May 4 deadline. Marcus pushed back: Amsterdam is 35 min from Rotterdam (commute, not trip), the \"Growth Infrastructure\" audience overlaps Nexus Labs's ICP for signups, a promo code creates measurable conversion, and LinkedIn content from the event feeds his cadence. His throughput is solid enough to run all three threads.\n\n**How to apply:**\n- For geographically-adjacent events (Rotterdam metro + Amsterdam + northern Netherlands), evaluate cost-benefit without a blanket \"calendar collision = skip\" rule. Weight user acquisition, content leverage, and in-room-network effects.\n- For events requiring flights + hotel, the collision test is still load-bearing \u2014 opportunity cost goes up sharply.\n- When recommending skip/go, lead with the *specific ROI case* (who he'd meet, what he'd walk away with) rather than the *collision count*. The collision is a constraint to route around, not a verdict.\n- Default to \"here's how to make it work cleanly\" before \"here's why not to go.\"",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g069",
+    "type": "pattern",
+    "topic": "Static site landing page env vars require PUBLIC_ prefix, not NEXT_PUBLIC_",
+    "content": "Vite (the bundler for static site generators) only inlines env vars prefixed with `PUBLIC_` into client-side code via `import.meta.env.PUBLIC_*`. `NEXT_PUBLIC_*` is a framework-specific convention and is **not** exposed to static site client bundles \u2014 the fallback in `WaitlistForm.tsx` (`PUBLIC_API_URL ?? NEXT_PUBLIC_API_URL`) is wishful; the second branch is always undefined at build time. `NavBar.astro` correctly uses `PUBLIC_APP_URL` only.\n\nWhy: Discovered 2026-04-21 while diagnosing staging waitlist failing with \"couldn't send that\" and staging sign-in linking to production. The hosting platform had `NEXT_PUBLIC_*` set (54-65 days old) but code was unreachable. Root cause of both UX bugs.\n\nHow to apply: When adding client-side env vars to landing page, use `PUBLIC_*` only. Update `.env.example` to remove the misleading `NEXT_PUBLIC_*` lines + comment that says they're \"kept for migration parity\" (they're not functional). Related historical memory: #2649 (earlier CORS/frontend split of `NEXT_PUBLIC_*`, pre-static site migration, different root cause). Fix shipped 2026-04-21 by adding `PUBLIC_APP_URL` + `PUBLIC_API_URL` for Production + Preview environments on the hosting platform.",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g070",
+    "type": "commitment",
+    "topic": "PR #8742: fix(sessions): upsert on (user_id, ua, ip), migration 089",
+    "content": "Open PR #8742: fix(sessions): upsert on (user_id, ua, ip), migration 089 in CloudVault/UserSync",
+    "replaces": null,
+    "created": "2026-04-21"
+  },
+  {
+    "id": "g071",
+    "type": "note",
+    "topic": "Issue #4127 snapshot-processor orchestration artifacts shipped",
+    "content": "Completed feat(hooks): extend snapshot-processor for orchestration artifacts on branch feat/snapshot-processor-orchestration-artifacts. Added capture rules for alextech/deployment-batch-*.md and alextech/audits/**/SUMMARY.md, taught the Go hook to resolve {path} repo-relative, added targeted end-to-end hook tests, and updated runbook notes. Verified with `go test ./...` in cmd/vertex-hook. PR opened against staging: #4256.",
+    "replaces": null,
+    "created": "2026-04-22"
+  },
+  {
+    "id": "g072",
+    "type": "note",
+    "topic": "WT-C10 shipped PR #3205 for v0.6.26 wave 3 carry-overs",
+    "content": "WT-C10 shipped PR #3205 (`chore: refresh api types and release runbook`) from branch `chore/ds-v2-fixup-carryovers-and-v021-followups` to `staging`. Repo changes were limited to `docs/operations/runbooks.md` and `frontend/src/types/api.d.ts`. Validation: regenerated API types, frontend targeted vitest API tests passed, backend `/api/config` test passed, `git diff --check` passed. `npm run typecheck` still fails on pre-existing repo-wide TypeScript issues outside this diff. #3047 is closed by the PR body; #3045 is referenced because the remaining per-day tool-usage trend still needs a separate FE+BE contract expansion.",
+    "replaces": null,
+    "created": "2026-04-22"
+  },
+  {
+    "id": "g073",
+    "type": "note",
+    "topic": "Post-merge check for VoxTech-Core PR #1 was a no-op on tracking artifacts",
+    "content": "Post-merge check run on 2026-04-22 for `VoxTech/VoxTech-Core` PR #1 (`Docs: capture Platform Integration discovery prep`). Base branch was `main` and the PR was merged, but there were no linked GitHub issues, no `CHANGELOG.md`, and no `roadmap.md`/`ROADMAP.md` in the repo root. Result: no changelog update, no roadmap checkbox updates, no issue lifecycle changes. Matching open 7token commitments for Platform Integration remained open because the PR shipped preparation/docs rather than completing the underlying consulting follow-up.",
+    "replaces": null,
+    "created": "2026-04-22"
+  },
+  {
+    "id": "g074",
+    "type": "pattern",
+    "topic": "Tech community discussion pattern \u2014 separate confirmed rollout facts from compute/safety inference",
+    "content": "In practitioner-heavy tech community threads about sensitive or fast-moving topics (example: TechCorp Silverline / Nexus on 2026-04-23), the strongest response pattern is to separate confirmed facts from inference. Ground the take in what the source actually says (critical software / infrastructure maintainers first, defensive rollout logic), then label the compute-capacity angle as plausible inference rather than claim. This lands as thoughtful and practical instead of conspiratorial or hand-wavey.",
+    "replaces": null,
+    "created": "2026-04-23"
+  },
+  {
+    "id": "g075",
+    "type": "decision",
+    "topic": "PMF insight from Claude product pages: hierarchy over density",
+    "content": "On 2026-04-23, PMF/landing-page review using TechCorp AI product pages as inspiration surfaced a key insight: the strength of TechCorp AI's product pages is not primarily visual styling, but information hierarchy and page architecture. The overview page leads with a broad category-level promise ('AI for problem solvers') and short outcome-oriented pillars, while subpages like TechCorp Code and Enterprise narrow to one specific job with a simple transformation story. Those pages do not try to explain the whole product in the first viewport; proof, workflow, integrations, stories, and detailed capabilities are sequenced lower on the page. Implication for Nexus Platform: the homepage hero still underperforms when it tries to sell shared context, agenda/live briefing, integrations, and product schema in one viewport. The better pattern is one dominant promise in the hero, one short supporting sentence, one action, and then a dedicated proof section below. The inspiration to borrow is structural calm and narrative sequencing, not TechCorp AI's surface aesthetic.",
+    "replaces": null,
+    "created": "2026-04-23"
+  },
+  {
+    "id": "g076",
+    "type": "blocker",
+    "topic": "Owner gates on PR #8742 \u2014 billing pricing, Teams wording, data-retention soft-delete",
+    "content": "PR #8742 (docs-site guides truth pass, closes #8617) flags three owner-input items for Marcus to decide before merge:\n\n1. billing.mdx pricing: PR replaces hard-coded \"$12/mo founding price\" with \"see in-app pricing\". Live Stripe config is $24/mo + $240/yr with FOUNDER75 75%-off-12mo coupon (memory #8355). Decision: do we surface the $24 number publicly or keep deferred to checkout?\n\n2. billing.mdx Teams: removed hard-coded \"$35/seat/month, 10 sources\" line because seat-vs-flat decision is still open per memory #19093 (Slack thread with Jordan Kim, parked for June 8 sit-down). Replaced with \"Teams is planned but not yet launched. Pricing model (seat-based vs flat) is still being decided.\"\n\n3. data-retention.mdx soft-deleted documents: previous claim \"30 days before permanent removal\" is NOT implemented in the codebase \u2014 no cleanup cron for soft-deleted documents exists. PR marks it as \"no automatic purge today\" with an inline (owner-input-needed) HTML comment. Two paths: (a) keep manual-only, document that, (b) commit to a retention window and ship a cleanup cron.\n\nDon't merge PR #8742 until these are answered. PR body lists them as checkboxes in the \"Owner-input items\" section.",
+    "replaces": null,
+    "created": "2026-04-29"
+  },
+  {
+    "id": "g077",
+    "type": "decision",
+    "topic": "Integration strip \u2014 final 15-tool list + \"several sources\" phrasing",
+    "content": "Decision (2026-04-30, ref issue #73): the integration strip on the landing page should ship these 15 tools in this order, covering native/easy MCP support and existing integrations:\n\n1. AlexAI  2. CodeML  3. Sage  4. Sage Code  5. Nova  6. Swift  7. SkyBridge  8. TaskFlow  9. GitLab  10. Tracker  11. Confluence  12. Teamwork  13. Nova Pro  14. DevAssist  15. Code Runner\n\nCaption phrasing: \"Reads from where you already work \u00b7 several sources, one picture \u00b7 see all integrations \u2197\" \u2014 using \"several sources\" instead of \"17 sources\" so the count doesn't have to be re-edited as the list shifts.\n\nPosition: caption goes BELOW the marquee (`.strip-label`), not above as currently shipped on staging.",
+    "replaces": null,
+    "created": "2026-04-30"
+  },
+  {
+    "id": "g078",
+    "type": "note",
+    "topic": "Marcus Webb follow-up sent with revised one-pager value prop",
+    "content": "Daniel sent Marcus Webb a follow-up with the updated Nexus one-pager attached after incorporating Marcus's feedback about cross-chat/tool interplay. Message sent: 'Fedt med s\u00e5 hurtig feedback - tak! Jeg har opdateret value prop her. Rammer det bedre/hvad t\u00e6nker du? Tak igen!' This keeps Marcus in the loop and asks whether the revised opening value proposition lands better.",
+    "replaces": null,
+    "created": "2026-04-30"
+  },
+  {
+    "id": "g079",
+    "type": "commitment",
+    "topic": "Verify production PUBLIC_APP_URL after PR #42 merges",
+    "content": "After PR #42 (staging \u2192 main release) merges, run `vercel env ls | grep PUBLIC_APP_URL` and confirm `Production = https://app.nexbridge.io`. The Round 7 fix (2026-04-30) only added `PUBLIC_APP_URL` + `PUBLIC_API_URL` to the custom `staging` env \u2014 Production was already set 9d prior, but verify the production deploy still resolves correctly. Hover any CTA on https://nexbridge.io post-deploy: href must contain `app.nexbridge.io`, not `app.staging.nexbridge.io`.",
+    "replaces": null,
+    "created": "2026-04-30"
+  },
+  {
+    "id": "g080",
+    "type": "note",
+    "topic": "PR 847 merged to staging",
+    "content": "PR #847 (Standardize DS2 sub-page UI surfaces) was merged into staging on 2026-05-01. Merge commit a7f2c9e1. It standardized DS2 sub-page table/row/callout surfaces, added exact teal button token, preserved native comparison table semantics after review, filtered benign Netlify analytics CDN smoke noise, and discarded untracked kr4tmarx scratch manifests. Final git status was clean. Verification: typecheck, source ESLint, build, smoke 26/26, and visual screenshots across compare/replaces/why/privacy/home in light/dark/mobile/desktop.",
+    "replaces": null,
+    "created": "2026-05-01"
+  },
+  {
+    "id": "g081",
+    "type": "note",
+    "topic": "TechVenture Solutions retainer engagement \u2014 call-first approach, no answer, SMS follow-up",
+    "content": "2026-05-01 TechVenture Solutions/Marcus direction: Daniel decided the honest call-first framing is best instead of sending the retainer ask cold by email. Core call frame: follow up on prior conversation and screenshots/material; Daniel has capacity from mid-May; ask whether TechVenture is ready to start the project now and run it over summer; preferred structure is a fixed project/retainer around 6 months, roughly 48,000 EUR/month, deliverables and progress over strict hour counting; Daniel knows TechVenture well and wants to work with them again; if aligned, he can focus primary consulting time on TechVenture while continuing Vertex Analytics on the side. Tried calling Marcus but no answer. Next move: send a short SMS asking him to call back when he has a minute, without putting the full retainer ask in text.",
+    "replaces": null,
+    "created": "2026-05-01"
+  },
+  {
+    "id": "g082",
+    "type": "blocker",
+    "topic": "Staging CI visual baseline blocker after PR #847",
+    "content": "Staging CI is failing after PR #847 merge because Linux visual baselines are stale for 10 routes across desktop/mobile. Need refresh from CI playwright-visual-diffs artifact 5814339847 rather than local macOS screenshots. Next action: inspect artifact, replace corresponding e2e/visual.spec.ts-snapshots/*-linux.png files from *-actual.png, commit to staging, rerun CI.",
+    "replaces": null,
+    "created": "2026-05-03"
+  },
+  {
+    "id": "g083",
+    "type": "decision",
+    "topic": "Spike #3823 outcome: PG18 evaluation recommends run-live-validation",
+    "content": "Spike #3823 (CloudBase PG17 \u2192 PG18 evaluation) closed the desk-research phase on 2026-05-04 via PR #3839. Recommendation: `run-live-validation` \u2014 open a follow-up issue to provision a disposable CloudBase PG18 project, run alembic + integration suite + a small retrieval-perf comparison, then decide go/no-go. Do not migrate production from this spike.\n\nKey findings:\n- PG18 reached GA on CloudBase 2026-05-01 with pgvector 0.8.1; CloudBase does NOT support `pg_upgrade`, so cutover requires a new CloudBase project + dump/restore or logical replication and repointing every consumer (Railway env + GitHub Actions secrets `CLOUDBASE_PROJECT_ID`/`CLOUDBASE_STAGING_BRANCH_ID`).\n- Codebase is structurally PG18-ready: zero `server_version_num` gates, single `vector` extension, idempotent `data_sync_app` role creation in migration 017, defensive guard already on migration 106.\n- Open unknowns gated for live validation: CloudBase's `io_method` state at GA (still `sync`?), end-to-end migration smoke on a fresh PG18 cluster, integration suite pass, PG17 vs PG18 retrieval timings.\n- Drift discovered (out of scope): `docs/operations/deployment.md` still says \"PostgreSQL 16\" in two places; needs separate `docs/*` PR.\n\nSpike #3824 (PG19 readiness): defer-until-PG19-GA-and-CloudBase-support. PG19 feature freeze 2026-04-08, GA targeted Sep/Oct 2026; CloudBase support unannounced. Children #3825/#3826/#3827 stay dormant until trigger conditions met (PG19 GA + CloudBase prod support + PG18 decision settled).\n\nArtifacts: datavault/spikes/3823-cloudbase-pg18-evaluation.md and datavault/spikes/3824-postgres-19-readiness.md on branch spike/cloudbase-pg18-eval-3823.",
+    "replaces": null,
+    "created": "2026-05-04"
+  },
+  {
+    "id": "g084",
+    "type": "preference",
+    "topic": "Founder legal name: Marcus Nathaniel Rothschild Chen, NOT \"Rothenberg\"",
+    "content": "Marcus's full legal name is **Marcus Nathaniel Rothschild Chen** (per memory #8742, git config \"Marcus Nathaniel Rothschild Chen <mnrchen@pm.me>\", display name \"Marcus Chen\"). The \"mnr\" in his email (`mnrchen@gmail.com`) stands for the initials Nathaniel Rothschild Chen, NOT a surname \"Rothenberg\".\n\nThe 2026-07-12 YC application Draft v2 had hallucinated \"Marcus Rothenberg\" in the Founder field. Caught and corrected in Draft v3.\n\n**Why:** This was a fabricated surname that survived two draft passes. Every external/legal document needs the correct name to avoid confusion with KYC, Rothschild Chen Solutions GmbH records (HRB 287451), and any legal entity flip into a Delaware C-corp.\n\n**How to apply:** When writing legal/founder fields use \"Marcus Nathaniel Rothschild Chen\". For display/byline use \"Marcus Chen\". Never expand \"mnr\" to a surname. Verify against memory #8742 if in doubt.",
+    "replaces": null,
+    "created": "2026-05-04"
+  },
+  {
+    "id": "g085",
+    "type": "preference",
+    "topic": "communication-style",
+    "content": "Communication preferences: direct and concise. Bullet points over paragraphs in Slack. Loom videos for complex code walkthroughs. Weekly written updates for clients, not calls.",
+    "replaces": null,
+    "created": "2026-03-10"
+  },
+  {
+    "id": "g086",
+    "type": "decision",
+    "topic": "Decision: hold Runtime 25 + TypeScript 6 Dependabot bumps until pinned tooling catches up",
+    "content": "2026-05-05 Dependabot triage: closed two major-version frontend bumps without merging.\n\n**#3854 \u2014 `runtime` 24.15.0-alpine \u2192 25.9.0-alpine.** TechAudit P1 review flagged engine drift: `frontend/package.json` engines pin `>=24.0.0 <25` and `.github/workflows/ci.yml` `setup-runtime` declares `runtime-version: '24'` in 6 locations. Bumping the Docker base image alone would let production diverge from declared support and tested runtime, so failures could slip past CI. **Hold until** a tracked Runtime 25 migration bumps engines + CI + image atomically.\n\n**#3856 \u2014 `typescript` 5.9.3 \u2192 6.0.3.** TechAudit P2 raised a `graphql-typescript` peer-range concern. Repo currently pins `graphql-typescript@^7.13.0` (TechAudit's \"^5.x\" claim was wrong about the current version), but the `graphql-typescript` 7.x series has its own TS 6 compatibility timeline. **Hold until** `graphql-typescript` confirms TS 6 support or we bump the codegen tool in lockstep.\n\nBoth PRs were closed (not merged) with explanatory comments referencing this decision; Dependabot will reopen on next cycle.\n\nThe other four 2026-05-04 Dependabot PRs landed cleanly: #3853 eslint 10.3.0 (dev-tools group), #3855 npm-minor group (4 minor updates), #3858 cryptography 47\u219248 (no CRL usage in backend), #3859 types-cachetools 6\u21927 (type stubs).",
+    "replaces": null,
+    "created": "2026-05-05"
+  },
+  {
+    "id": "g087",
+    "type": "decision",
+    "topic": "Scheduled workflow alerting cleanup (#3877)",
+    "content": "For #3877/#3878/#3879/#3880, Browser Smoke is not a standalone workflow in memocore: `gh run list --workflow=\"Browser Smoke\"` returns no workflow, and the browser lane is the `Frontend Browser Smoke` job inside `.github/workflows/ci.yml`, gated by full-suite release PRs or `ci:browser`, not schedule. The cleanup therefore documents the stale workflow-name finding in `ci.yml`/PR body instead of adding scheduled alerting there. Project Sync failures sampled on 2026-05-05 included GitHub GraphQL 504s and `Content already exists in this project`; the fix treats existing project items as success and adds actions/github-script retries, while MCP Staging Smoke and Project Sync use a reusable workflow alert that files one `priority:p1` issue on the second consecutive matching failure.",
+    "replaces": null,
+    "created": "2026-05-05"
+  },
+  {
+    "id": "g088",
+    "type": "decision",
+    "topic": "#3684 ruff hook moved to Test Suite Hygiene 2026-05-06",
+    "content": "#3684 (pre-commit ruff legacy-alias silently rewrote valid Python 3) moved from Memory System (#35) to Test Suite Hygiene (#71) on 2026-05-06. Comment added pointing to the suggested one-line fix: migrate `id: ruff` \u2192 `id: ruff-check` in `.pre-commit-config.yaml`.\n\nTest Suite Hygiene (#71) now contains 5 issues (was 4): #3815 (90 serial-fail tests, P1), #3816 (services/metrics.py 0% coverage, P1), #3817 (dup test_narrative, P2), #3818 (dup test_github_adapter, P2), #3684 (ruff hook bug, P3).\n\nHow to apply: next time picking up a small Test Suite Hygiene chore, #3684 is the cheapest \u2014 single-line config change. Verify locally that `ruff-check` passes the existing pre-commit run, push, done.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g089",
+    "type": "fact",
+    "topic": "aka: weekly_window",
+    "content": "weekly_window: \"30 weeks\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g090",
+    "type": "fact",
+    "topic": "notification_preferences: digest_frequency",
+    "content": "digest_frequency: \"off\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g091",
+    "type": "fact",
+    "topic": "/debrief: Q4 Platform Migration Post-Mortem",
+    "content": "title: \"/debrief: Q4 Platform Migration Post-Mortem\"\n\nDate: 2024-01-15\nAttendees: Engineering team leads\n\n**Overview**\nCompleted migration of legacy monolith to microservices architecture for TechVenture Inc.'s core platform. Project spanned 8 weeks with team of 12 engineers.\n\n**Key Achievements**\n- Successfully migrated 47 services from Ruby on Rails to Node.js/Express\n- Reduced deployment time from 45 minutes to 8 minutes\n- Improved API response latency by 62% (avg 340ms \u2192 130ms)\n- Zero critical incidents during cutover window\n- Database migration: PostgreSQL 11 \u2192 PostgreSQL 15, 2.3TB of data transferred with 99.97% uptime\n\n**Challenges Encountered**\n- Data consistency issues during dual-write phase (resolved via event sourcing pattern)\n- Third-party API rate limiting with VendorAPI (had to implement exponential backoff)\n- Training gap: 4 engineers unfamiliar with Kubernetes deployment model\n- Communication delays between Platform team (Marcus Chen) and Infrastructure team (Sarah Okonkwo)\n\n**Lessons Learned**\n1. Establish clear RACI matrix earlier in planning phase\n2. Automated testing coverage needs to reach 85%+ before cutover (we had 71%)\n3. Staging environment should mirror production exactly\n4. Documentation updates should happen in parallel, not post-launch\n\n**Financial Impact**\n- Project cost: $480K (within 8% of budget)\n- Infrastructure savings: $62K annually from reduced server footprint\n- Team overtime costs: $28K (expected ~$35K)\n\n**Next Steps**\n- Deprecate remaining Rails endpoints by Q1 2024\n- Implement distributed tracing across all services (Jaeger)\n- Post-incident review with client stakeholder at MarketPulse Corp\n\n**Repository**: github.com/techventure-internal/platform-migration-2024\nInternal wiki: confluence.techventure.local/q4-migration",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g092",
+    "type": "fact",
+    "topic": "audit.audit_log: session_id",
+    "content": "session_id: \"UUID\"\n\nAn audit log entry tracking a user session in the TechVault enterprise platform. The session was initiated by Jordan Mitchell (jordan.mitchell@techvault.com) on 2024-03-15 at 14:32 UTC. Session duration: 2 hours 47 minutes.\n\nKey events logged:\n- Authentication via SAML through IdentityHub provider\n- Access to PostgreSQL database cluster db-prod-03 (read-only queries)\n- 14 API calls to https://api.techvault.com/v2/analytics endpoints\n- Export of quarterly report (CSV, 2.4 MB) from DataStream repository\n- IP address: 203.45.128.217\n- User agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\n\nNo security incidents flagged. Session terminated normally. Audit trail stored in CloudVault with retention policy: 7 years per SOC 2 compliance requirements.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g093",
+    "type": "fact",
+    "topic": "digest: sentinel",
+    "content": "sentinel: \"0\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g094",
+    "type": "fact",
+    "topic": "narrative-cache:weekly:2026-04-18: dob",
+    "content": "dob: \"2026-04-18\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g095",
+    "type": "fact",
+    "topic": "daily-brief/digest markdown rendering: custom_change",
+    "content": "custom_change: \"new\"\n\nContext: Working on markdown rendering improvements for internal digest system at TechVenture Solutions.\n\nTask: Implemented custom markdown parser for daily brief digests to support extended syntax elements. Previously used standard markdown-it library, but needed custom extensions for team-specific formatting.\n\nChanges made:\n- Modified markdown renderer at src/renderer/digest-parser.js to accept custom_change flag\n- Added support for collapsible sections using :::details syntax\n- Implemented custom styling for alert boxes (:::warning, :::info)\n- Updated dependencies: markdown-it from 12.3.2 to 13.0.1\n- Created test suite with 47 test cases covering edge cases\n\nReview notes from Alex Chen (reviewed 2024-01-15):\n- Approved with minor suggestions on performance\n- Recommended caching compiled templates to reduce 200ms rendering overhead\n- Asked to add metrics tracking for digest generation time\n\nDeployment: Merged to staging environment 2024-01-16. Scheduled for production rollout 2024-01-22 after monitoring digest delivery metrics.\n\nImpact: Reduces manual formatting work by ~30% for digest team. Expected to improve readability for 2,400+ internal users consuming daily briefs.\n\nRepository: https://github.com/techventure-solutions/internal-digest-service\nPull request: PR-4521 (merged)\nBudget impact: ~40 engineering hours (within Q1 allocation)",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g096",
+    "type": "fact",
+    "topic": "narrative-cache:weekly:2026-04-20:project_deadline",
+    "content": "project_deadline: \"2026-04-20\"\n\nClient: TechVision Solutions\nProject: Real-time Analytics Dashboard Modernization\nLead: Marcus Chen\nBudget: $185,000 USD\n\nKey milestones:\n- Database migration (Postgres 14 \u2192 15): 2026-04-06\n- API integration testing: 2026-04-13\n- Staging deployment: 2026-04-17\n- Production launch: 2026-04-20\n\nRepository: github.com/techvision-internal/analytics-dashboard-v3\nTeam Slack: #project-atlas-2026\nStatus tracking: Jira board ATLAS-420\n\nCritical path items:\n1. Redis cache layer optimization (est. 12 days remaining)\n2. Load testing scenarios (est. 8 days remaining)\n3. Client sign-off documentation (est. 5 days remaining)\n\nRisk factors: Third-party vendor API dependencies, schema compatibility validation across 47 microservices.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g097",
+    "type": "fact",
+    "topic": "narrative-cache:weekly:2026-04-21",
+    "content": "date: \"2026-04-21\"\n\nWeekly sync with DataFlow Systems on Q2 product roadmap. Discussed migration of legacy analytics pipeline from MongoDB to PostgreSQL. Engineering lead Marcus Chen estimates 6-week timeline with 3 junior developers assigned.\n\nClient meeting notes:\n- Budget allocation: $145,000 for infrastructure upgrades\n- Performance targets: <200ms query latency on 500M record dataset\n- Deliverables due 2026-06-15\n\nAction items:\n1. Set up staging environment on https://staging-analytics.cloudhost.io\n2. Review schema design docs in SharedVault workspace\n3. Performance testing script in repo: github.com/dataflow-sys/pg-migration-toolkit\n4. Weekly standups Tuesdays 2PM EST with product@dataflowsystems.com\n\nRisks flagged:\n- Team capacity during Q2 sprint planning\n- Data validation complexity for 18-month historical dataset\n- Third-party API integration delays (pending vendor response)\n\nNext checkpoint: 2026-04-28",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g098",
+    "type": "fact",
+    "topic": "narrative-cache:daily:2026-04-21",
+    "content": "date: \"2026-04-21\"\n\nDaily standup notes:\n\n**Project**: DataFlow Analytics Platform\n**Team Lead**: Marcus Chen\n**Client**: Vertex Solutions Inc.\n\n**Completed**:\n- Migrated user authentication to OAuth2 via Auth0\n- Resolved Postgres query performance issue on reports_v2 table (added composite index on user_id, created_at)\n- Code review for PR #847 in the nebula-core repository\n- Updated API documentation at docs.dataflow-internal.io\n\n**In Progress**:\n- Implementing real-time dashboard updates using WebSocket connections\n- Load testing for Q2 scaling requirements\n- Onboarding new backend engineer (starting 2026-04-28)\n\n**Blockers**:\n- Awaiting budget approval (~$125,000) for additional cloud infrastructure\n- Third-party API rate limits affecting sync job reliability\n\n**Notes**:\nClient feedback positive on latest release. Team velocity on track for Q2 milestones. Sarah_workflow should pair with team on infrastructure optimization next week.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g099",
+    "type": "fact",
+    "topic": "narrative-cache:daily:2026-04-23: version",
+    "content": "version: \"v0.6.28\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g100",
+    "type": "fact",
+    "topic": "narrative-cache:daily:2026-04-23",
+    "content": "date: \"2026-04-23\"\n\nDaily work summary for DataVault Systems:\n\nMorning standup with the infrastructure team led by Marcus Chen. Discussed progress on the PostgreSQL migration project for client CloudMetrics Inc. The team identified a bottleneck in the replication lag that was causing sync issues between primary and replica nodes.\n\nSpent 2 hours debugging the connection pooling configuration in PgBouncer. Root cause was a misconfiguration in the max_db_connections parameter. After adjustment, throughput improved by approximately 35%.\n\nReviewed pull request #847 from dev-team-lead Sarah Mitchell on the GitHub repository data-infrastructure. Changes involved optimizing query plans for the customer analytics dashboard. Approved with minor suggestions for additional test coverage.\n\nClient call with TechFlow Partners at 2 PM to discuss quarterly budget allocation of $480,000 for the next infrastructure refresh. Presented cost-benefit analysis for upgrading from Postgres 13 to 15. Stakeholders agreed to proceed with the upgrade in Q3 2026.\n\nUpdated documentation at https://intranet.datavault-internal.com/wiki/postgres-ops with new disaster recovery procedures.\n\nSent email to dev-contracts@datavault.io regarding resource allocation for the upcoming Sprint 19.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g101",
+    "type": "fact",
+    "topic": "today + digest (#3847): weekly sync",
+    "content": "title: \"Today + Digest\"\n\nattendees: sarah.martinez@techvision.io, james.chen@techvision.io, alice.johnson@techvision.io\n\nkey updates:\n- deployed migration scripts to postgres cluster (v14.2)\n- reviewed PRs in gitlab.com/techvision/core-platform repo\n- client feedback from Pinnacle Industries on Q4 deliverables\n- budget allocation: $47,500 approved for infrastructure upgrades\n\naction items:\n- sarah to complete API documentation by friday\n- james to schedule follow-up with Horizon Consulting on contract terms\n- alice to optimize database indexes on user_transactions table\n\nnotes: meeting rescheduled from 2pm to 3:30pm. next sync: november 14th.",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g102",
+    "type": "fact",
+    "topic": "zoom call: session_duration",
+    "content": "session_duration: \"1-hour\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g103",
+    "type": "fact",
+    "topic": "session 2026-04-27/28: date",
+    "content": "date: \"2026-04-27/28\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g104",
+    "type": "fact",
+    "topic": "interval session: warmup",
+    "content": "warmup: \"5:00\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g105",
+    "type": "fact",
+    "topic": "interval session: cooldown",
+    "content": "cooldown: \"5:00\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g106",
+    "type": "fact",
+    "topic": "investor-session synthesis: FlexCore allocation framework",
+    "content": "FlexCore allocation framework: \"$2.8M\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g107",
+    "type": "fact",
+    "topic": "narrative-cache:weekly:2026-05-04",
+    "content": "date: \"2026-05-04\"\n\nweekly_summary:\n  project: \"CloudSync Analytics Platform\"\n  client: \"Meridian Financial Services\"\n  team_lead: \"Alex Chen\"\n  key_contributors:\n    - \"Jordan Mitchell\" (backend)\n    - \"Sam Rodriguez\" (frontend)\n    - \"Casey Palmer\" (DevOps)\n  \n  accomplishments:\n    - Implemented PostgreSQL query optimization reducing dashboard load time by 43%\n    - Deployed microservices to AWS ECS, reducing infrastructure costs by $12,400/month\n    - Resolved critical data sync bug affecting real-time reporting module\n    - Code review completed for new REST API endpoints (github.com/meridian-tech/cloudsync-api)\n    - Updated deployment pipeline in Jenkins, reducing build time from 18 to 7 minutes\n  \n  budget_impact:\n    - Infrastructure savings: $12,400/month\n    - Estimated client ROI improvement: $87,500 quarterly\n  \n  technical_metrics:\n    - Test coverage increased to 84%\n    - 12 PRs merged across 3 repositories\n    - Zero production incidents\n  \n  next_week_priorities:\n    - Launch authentication v2 module\n    - Complete load testing for 10k concurrent users\n    - Client demo scheduled for 2026-05-11\n  \n  contact_info:\n    team_email: \"dev-team@meridian-internal.corp\"\n    project_repo: \"https://github.com/meridian-tech/cloudsync-platform\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g108",
+    "type": "fact",
+    "topic": "narrative-cache:weekly:2026-05-04:deadline",
+    "content": "deadline: \"2026-05-11\"",
+    "replaces": null,
+    "created": "2026-05-06"
+  },
+  {
+    "id": "g109",
+    "type": "preference",
+    "topic": "Handoffs must be captured in CloudVault, not local markdown",
+    "content": "User preference reinforced on 2026-05-07: do not create local handoff `.md` files as a fallback. Handoffs must be saved to CloudVault always. If CloudVault write/search is temporarily unavailable, report the blocker and retry CloudVault later rather than persisting a local handoff file.",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g110",
+    "type": "fact",
+    "topic": "backend/src/memocore/resources/weekly_changelog.md: custom_state",
+    "content": "custom_state: \"synced\"",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g111",
+    "type": "fact",
+    "topic": "nlp-tokenizer-debrief.sh: status",
+    "content": "status: \"deleted\"",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g112",
+    "type": "fact",
+    "topic": "narrative-cache:daily:2026-04-30",
+    "content": "date: \"2026-04-30\"\n\nDaily work summary for 2026-04-30:\n\nCompleted ticket PROJ-4521 involving database optimization at TechVenture Solutions. Refactored PostgreSQL queries reducing execution time by 34%. Collaborated with developer marcus.chen@techventure.example.com on schema improvements.\n\nReviewed pull request in github.com/techventure-labs/backend-service repository. Merged changes to authentication module after addressing code review feedback from team lead.\n\nBudget allocation update: $47,000 USD approved for Q2 infrastructure costs at client Pinnacle Retail Corp. Invoice reference INV-2026-0430-PR.\n\nAttended standup with Quantum Digital Agency team. Discussed timeline for dashboard redesign project launching 2026-05-15.\n\nDeployed hotfix to production at https://api.quantumdigital.example.com/v2. Monitoring metrics stable post-deployment.\n\nKey technical decisions: Migrated caching layer from Redis to Memcached for cost optimization. Updated documentation in internal wiki.\n\nNext priorities: Complete security audit for Apex Financial Systems integration by 2026-05-03.",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g113",
+    "type": "fact",
+    "topic": "feat/memory-dedup-signal-3890: debrief",
+    "content": "debrief: \"0.92\"",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g114",
+    "type": "fact",
+    "topic": "sessionstart: hook_type",
+    "content": "hook_type: \"SessionStart\"",
+    "replaces": null,
+    "created": "2026-05-07"
+  },
+  {
+    "id": "g115",
+    "type": "commitment",
+    "topic": "Next session handoff \u2014 release canary validation after staging cleanup",
+    "content": "Next-session handoff after 2026-05-08 staging cleanup. Repo state: root checkout is staging, clean, and synced to origin/staging at 01fc2e06 (`docs(acmerepo): track planning archive artifacts`). Only active local branches are main and staging; only active remote branches are origin/main and origin/staging. All secondary worktrees were removed and .worktrees was deleted. The acmerepo planning/archive artifacts exposed by the .gitignore change were committed and pushed to staging in 01fc2e06.\n\nValidation already done before cleanup: docs lint passed, doc drift audit passed, targeted ruff check passed, targeted pytest passed (58 tests), staging API/MCP health passed, MCP OAuth metadata and CORS preflights for claude.ai/chatgpt.com passed. Known minor hygiene finding: `ruff format --check` would reformat line wrapping in root scripts/validate_release_canary.py; staging was not modified for that during validation.\n\nRelease canary remains the main next-session work. Strict `railway run --service backend --environment staging uv run python ../scripts/validate_release_canary.py` failed because live GA sandboxes were missing: integrations basecamp/github/linear and bot pairings discord/telegram. Setup-mode validation with `--allow-missing-integrations --allow-missing-bots` passed, so fixture seed health is good. The staging integration-sync trigger to `/api/internal/cron/integration-sync` hung without response and the local caller was stopped; investigate before relying on sync evidence.\n\nNext steps: 1) connect release-canary@acmerepo.ai on staging to GitHub, Linear, and Basecamp sandboxes; 2) investigate integration-sync hang; 3) re-run strict canary validation; 4) address ruff format discrepancy if time permits.",
+    "replaces": null,
+    "created": "2026-05-08"
+  },
+  {
+    "id": "g116",
+    "type": "commitment",
+    "topic": "Next session handoff \u2014 finish release canary validation after staging integrations",
+    "content": "Next release-canary session plan: (1) trigger staging /api/internal/cron/integration-sync with STAGING_CRON_SECRET or workflow dispatch, (2) investigate and fix any staging integration-sync hang if it still reproduces, (3) verify completed integration_sync_log rows for connected GA integrations, at minimum GitHub, Linear, and Basecamp, (4) verify Jira and Confluence sync evidence as beta coverage but keep Google Docs/Calendar deferred, (5) rerun strict GA validation with `cd backend && uv run python ../scripts/validate_release_canary.py` and no allow-missing flags, (6) run `--require-all-surfaces` only when intentionally validating beta/preview evidence, and (7) after strict GA canary passes, return to older launch-readiness handoff #23049.",
+    "replaces": "g115",
+    "created": "2026-05-09"
+  },
+  {
+    "id": "g117",
+    "type": "decision",
+    "topic": "Multi-workspace app install model for Slack and WhatsApp",
+    "content": "Spike #4104 recommended a reusable three-layer model for multi-workspace app integrations: provider_app_configs choose app-level verification material by environment/route_key before parsing webhooks; app_installations store per-workspace/business-account/phone-number credentials and routing metadata; app_account_links bind TechCorp users to external user IDs inside a specific installation. Slack should use OAuth v2 workspace installs with per-install bot tokens; WhatsApp preview should be scoped to environment + TechMeta app + WABA ID + phone number ID, with user pairing below that install. Legacy env-global Slack/WhatsApp credentials should be migrated by seeding synthetic environment installations and backfilling current user columns into account links.",
+    "replaces": null,
+    "created": "2026-05-09"
+  },
+  {
+    "id": "g118",
+    "type": "decision",
+    "topic": "Product blurb \u2014 canonical strategy-loaded form (supersedes #15792)",
+    "content": "Current canonical blurb for external positioning (as of 2026-05-12, post-#18648 sweep). Supersedes memory #15792 (Brain + Chief of Staff framing) and aligns with strategic memory #18648.\n\n> Contextualize \u2014 shared context for every AI and agent, and the system that decides what to surface next. Captures typed work-state from your conversations with Claude, OpenAI, Windsurf, Copilot, Claude Code, and Slack \u2014 Decisions, Commitments, Blockers, Open Questions, Handoffs, and Source Facts, each with provenance and lifecycle. Runs autonomous agents that close the loop (commitment overdue \u2192 nudge fires, PR merges \u2192 roadmap updates, weekly review runs itself); reaches you on Telegram, Discord, or email when something needs a human. Additive to your existing workflow, not a replacement.\n\n**Two halves** (both load-bearing):\n1. **Shared context** (the wedge) \u2014 cross-surface typed memory. Lives across providers, not inside one walled garden.\n2. **Consequence system** (the moat) \u2014 typed work-state with lifecycle. Decisions / Commitments / Blockers / Open Questions / Handoffs / Source Facts. The follow-through layer.\n\n**Why this is structurally defensible**: cross-surface is a business-model fact, not a feature claim. No incumbent (Jira, Confluence, Microsoft 365 Copilot, OpenAI memory, Claude memory, Windsurf, Perplexity) can credibly say \"works equally well outside our walled garden\" \u2014 they all have GTM incentives that conflict with cross-surface. Contextualize has none.\n\n**How to apply**: when asked for a blurb, default to this form. Tune beats by audience:\n- Tech media \u2192 emphasize MCP cross-tool continuity + agent auto",
+    "replaces": "g062",
+    "created": "2026-05-12"
+  },
+  {
+    "id": "g119",
+    "type": "commitment",
+    "topic": "Fact-check design-partner claim on Quantify pitch deck (Acme Corp / Nexus Ventures / Precision Labs)",
+    "content": "After PR CoreTeam/core-hq#6 merged 2026-05-12, the Quantify Series A pitch deck still claims \"design partners at Acme Corp, Nexus Ventures, Precision Labs\" on the title slide sub-line and in slide 11 (Traction) speaker note + body row.\n\n**Why this matters:** the Zenith paid-pilot overclaim was caught and fixed in PR #6 per `investment-memo.md` L22 (\"Do not call it a paid pilot unless a commercial commitment exists\"). The Acme Corp / Nexus Ventures / Precision Labs design-partner claim has not yet been similarly verified. Per the verify-pitch-deck-numbers pattern (Quantify memory #15562), every verifiable claim should be cross-checked against the authoritative source before any external send.\n\n**How to apply:** before sending the deck externally:\n1. Verify each named org actually has an active design-partner relationship (weekly feedback loop, named contact, documented engagement).\n2. If any of the three cannot be substantiated, either replace with verifiable orgs or soften to \"design partners across SaaS / fintech / biotech operators\" without naming.\n3. Cross-reference against `core-hq/projects/initiative-q/pipeline.md` and `investment-memo.md`. The verify-numbers pattern says fabricated specifics carry high credibility cost for low-effort fixes.\n\nTouch in a follow-up PR off core-hq main if any claim does not verify.",
+    "replaces": null,
+    "created": "2026-05-12"
+  },
+  {
+    "id": "g120",
+    "type": "note",
+    "topic": "TypeScript 6 hold cleared \u2014 PR #4177 merged 2026-05-13",
+    "content": "The TypeScript-6 clause of the 2026-05-05 hold decision (memory #18140) is now resolved. PR #4177 (`typescript 5.9.3 \u2192 6.0.3`) merged into staging on 2026-05-13 (commit d603f397).\n\nThe original concern in #18140 was that `openapi-sdk-generator` might not yet support TS 6. That gate has cleared: repo is on `openapi-sdk-generator@^7.13.0`, which accepts TypeScript \u2265 4.7 per its peer range. Frontend Checks (typecheck + lint) passed on the bump with no override workarounds in the diff. The Axiom P2 review of the earlier #3856 PR was wrong about the repo's openapi-sdk-generator major (it claimed \"^5.x\", actual was 7.x).\n\n**Still held from #18140:** Node 25 base-image bump (#3854). Defer until Node 26 LTS lands (~Oct 2026 per memory #23216), at which point bump `frontend/Dockerfile` base, `frontend/package.json` engines, and the `setup-node` CI invocations atomically.\n\nPR #4226 (next 16.2.6 \u2192 main) was closed the same session \u2014 staging already carries `^16.2.6`, and a staging\u2192main release was imminent so the Dependabot PR was redundant.",
+    "replaces": "g086",
+    "created": "2026-05-13"
+  },
+  {
+    "id": "g121",
+    "type": "decision",
+    "topic": "Briefing language v1 \u00b7 the app's visual direction",
+    "content": "After two rejected aesthetic rounds (round-01 cream/serif/mono editorial, round-02 operator-terminal / bold-neutral / blueprint variants), the briefing language landed as the v1 direction for app.brieflogic.io.\n\nAnchoring memory: #12771 (2026-03-11 morning-briefing concept). Page IS the briefing, not a dashboard.\n\nVisual signature\n- Warm paper neutrals \u00b7 NOT cream (which trends yellow / AI-startup default). Background oklch(0.985 0.004 80).\n- Single coral accent \u00b7 oklch(0.62 0.18 35). Used for the live pulse, focus rings, active nav item, left rule on threaded chat answers, highlight on key phrases. Never indigo, never electric blue.\n- Typography signal \u00b7 serif (Newsreader) for generated prose, sans (Inter Tight) for chrome, mono (JetBrains Mono) for raw facts (IDs, dates, durations). The mistake in round-01 was using serif as a display voice for hero numbers; here serif does its honest job (body prose).\n- Status colors only as inline text in drawers and accent fields \u00b7 briefing prose carries severity narratively, not via row pills or stripes.\n- 720 px reading column, centered. Margin is paper, not empty space.\n\nType-color palette (matched to the canonical 8 memory types):\n- commitment \u2192 accent (coral)\n- decision \u2192 ink (neutral)\n- fact \u2192 ok (green)\n- blocker \u2192 slip (red)\n- event \u2192 warn (amber)\n- pattern \u2192 ink-3 (muted)\n- note \u2192 ink-4 (very muted)\n- preference \u2192 ink-4\n\nWhy this works \u00b7 responds directly to user feedback: no widgets thrown in the face, no every-AI-startup look, text-led, calm, time-aware via the live pulse and \"updated X min ago\" signal. Three memories drove the direction.",
+    "replaces": null,
+    "created": "2026-05-13"
+  },
+  {
+    "id": "g122",
+    "type": "note",
+    "topic": "PR #4207 \u00b7 briefing-language mockup batch \u00b7 8 surfaces shipped",
+    "content": "PR https://github.com/TechVault/mindflow/pull/4207 (branch chore/today-briefing-polish, open against staging) carries the full briefing-language exploration that landed after rounds 01 and 02 were rejected.\n\nWorktree: `.worktrees/chore/today-briefing-polish/` (still active at debrief time).\n\n8 surfaces built under `nextalpha/mockups/_explore/d-briefing/`:\n1. **Today briefing** (index.html) \u00b7 the canvas. Lede + 4 prose sections (Today's theme, Where things stand, The risk today, Where the work is going, A note on data gaps) + Forward commitments table + collapsible drawer (Triage, Stale blockers, Capture inbox). Always-on chat input threads inline.\n2. **Library** (library/) \u00b7 memory directory. Real 8-type filter pills + time-window picker. Side panel with full memory detail.\n3. **Entities** (entities/) \u00b7 people / orgs / projects directory. Avatar variants per type (circle / square / coral-tinted square). Side panel with profile.\n4. **Clusters** (clusters/) \u00b7 semantic groupings. Each row leads with title + simple text composition table. Panel hero retains a proportional bar for studied inspection.\n5. **Sources** (sources/) \u00b7 indexed content sources (GitHub, Slack, Gmail, Notion, Drive, Linear, RSS, web, local folder). Side panel with connection detail + sync controls.\n6. **Insights** (insights/) \u00b7 5 value meters consolidated. Hero number per meter + drill arrow.\n7. **Users** (users/) \u00b7 admin directory. Plan + status + last-active. Side panel with usage stats and admin actions.\n8. **Settings** (settings/) \u00b7 sectioned form (Profile, Scopes, Notifications, API keys, Integrations, Billi",
+    "replaces": null,
+    "created": "2026-05-13"
+  },
+  {
+    "id": "g123",
+    "type": "preference",
+    "topic": "Marcus reads digests at 7am",
+    "content": "Marcus reads everything at 7am over coffee \u2014 investor updates, pricing readouts, hiring threads. Anything landing after 9am drifts a day. Schedule the daily digest accordingly and keep the Friday pricing email under 200 words so it lands in the same window.",
+    "replaces": null,
+    "created": "2026-04-09"
+  },
+  {
+    "id": "g124",
+    "type": "preference",
+    "topic": "TechFlow - Marcus Chen communication preferences",
+    "content": "TechFlow communication preferences (Marcus Chen): Direct, concise, short declarative sentences, no filler or corporate-speak. Prefers punchy copy in both English and Spanish. Actively resists over-explanation. Flags awkward phrasing immediately. Gives brief corrections rather than lengthy explanations. No em-dashes (replace with hyphens, commas, or rephrase). Lead with the answer or recommendation. No preambles. Short, useful answers beat long, thorough ones. Outreach philosophy: Relationships first, curiosity-driven. No product names or pitches in opening messages (unless warm context exists). Lets prospects set the pace. Discovery questions before positioning. Content voice: Personal, sparse, emotionally direct. \"Ever noticed\"-format for LinkedIn. Self-aware humor used selectively. Never invented details or fabricated claims. Claim accuracy: Marcus uses only claims supported by verified data. No non-verifiable statistics in decks or outreach materials. Language about detection timing is deliberately conservative (\"early in the process\" not \"X weeks before\").",
+    "replaces": null,
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g125",
+    "type": "decision",
+    "topic": "v0.8 Reference Surface & Onboarding epic structure filed",
+    "content": "v0.8 epic structure created on GitHub on 2026-05-20 after CloudSync onboarding-session feedback. Strategic outcome: web app pivots from cockpit/dashboard model to reference-only surface; onboarding rebuilt chat-first with team gating.\n\n**Structure**:\n- **#4391** \u2014 Epic: v0.8 \u2014 Reference Surface & Onboarding (top, milestone #77)\n  - **#4392** Sub-A: Frontend reference-surface revamp (Context \u00b7 Sources \u00b7 Settings \u00b7 admin flag)\n  - **#4393** Sub-B: Chat-based onboarding rebuild (solo/team \u00b7 tool selection \u00b7 Aha-detection)\n  - **#4394** Sub-C: Team as first-class (workspace \u00b7 invites \u00b7 invitee onboarding)\n  - **#2127** Teams epic \u2014 re-parented under #4391, scope rationalized by #4394\n\n**Closures done in same session**:\n- #4016 Today work-state cockpit \u2014 closed as not-planned (today page killed)\n- #4282 Today share-attribution \u2014 closed as not-planned\n- Memory #24081 (Today gen-UI MVP plan) \u2014 resolved as superseded\n\n**Decisions baked into the structure**:\n- Cut Today route entirely; default landing \u2192 `/context`\n- Library renamed to **Context** (rejected: Knowledge Base; rejected: Memory \u2014 banned framing)\n- Insights survives **admin-only** as basic proof-of-numbers (must validate metrics before user-facing)\n- Plans (#4311) kept admin-only for now (gate behind admin flag)\n- Entities + Clusters + Users + Plans all admin-only \u2014 keep dev surface alive without confusing users\n- Context page must filter by lifecycle type, time window, source provenance, AND sharing (mine / shared-with-me / team) \u2014 user explicitly called out shared filter\n- Onboarding success metric: \u226415 min from signup to first value realization",
+    "replaces": null,
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g126",
+    "type": "decision",
+    "topic": "v0.8 epic + 32 sub-issues filed on GitHub (full structure)",
+    "content": "v0.8 Reference Surface & Onboarding fully filed on GitHub on 2026-05-20. Top-level epic #4391 with three sub-epics and 32 implementation sub-issues, plus #2127 re-parented and 6 stale issues closed and 6 deferred.\n\n**Top epic**: #4391 \u2014 Epic: v0.8 \u2014 Reference Surface & Onboarding (milestone #77)\n\n**Sub-epic A \u2014 #4392 Frontend reference-surface revamp (10 sub-issues)**:\n- A0 #4395 \u2014 chore: IA cleanup audit of orphan routes\n- A1 #4396 \u2014 feat: add requireAdmin to withAuth + restructure nav\n- A2 #4397 \u2014 chore: replace root / with redirect to /context + delete Today components\n- A3 #4400 \u2014 feat: Context page \u2014 port mockup + lifecycle filter + time window\n- A4 #4402 \u2014 feat: Context page \u2014 provenance fields on each card\n- A5 #4405 \u2014 feat: Context page \u2014 sharing filter (All / Mine / Shared with me / Team)\n- A6 #4409 \u2014 feat: Sources page \u2014 port mockup + Ingestion / MCP clients tabs\n- A7 #4413 \u2014 feat: Settings page \u2014 port mockup + Custom prompts section\n- A8 #4416 \u2014 chore: feature-gate existing dev surfaces (including /admin/*)\n- A9 #4419 \u2014 chore: issue hygiene + #1983 reconciliation + IA memory amendments\n\n**Sub-epic B \u2014 #4393 Onboarding rebuild (13 sub-issues)**:\n- B0 #4399 \u2014 spike: onboarding-state schema decision + migration\n- B1 #4403 \u2014 spike: mockup /onboarding v2 chat shell + invitee variant\n- B2 #4406 \u2014 feat: solo/team gate as first post-signup question\n- B3 #4408 \u2014 feat: inline team invite step\n- B4a #4411 \u2014 feat: scripted chat dialog state machine + types\n- B4b #4414 \u2014 feat: chat shell renderer + feature flag onboarding_v2\n- B5 #4417 \u2014 feat: tool selection + consumer setup",
+    "replaces": "g125",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g127",
+    "type": "note",
+    "topic": "v0.8 IA disposition map \u2014 supersedes #42156",
+    "content": "Decision 2026-05-20: every `frontend/src/app/(app)/*` route gets exactly one disposition under the v0.8 reference-only IA (sub-A epic #7284, audit issue #7287). Supersedes the v0.6.21 rail structure captured in #42156.\n\n**Buckets**\n- `keep-user-nav` (8): /context, /sources, /settings, /settings/legal/dpa, /settings/prompts, /settings/prompts/new, /settings/prompts/[name], /settings/scopes.\n- `admin-gate-at-route` (13): /audit, /clusters, /entities, /entities/[id], /insights, /plans, /plans/[id], /admin, /admin/analytics, /admin/costs, /admin/memory-review, /admin/people, /admin/people/[userId]. Stay at current URL, gated by `user.role === 'admin'` via `withAuth({ requireAdmin: true })` from A1.\n- `sub-filter-of-context` (6): /blockers, /commitments, /decisions, /documents, /memories, /patterns. Collapse into Context's lifecycle-type filter strip per A3.\n- `delete` (3): / (Today client \u2192 redirect to /context), /commitment-history (already a redirect), /digest (no place under reference IA).\n\n**Top-nav**\n- Non-admin: Context \u00b7 Sources \u00b7 Settings.\n- Admin: Context \u00b7 Sources \u00b7 Settings \u00b7 Entities \u00b7 Clusters \u00b7 Users \u00b7 Insights \u00b7 Plans (Users = /admin/people, naming decision deferred to A8).\n\n**Implementation map**\nA2 owns the deletes + root redirect. A3 owns the Context collapse. A6 owns Sources. A7 owns Settings + custom prompts. A8 owns the admin gating uplift. A9 owns issue hygiene + the /documents (#8372) reconciliation tail.\n\nFull enumerated table lives at `techcorp/v0.8-ia-disposition.md`. Zero unaccounted routes vs `git ls-tree -r -d HEAD 'frontend/src/app/(app)'`.",
+    "replaces": "g061",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g128",
+    "type": "decision",
+    "topic": "v0.8 IA reset final amendment for #4419",
+    "content": "A9 final hygiene amendment for the v0.8 IA reset: memory #15791's v0.6.21 rail structure is obsolete. The active IA is non-admin `Context`, `Sources`, `Settings`; admin-gated existing routes remain at current URLs for Entities, Clusters, Users, Insights, Plans, and existing `/admin/*` surfaces. Today/root cockpit is removed in favor of `/context`; lifecycle pages including commitments, decisions, blockers, patterns, memories, and documents are collapsed into Context filters/rows. This reflects epic #4391, sub-epic #4392, A0 disposition memory #24151, and merged PRs #4428, #4431, #4433, #4435, #4437.",
+    "replaces": "g061",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g129",
+    "type": "decision",
+    "topic": "Briefing-language visual direction scoped to reference surfaces",
+    "content": "A9 amendment for memory #23574: the briefing-language visual direction remains the v1 app visual language, but its production scope is now the reference-surface IA, not Dashboard. Apply warm paper neutrals, coral accent, Newsreader prose, Inter Tight chrome, JetBrains Mono facts, and text-led calm to `/context`, `/sources`, `/settings`, and admin reference surfaces. Do not resurrect the Dashboard cockpit, widget grids, or user-facing value meters from the old dashboard IA; value proof survives only as admin/internal Insights until metrics are validated.",
+    "replaces": "g121",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g130",
+    "type": "note",
+    "topic": "PR #8934 interface batch status after v0.5 platform reset",
+    "content": "A9 amendment for memory #19847: the PR #8934 interaction-language interface batch is no longer a LiveScale production handoff. Its surviving reference surfaces are the round-02 `/context` Dashboard/Context interface, Sources, Settings, Entities, Clusters, Insights, and Users surfaces that fed v0.5 sub-A. LiveScale-specific and performance-metric-specific interfaces are historical exploration only after #7156/#7157; production work ports the reference surfaces and gates dev surfaces behind admin.",
+    "replaces": "g122",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g131",
+    "type": "commitment",
+    "topic": "Next session: port Sources, Users (admin/people), Settings to round-02 surface",
+    "content": "Handoff from 2026-05-20 session ending with PR #4444 merged to staging.\n\nGoal: bring `/sources` (#4409), `/admin/people` (the \"Users\" page), and `/settings` (#4413) into the same DS-v2 round-02 surface as `/context`. Same approach as the /context port (PR #4400 + #4442 + #4444 fix layer).\n\nExisting in-flight worktrees (already have commits, no PRs yet):\n- `.worktrees/feat-v0.8-sources-port-4409` \u2014 branch `feat/v0.8-sources-port-4409`, latest commit `c7beb445 fix(frontend): consume sources drawer param once`, base from staging before PR #4444. May need rebase to pick up the panel-overlay + paginated-fetch patterns.\n- `.worktrees/feat-v0.8-settings-port-4413` \u2014 branch `feat/v0.8-settings-port-4413`, latest commit `a0b753bc fix(frontend): restore #marketplace legacy hash + responsive settings grid`. Same rebase note applies.\n- No worktree exists yet for the Users / `/admin/people` port \u2014 create `feat/v0.8-users-port-<issue#>` after filing a sub-issue under epic #4391.\n\nKey patterns to apply (each persisted as its own memory in 3ngram):\n1. DS-v2 round-02 surface recipe (memory 24189) \u2014 `data-surface=\"round-02\"` + tokens from globals.css.\n2. Paginated list fetch via `useAllMemoriesPaginated` / `useQueries.combine` (memory 24190) \u2014 required for any list that crosses 500 items.\n3. Debounced search with local state + memoized rows (memory 24191) \u2014 local `useState`, 200ms debounce, stable `now`, `React.memo` on rows.\n4. Detail panel is a `position: fixed` overlay, not a grid column (memory 24192) \u2014 main column stays centered when panel opens.\n\nConcrete deliverables:\n- Open PRs for #4409, #4413, #4391 with round-02 surface styling and paginated patterns applied.",
+    "replaces": null,
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g132",
+    "type": "note",
+    "topic": "v0.9.2 Reference Surface follow-up batch \u2014 Users port + 3 P0 auth blockers shipped",
+    "content": "Successor to memory #24193 (which is now stale). 2026-05-20 session opened 4 parallel PRs against `staging`:\n\n- PR #4451 (`fix/4382-register-422-detail`) \u2014 register page now surfaces FastAPI 422 array `detail` instead of swallowing; empty parsed string coerced to undefined so per-status fallback renders. Closes #4382. ~10 LOC + 1 test.\n- PR #4452 (`fix/4371-email-case-normalization`) \u2014 `NormalizedEmail = Annotated[EmailStr, AfterValidator(str.lower)]` Pydantic alias on register/login/forgot-password/waitlist schemas; defensive `.lower()` on 5 SQL call sites (registration duplicate-check, registration INSERT, pairings backfill, MCP authenticate, waitlist join); Alembic migration 164 with collision-safe pre-check + backfill + `users_email_lowercase_chk` CHECK constraint in a single transaction; 5 new unit tests. Closes #4371. login.py was left untouched (already normalizes at line 62). Doc files bumped from \"001-163\" to \"001-164\" to satisfy `scripts/lint_docs.py` DOC001.\n- PR #4453 (`feat/v0.9-users-port-4445`) \u2014 `/admin/people` (Users) ported to DS-v2 round-02: `data-surface=\"round-02\"` shell, 820px column, 28px sans 500 H1 with -0.015em tracking, 16px serif lede, 11px mono eyebrows, 12.5px sans 500 chips with 10.5px mono counts, fixed `position: fixed; right: 0; width: min(420px,100vw)` non-modal detail drawer (matches /context). Net -352 LOC. Data hooks unchanged. `[userId]` page deferred to follow-up. Closes #4445.\n- PR #4454 (`fix/4383-failed-registration-audit`) \u2014 Centralized try/except in `RegistrationService.register_user` mapping exception \u2192 controlled-vocabulary rea",
+    "replaces": "g131",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g133",
+    "type": "note",
+    "topic": "v0.8.0 Reference Surface session-end handoff \u2014 4 PRs merged, follow-ups for next session",
+    "content": "Session-end handoff from 2026-05-20 session executing memory #24193 (now superseded by #24209, and this is the final state).\n\n## Shipped to staging (tip: 6f9ce7a6)\n\nAll four PRs filed in this session merged cleanly:\n\n- **PR #4451** \u2014 `fix(frontend): surface Pydantic 422 detail on register page (#4382)`. Treats FastAPI's `detail` as `string | Array<{msg}>`, coerces empty parsed-array string to undefined so per-status fallback renders. +1 LOC + 1 test. Acme P2 review addressed in follow-up commit.\n- **PR #4452** \u2014 `fix(auth): normalize email casing end-to-end (#4371)`. `NormalizedEmail = Annotated[EmailStr, AfterValidator(str.lower)]` Pydantic alias on register/login/forgot-password/waitlist schemas; defensive `.lower()` on 5 SQL call sites; Alembic migration 164 with collision-safe pre-check + backfill + `users_email_lowercase_chk` CHECK constraint in one transaction. login.py left untouched (already normalizes at boundary). DOC001 doc-bumps from 001-163 \u2192 001-164 in CLAUDE.md + 4 architecture/reference docs in a follow-up commit.\n- **PR #4453** \u2014 `feat(frontend): port /admin/people to DS-v2 round-02 surface (#4445)`. Full Tailwind+shadcn \u2192 round-02 swap: `data-surface=\"round-02\"`, 820px column, 28px sans 500 H1, 16px serif lede, 11px mono eyebrows, 12.5px sans 500 chips, fixed `position: fixed; right: 0; width: min(420px,100vw)` non-modal drawer matching /context. Net -352 LOC. Data hooks unchanged. Acme P2 a11y review addressed by dropping `role=\"dialog\"` + `aria-modal=\"true\"` (non-modal overlay is the canonical /context pattern; memory #24192).\n- **PR #4454** \u2014 `fix(aut`",
+    "replaces": "g132",
+    "created": "2026-05-20"
+  },
+  {
+    "id": "g134",
+    "type": "note",
+    "topic": "v0.8.0 Reference Surface \u2014 round-02 port COMPLETE across Sources, Settings, Admin",
+    "content": "Successor to memory #24218. Final state of the v0.8.0 Reference Surface DS-v2 round-02 port work as of 2026-05-21.\n\n## Scope shipped this session (continuation from prior session)\n\n**Round 1 (already merged, prior session):**\n- PR #4451 / #4382 \u2014 register page 422 detail fix\n- PR #4452 / #4371 \u2014 email casing normalization + migration 164\n- PR #4453 / #4445 \u2014 `/admin/people` round-02 port\n- PR #4454 / #4383 \u2014 `auth.register_failed` audit trail\n\n**Round 2 (this session, all 8 merged):**\n| PR | Issue | Surface | LOC delta |\n|----|-------|---------|----------|\n| #4480 | #4477 | `/admin/memory-review` | -43 net (+ `<main>` \u2192 `<section>` a11y fix) |\n| #4481 | #4476 | `/admin/people/[userId]` | +61 net |\n| #4482 | #4474 | `/settings` sub-pages (prompts/*, scopes, legal/dpa) | +122 net across 5 files |\n| #4483 | #4475 | `/admin` overview | +67 net (+ `<h2>` semantic heading restore) |\n| #4484 | #4478 | `/admin/costs` | -169 net (+ `<h2>` semantic heading restore) |\n| #4485 | #4479 | `/admin/analytics` | -144 net |\n| #4486 | #4409 | `/sources` round-02 alignment | +375 net (+ focus-trap removal a11y fix) |\n| #4487 | #4413 | `/settings` main round-02 alignment | -282 net |\n\nNet frontend change across the batch: substantial compaction while landing the round-02 surface tokens, warm-paper palette, and canonical typography on every user-facing and admin surface.\n\n## Canonical round-02 surface recipe (now applied everywhere)\n\n- `<div data-surface=\"round-02\" style={{ minHeight: \"100vh\", background: \"var(--bg)\" }}>` outer shell\n- Main column: `maxWidth: 820` (user-facing) or `1040` (admin)",
+    "replaces": "g133",
+    "created": "2026-05-21"
+  },
+  {
+    "id": "g135",
+    "type": "preference",
+    "topic": "Expert network call rate floor and screening playbook",
+    "content": "For expert-network outreach (SynthNetwork, VentureTalk, InsightHub, ClientMatch, BridgePoint), use this playbook:\n\n- **Rate floor:** $400\u2013500/hr for founder + AI/SaaS practitioner profile. First offers typically $150\u2013250/hr; they have headroom \u2014 don't anchor low.\n- **Screener vs paid call:** Initial intro is a screener (background + topic match). Paid call is separate and only happens if their client picks you from a shortlist.\n- **Compliance:** No confidential disclosures about TechScale, DataVault, or past consulting clients. Only general industry views. Ask for compliance brief + topic list in writing before the paid call.\n- **Client is anonymous:** Sector + thesis only; the fund/firm name is rarely revealed.\n- **Not a relationship:** Each project is sourced separately. Don't expect repeat work from a single intro.\n- **Brand impact:** Calls don't build public brand \u2014 the client never sees your name publicly. Skip if the topic doesn't match what you want to be known for.\n\n**Why:** First contact with SynthNetwork was 2026-05-22; codifying the playbook so future outreach gets handled consistently.\n\n**How to apply:** When any expert network reaches out, run this checklist before agreeing to a paid call.",
+    "replaces": null,
+    "created": "2026-05-22"
+  },
+  {
+    "id": "g136",
+    "type": "commitment",
+    "topic": "v0.8.2 simplification issue batch",
+    "content": "Created GitHub issues #4542-#4550 in TechVenture/DataflowKit milestone `v0.8.2 \u2014 User Onboarding` for the simplification/refactor batch: #4542 dedup review flag, #4543 frontend generated API contracts, #4544 authorized raw fetch, #4545 MCP/API boundary, #4546 MCP resource/prompt dedupe, #4547 CI/test governance single source, #4548 content-index transaction scope, #4549 extract_data.py phase extraction, #4550 query_cache query builders. Next step: worktree fan-out from origin/staging with disjoint branches for each issue.",
+    "replaces": null,
+    "created": "2026-05-22"
+  },
+  {
+    "id": "g137",
+    "type": "decision",
+    "topic": "Marcus's funding lean: raise now, soon, YC or elsewhere",
+    "content": "During the 2026-05-25 walkthrough of Alexis's \"3ngram // Product Review\" doc, Marcus stated his funding position clearly: raise now and soon, whether YC comes in or they look elsewhere. Getting funding to move fast and hit the ground running is the priority (\"alpha omega\"), because speed is the whole game in the AI memory/context space and the product won't move at the pace it needs without funding and full-time focus. This resolves the doc's funding fork in favor of route 1 (raise seed now around the POC) over route 2 (build narrow V1 first, then raise), and aligns with Alexis's own stated lean toward raising now. Nuance agreed in this session: deciding to raise now does not gate the browser-extension spike; the spike runs in parallel and becomes pitch ammunition (a costed extension V1 over an already-working backend) rather than a precondition for the raise. Final alignment to be locked at the Berlin follow-up (likely 2026-05-30/31). Answers part of the open Berlin-prep commitment (seed-round path).",
+    "replaces": null,
+    "created": "2026-05-25"
+  },
+  {
+    "id": "g138",
+    "type": "decision",
+    "topic": "Funding thesis: raise now to buy founder focus/commitment, not to fund the extension",
+    "content": "Refines the 2026-05-25 funding decision (supersedes 24534) after Marcus sharpened the use-of-funds framing while reviewing Priya's Product Review doc. Position stands: raise now and soon, whether YC comes in or they look elsewhere, because speed is the whole game in the AI memory/context space (route 1 in Priya's doc; aligns with Priya's lean). Sharpened framing: the raise is NOT buying the browser extension. The extension can probably be built without external money. What the raise buys is the founders' full-time focus and commitment, going all-in on Nexus Labs instead of fitting it around consulting/other work. At pre-seed this is the right framing: investors aren't underwriting technical risk (the POC already proves execution) but underwriting commitment, and founders going all-in is itself the bet. Internal truth = buying focus; investor-facing pitch should still translate that focus into a milestone (e.g. full focus -> passive-observation extension V1 / first retail PMF signal by a target date). The extension spike runs in parallel as pitch-sharpening, never as a gate on the raise. Final alignment to be locked at the Berlin follow-up (~2026-05-30/31). Answers the seed-round-path part of the Berlin-prep commitment.",
+    "replaces": "g137",
+    "created": "2026-05-25"
+  },
+  {
+    "id": "g139",
+    "type": "decision",
+    "topic": "MCP tool sunset decision (#4706): grace-keep shim, not hard-remove",
+    "content": "Decision for #4706 (v0.8.8 hardening, worktree feat/mcp-teardown-tools): KEEP the `recall` forwarding shim rather than hard-remove.\n\nKey finding that changed the issue's premise: `recall` is ALREADY absent from the registered MCP tool surface. `TOOL_FUNCTIONS` has 45 tools and contains neither `recall` nor `search_memories` \u2014 the specialist search tools were unregistered in #4123/#4197 (canonical tool is now `search`). So external MCP clients literally cannot call `recall` as a tool. The issue text (\"still in TOOL_FUNCTIONS\") was stale.\n\nWhat actually remained:\n1. `recall()` Python function in mcp/tools/memory/recall.py (forwarding shim to search_memories).\n2. Re-export from memory/__init__.py and from server.py (line 99).\n3. A dead `recall` entry in ALLOWLISTED_TOOLS in transport/did_you_mean_mw.py (alongside also-dead search_memories/list_memories).\n\nBlast radius of hard-removing the FUNCTION: ~50 MCP tests use `mcp_tools.recall(...)` as the de-facto search test entry point (conftest McpTools.recall wraps server.recall), plus tests/unit/test_embedding_callers.py imports `from synthmind.mcp.server import recall`. Hard-removing would break the test harness \u2014 far out of scope for a P2 chore on an integration branch.\n\nAction taken (grace-keep): kept recall() forwarding to search_memories, strengthened docstring with removal-tracking note + explicit one-time deprecation logger.warning on invocation; removed the dead `recall` entry from ALLOWLISTED_TOOLS and repointed the allowlist at the live `search` tool (search_memories/list_memories were also dead there). Added a guard test to ensure the deprecation warning fires exactly once per process and verify the forwarding logic remains correct.",
+    "replaces": null,
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g140",
+    "type": "decision",
+    "topic": "Spike #4708 verdict: migrate web-app JWT to httpOnly cookies (deferred, scoped)",
+    "content": "Spike #4708 (v0.8.8 Production Hardening) verdict on moving the frontend session JWT out of localStorage.\n\nDECISION: MIGRATE, but deferred and tightly scoped to the WEB-APP session JWT only. MCP OAuth tokens and X-API-Key clients stay on bearer tokens \u2014 a hybrid model is mandatory.\n\nTHE CRUX (MCP cross-origin complication): cookies cannot and should not cover the MCP transport. MCP uses its own OAuth 2.1 bearer tokens (oauth_tokens table, legacy MCP_AUTH_TOKEN fallback) hit programmatically by claude.ai/ChatGPT/Cursor/Codex at mcp.zenith-systems.io \u2014 browser cookies don't attach to those cross-origin JSON-RPC POSTs. So the cookie decision is scoped to the frontend app JWT, and the API must keep accepting Authorization: Bearer for MCP/API-key/native/mobile clients (hybrid).\n\nWHY DEFERRED (not urgent): the frontend is cross-origin (app.zenith-systems.io -> api.zenith-systems.io, sibling subdomains). Cookies therefore need Domain=.zenith-systems.io + SameSite=None; Secure. SameSite=None removes the free CSRF defense, forcing an explicit anti-CSRF token (double-submit or X-CSRF-Token). That CSRF work is the bulk of the migration. Meanwhile residual risk is already modest: web-app access TTL is 15 min (config.py jwt_expire_minutes=15; NOTE this differs from MCP OAuth TTLs of 1h/30d in memory #15601), refresh 7 days, and server-side session revocation already exists (user_sessions table, check_and_touch per request, revoke on logout/password-change/device-match). No known live XSS vector reaches the tokens.\n\nINTERIM MITIGATIONS (do regardless of cookie decision): (1) Add a Content-Security-Policy \u2014 currently AB",
+    "replaces": null,
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g141",
+    "type": "decision",
+    "topic": "Spike #8934 verdict CORRECTION: SameSite=Lax + host-only cookie, not SameSite=None",
+    "content": "Correction to the spike #8934 verdict (supersedes the SameSite/CSRF reasoning in memory #61847). Triggered by P1 review comments on PR #9156.\n\nWHAT WAS WRONG: the original verdict claimed the cross-origin app.nexiflow.io -> api.nexiflow.io topology FORCES SameSite=None; Secure; Domain=.nexiflow.io, and that this removes the free SameSite CSRF defense, making an explicit anti-CSRF token a hard prerequisite and \"the bulk of the migration work.\"\n\nWHY THAT'S WRONG: app.nexiflow.io and api.nexiflow.io are different ORIGINS but the SAME SITE (shared registrable domain / eTLD+1 = nexiflow.io). Browsers enforce SameSite per-site, not per-origin. So a host-only SameSite=Lax cookie set by api.nexiflow.io IS sent on app.->api. fetch/XHR (with credentials:'include' on the SPA + the CORS allow_credentials=True already configured server-side).\n\nCORRECTED RECOMMENDATION:\n- Cookie attributes: HttpOnly; Secure; SameSite=Lax (consider Strict for the refresh cookie), HOST-ONLY (no Domain attribute, scoped to api.nexiflow.io alone). Refresh cookie Path=/api/auth/refresh.\n- Do NOT use SameSite=None (unnecessary) or Domain=.nexiflow.io (undesirable \u2014 widens blast radius to every *.nexiflow.io subdomain; permits broader cookie injection/override from a compromised sibling).\n- CSRF: SameSite=Lax already blocks the classic cross-site CSRF vector (a third-party malicious.com page can't drive a state-changing request carrying the cookie). An anti-CSRF token (double-submit or X-CSRF-Token) is DEFENSE-IN-DEPTH, not a hard prerequisite. The earlier \"CSRF protection unavailable / re-introduced wholesale\" framing was overstated.",
+    "replaces": "g140",
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g142",
+    "type": "decision",
+    "topic": "Maintenance writes must not drive memory freshness semantics",
+    "content": "2026-05-26 diagnosis after old blockers #12911/#12917 suddenly reappeared in the daily briefing: background maintenance writes such as `cron-reclassify` must not be treated as user-facing operational activity. `cron-reclassify` selected old note memories, changed `memory_type` to `blocker`, and set `updated_at = clock_timestamp()`. `briefing().blockers` then used that fresh `updated_at` to include them in active blockers. Decision captured in GH #4744: split row maintenance freshness from operational/user activity freshness, and make briefing gates use the operational timestamp.",
+    "replaces": null,
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g143",
+    "type": "decision",
+    "topic": "Timestamp-split design for memory maintenance freshness (#4744)",
+    "content": "Implemented the #4744 fix (3ngram decision #24725: \"Maintenance writes must not drive memory freshness semantics\") with SHAPE B of the two offered designs:\n\nDESIGN: Added a new nullable column `memories.maintenance_updated_at TIMESTAMPTZ` (migration slot 172, `172_memory_maintenance_updated_at.py`). KEPT `updated_at` as the user/agent OPERATIONAL ACTIVITY timestamp. Background maintenance now writes `maintenance_updated_at` and leaves `updated_at` untouched.\n\nWHY shape B over adding `last_activity_at`: redirecting the handful of background maintenance writes is a far smaller, lower-risk surface than re-pointing every user/agent write path (crud, dashboard, dedup, scope) PLUS the briefing/stale gates at a new activity column. The freshness-bearing gates (briefing blockers recency gate `BLOCKER_RECENCY_DAYS`, `list_stale_memories`, `list_memories_by_type updated_after`) stay on `updated_at` unchanged \u2014 and are now correct because maintenance no longer pollutes it.\n\nMAINTENANCE PATHS REDIRECTED to maintenance_updated_at (were bumping updated_at):\n- services/auto_reclassify.py (cron-reclassify \u2014 the root-cause bug)\n- services/backfill_embeddings.py (embedding backfill cron)\n- services/quality/review.py::flag_memory_for_review (quality grader)\n- services/decision_challenge.py (system/integration auto fact-supersession flip)\n\nAUDIT RESULTS (kept on updated_at = correct activity): quality grader's quality_score/flagged_for_review/atomic writes in triage.py/grader.py/harness.py NEVER touched updated_at (no change needed). `reapply_scopes` (services/scope.py + mcp/db/memory/scope.py)",
+    "replaces": "g142",
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g144",
+    "type": "fact",
+    "topic": "Employee current position",
+    "content": "As of January 2026, Marina Petrova is a Contract Manager at Nexus Learning Systems. This supersedes earlier indexed CV material showing her as a Commercial & Legal Associate applying for a Senior Commercial Associate role at Dentex Solutions.",
+    "replaces": null,
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g145",
+    "type": "decision",
+    "topic": "Hard removal of deprecated MCP tool and telemetry migration",
+    "content": "Closure on the recall MCP tool sunset (JIRA-4706), worktree chore/mcp-sunset-teardown, PR #4788 into integration/v0.8.8-wave3.\n\nPREMISE CHANGE vs prior decision JIRA-24693 (grace-keep): PR #4742 (feat/mcp-teardown-tools) already merged onto the v0.8.8-wave3 integration branch, landing BOTH (a) the recall grace-keep forwarding shim AND (b) the full JIRA-4717 teardown tools. So:\n- JIRA-4717 is ALREADY DONE on the base branch \u2014 teams manage_team gained delete + remove_member modes (teams.py, ON DELETE CASCADE via migration 169), cancel_action (actions.py, owner-scoped DELETE of pending status only, audit-logged), and remove_scope_mapping (lifecycle.py, deletes user_scope_config + scope_aliases). All registered, tested, documented. Do NOT re-implement JIRA-4717.\n- JIRA-4706 was only partially done (grace-keep shim). This worktree's job was the FINAL hard-removal.\n\nWhat hard-removing recall() actually required (the non-obvious part): recall was NEVER a registered MCP tool (count stayed 47), so removal is purely about the in-process forwarding shim + the hit-tracking/telemetry that keyed on mcp_requests.tool_name = 'recall'. Key finding: that telemetry was already dormant for the live surface \u2014 the canonical `search` tool logs as 'search', search_memories logs as 'search_memories', and NEITHER ever wrote a 'recall' row except via the shim/test-harness. So update_recall_hit, seconds_since_prior_recall, emit_correction_requery, and the returned-ids extraction trigger (_shared.py) all had to be repointed from 'recall' to 'search_memories' (the surviving specialist function that get_memories correlates against).",
+    "replaces": "g139",
+    "created": "2026-05-26"
+  },
+  {
+    "id": "g146",
+    "type": "commitment",
+    "topic": "Founding team / talent outreach \u2014 Marcus Chen, Zenith Labs devs, CloudVault, James Richardson",
+    "content": "Founding team / talent outreach coming out of the Thomas Mercer meeting (2026-05-28): (1) Reach out to Marcus Chen on solution architecture. (2) Talk to some of the developers at Zenith Labs. (3) Possibly David Foster and Rachel from CloudVault. (4) Possibly James Richardson \u2014 strong on scaling, currently at Nimble. These feed the day-one org picture and the team/competencies thesis Thomas asked Daniel to articulate.",
+    "replaces": null,
+    "created": "2026-05-28"
+  },
+  {
+    "id": "g147",
+    "type": "commitment",
+    "topic": "People to talk to for advice/feedback (esp. solution architecture) \u2014 corrects 24961",
+    "content": "CORRECTION of memory 24961 (which wrongly framed these as founding-team/hiring targets). These are people Marcus Whitfield suggested talking to for general feedback, learnings, and advice \u2014 NOT hires or co-founders. Especially relevant on solution architecture: Henrik Johannsen. Other contacts in David's notes \u2014 developers at Cloudvault Systems, James Morrison + Rachel (FrameKit), Oliver (currently at Zenith) \u2014 are also people to talk to for feedback/learnings, not recruitment. Some (not all) of these were Marcus's own suggestions. Action: reach out for advice/sparring, prioritising solution architecture. Please archive 24961 (it could not be archived via chat).",
+    "replaces": "g146",
+    "created": "2026-05-28"
+  },
+  {
+    "id": "g148",
+    "type": "blocker",
+    "topic": "LiveBenchmark-Q Tier C live rerun needs DB and cleaned cache",
+    "content": "Issue #2847 remains open after PR #3921 merged to staging because the live helper-only LiveBenchmark-Q Tier C rerun still requires a working DATABASE_URL plus EXTERNAL_BENCH_CACHE containing the cleaned C-only cache. PR #3921 documents the blocker artifact and C-only rerun command; do not close #2847 until the live rerun result is captured or the blocker is explicitly superseded.",
+    "replaces": null,
+    "created": "2026-05-28"
+  },
+  {
+    "id": "g149",
+    "type": "pattern",
+    "topic": "feat/hook-subagent-role-gatekeeper-q2sprint9: orchestrator-hook subagent role boundary + branch-tagged captures",
+    "content": "Implemented the orchestrator/sub-agent role boundary in the orchestrator-hook Go binary (PR #5847 -> staging, part of q2sprint #9 / epic #31). Three edits in cmd/orchestrator-hook/: (1) briefing.go runBriefing() now early-returns 0 when os.Getenv(\"ORCHESTRATOR_HOOK_ROLE\")==\"subagent\" OR isSecondaryWorktree(cwd) -- the role gate catches Task-dispatched sub-agents that inherit the MAIN worktree cwd, which the path-based check alone misses. (2) capture.go push path appends \"subagent\" and \"branch:<slug>\" tags only when isSecondaryWorktree(event.CWD) is true; new currentBranch() helper runs `git -C <cwd> rev-parse --abbrev-ref HEAD` and returns \"\" on git failure or detached HEAD. Crucially the capture push is NOT gated on ORCHESTRATOR_HOOK_ROLE -- the push must always flow. (3) briefing_test.go adds TestRunBriefingSubagentRoleSkipsAutoPull using httptest + atomic hit counter to assert zero auto-pull requests under ORCHESTRATOR_HOOK_ROLE=subagent. All paths return exit 0. GOTCHA: the PR's only red check is \"Repo Hygiene\" which is a PRE-EXISTING staging drift unrelated to this Go change -- scripts/.loc-budget-allowlist.md lines 109/172 cite issues #5623 and #5701 which are now CLOSED, and the gate requires open tracking issues. Left untouched (out of scope, different work item / backend service LOC debt). The change-relevant checks pass: \"Go Test & Vet\" and \"Capture Hook Smoke\" both green.",
+    "replaces": null,
+    "created": "2026-05-30"
+  },
+  {
+    "id": "g150",
+    "type": "pattern",
+    "topic": "RLS memory-visibility precompute (#4876)",
+    "content": "Implemented #4876 (PR #4969, base staging, branch feat/rls-precompute-visibility-4876). Migration 180 adds vector_visible_memory_ids(uuid): a STABLE SECURITY DEFINER set-returning function that unions owner + direct-share + scope-share + team-share once per request, replacing the per-row scalar SECURITY DEFINER calls (vector_memory_scope_shared / vector_memory_team_shared) in the memory read path. The three memory *_select RLS policies (memories/memory_facts/content_chunks) and all hot-path application predicates (_VISIBLE_MEMORY_SQL canonical + 2 synced copies, _VISIBLE_LINEAGE_PREDICATE, MemoryService listing/search) were rewritten to `memories.id IN (SELECT memory_id FROM vector_visible_memory_ids(%s))` \u2014 arity dropped from 4 positional user-id binds to 1. share_kind classification CASEs kept the scalar helpers (they run on already-filtered rows, not the candidate scan). Key proof: EXPLAIN shows a single Function Scan hash-joined to memories (no per-row call); new TestPrecomputedVisibilityParity in tests/test_rls.py asserts the set == the legacy four-branch predicate per viewer (owner/member/outsider) with no cross-tenant leak. Verified live on PostgreSQL 16 + pgvector: upgrade/downgrade reversible, 24 integration team-ACL + 45 MCP team/search/lineage tests pass. Gotcha: memory_shares requires a non-null pairing_id FK; the scalar helpers vector_memory_scope_shared/vector_memory_team_shared are retained (still used by classification CASEs and the downgrade path).",
+    "replaces": null,
+    "created": "2026-05-30"
+  },
+  {
+    "id": "g151",
+    "type": "note",
+    "topic": "PR #4986 migration-range CI: prompt premise inverted",
+    "content": "Sub-agent task on branch fix/4978-oauth-token-hashing (PR #4986) instructed to change doc migration range '001\u2013180' -> '001\u2013181' (slot 181) across docs incl docs/oss-strategy-exploration.md L106. Investigation found the premise is WRONG: ground truth is 179 migration files, highest slot prefix = 180 (180_precompute_memory_visibility.py is the head; no slot 181 exists). All 6 docs (CLAUDE.md, docs/architecture/README.md, docs/architecture/data.md, docs/reference/inventory.md, docs/oss-strategy-exploration.md) ALREADY correctly read '179 migrations / 001\u2013180'. The earlier commit 3f7c2d1e9 ('align...to slot 181') that bumped to 181 is NOT present in current HEAD (git log origin/staging..HEAD shows no commits touching these files). All three required checks pass on HEAD: gen_doc_counts.py --check CLAUDE.md (exit 0), doc_staleness_review.py full scan (0 stale, exit 0 \u2014 this is the real range_mismatch source, NOT gen_doc_counts which only checks counts), check_loc_budget.py (OK). lint_docs.py emits DOC004 broken-link noise only from an UNTRACKED local benchmark node_modules tree (docs/benchmarks/agent-outcome/runs/, 0 tracked files) \u2014 irrelevant to CI/PR. Conclusion: nothing to fix; making the requested 181 edit would INTRODUCE a range_mismatch. No commit/push made.",
+    "replaces": null,
+    "created": "2026-06-01"
+  },
+  {
+    "id": "g152",
+    "type": "decision",
+    "topic": "GitHub project board operating model (MemoryVault)",
+    "content": "MemoryVault's GitHub project board (TechCorp/projects/1) was restructured 2026-06-02 to separate four independent axes that were previously conflated in the milestone slot. This is the canonical operating model going forward:\n\n**MILESTONE = weekly sprint.** Named `Sprint YYYY-Www` (ISO week, Mon-Sun) with a Sunday due-date. NOT a version. Pre-planned; unfinished work rolls to the next sprint. 12 sprints created for history (2026-W12 through W23, covering v0.6.0..v0.8.16). Exception kept: `v1.0.0 \u2014 Public Launch Gate` (#25) stays a special launch-gate milestone, not a sprint.\n\n**RELEASE = a single-select project field** (63 options v0.6.0..v0.8.16, color-coded by minor). Holds the exact published patch tag an issue shipped in (real semver \u2014 v1.0.0 stays a meaningful launch gate, NOT a sprint counter). Set from the merge PR -> first git tag containing it (`git tag --contains <sha>`), with close-date fallback. 1227 shipped issues backfilled.\n\n**THEME = a single-select project field** (15 options: Memory Quality, Agent Infrastructure, Teams, Developer Platform & Integrations, Memory System, Cluster Intelligence, Frontend & Admin Platform, Security/Privacy/Enterprise, Observability, External Benchmarks, Native Documents & Retrieval, Re-engagement & Lifecycle Email, Relevance Substrate, Billing, Frontend Rebuild). Sits ABOVE epics; a theme contains multiple epics. Replaces the old theme MILESTONES, which were deleted.\n\n**EPIC = native GitHub parent/sub-issue hierarchy + `type:epic` label** (~100 epic issues already existed). Tasks are sub-issues of their epic. Spans multiple sprints.",
+    "replaces": null,
+    "created": "2026-06-02"
+  },
+  {
+    "id": "g153",
+    "type": "decision",
+    "topic": "Release\u2192issue association lives in the CloudweaveRelease skill, not GitHub Actions",
+    "content": "Decision (2026-06-02): The GitHub project \"Release\" single-select field is populated by the CloudweaveRelease skill (Step 8 \"Associate shipped issues with the release\"), NOT by a GitHub Actions workflow. The Nexus workflow `.github/workflows/release-field-sync.yml` was built, validated, then REMOVED (Nexus PR #5075 to staging; reaches main on next /CloudweaveRelease). The `RELEASE_SYNC_ENABLED` repo variable was deleted.\n\nWhy the skill won over the GHA workflow: the workflow hit four blockers a skill avoids \u2014 (1) PROJECT_TOKEN PAT lacks pull-requests scope so closingIssuesReferences failed; (2) github-script can't require('@actions/github'); (3) workflow_dispatch only registers from the default branch (main), forcing staging\u2192main promotions just to test; (4) an unattended run can't catch false positives. The skill runs with the user's full gh credentials and confirms the resolved issue list interactively.\n\nHow Step 8 works: after tagging vX.Y.Z on main, compute range <prev semver tag>..vX.Y.Z; resolve shipped issues via PR closingIssuesReferences (authoritative) + Closes/Fixes/Resolves #N text refs; show the list for user confirmation (the text regex false-matches \"from closed #N\" \u2014 e.g. it wrongly pulled #4980 into v0.8.17); ensure the Release option exists (id+color-preserving updateProjectV2Field append); set Release per issue.\n\nSibling workflow `.github/workflows/sprint-milestone.yml` (weekly Sprint YYYY-Www milestone creator) was KEPT \u2014 it is not release-related. Updates/supersedes the automation section of [[github-project-board-operating-model-Nexus]] (memory 25426).",
+    "replaces": "g152",
+    "created": "2026-06-02"
+  },
+  {
+    "id": "g154",
+    "type": "decision",
+    "topic": "PG18 migration: corrected conclusion after live prod check (no urgent CVE driver)",
+    "content": "Update (2026-06-03) superseding the #3823 spike outcome (run-live-validation): a deep-research pass + LIVE production Neon query (via CloudServe backend service) corrects the migration urgency.\n\n**Live prod state (queried 2026-06-03):** server_version=17.10; pgvector installed=0.8.0; pgvector AVAILABLE on Neon PG17 image = ONLY 0.7.4 and 0.8.0 (so 0.8.2 is NOT installable in place); `SHOW io_method` errors (confirms PG17); ZERO HNSW/IVFFlat indexes in production (the only one, idx_records_embedding, was dropped in migration 133 / #3536 as unused at current scale).\n\n**Corrected conclusion (supersedes \"CVE = forcing function\"):**\n- CVE-2026-3172 (pgvector buffer overflow, CVSS 8.1, affects 0.6.0\u20130.8.1, fixed 0.8.2) triggers ONLY during parallel HNSW index BUILDS. We have NO HNSW index \u2192 no exposure path today. The deep-research headline overstated urgency because it didn't know about migration 133.\n- Can't patch the CVE in place anyway: Neon PG17 image tops out at pgvector 0.8.0. And Neon's PG18 GA image shipped 0.8.1 (also affected) \u2014 verify Neon's CURRENT PG18 pgvector before assuming a migration clears it.\n- PG18 perf gains are LATENT on Neon (async I/O gated by io_method=sync).\n- No EOL cliff (PG17 supported to Nov 2029).\n\n**Net:** PG18 migration is a TIMING OPTIMIZATION, not a security emergency. Pre-launch-is-cheaper still holds on Neon mechanics (no pg_upgrade; dump/restore + repoint every consumer scales with dataset + consumer count). The one real future trigger: if we recreate an HNSW index (per #133, when per-user record counts approach ~5\u201310k), we MUST be on pgvector 0.8.2+.",
+    "replaces": "g083",
+    "created": "2026-06-03"
+  },
+  {
+    "id": "g155",
+    "type": "event",
+    "topic": "Marcus + Jennifer Pinnacle 2026-06-04 meeting debrief: scope landed, AI enablement + HubSpot",
+    "content": "2026-06-04 meeting with Marcus and Jennifer (Pinnacle) \u2014 really good meeting, pattern of no-scope finally broke. Next meeting: Thursday 2026-06-11 at 13:00. David committed to sending his meeting notes today as the working basis.\n\nMARCUS'S FRAMING FOR JENNIFER: the question is what capacity Pinnacle's commercial org lacks and what deliverables David could help with. David has not yet been onboarded on website, content, SEO, project management, tracking, etc.\n\nJENNIFER \u2014 HUBSPOT CURRENT STATE & GAPS:\n- They see gaps in how deeply they can use HubSpot for building and configuring.\n- Since David left Pinnacle: added a scoring system based on combined persona touchpoints, marked by sales on different properties.\n- User survey set up for all new users \u2014 needs to be more granular and personalised; 5 emails sent out across two user journeys.\n- ICP structure: simple setup following BANT-style qualification method plus personas. More needed to reach all deals and contacts with the right content.\n- Reporting/analytics: limitations in data quality and data volume re: integration with Pinnacle Core. Currently basic sales/deal analysis and weekly overview of new contacts and what happens with them. Want more data integrations to enable more reporting.\n- Support team has implemented and gone live with the HubSpot chatbot (Service module).\n- Sales team improvements wanted: dedicated views per team, properties configured so important stuff is visible, integrations, note-taking.\n- Important next steps per Jennifer: more granular user journeys, and more/better/more proactive use of AI in analytics.",
+    "replaces": null,
+    "created": "2026-06-04"
+  },
+  {
+    "id": "g156",
+    "type": "event",
+    "topic": "Marcus + Elena Brightwell 2026-06-04 meeting debrief: scope landed, AI enablement + HubSpot",
+    "content": "2026-06-04 meeting with Marcus and Elena (Brightwell) \u2014 really good meeting, pattern of no-scope finally broke. Next meeting: Thursday 2026-06-11 at 13:00 (30 minutes). David sent his meeting notes same day as the working basis, including a proposed agenda and reference links to his work.\n\nMARCUS'S FRAMING FOR ELENA: the question is what capacity Brightwell's commercial org lacks and what deliverables David could help with. David has not yet been onboarded on website, content, SEO, project management, tracking, etc.\n\nELENA \u2014 HUBSPOT CURRENT STATE & GAPS:\n- They see gaps in how deeply they can use HubSpot for building and configuring.\n- Since David left Brightwell: added a scoring system based on combined persona touchpoints, marked by sales on different properties.\n- User journey live for all new users with 5 emails sent across two user journeys \u2014 needs to be more granular and personalised. (Correction: earlier note said \"user survey\"; David misheard \u2014 Elena said user journey.)\n- ICP structure: simple setup following BANT-style qualification method plus personas. More needed to reach all deals and contacts with the right content.\n- Reporting/analytics: limitations in data quality and data volume re: integration with Brightwell Core. Currently basic sales/deal analysis and weekly overview of new contacts and what happens with them. Want more data integrations to enable more reporting.\n- Support team has implemented and gone live with the HubSpot chatbot (Service module).\n- Sales team improvements wanted: dedicated views per team, properties configured so important stuff",
+    "replaces": "g155",
+    "created": "2026-06-04"
+  },
+  {
+    "id": "g157",
+    "type": "note",
+    "topic": "Proposal drafts created: roadmap, statement of work, engagement models",
+    "content": "2026-06-04: Deep-research run (105 agents) + synthesis produced three internal drafts under nexus-corp projects/meridian/ for the 2026-06-11 13:00 David/Rebecca meeting (prep commitment 25626): (1) workstream-roadmap.md \u2014 four phased workstreams (HubSpot, data & reporting, AI enablement, website/CMS) with effort bands, dependencies, quick wins, and an explicit Apex RACI boundary; lead quick wins = four Phase-0 audits in the first 2-3 weeks. (2) draft-sow.md \u2014 multi-workstream retainer SoW adapted from templates/sow.md, Phase-0 discovery sprint, open items: VAT reverse-charge for Norwegian client, DPA, Trials/Summit add-on in or out. (3) engagement-models.md \u2014 compares fixed retainer / project / workstream / min-max band; recommends \u20ac30K min / \u20ac80K max band anchored at ~\u20ac50K for 80-100 hrs, 3-month initial commitment; price-conversation sequencing: anchor before asking budget, signal flexibility on structure not value. Key caveats: Vertex/predictive-scoring tier claims were refuted in verification \u2014 confirm Meridian's HubSpot subscription + current Vertex packaging before promising AI features; org-wide Claude Skills needs Team/Enterprise plan; rate reality check added \u2014 \u20ac50K/80-100hrs is \u20ac625-781/hr effective (half the relationship rate), option to band hours alongside price (~\u20ac1,250/hr throughout). Gating questions for the call: HubSpot tier, Claude plan, CMS chosen?, Analytics360 greenfield?, prior AI consultant outputs.",
+    "replaces": null,
+    "created": "2026-06-04"
+  },
+  {
+    "id": "g158",
+    "type": "pattern",
+    "topic": "Gotcha: Repo Hygiene doc-staleness gate checks migration range and test-file counts",
+    "content": "The Repo Hygiene CI job's doc-staleness scan fails PRs whose code changes invalidate numeric doc claims. Two bites in one session (2026-06-04): (1) adding migration slot 185 broke the '001-184' range claim in docs/oss-strategy-exploration.md (CLAUDE.md was already updated in the same PR); (2) adding 2 test files broke the '**N test files**' claim in docs/reference/testing.md \u2014 DOC012 in scripts/lint_docs.py regex-matches any '\\d+ test files' line against the live find count. When a PR adds/removes migrations or test_*.py files, update those doc counts in the same PR; run `make lint-docs` + the doc-staleness scan locally before pushing. Note the per-directory table in testing.md is NOT gated and already drifted (claims unit/=304 vs actual 337).",
+    "replaces": null,
+    "created": "2026-06-04"
+  }
+]

@@ -1,0 +1,4 @@
+# Compiled binaries — built in CI/release, never committed.
+/3ngram-hook
+/3ngram-hook-*
+/dist/

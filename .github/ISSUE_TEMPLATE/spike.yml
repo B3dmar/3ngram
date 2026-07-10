@@ -1,0 +1,38 @@
+name: Spike
+description: Timeboxed investigation that produces a written result
+title: "spike: "
+labels: ["spike"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A spike is a timeboxed validation that ends in a written result (`docs/spikes/`).
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: The specific question this spike must answer.
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Method
+      description: How you will investigate — experiments, prototypes, measurements.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: What a usable result looks like and where it will be written.
+    validations:
+      required: true
+  - type: input
+    id: effort
+    attributes:
+      label: Effort (timebox)
+      description: The timebox for this spike.
+      placeholder: e.g. 1 day, 4 hours
+    validations:
+      required: true

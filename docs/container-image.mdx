@@ -1,0 +1,62 @@
+---
+title: "Container image"
+description: "Pull and verify the official multi-platform 3ngram server image."
+icon: "box"
+---
+
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+The official server image is `ghcr.io/b3dmar/3ngram`. It contains the MCP and
+REST server, runs as the non-root `node` user, and includes the Apache-2.0
+license and NOTICE. Postgres, pgvector, and Redis remain separate services; see
+[Self-host](/self-host) for the complete deployment path.
+
+## Pull a release
+
+Versioned tags identify a release, while `latest` follows the newest stable
+release. Use the published digest below when deployment immutability matters.
+
+```bash
+docker pull ghcr.io/b3dmar/3ngram:1.0.0
+```
+
+Every release publishes a multi-platform OCI index for `linux/amd64` and
+`linux/arm64`. Docker selects the matching image automatically. To inspect or
+select a platform explicitly:
+
+```bash
+docker buildx imagetools inspect ghcr.io/b3dmar/3ngram:1.0.0
+docker pull --platform linux/arm64 ghcr.io/b3dmar/3ngram:1.0.0
+```
+
+Published tags are the full version (`1.0.0`), major/minor (`1.0`), `latest`,
+and `sha-<full-git-sha>`.
+
+## Pin an immutable digest
+
+The release page records the exact multi-platform digest. Pulling by digest
+prevents a tag change from altering what is deployed:
+
+```bash
+docker pull ghcr.io/b3dmar/3ngram@sha256:<release-digest>
+```
+
+## Verify provenance
+
+The release workflow attaches a BuildKit SBOM and max-mode provenance to the
+OCI image. It also publishes GitHub-signed SLSA provenance for the image
+digest. With GitHub CLI authenticated to GitHub, verify both the repository and
+the exact signer workflow. Public pulls are anonymous; if your environment
+requires registry credentials, log in with a token that can read packages
+before running the command.
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/b3dmar/3ngram@sha256:<release-digest> \
+  --repo B3dmar/3ngram \
+  --signer-workflow B3dmar/3ngram/.github/workflows/release-publish.yml
+```
+
+The release is blocked when Trivy finds a fixable high or critical
+vulnerability. Unfixed upstream findings remain visible in the scan output but
+do not block a release.

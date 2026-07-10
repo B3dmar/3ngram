@@ -1,0 +1,73 @@
+---
+title: "Recall and supersession"
+description: "What makes typed, append-and-supersede memory different from a plain vector store — with a worked example of correcting a fact without losing the old one."
+icon: "layers"
+---
+
+Most "memory" for agents is a vector store: you embed text, you retrieve nearest neighbors, and when something changes you overwrite or delete the old row. 3ngram is built on the opposite rule — **the write path never destroys data** — and recall is supersession-aware as a result. This guide shows what that buys you, with an example you can follow.
+
+## The difference in one sentence
+
+A plain vector store answers "what text is similar to my query"; 3ngram answers "what is *currently true*, and what did I believe *before*" — because corrections create typed edges instead of erasing history. See the [memory model](/concepts/memory-model) for the full mechanism.
+
+## Worked example: a fact that changes
+
+Suppose you record a project's database choice, then change it later.
+
+<Steps>
+  <Step title="Record the original decision">
+    ```text
+    Remember that project Atlas uses MySQL for its primary datastore.
+    ```
+
+    This appends a memory. Ask `search` for "Atlas datastore" and it comes back.
+  </Step>
+  <Step title="Correct it later">
+    The team migrates. Instead of editing the old memory, you supersede it:
+
+    ```text
+    Atlas moved to Postgres for the primary datastore. This supersedes the MySQL decision.
+    ```
+
+    `revise` appends the new memory and links it to the old one with a `supersedes`
+    edge. The MySQL memory is marked invalid from this point — not deleted, not
+    rewritten.
+  </Step>
+  <Step title="Recall returns the current truth">
+    ```text
+    What datastore does Atlas use?
+    ```
+
+    `search` ranks the current memory first, so **Postgres** comes back on top. A
+    scoring penalty demotes the superseded MySQL memory a full tier below any live
+    row, so it never outranks its successor — it stays retrievable (you can still
+    reach it with a time-travel query), but it will not win as the answer.
+  </Step>
+  <Step title="Ask what you believed before">
+    ```text
+    What did we believe about Atlas's datastore before the migration?
+    ```
+
+    Recall time-travels through the search tool's `asOf` filter (a `validAt`
+    timestamp): it returns the MySQL memory as the historical predecessor that was
+    valid then. The lineage itself — the Postgres memory carries the `supersedes`
+    edge pointing back to MySQL — is stored as metadata and inspected through a
+    memory's detail view, not returned in `search` hits.
+  </Step>
+</Steps>
+
+## Why this matters for retrieval
+
+- **No silent contradictions.** A vector store that kept both rows would return MySQL and Postgres as equally-similar answers and leave the agent to guess. Supersession resolves it.
+- **History stays queryable.** You can reconstruct what was known at any point — useful for audits, post-mortems, and "why did we change this".
+- **Corrections are cheap and safe.** Revising is an append plus an edge, done atomically for facts (the old validity closes as the new one opens). Nothing is bulk-rewritten in place.
+
+## Beyond supersession
+
+The same append-only foundation powers the rest of recall:
+
+- **Typed memories** keep their own lifecycle — a `commitment` moves through `open → waiting → resolved | expired` via the `resolve` tool, while resolving a `blocker` archives it (`active → archived`), so `briefing` can surface what is open or overdue.
+- **Bi-temporal facts** separate when something was true in the world from when 3ngram learned it, so late-arriving corrections are recorded accurately on both timelines.
+- **Consolidation is advisory** — a background worker proposes merges and contradictions through `review_proposals`, but never applies them to your memory automatically.
+
+See [Memory model](/concepts/memory-model) for the complete picture, and the [tool reference](/reference/tools) for `search`, `revise`, `resolve`, and `get_facts`.

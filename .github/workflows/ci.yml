@@ -1,0 +1,636 @@
+# ci.yml — check + test + eval-gate (docs/concepts/testing.mdx).
+# The protected-branch ruleset requires the stable contexts `check`, `test`,
+# and `eval-gate`. Fan-out jobs below are intentionally non-required; the
+# required aggregators fail closed when any required lane fails.
+# RULE: actions pinned by full SHA, never tags (scripts/check-action-pins.sh).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Path gate: cheap change detection so docs/web/
+  # CLI-only changes skip the expensive Postgres integration shards, and the Go hook
+  # gate runs only when the hook actually changes. Downstream required
+  # aggregators fail closed if this non-required gate fails.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # dorny lists PR files via the API
+    outputs:
+      integration: ${{ steps.integration.outputs.integration }}
+      integration_all: ${{ steps.suites.outputs.integration_all }}
+      integration_db: ${{ steps.suites.outputs.integration_db }}
+      integration_core: ${{ steps.suites.outputs.integration_core }}
+      integration_server: ${{ steps.suites.outputs.integration_server }}
+      go: ${{ steps.go.outputs.go }}
+      container: ${{ steps.container.outputs.container }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0 # push events diff before..after; needs full history
+      # `integration` is fail-safe for unknown code: '**' matches everything, the
+      # '!' lines subtract known non-integration paths. predicate-quantifier MUST
+      # be 'every' here — under the default 'some', a .md file still matches '**'
+      # and the exclusions never take effect, so docs-only PRs would wrongly run
+      # Postgres integration.
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: integration
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            integration:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+              - '!docs/**'
+              - '!.claude/**'
+              - '!backlog/**'
+              - '!research/**'
+              - '!apps/cli/**'
+              - '!apps/worker/**'
+              - '!packages/sdk/**'
+              - '!cmd/3ngram-hook/**'
+              - '!eval/**'
+              - '!LICENSE'
+      # Positive suite filters choose which Postgres service shards do
+      # real work. Unknown integration-relevant paths fall back to all shards in
+      # the `integration` job.
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: suites
+        with:
+          filters: |
+            integration_all:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - 'scripts/**'
+              - 'packages/schema/**'
+            integration_db:
+              - 'packages/db/**'
+              - 'packages/schema/**'
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - 'scripts/**'
+            integration_core:
+              - 'packages/core/**'
+              - 'packages/db/**'
+              - 'packages/llm/**'
+              - 'packages/schema/**'
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - 'scripts/**'
+            integration_server:
+              - 'apps/server/**'
+              - 'packages/config/**'
+              - 'packages/core/**'
+              - 'packages/db/**'
+              - 'packages/llm/**'
+              - 'packages/schema/**'
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - 'scripts/**'
+      # `go` is an OR of positive patterns, so it keeps the default 'some'
+      # quantifier (a separate step — 'every' would require a file to match both
+      # patterns, which is impossible).
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: go
+        with:
+          filters: |
+            go:
+              - 'cmd/3ngram-hook/**'
+              - '.github/workflows/ci.yml'
+      # Build the distributable server image whenever its runtime closure or
+      # container/release contract changes. This is an OR of positive patterns.
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: container
+        with:
+          filters: |
+            container:
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release-publish.yml'
+              - '.npmrc'
+              - 'LICENSE'
+              - 'NOTICE'
+              - 'apps/server/**'
+              - 'compose.selfhost.yml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'packages/config/**'
+              - 'packages/core/**'
+              - 'packages/db/**'
+              - 'packages/llm/**'
+              - 'packages/schema/**'
+              - 'tsconfig*.json'
+              - 'turbo.json'
+  quality:
+    name: quality (${{ matrix.lane }})
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+      TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+      TURBO_TELEMETRY_DISABLED: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        lane:
+          - hygiene
+          - biome
+          - workspace-checks
+          - unit
+          - docs-reference
+          - go-hook
+    steps:
+      - name: Fail closed when path gate fails
+        if: ${{ needs.changes.result != 'success' }}
+        run: |
+          echo "changes job result was '${{ needs.changes.result }}'; refusing to pass quality gates"
+          exit 1
+      - name: Skip Go hook
+        if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go != 'true' }}
+        run: echo "No Go hook changes detected; Go hook lane is satisfied."
+      - if: ${{ matrix.lane != 'go-hook' || needs.changes.outputs.go == 'true' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Full history so the DCO gate can walk base..head on fork PRs
+          # (the PR merge ref makes the fork head reachable).
+          fetch-depth: 0
+      - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' || matrix.lane == 'hygiene' }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      # hygiene only runs `pnpm config get` (no install), so it needs Node + pnpm but NOT the
+      # pnpm cache — `cache: pnpm` would fail trying to save a store that was never populated.
+      - if: ${{ matrix.lane == 'hygiene' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+      - name: Install (frozen)
+        if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
+        run: pnpm install --frozen-lockfile
+      - name: Supply-chain guards
+        if: ${{ matrix.lane == 'hygiene' }}
+        run: |
+          bash scripts/check-no-lifecycle-scripts.sh --self-test
+          bash scripts/check-no-lifecycle-scripts.sh
+          bash scripts/check-action-pins.sh
+          bash scripts/check-spdx.sh
+          # Fork-PR token-policy guard: no workflow may combine
+          # pull_request_target with secrets. (self-test first, then real scan).
+          bash scripts/check-workflow-safety.sh --self-test
+          bash scripts/check-workflow-safety.sh
+          bash scripts/check-db-access.sh --self-test
+          bash scripts/check-db-access.sh
+          bash scripts/check-db-shards.sh --self-test
+          bash scripts/check-db-shards.sh
+          bash scripts/check-no-skip.sh --self-test
+          bash scripts/check-no-skip.sh
+          bash scripts/check-no-direct-provider.sh --self-test
+          bash scripts/check-no-direct-provider.sh
+          # Self-host DB secret preflight (issue #452): self-test only here (the
+          # real check needs the operator's .env.selfhost and runs in the
+          # migrations service at deploy time). Node built-ins / sh only.
+          bash scripts/check-selfhost-secrets.sh --self-test
+          # Static guard that compose.selfhost.yml keeps the owner credential
+          # scoped: present on `migrations`, scrubbed on `server` (#452).
+          node --test scripts/test/check-selfhost-cred-scoping.test.mjs
+          # (Apache→FSL import-ban + zero-FSL artifact proof retired in spec 019 /
+          # The public repo is 100% Apache and billing lives in a private
+          # repo, so the boundary is a repo boundary, not an in-repo linter.)
+      - name: Changeset guard (PRs only)
+        if: ${{ matrix.lane == 'hygiene' && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'changeset-release/') }}
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          bash scripts/check-changeset.sh "origin/${{ github.base_ref }}"
+      # DCO sign-off (CONTRIBUTING.md, LICENSING.md §5). Enforced only on
+      # EXTERNAL (fork) PRs — DCO is required "once external contributions open",
+      # so internal branches (which can't rewrite already-merged protected-branch
+      # commits) are not gated. Pure bash, no third-party action. Fails if any
+      # commit in base..head that introduces content lacks a `Signed-off-by:`
+      # trailer; trivial merges (empty --cc combined diff) are exempt, but an
+      # "evil merge" carrying its own edits is checked like any content commit.
+      - name: DCO sign-off (external PRs)
+        if: ${{ matrix.lane == 'hygiene' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Every commit introduced by this PR (base..head). Merge commits are
+          # included so an "evil merge" carrying conflict-resolution edits cannot
+          # slip through unsigned; trivial merges are filtered out below.
+          commits=$(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+
+          if [[ -z "$commits" ]]; then
+            echo "dco: no commits in range — nothing to check."
+            exit 0
+          fi
+
+          # True if the commit introduces content of its own. Non-merge commits
+          # always count; a merge commit counts only when its combined diff
+          # against all parents is non-empty (i.e. it carries its own edits).
+          introduces_content() {
+            local sha="$1"
+            local parents
+            parents=$(git rev-list -1 --parents "$sha" | cut -d' ' -f2-)
+            # Single parent (or root) -> ordinary content commit.
+            if [[ $(wc -w <<<"$parents") -le 1 ]]; then
+              return 0
+            fi
+            # Merge commit: --cc shows only hunks not resolvable from a parent,
+            # so non-empty output means the merge introduced its own edits.
+            [[ -n "$(git show --cc --format= "$sha")" ]]
+          }
+
+          missing=""
+          for sha in $commits; do
+            introduces_content "$sha" || continue
+            # A commit is signed off if its message body carries a
+            # `Signed-off-by:` trailer (case-insensitive, line-anchored).
+            if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+>'; then
+              subject=$(git log -1 --format='%h %s' "$sha")
+              missing="${missing}${subject}"$'\n'
+            fi
+          done
+
+          if [[ -n "$missing" ]]; then
+            echo "ERROR: the following commits lack a 'Signed-off-by:' trailer:" >&2
+            printf '%s' "$missing" | sed 's/^/  /' >&2
+            echo "" >&2
+            echo "Sign off your commits with 'git commit -s' (or amend/rebase --signoff)." >&2
+            echo "See CONTRIBUTING.md (DCO section)." >&2
+            exit 1
+          fi
+
+          echo "dco: OK — all content-introducing commits signed off."
+      - name: Format + lint (Biome)
+        if: ${{ matrix.lane == 'biome' }}
+        run: pnpm exec biome ci .
+      - name: Workspace checks
+        if: ${{ matrix.lane == 'workspace-checks' }}
+        run: pnpm run check
+      - name: Production dependency license audit
+        if: ${{ matrix.lane == 'workspace-checks' }}
+        run: |
+          node scripts/check-dependency-licenses.mjs --self-test
+          node scripts/check-dependency-licenses.mjs
+      - name: Unit tests
+        if: ${{ matrix.lane == 'unit' }}
+        run: pnpm run test
+      # Generate-and-diff freshness gate (= the docs/concepts/testing.mdx "REST
+      # mirrors" contract check): the committed docs reference artifacts
+      # must match a fresh regeneration, byte for byte. The OpenAPI generator
+      # also asserts its route table covers every router.ts registration.
+      - name: Docs reference freshness
+        if: ${{ matrix.lane == 'docs-reference' }}
+        run: |
+          pnpm run docs:generate
+          git add -N docs
+          git diff --exit-code -- docs
+      - if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.24'
+      - name: Go fmt
+        if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
+        working-directory: cmd/3ngram-hook
+        run: test -z "$(gofmt -l .)" || { echo 'run gofmt -w .'; gofmt -l .; exit 1; }
+      - name: Go vet
+        if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
+        working-directory: cmd/3ngram-hook
+        run: go vet ./...
+      - name: Go test
+        if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
+        working-directory: cmd/3ngram-hook
+        run: go test ./...
+      - name: Go cross-compile (4 targets) + checksums
+        if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
+        working-directory: cmd/3ngram-hook
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w" -o "dist/3ngram-hook-${goos}-${goarch}" .
+          done
+          (cd dist && sha256sum 3ngram-hook-* > checksums.txt && cat checksums.txt)
+
+  container-smoke:
+    name: container smoke (linux/amd64)
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed when path gate fails
+        if: ${{ needs.changes.result != 'success' }}
+        run: |
+          echo "changes job result was '${{ needs.changes.result }}'; refusing to pass the container gate"
+          exit 1
+      - name: Skip unchanged container closure
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container != 'true' }}
+        run: echo "No container-relevant changes detected; container smoke is satisfied."
+      - if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Build release runner
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        run: |
+          docker build \
+            --pull \
+            --platform linux/amd64 \
+            --target runner \
+            --file apps/server/Dockerfile \
+            --tag "3ngram-ci:${GITHUB_SHA}" \
+            .
+      - name: Inspect runtime contract
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        run: |
+          image="3ngram-ci:${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "node"
+          license=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' "$image")
+          test "$license" = "Apache-2.0"
+          docker run --rm --entrypoint sh "$image" -c \
+            'test -s /usr/share/licenses/3ngram/LICENSE && test -s /usr/share/licenses/3ngram/NOTICE'
+      - name: Boot development mode and probe health
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        run: |
+          image="3ngram-ci:${GITHUB_SHA}"
+          name="3ngram-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker logs "$name" 2>/dev/null || true; docker rm -f "$name" 2>/dev/null || true' EXIT
+          docker run --detach \
+            --name "$name" \
+            --env NODE_ENV=development \
+            --publish 127.0.0.1:3000:3000 \
+            "$image"
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/health; then
+              echo
+              echo "container: /health passed"
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' "$name" | grep -qx true; then
+              echo "container exited before becoming healthy" >&2
+              exit 1
+            fi
+            echo "Waiting for server health (${attempt}/30)..."
+            sleep 2
+          done
+
+          echo "container did not become healthy" >&2
+          exit 1
+
+  check:
+    needs: [changes, quality, container-smoke]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate quality gates
+        run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "changes failed with result '${{ needs.changes.result }}'"
+            exit 1
+          fi
+          if [ "${{ needs.quality.result }}" != "success" ]; then
+            echo "quality failed with result '${{ needs.quality.result }}'"
+            exit 1
+          fi
+          if [ "${{ needs.container-smoke.result }}" != "success" ]; then
+            echo "container-smoke failed with result '${{ needs.container-smoke.result }}'"
+            exit 1
+          fi
+          echo "check: all quality gates passed"
+
+  # Deterministic golden-set gate (docs/concepts/testing.mdx evals layer): zero deps, no network, no DB —
+  # pure cosine over committed embeddings vs ratchet floors. <10s.
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+      - name: Golden-set gate
+        run: node eval/src/run.mjs --model openai-large-1536
+
+  # Real-database integration on a throwaway Postgres service container with
+  # pgvector (fork-friendly: no maintainer secrets required).
+  # PR-only. Known non-integration changes pass through the required `test`
+  # aggregator without spinning the DB. If path detection fails, `test`
+  # fails closed instead of becoming skipped via `needs`.
+  integration:
+    name: integration (${{ matrix.shard }})
+    needs: changes
+    if: ${{ always() && github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.integration == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+      TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+      TURBO_TELEMETRY_DISABLED: '1'
+      # Owner/migration connection to the throwaway Postgres service (below).
+      # Fork-friendly: fixed, non-secret credentials against a disposable CI DB.
+      DATABASE_URL_UNPOOLED: postgres://postgres:postgres@localhost:5432/threengram_test
+      # The service container is a fresh, disposable DB — mark it ephemeral so the
+      # resetDomainTables() truncate guard (packages/db ephemeral-guard) allows it.
+      I_AM_AN_EPHEMERAL_DB: '1'
+    # pgvector-capable Postgres, health-checked; a disposable service DB (no
+    # hosted-branch secrets) so any fork can run the integration suite.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: threengram_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d threengram_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: db-structure
+            package: '@3ngram/db'
+            test_files: >-
+              test/integration/migration-roundtrip.int.test.ts
+              test/integration/append-only.int.test.ts
+              test/integration/tenant-isolation.int.test.ts
+              test/integration/with-tenant-discipline.int.test.ts
+          - shard: db-search
+            package: '@3ngram/db'
+            test_files: >-
+              test/integration/search.int.test.ts
+              test/integration/search-filters.int.test.ts
+              test/integration/hnsw-parity.int.test.ts
+          - shard: db-auth
+            package: '@3ngram/db'
+            test_files: >-
+              test/integration/auth-api-keys.int.test.ts
+              test/integration/auth-sessions.int.test.ts
+              test/integration/auth-reset-tokens.int.test.ts
+              test/integration/auth-email-verification.int.test.ts
+              test/integration/auth-oauth-consent.int.test.ts
+              test/integration/resource-limits.int.test.ts
+              test/integration/gc-clients.int.test.ts
+              test/integration/account-delete.int.test.ts
+          - shard: db-memory
+            package: '@3ngram/db'
+            test_files: >-
+              test/integration/briefing-read.int.test.ts
+              test/integration/commitments.int.test.ts
+              test/integration/facts-read.int.test.ts
+              test/integration/memory-read.int.test.ts
+              test/integration/memory-history-read.int.test.ts
+              test/integration/scopes.int.test.ts
+              test/integration/workers.int.test.ts
+          - shard: core
+            package: '@3ngram/core'
+            test_files: ''
+          - shard: server
+            package: '@3ngram/server'
+            test_files: ''
+    steps:
+      - name: Decide shard relevance
+        id: shard
+        run: |
+          case "${{ matrix.shard }}" in
+            db-*) specific="${{ needs.changes.outputs.integration_db }}" ;;
+            core) specific="${{ needs.changes.outputs.integration_core }}" ;;
+            server) specific="${{ needs.changes.outputs.integration_server }}" ;;
+            *) specific="false" ;;
+          esac
+
+          all="${{ needs.changes.outputs.integration_all }}"
+          any="${{ needs.changes.outputs.integration_all }}${{ needs.changes.outputs.integration_db }}${{ needs.changes.outputs.integration_core }}${{ needs.changes.outputs.integration_server }}"
+
+          if [ "$all" = "true" ] || [ "$specific" = "true" ] || [ "$any" = "falsefalsefalsefalse" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Skip inactive shard
+        if: ${{ steps.shard.outputs.enabled != 'true' }}
+        run: echo "Shard '${{ matrix.shard }}' is not relevant for these changed paths; skipping DB work."
+      - if: ${{ steps.shard.outputs.enabled == 'true' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - if: ${{ steps.shard.outputs.enabled == 'true' }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - if: ${{ steps.shard.outputs.enabled == 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install (frozen)
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        run: pnpm install --frozen-lockfile
+      - name: Wait for Postgres service
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres -d threengram_test; then
+              exit 0
+            fi
+            echo "Waiting for Postgres ($i/30)..."
+            sleep 2
+          done
+          echo "Postgres service never became ready" >&2
+          exit 1
+      - name: Migrate (drizzle, owner connection)
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        # DATABASE_URL_UNPOOLED (owner) is set job-wide; drizzle.config.ts reads it.
+        run: pnpm --filter @3ngram/db exec drizzle-kit migrate
+      - name: Provision roles + smoke (owner)
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        # Fixed, non-secret app_user password: the whole DB is a disposable CI
+        # container. The password reaches SQL via psql's :'var' literal quoting.
+        env:
+          PGURL: postgres://postgres:postgres@localhost:5432/threengram_test
+          APP_USER_PASSWORD: app_user
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f scripts/provision-roles.sql
+          # :'var' interpolation only applies to stdin/-f input, never -c strings
+          echo "ALTER ROLE app_user PASSWORD :'pw';" | psql "$PGURL" -v ON_ERROR_STOP=1 -v pw="$APP_USER_PASSWORD"
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f scripts/ci-smoke-owner.sql
+      - name: Smoke (runtime role — RLS, append-only)
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        run: |
+          app_url="postgres://app_user:app_user@localhost:5432/threengram_test"
+          psql "$app_url" -v ON_ERROR_STOP=1 -f scripts/ci-smoke-app.sql
+          echo "DATABASE_URL=$app_url" >> "$GITHUB_ENV"
+      - name: Integration suite (vitest, Postgres service with pgvector)
+        if: ${{ steps.shard.outputs.enabled == 'true' }}
+        # DATABASE_URL (runtime/app_user) comes from the smoke step's GITHUB_ENV
+        # export; DATABASE_URL_UNPOOLED (owner) + I_AM_AN_EPHEMERAL_DB are job-wide.
+        # turbo.json passThroughEnv must list these vars or Strict Mode strips
+        # them before vitest sees them.
+        env:
+          TEST_FILES: ${{ matrix.test_files }}
+        run: |
+          if [ -n "$TEST_FILES" ]; then
+            pnpm exec turbo run build --filter=${{ matrix.package }}
+            pnpm --filter ${{ matrix.package }} exec vitest run $TEST_FILES --fileParallelism=false --testTimeout=30000
+          else
+            pnpm exec turbo run test:integration --filter=${{ matrix.package }}
+          fi
+
+  test:
+    needs: [changes, integration]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate integration gates
+        run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "changes failed with result '${{ needs.changes.result }}'; refusing to skip integration tests"
+            exit 1
+          fi
+          if [ "${{ needs.changes.outputs.integration }}" != "true" ]; then
+            echo "No integration-relevant changes detected; Postgres integration suite is satisfied."
+            exit 0
+          fi
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "integration failed with result '${{ needs.integration.result }}'"
+            exit 1
+          fi
+          echo "test: integration shards passed"

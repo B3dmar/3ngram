@@ -1,0 +1,56 @@
+---
+title: "Memory model"
+description: "How 3ngram stores memories: append-and-supersede writes, typed memories, and bi-temporal facts."
+icon: "database"
+---
+
+3ngram's memory model is built on one rule: **the write path never destroys data**. Everything else — typed edges, bi-temporal validity, advisory consolidation — follows from it.
+
+## Append-and-supersede
+
+`remember` appends. There is no write-side similarity merge, no in-place edit, no delete on any write path.
+
+When a memory needs correction, `revise` creates a **typed edge** between the new memory and the old one:
+
+| Edge | Meaning |
+|---|---|
+| `supersedes` | The new memory replaces the old one outright |
+| `updates` | The new memory revises part of the old one |
+| `extends` | The new memory adds to the old one without contradicting it |
+| `derives` | The new memory was derived from the old one |
+
+A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: `search` returns currently-valid memories by default, and accepts an `asOf` filter (a `validAt` and/or `asKnownAt` timestamp) for time travel, so "what did I believe on date X" stays answerable.
+
+Episodic memories (dated sessions, events) and semantic memories (facts, preferences, patterns) are distinct and never collapsed into each other.
+
+## Typed memories
+
+Every memory carries a `memory_type`, and each type keeps its own lifecycle instead of flattening into undifferentiated text:
+
+- **`decision`** — choices made, with their rationale
+- **`commitment`** — promises with an owner and a due date
+- **`blocker`** — things standing in the way
+- **`fact`** — structured statements about the world
+- **`preference`** — how you like things done
+- **`pattern`** — recurring approaches worth reusing
+- **`note`** — general knowledge worth keeping
+- **`event`** — dated, episodic entries (session debriefs, digests)
+
+Commitments have an explicit state machine — `open → waiting → resolved | expired` — driven by the `resolve` tool. Blockers are deliberately simpler: resolving one archives the blocker memory (`active → archived`, whatever status you pass), dropping it from the briefing's active blockers. The `briefing` tool surfaces what is open, overdue, or going stale.
+
+## Bi-temporal facts
+
+Facts track two timelines independently:
+
+- **World time** (`valid_from` / `valid_to`): when the statement was true in the world.
+- **System time** (`recorded_at`): when 3ngram learned it.
+
+When a fact is superseded, the old fact's validity is closed and the new fact is linked with a `supersedes` edge — in one atomic step. `get_facts` returns the currently-valid facts for a subject; historical queries can reconstruct what was known at any point.
+
+This separation matters because corrections arrive late: you might learn today that a value changed last month. Bi-temporal storage records both when the change happened and when you found out.
+
+## Consolidation is advisory
+
+A background worker detects candidate duplicates and contradictions and **proposes** edges with a rationale — it does not apply them by default. Proposals surface through the `review_proposals` tool, where you accept or reject them.
+
+Event-type memories are never auto-linked, regardless of similarity: recurring episodic entries (daily digests, session debriefs) are textually near-identical by construction, which makes automatic merging the most dangerous exactly where it looks most confident.

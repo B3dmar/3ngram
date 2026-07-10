@@ -1,0 +1,590 @@
+[
+  {
+    "slice": "retrieval",
+    "query": "How do I recover memory notes I saved during my Claude Code sessions that got lost?",
+    "expected": ["g001"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's wrong with my vector search setup and why are embedding operations broken?",
+    "expected": ["g003"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What kind of color schemes work best for me given my colorblindness?",
+    "expected": ["g005"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What changes did I make to my website between late January and mid-February 2026?",
+    "expected": ["g007"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What did we find about orphaned tokens in the production database during that recent data quality check?",
+    "expected": ["g009"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's the structure of the thriftcore-auth-lib project I set up, and what modules and functionality does it include?",
+    "expected": ["g011"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How does Marcus push directly to the staging branch without going through pull requests?",
+    "expected": ["g013"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How is the documentation organized after the March 2025 restructure, and which folders are meant for different roles like end users versus developers?",
+    "expected": ["g015"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what's the issue with the documents count endpoint and why isn't it being fixed right now?",
+    "expected": ["g017"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what's the current payment provider setting in staging and should I change it?",
+    "expected": ["g019"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what licensing issue do we have with the postgresql adapter that's blocking our next release?",
+    "expected": ["g021"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How can I customize scope mappings for my projects and what's the order of precedence when determining which scope to use?",
+    "expected": ["g023"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "how did we handle admin and internal endpoints in the OpenAPI documentation?",
+    "expected": ["g025"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How is our Basecamp organized and what's the main issue we're trying to solve with it?",
+    "expected": ["g027"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what parts of the quick start guide #847 are still left to do?",
+    "expected": ["g029"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "which git worktrees do I need to clean up and what's the status of each one?",
+    "expected": ["g031"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what do I need to do on staging after the migration goes live?",
+    "expected": ["g033"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "why can't I click on my overdue cards to see more details",
+    "expected": ["g035"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "how did we change our release versioning approach and why did we move away from milestone-based releases?",
+    "expected": ["g037"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what refactoring work did we commit to for the analytics module and why?",
+    "expected": ["g039"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what email address should I use for git commits on Marcus's iMac?",
+    "expected": ["g041"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What were my blood pressure numbers when I measured them that morning in March?",
+    "expected": ["g043"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What information did we provide to NeoBank about our pricing structure and target customer segments for the business account?",
+    "expected": ["g045"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "why are the dependabot pull requests for upgrading TypeScript failing in our CI pipeline?",
+    "expected": ["g047"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what did we decide about releasing DataFlow as open source?",
+    "expected": ["g049"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "Why aren't my regular physical therapy and mobility training sessions showing up in my briefing?",
+    "expected": ["g051"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How should I approach explaining AI privacy protections when posting about this topic online\u2014what's my preferred way to handle the jurisdiction angle?",
+    "expected": ["g053"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's my plan for reducing database connection checkouts in the read-path operations, and how am I consolidating the preflight checks?",
+    "expected": ["g055"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What cleanup tasks do I still need to finish after merging that PR about data serialization?",
+    "expected": ["g057"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "why are all my saved memories showing no source information?",
+    "expected": ["g063"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What should I do if Playwright MCP keeps crashing on my VM, and what's a working alternative I used before?",
+    "expected": ["g065"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what did we do to fix those audit issues that were blocking the landing page?",
+    "expected": ["g067"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's the right environment variable naming convention I need to use for exposing variables to the client side in our static site?",
+    "expected": ["g069"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what changes did we make to the snapshot processor to handle orchestration artifacts?",
+    "expected": ["g071"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "why didn't the VoxTech-Core PR merge trigger any tracking updates",
+    "expected": ["g073"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What did I learn about how to structure our homepage messaging based on looking at TechCorp's product pages?",
+    "expected": ["g075"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what tools did we decide to show in the integration strip on the landing page and in what order?",
+    "expected": ["g077"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What do I need to check after the PR merges to make sure the production app URL is configured correctly?",
+    "expected": ["g079"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How should I approach TechVenture Solutions about that retainer opportunity?",
+    "expected": ["g081"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's the founder's correct legal name and why does it matter for our documents?",
+    "expected": ["g084"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What did we decide to do about the Browser Smoke workflow alerting and how are we handling Project Sync failures?",
+    "expected": ["g087"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How long is the weekly window period?",
+    "expected": ["g089"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What were the main technical problems we ran into during that big platform migration last quarter, and how did we fix them?",
+    "expected": ["g091"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What did I set the digest sentinel value to?",
+    "expected": ["g093"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What custom markdown extensions did I add to the digest parser at TechVenture?",
+    "expected": ["g095"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what was decided in the DataFlow Systems meeting about moving our analytics database and when do we need to finish it?",
+    "expected": ["g097"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what version of the software am I currently running as of late april?",
+    "expected": ["g099"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what did we cover in this week's team sync meeting and what are everyone's tasks?",
+    "expected": ["g101"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "When was that session I had at the end of April?",
+    "expected": ["g103"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How long should I rest between interval training sessions?",
+    "expected": ["g105"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What improvements did we make to the CloudSync Analytics platform for Meridian Financial last week?",
+    "expected": ["g107"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "Where should I be storing my handoff notes instead of saving them locally?",
+    "expected": ["g109"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "what happened to that nlp tokenizer debrief script?",
+    "expected": ["g111"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What debrief score did we get for the memory deduplication signal feature?",
+    "expected": ["g113"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What do I need to finish for the release canary before moving forward with the launch checklist?",
+    "expected": ["g116"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's our current pitch for what this product does and who it's for?",
+    "expected": ["g118"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What was blocking the TypeScript 6 upgrade and did we resolve it?",
+    "expected": ["g120"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "How does Marcus prefer to be communicated with in work settings?",
+    "expected": ["g124"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What did we decide about how to organize the app routes in v0.8 and which pages should get removed?",
+    "expected": ["g127"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What visual design approach did we decide on for the reference surface interfaces, and which components from the old dashboard should we avoid?",
+    "expected": ["g129"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's the current status of the v0.8.0 reference surface porting work across admin and settings pages?",
+    "expected": ["g134"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What GitHub issues did I create for the v0.8.2 simplification work and what's my plan for tackling them?",
+    "expected": ["g136"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What should we use for cookie security settings between our app and API subdomains - do we need SameSite=None or can we use something simpler?",
+    "expected": ["g141"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What's Marina's current job title and company?",
+    "expected": ["g144"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "Who did Marcus suggest I should talk to for feedback and advice on solution architecture?",
+    "expected": ["g147"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What changes did we make to the orchestrator-hook to prevent sub-agents from running certain operations while still allowing them to send captures with proper tags?",
+    "expected": ["g149"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What was wrong with the migration range update that was supposed to happen in PR #4986?",
+    "expected": ["g151"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "Did we really need to rush the PG18 migration because of that pgvector security issue?",
+    "expected": ["g154"],
+    "forbidden": []
+  },
+  {
+    "slice": "retrieval",
+    "query": "What proposal drafts did we prepare for the David and Rebecca meeting, and what were the key recommendations?",
+    "expected": ["g157"],
+    "forbidden": []
+  },
+  {
+    "slice": "supersession",
+    "query": "what do I need to finish for the release canary validation in the next session?",
+    "expected": ["g116"],
+    "forbidden": ["g115"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What's our current pitch for how the product works and what makes it different?",
+    "expected": ["g118"],
+    "forbidden": ["g062"]
+  },
+  {
+    "slice": "supersession",
+    "query": "what was blocking the TypeScript 6 upgrade and did we resolve it?",
+    "expected": ["g120"],
+    "forbidden": ["g086"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What's the overall structure of the v0.8 release we're planning - how many issues and epics did we break it down into?",
+    "expected": ["g126"],
+    "forbidden": ["g125"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What's the plan for organizing the frontend routes in v0.8 and how should we handle the different sections like admin pages and context filters?",
+    "expected": ["g127"],
+    "forbidden": ["g061"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What changes did we make to the IA structure in the v0.8 reset, and how are the lifecycle pages organized now?",
+    "expected": ["g128"],
+    "forbidden": ["g061"]
+  },
+  {
+    "slice": "supersession",
+    "query": "what visual design language should we use for the reference surface interface and where exactly should we apply it?",
+    "expected": ["g129"],
+    "forbidden": ["g121"]
+  },
+  {
+    "slice": "supersession",
+    "query": "what happened to the batch status interface after we reset the platform to version 0.5?",
+    "expected": ["g130"],
+    "forbidden": ["g122"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What authentication and registration issues did we fix in the v0.9.2 batch, and what were the specific changes?",
+    "expected": ["g132"],
+    "forbidden": ["g131"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What PRs did we get merged in the last session and what were the main changes?",
+    "expected": ["g133"],
+    "forbidden": ["g132"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What was the final status of the v0.8.0 Reference Surface porting work across admin and settings pages?",
+    "expected": ["g134"],
+    "forbidden": ["g133"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What's our actual reason for raising funding right now - what are we really buying with it?",
+    "expected": ["g138"],
+    "forbidden": ["g137"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What's the right cookie configuration for requests between our app and API subdomains, and do we actually need SameSite=None?",
+    "expected": ["g141"],
+    "forbidden": ["g140"]
+  },
+  {
+    "slice": "supersession",
+    "query": "what design did we choose for separating maintenance updates from user activity timestamps in memory freshness?",
+    "expected": ["g143"],
+    "forbidden": ["g142"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What did we decide to do with the recall MCP tool - are we keeping the compatibility shim or doing a complete removal?",
+    "expected": ["g145"],
+    "forbidden": ["g139"]
+  },
+  {
+    "slice": "supersession",
+    "query": "Who did Marcus suggest I should talk to for feedback and advice on solution architecture?",
+    "expected": ["g147"],
+    "forbidden": ["g146"]
+  },
+  {
+    "slice": "supersession",
+    "query": "Where does the GitHub Release field get populated - is it a GitHub Actions workflow or something else?",
+    "expected": ["g153"],
+    "forbidden": ["g152"]
+  },
+  {
+    "slice": "supersession",
+    "query": "do we actually need to urgently migrate to postgres 18 because of that pgvector vulnerability?",
+    "expected": ["g154"],
+    "forbidden": ["g083"]
+  },
+  {
+    "slice": "supersession",
+    "query": "What did we decide about using HubSpot and AI to help with at Brightwell?",
+    "expected": ["g156"],
+    "forbidden": ["g155"]
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the iOS app store rejection?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about hiring a sales director?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the Tokyo office lease?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the React Native rewrite?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about our patent filing strategy?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the Salesforce outage?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the company retreat venue?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about switching payroll providers?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the office printer situation?",
+    "expected": [],
+    "forbidden": []
+  },
+  {
+    "slice": "abstention",
+    "query": "What do I know about the warehouse inventory system?",
+    "expected": [],
+    "forbidden": []
+  }
+]

@@ -1,0 +1,69 @@
+---
+title: "Monorepo & layering"
+description: "The Turborepo/pnpm workspace layout and the one-way layering rules that keep transport thin and business logic in the core."
+icon: "sitemap"
+---
+
+Turborepo + pnpm workspaces. The license boundary follows the package boundary.
+
+```
+3ngram/
+├── apps/
+│   ├── server/            # express: REST API + MCP — one deployable
+│   ├── worker/            # BullMQ consumers: consolidation, embeddings backfill, surfacing
+│   └── cli/               # 3ngram (bare npm name) — thin SDK client; the coding-agent default transport
+├── packages/
+│   ├── schema/            # Zod v4: THE single source of truth (enums, constraints, tool I/O, API DTOs)
+│   ├── db/                # Drizzle schema (generated CHECKs from packages/schema), withTenant(), migrations
+│   ├── core/              # Domain services: memory write path, retrieval, commitments FSM, consolidation
+│   ├── llm/               # Gateway client + operation-keyed routing registry + usage tracking
+│   ├── sdk/               # Published TS client (@3ngram/sdk) — thin over REST
+│   └── config/            # Shared tsconfig, Biome, env parsing (zod-validated)
+├── eval/                  # Golden set + LongMemEval/MemoryAgentBench harnesses
+├── cmd/3ngram-hook/       # Static Go binary: Claude Code briefing/precheck hook (read-side context feed)
+├── docker-compose.yml     # Local dev / self-host: postgres+pgvector, redis
+├── scripts/
+│   └── provision-roles.sql  # The ONLY place GRANTs/roles live
+├── docs/                  # Mintlify docs site (this tree)
+├── LICENSING.md           # Apache-2.0 license statement (platform billing = separate private repo)
+└── .github/workflows/     # ci.yml, eval-nightly.yml, release-3ngram-hook.yml
+```
+
+## Layering rules (enforced, not aspirational)
+
+```
+apps/* → packages/core → packages/db → postgres
+              ↓
+        packages/schema (imported by everyone, imports nothing)
+```
+
+- **Transport layers (REST routes, MCP tools) contain zero business logic** — they parse (schema), call `packages/core`, format. Oversized router files are the anti-pattern to avoid.
+- `packages/core` never imports express/MCP/Next types.
+- **50-line function / 500-line file budget**, enforced by lint warning + review. Oversized files in core paths are exactly the failure mode this budget prevents.
+- Dependency direction checked in CI (`dependency-cruiser` or Turborepo boundaries).
+
+## Server topology note
+
+API and MCP ship as **one express app / one service** in v1 (a shared service layer makes a separate process split unnecessary at this scale). Split into separate deployables only when load profiles demonstrably diverge — the code structure (thin adapters over `core`) keeps that a deploy-config change, not a refactor.
+
+## Resource-limit composition contract
+
+The public server exposes two optional, billing-neutral resource limits through the injected `Limits` resolver:
+
+- `maxLiveMemories` caps rows where `status = 'active' AND valid_to IS NULL`.
+- `maxActiveMcpClients` caps distinct client IDs with at least one non-revoked, unexpired OAuth token.
+
+Omitting either field means unlimited, which is the Apache self-host default. Values are validated as finite, non-negative safe integers before use; invalid injected policy fails closed. The schema contains no plan names or product prices.
+
+Live-memory admission is an exact count-and-insert transaction serialized per tenant. Active welcome memories and active imports consume a slot. Archived imports and imports whose `valid_to` is already set do not. A revision is allowed at the cap because it closes one live row and appends its successor in the same transaction, leaving the live count unchanged.
+
+OAuth admission is serialized with account credential lifecycle changes. A first grant for a new distinct client is refused at the cap, while reauthorization of an already-active client remains possible when usage is at or below the cap. If a limit is lowered below current usage, issuance converges without deleting credentials: only the newest allowed client IDs (ordered by their latest live token creation time, then `client_id` ascending) may reauthorize or rotate. Losing clients cannot leapfrog the retained set with a fresh authorization-code flow, and their current access tokens expire naturally. Dynamic client registration remains unrestricted; the limit is enforced when a client first receives tokens.
+
+Transport contracts are explicit:
+
+- REST memory creation returns `409 {"error":"resource_limit_exceeded"}`.
+- MCP tools return an `isError` result with reason code `resource_limit_exceeded`.
+- The onboarding welcome-seed endpoint returns the same HTTP 409 reason.
+- OAuth token issuance returns RFC-compatible HTTP 400 `invalid_grant` with the safe description `Active MCP client limit reached`.
+
+`@3ngram/server/app` exports the literal `RESOURCE_LIMITS_ENFORCED = true`. Downstream composition roots can require this sentinel before booting, preventing an older public server from silently ignoring the optional fields. It is a runtime compatibility marker, not commercial policy.
