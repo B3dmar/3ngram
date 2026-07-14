@@ -253,7 +253,7 @@ test('empty-string env overrides fall back to pinned defaults (GH unset vars.*)'
     let seenUrl
     const fetchImpl = (u) => {
       seenUrl = u
-      return fakeFetch(PARQUET_BODY)(u) // != pinned content -> must be rejected
+      return fakeFetch(PARQUET_BODY)() // != pinned content -> must be rejected
     }
     await assert.rejects(
       ensureMemoryAgentBenchSubset(

@@ -426,6 +426,7 @@ jobs:
     needs: [changes, quality, container-smoke]
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Aggregate quality gates
         run: |
@@ -447,6 +448,8 @@ jobs:
   # pure cosine over committed embeddings vs ratchet floors. <10s.
   eval-gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -626,6 +629,7 @@ jobs:
     needs: [changes, integration]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Aggregate integration gates
         run: |

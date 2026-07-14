@@ -20,7 +20,6 @@ import {
   getCommitment,
   getCommitmentByMemoryId,
   getMemoryById,
-  IllegalCommitmentTransitionError,
   type WrittenCommitment,
   withTenant,
 } from '@3ngram/db'

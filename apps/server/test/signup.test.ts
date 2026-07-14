@@ -123,7 +123,12 @@ function stubPwnedRange(body: string): ReturnType<typeof vi.spyOn> {
   const realFetch = globalThis.fetch.bind(globalThis)
   return vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    if (url.includes('api.pwnedpasswords.com')) {
+    const parsed = new URL(url)
+    if (
+      parsed.protocol === 'https:' &&
+      parsed.hostname === 'api.pwnedpasswords.com' &&
+      parsed.pathname.startsWith('/range/')
+    ) {
       return Promise.resolve(new Response(body, { status: 200 }))
     }
     return realFetch(input, init)

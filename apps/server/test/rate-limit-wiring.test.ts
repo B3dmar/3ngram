@@ -7,13 +7,19 @@
 import type { Server } from 'node:http'
 import { resetEnvCache } from '@3ngram/config'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { createRateLimiter, ipKey, userIdKey } from '../src/middleware/rate-limit.js'
+import {
+  createRateLimiter,
+  ipKey,
+  type RateLimiterMiddleware,
+  userIdKey,
+} from '../src/middleware/rate-limit.js'
 
 let server: Server
 let baseUrl: string
 // Records whether the /mcp limiter middleware ever executed — it must NOT for an
 // unauthenticated request (auth gates it first).
 const mcpLimiterCalls = vi.fn()
+const edgeLimiterCalls = vi.fn()
 
 beforeAll(async () => {
   process.env.BASE_URL = 'https://api.3ngram.test'
@@ -21,6 +27,11 @@ beforeAll(async () => {
   // guard before any token verification, which is exactly the path under test.
   resetEnvCache()
   const { createApp } = await import('../src/app.js')
+
+  const edgeLimiter: RateLimiterMiddleware = (_req, _res, next) => {
+    edgeLimiterCalls()
+    next()
+  }
 
   // Per-IP login limiter: 1 request / 60s so the second login is a 429.
   const authLimiter = createRateLimiter({
@@ -64,7 +75,13 @@ beforeAll(async () => {
     keyResolver: ipKey,
   })
 
-  server = createApp({ authLimiter, mcpLimiter, registerLimiter, oauthLimiter }).listen(0)
+  server = createApp({
+    edgeLimiter,
+    authLimiter,
+    mcpLimiter,
+    registerLimiter,
+    oauthLimiter,
+  }).listen(0)
   await new Promise<void>((resolve) => server.once('listening', resolve))
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('expected a TCP address')
@@ -92,6 +109,17 @@ describe('/auth/login per-IP rate limit', () => {
     expect(second.status).toBe(429)
     expect(Number(second.headers.get('retry-after'))).toBeGreaterThan(0)
     expect(await second.json()).toEqual({ error: 'rate_limited' })
+  })
+})
+
+describe('coarse edge limiter ordering', () => {
+  it('covers non-health routes but never consumes health-probe capacity', async () => {
+    const before = edgeLimiterCalls.mock.calls.length
+    expect((await fetch(`${baseUrl}/health`)).status).toBe(200)
+    expect(edgeLimiterCalls).toHaveBeenCalledTimes(before)
+
+    expect((await fetch(`${baseUrl}/.well-known/3ngram-capabilities`)).status).toBe(200)
+    expect(edgeLimiterCalls).toHaveBeenCalledTimes(before + 1)
   })
 })
 
