@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+# Propagate the private platform compatibility proof onto protected engine SHAs.
+# This workflow deliberately never checks out or executes repository code.
+name: platform-contract
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: platform-contract-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  platform-contract:
+    name: Verify private platform compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark platform contract pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENGINE_SHA: ${{ github.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${ENGINE_SHA}" \
+            -f state=pending \
+            -f context=platform-contract \
+            -f description='Waiting for private platform compatibility proof' \
+            -f target_url="$TARGET_URL"
+
+      - name: Dispatch and await private platform proof
+        id: contract
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_CONTRACT_TOKEN }}
+          ENGINE_SHA: ${{ github.sha }}
+          REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          jq --null-input \
+            --arg engine_ref "$ENGINE_SHA" \
+            --arg request_id "$REQUEST_ID" \
+            '{
+              ref: "main",
+              inputs: {
+                engine_ref: $engine_ref,
+                proof_break: "false",
+                request_id: $request_id
+              }
+            }' \
+            | gh api --method POST \
+                repos/B3dmar/3ngram-platform/actions/workflows/engine-contract.yml/dispatches \
+                --input -
+
+          run_id=''
+          run_url=''
+          for _ in {1..60}; do
+            run_json=$(gh api \
+              'repos/B3dmar/3ngram-platform/actions/workflows/engine-contract.yml/runs?event=workflow_dispatch&branch=main&per_page=100')
+            run_id=$(jq --raw-output \
+              --arg request "request=${REQUEST_ID}" \
+              '[.workflow_runs[] | select(.display_title | contains($request))][0].id // empty' \
+              <<<"$run_json")
+            run_url=$(jq --raw-output \
+              --arg request "request=${REQUEST_ID}" \
+              '[.workflow_runs[] | select(.display_title | contains($request))][0].html_url // empty' \
+              <<<"$run_json")
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+
+          if [[ -z "$run_id" ]]; then
+            echo 'timed out waiting for the private workflow run to appear' >&2
+            exit 1
+          fi
+
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          for _ in {1..180}; do
+            run_json=$(gh api "repos/B3dmar/3ngram-platform/actions/runs/${run_id}")
+            status=$(jq --raw-output '.status' <<<"$run_json")
+            conclusion=$(jq --raw-output '.conclusion // empty' <<<"$run_json")
+            if [[ "$status" == 'completed' ]]; then
+              echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+              [[ "$conclusion" == 'success' ]]
+              exit
+            fi
+            sleep 10
+          done
+
+          echo 'timed out waiting for the private workflow run to complete' >&2
+          exit 1
+
+      - name: Publish platform contract result
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENGINE_SHA: ${{ github.sha }}
+          CONTRACT_OUTCOME: ${{ steps.contract.outcome }}
+          CONTRACT_CONCLUSION: ${{ steps.contract.outputs.conclusion }}
+          CONTRACT_URL: ${{ steps.contract.outputs.run_url }}
+          FALLBACK_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          state=failure
+          description='Private platform compatibility proof failed'
+          if [[ "$CONTRACT_OUTCOME" == 'success' && "$CONTRACT_CONCLUSION" == 'success' ]]; then
+            state=success
+            description='Private platform compatibility proof passed'
+          fi
+
+          target_url=${CONTRACT_URL:-$FALLBACK_URL}
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${ENGINE_SHA}" \
+            -f state="$state" \
+            -f context=platform-contract \
+            -f description="$description" \
+            -f target_url="$target_url"
