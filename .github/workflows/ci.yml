@@ -230,7 +230,15 @@ jobs:
           # The public repo is 100% Apache and billing lives in a private
           # repo, so the boundary is a repo boundary, not an in-repo linter.)
       - name: Changeset guard (PRs only)
-        if: ${{ matrix.lane == 'hygiene' && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'changeset-release/') }}
+        # Version PRs consume their changesets, and the protected staging→main
+        # promotion contains only changes that already passed this guard.
+        if: >-
+          ${{
+            matrix.lane == 'hygiene' &&
+            github.event_name == 'pull_request' &&
+            !startsWith(github.head_ref, 'changeset-release/') &&
+            !(github.head_ref == 'staging' && github.base_ref == 'main')
+          }}
         run: |
           git fetch origin "${{ github.base_ref }}" --depth=1
           bash scripts/check-changeset.sh "origin/${{ github.base_ref }}"
