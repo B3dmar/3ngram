@@ -118,7 +118,9 @@ function hashToken(token: string): string {
  * otherwise reject an equivalent issuer). Applied to BOTH sides before compare.
  */
 function normalizeIssuer(value: string): string {
-  return value.replace(/\/+$/, '')
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
 }
 
 type PublicJwk = JSONWebKeySet['keys'][number]

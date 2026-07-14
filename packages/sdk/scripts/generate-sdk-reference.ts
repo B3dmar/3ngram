@@ -43,7 +43,7 @@ function mdx(text: string): string {
 }
 
 function tableCell(text: string): string {
-  return mdx(text).replace(/\|/g, '\\|')
+  return mdx(text).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 }
 
 function schemaBlock(schema: z.ZodType, io: 'input' | 'output'): string {

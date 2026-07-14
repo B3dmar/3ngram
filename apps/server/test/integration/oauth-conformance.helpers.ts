@@ -78,11 +78,11 @@ export function pkcePair(): { verifier: string; challenge: string } {
 function parseHiddenFields(html: string): Record<string, string> {
   const decode = (v: string): string =>
     v
-      .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
       .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
   const fields: Record<string, string> = {}
   const re = /<input type="hidden" name="([^"]+)" value="([^"]*)">/g
   for (let m = re.exec(html); m !== null; m = re.exec(html)) {

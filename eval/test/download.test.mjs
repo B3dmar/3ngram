@@ -6,7 +6,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -137,7 +136,7 @@ test('empty-string env vars fall back to defaults (GH unset vars.*)', async () =
     let seenUrl
     const fetchImpl = (u) => {
       seenUrl = u
-      return fakeFetch(PAYLOAD)(u)
+      return fakeFetch(PAYLOAD)()
     }
     // No pinned integrity (all env empty) -> download succeeds, no phantom
     // size mismatch, and the documented HuggingFace default URL is used.
@@ -208,9 +207,10 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
   // is identical apart from doing the initial fetch. A pre-existing real cache is
   // saved and restored so a developer's downloaded 500q dataset is never lost.
   const cachedFile = join(CACHE_DIR, DATASET_FILENAME)
-  const backup = `${cachedFile}.test-bak`
-  const hadCache = existsSync(cachedFile)
-  if (hadCache) await rm(backup, { force: true }).then(() => mvKeep(cachedFile, backup))
+  const previousCache = await readFile(cachedFile).catch((error) => {
+    if (error?.code === 'ENOENT') return undefined
+    throw error
+  })
   try {
     await mkdir(CACHE_DIR, { recursive: true })
     await writeFile(cachedFile, OFFICIAL_DATASET)
@@ -233,12 +233,6 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
     assert.equal(out.includes('wombat'), false)
   } finally {
     await rm(cachedFile, { force: true })
-    if (hadCache) await mvKeep(backup, cachedFile)
+    if (previousCache !== undefined) await writeFile(cachedFile, previousCache)
   }
 })
-
-/** Move a file, preserving the source semantics of a backup/restore swap. */
-async function mvKeep(from, to) {
-  await writeFile(to, await readFile(from))
-  await rm(from, { force: true })
-}
