@@ -9,7 +9,7 @@
 // { error: 'rate_limited' }. That is a TEST-HARNESS artifact, not a product bug.
 //
 // FIX: integration tests build the app through this helper, which injects a NO-OP
-// limiter via the EXISTING AppOptions seam (mcpLimiter/authLimiter/
+// limiter via the EXISTING AppOptions seam (edgeLimiter/mcpLimiter/authLimiter/
 // registerLimiter). Production createApp is unchanged — only the test harness
 // relaxes the limiter, localized here so every integration test benefits from
 // one place. Throttling itself is still proven by rate-limit.test.ts
@@ -30,6 +30,7 @@ const passThroughLimiter: RateLimiterMiddleware = (_req, _res, next) => next()
  */
 export function createTestApp(options: AppOptions = {}): Express {
   return createApp({
+    edgeLimiter: passThroughLimiter,
     mcpLimiter: passThroughLimiter,
     authLimiter: passThroughLimiter,
     signupLimiter: passThroughLimiter,

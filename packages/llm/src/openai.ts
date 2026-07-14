@@ -79,6 +79,13 @@ export class InvalidEmbeddingResponseError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
+/** Strip trailing path separators in linear time for arbitrary config input. */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
+}
+
 interface EmbeddingResponse {
   data?: Array<{ embedding?: number[] }>
   // Token accounting for cost tracking. Carries no content —
@@ -93,7 +100,7 @@ interface EmbeddingResponse {
  * construction; the network call happens per embed().
  */
 export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
-  const baseUrl = config.baseUrl.replace(/\/+$/, '')
+  const baseUrl = stripTrailingSlashes(config.baseUrl)
   const model = config.model ?? EMBEDDING_MODEL
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
 

@@ -68,6 +68,13 @@ export interface AppOptions {
   mcpLimiter?: RateLimiterMiddleware
   authLimiter?: RateLimiterMiddleware
   /**
+   * Coarse per-IP bucket for every non-health HTTP surface. This bounds database
+   * work on session-authenticated management routes and adds defense in depth
+   * around the narrower auth/OAuth/MCP/API-key buckets below. Defaults to
+   * 600 requests / 60s and shares the resolved Redis client across replicas.
+   */
+  edgeLimiter?: RateLimiterMiddleware
+  /**
    * Per-IP buckets for the five public self-serve auth endpoints. Each
    * carries its own threshold (signup 5/min, resend-verification 3/min,
    * verify-email 10/min, forgot-password 3/min, reset-password 5/min) keyed on
@@ -121,6 +128,7 @@ export interface AppOptions {
  */
 const MCP_USER_POINTS = 120
 const AUTH_IP_POINTS = 10
+const EDGE_IP_POINTS = 600
 // Per-endpoint thresholds (per source IP, per RATE_WINDOW_SECONDS). The
 // public self-serve surface is more abuse-prone than login, so each endpoint
 // gets its own tight bucket instead of the shared 10/min login bucket.
@@ -155,6 +163,7 @@ function resolveLimiters(
 ): {
   mcpLimiter: RateLimiterMiddleware
   authLimiter: RateLimiterMiddleware
+  edgeLimiter: RateLimiterMiddleware
   signupLimiter: RateLimiterMiddleware
   resendVerificationLimiter: RateLimiterMiddleware
   verifyEmailLimiter: RateLimiterMiddleware
@@ -165,6 +174,15 @@ function resolveLimiters(
   apiKeyLimiter: RateLimiterMiddleware
 } {
   return {
+    edgeLimiter:
+      options.edgeLimiter ??
+      createRateLimiter({
+        points: EDGE_IP_POINTS,
+        duration: RATE_WINDOW_SECONDS,
+        keyPrefix: 'edge:ip',
+        keyResolver: ipKey,
+        redis,
+      }),
     mcpLimiter:
       options.mcpLimiter ??
       createRateLimiter({
@@ -302,6 +320,7 @@ export function createApp(options: AppOptions = {}): Express {
   // seam); else the env-derived client (undefined ⇒ in-memory fallbacks).
   const redis = options.redis ?? resolveRedis()
   const {
+    edgeLimiter,
     mcpLimiter,
     authLimiter,
     signupLimiter,
@@ -319,6 +338,11 @@ export function createApp(options: AppOptions = {}): Express {
   app.disable('x-powered-by')
 
   app.use(requestContext)
+  app.use(healthRouter)
+  // Keep health probes outside throttling so the platform can always distinguish
+  // an overloaded API from a dead process. Every other surface gets a coarse
+  // per-IP cap before body parsing or any handler work.
+  app.use(edgeLimiter)
   // Capture the exact raw bytes alongside JSON parsing so a private webhook
   // (mounted by the extension below) can verify the signature over the
   // unmodified payload — re-serializing a parsed body would change the bytes and
@@ -331,7 +355,6 @@ export function createApp(options: AppOptions = {}): Express {
       },
     }),
   )
-  app.use(healthRouter)
   app.use(wellKnownRouter)
   // Capability discovery: base Apache surfaces ∪ injected hosted-only
   // capabilities. On self-host (no-op extension) only base capabilities appear.

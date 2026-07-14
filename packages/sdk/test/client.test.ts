@@ -173,9 +173,9 @@ describe('ThreengramClient request shape', () => {
     expect(result).toEqual(payload)
   })
 
-  it('strips a trailing slash from baseUrl so paths never double up', async () => {
+  it('strips trailing slashes from baseUrl so paths never double up', async () => {
     const { fetch, calls } = stubFetch(200, { hits: [], count: 0 })
-    const client = new ThreengramClient({ ...CONFIG, baseUrl: 'https://api.example.com/' }, fetch)
+    const client = new ThreengramClient({ ...CONFIG, baseUrl: 'https://api.example.com///' }, fetch)
 
     await client.search('x')
 

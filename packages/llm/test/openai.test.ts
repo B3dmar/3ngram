@@ -35,6 +35,18 @@ function row(length: number) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('createOpenAIGateway embed() response validation', () => {
+  it('strips every trailing slash without changing the request path', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ data: [row(EMBEDDING_DIMENSIONS)] })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const gw = createOpenAIGateway({ ...CONFIG, baseUrl: `${CONFIG.baseUrl}///` })
+
+    await gw.embed(['hello'], 'memory_embed')
+
+    expect(fetchMock).toHaveBeenCalledWith(`${CONFIG.baseUrl}/embeddings`, expect.any(Object))
+  })
+
   it('accepts a well-formed response (right count, right dimensions)', async () => {
     stubFetch({ data: [row(EMBEDDING_DIMENSIONS), row(EMBEDDING_DIMENSIONS)] })
     const gw = createOpenAIGateway(CONFIG)

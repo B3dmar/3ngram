@@ -23,7 +23,7 @@
 // dependencies.
 
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -52,12 +52,14 @@ function workspacePackages() {
     const base = path.join(ROOT, glob)
     for (const entry of readdirSync(base)) {
       const manifestPath = path.join(base, entry, 'package.json')
+      let source
       try {
-        statSync(manifestPath)
-      } catch {
-        continue
+        source = readFileSync(manifestPath, 'utf8')
+      } catch (error) {
+        if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') continue
+        throw error
       }
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      const manifest = JSON.parse(source)
       found.set(manifest.name, { dir: path.join(glob, entry), manifest })
     }
   }

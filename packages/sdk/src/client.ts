@@ -52,6 +52,13 @@ export type ReviseBody = Omit<ReviseToolArgs, 'predecessorId'>
 /** The `fetch` surface the client depends on — injectable for tests (no network). */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 
+/** Strip trailing path separators in linear time for arbitrary caller input. */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
+}
+
 /**
  * Typed client over REST `/api/v1`. Five methods mirror the routes 1:1; every
  * argument and return type is sourced from @3ngram/schema.
@@ -62,7 +69,7 @@ export class ThreengramClient {
   readonly #fetch: FetchLike
 
   constructor(config: ThreengramClientConfig, fetchImpl?: FetchLike) {
-    this.#baseUrl = config.baseUrl.replace(/\/+$/, '')
+    this.#baseUrl = stripTrailingSlashes(config.baseUrl)
     this.#apiKey = config.apiKey
     this.#fetch = fetchImpl ?? ((input, init) => fetch(input, init))
   }

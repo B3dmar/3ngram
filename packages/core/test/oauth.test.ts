@@ -110,9 +110,9 @@ describe('verifyAccessToken', () => {
 
   it('accepts trailing-slash issuer variants on both sides (S4 normalization)', async () => {
     resolveOauthToken.mockResolvedValue(liveGrant)
-    // token iss has NO trailing slash; config issuer HAS one — must still match.
+    // token iss has NO trailing slash; config issuer HAS several — must still match.
     const token = await sign(current, { iss: 'https://api.3ngram.test' })
-    const result = await verifyAccessToken(token, config)
+    const result = await verifyAccessToken(token, { ...config, issuer: `${config.issuer}//` })
     expect(result.ok).toBe(true)
   })
 
