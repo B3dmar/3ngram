@@ -48,6 +48,12 @@ RUN apt-get update \
 # ---- runner: minimal runtime, non-root, dist + prod node_modules only ----------
 FROM ${NODE_IMAGE} AS runner
 ENV NODE_ENV=production
+# The official Node image bundles npm for developer ergonomics, but the runtime
+# starts the already-built server with `node` and never invokes npm/npx. Remove
+# that unused package-manager tree from the final image so vulnerabilities in
+# npm's own transitive tooling cannot expand the production attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx
 # The server binds env.PORT (packages/config default 3000) on all interfaces
 # (Express default host = 0.0.0.0), so Railway's injected PORT is honored.
 ENV PORT=3000

@@ -1,5 +1,11 @@
 # @3ngram/server
 
+## 1.0.1
+
+### Patch Changes
+
+- 4b6e545: Remove the unused npm toolchain from the production server image.
+
 ## 1.0.0
 
 ### Major Changes
