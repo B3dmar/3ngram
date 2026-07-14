@@ -1,5 +1,13 @@
 # @3ngram/core
 
+## 0.5.1
+
+### Patch Changes
+
+- e18e4a2: Bound every non-health HTTP surface with a coarse per-IP rate limit and replace trailing-slash regular expressions with linear-time normalization.
+- Updated dependencies [e18e4a2]
+  - @3ngram/llm@0.2.2
+
 ## 0.5.0
 
 ### Minor Changes
