@@ -50,17 +50,19 @@ docker compose --env-file .env.selfhost -f compose.selfhost.yml up -d
 
 A fail-closed preflight refuses to boot on blank or placeholder secrets. The server exposes `/health` and the REST API on port `3000`. Seed a golden dataset and mint a demo API key (`3ng_<prefix>_<secret>`) with `pnpm seed`; the full walkthrough is in [Self-host](https://docs.3ngram.ai/self-host).
 
-Before running a search, configure both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY` in `.env.selfhost` and restart the server. Seeded memories include cached vectors, but the server still needs an embedding provider for each query (and to embed new writes); without one, search returns `503 embedding_unavailable`.
+Before running a search, configure both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY` in `.env.selfhost` and restart the server. Seeded memories include cached vectors, but the server still needs an embedding provider to embed each query; without one, search returns `503 embedding_unavailable`. Writes are unaffected — they succeed with embedding deferred until a provider is configured.
 
 ### Published container
 
 The official multi-platform server image supports Linux amd64 and arm64:
 
 ```bash
-docker pull ghcr.io/b3dmar/3ngram:1.0.0
+docker pull ghcr.io/b3dmar/3ngram:latest
 ```
 
-Each release also publishes `1.0`, `latest`, and `sha-<full-git-sha>` tags, an
+Pin a specific release instead of `latest` with its full version tag, e.g. `docker pull ghcr.io/b3dmar/3ngram:1.0.2`.
+
+Each release also publishes the major/minor (e.g. `1.0`) and `sha-<full-git-sha>` tags, an
 SBOM, build provenance, and a GitHub-signed attestation. For immutable digest
 pulls and verification, see the [container image guide](https://docs.3ngram.ai/container-image).
 
