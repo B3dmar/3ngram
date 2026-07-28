@@ -1,0 +1,82 @@
+---
+title: "Threads"
+description: "Cross-cutting collections that follow a continuous theme through your memory space — explicit curation plus advisory membership."
+icon: "layer-group"
+---
+
+A **thread** is a named, persistent collection of memories that belong to one continuous theme of your life: workout-and-health, ADHD, family, a long-running client relationship. Threads answer the job scopes and projects cannot: **"follow this theme across my whole memory space."**
+
+| | Scope | Project | Thread |
+|---|---|---|---|
+| Cardinality | exactly one per memory | at most one per memory | **many per memory** |
+| Reach | exclusive partition | subdivides one scope | **cuts across scopes** |
+| Lifecycle | structural, permanent | an effort with an end | a theme that accumulates indefinitely |
+| Membership | set at write time | set at write time | write-time, curated, **or proposed** |
+
+A memory about exercise improving focus belongs to both a `workout-health` thread and an `adhd` thread, and those threads span memories from `personal` and `work` scopes alike. Neither scope nor project can express that.
+
+## Entity model
+
+Two new tables (17 → 19; the JTBD above is the budget justification — cross-scope, many-to-many thematic grouping is unrepresentable in the v1 layout):
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `threads` | id, `user_id`, `name` (kebab-case, same shape as scope names, separate namespace), `description`, `embedding vector(1536)` (of the description — the anchor for advisory matching), `status` (`active`/`archived`), timestamps | `UNIQUE (user_id, name)`; RLS |
+| `memory_threads` | `user_id`, `thread_id`, `memory_id`, `status` (`proposed`/`confirmed`/`rejected`), `added_by` (`user`/`agent`/`consolidator`/`inherited`), `similarity` + `rationale` (nullable, worker-filled), `created_at`, `decided_at` | `UNIQUE (user_id, thread_id, memory_id)`; composite FKs `(user_id, thread_id)` and `(user_id, memory_id)`; RLS |
+
+The full tenant-invariant checklist from [Data model](/concepts/data-model) applies to both: own `user_id`, RLS policy, tenant-qualified composite FKs, `user_id`-leading indexes, isolation tests over their query paths.
+
+**Threads are not edges.** `memory_edges` stays memory→memory; membership lives only in the join table. Proposed memberships are rows in `memory_threads` with `status = 'proposed'` — no third table, and `review_proposals` reads them alongside edge proposals.
+
+## How memories join a thread
+
+Three paths, all landing in `memory_threads`:
+
+1. **At write time** — `remember` accepts an optional `threads: string[]`. Names must already exist (`configure_thread` creates them); unknown names are rejected, not auto-created. Membership lands as `confirmed`, `added_by: agent`.
+2. **Curation** — pin or unpin any existing memory. Membership metadata is organizational, not memory data: adding or removing a membership row never touches a memory row, so append-and-supersede is not in play here.
+3. **Advisory proposals** — the consolidation worker compares memory embeddings against thread embeddings (description vector, blended with the centroid of confirmed members once a thread has enough of them) and writes `proposed` rows above a similarity threshold. Two triggers: each new memory is checked against active threads, and creating a thread kicks off a one-time corpus backfill scan so a new `adhd` thread immediately proposes its historical members.
+
+**Nothing is auto-confirmed.** Stricter than edge consolidation (where `fact`/`preference` may earn auto-apply above the measured precision bar): every worker-proposed membership requires explicit review, for all memory types including `event`. Proposing event memberships is safe precisely because a human confirms them; auto-confirm may be revisited later behind the same per-type precision-bar mechanism, but it is out of scope here.
+
+When `revise` supersedes a memory, the successor inherits the predecessor's `confirmed` memberships (`added_by: inherited`) — a corrected memory should not silently fall out of its threads.
+
+## Retrieval
+
+- **`search`** gains a `thread` filter: results restricted to `confirmed` members of that thread, combinable with existing filters. Membership filters; it never boosts ranking.
+- **`briefing`** gains `thread` as a selector alongside scope, project, and `all`. A thread briefing deliberately crosses scopes — that is the feature, and the no-firehose rule holds because the selector is explicit.
+- **`review_proposals`** lists membership proposals alongside edge proposals (a `kind` discriminator: `edge` | `thread_membership`); accept confirms, reject records `rejected` so the worker never re-proposes the same pair.
+- **`describe_environment`** includes the thread registry.
+
+## Tool surface
+
+One new tool — **`configure_thread`** — taking the MCP count to 11 of the hard cap of 12. It mirrors `configure_scope` (`list` / `create` / `rename` / `set_description` / `archive` / `delete`) and adds the curation actions (`pin` / `unpin`).
+
+Considered and rejected: folding threads into `configure_scope`. Scopes are exclusive partitions and threads are overlapping collections; overloading one tool with both models confuses the agents reading the tool description, and renaming the shipped tool to something neutral breaks existing clients. The JTBD table gains one row:
+
+| JTBD | Tool |
+|---|---|
+| "Follow a theme across my whole memory space" | `configure_thread` (+ `thread` filters on `search`/`briefing`) |
+
+Deleting a thread removes the registry entry and its membership rows; archiving hides it from selectors and stops new proposals while keeping memberships. Neither touches a memory row — same registry-only contract as scope deletion.
+
+## REST surface
+
+- `GET/POST /api/v1/threads`, `PATCH/DELETE /api/v1/threads/:id`
+- `PUT/DELETE /api/v1/threads/:id/memories/:memoryId` (pin/unpin)
+- `GET /api/v1/memories` accepts `?thread=`; `GET /api/v1/memories/facets` adds `threads: string[]`
+
+All thin adapters over the same `packages/core` thread service the MCP tools use.
+
+## Phasing
+
+1. **Foundations** — schema (+2 tables, migrations, isolation tests), `packages/schema` thread types, core thread service, `configure_thread`, `remember.threads`, `search`/`briefing` filters, REST routes.
+2. **Advisory membership** — worker job (new-memory matching + creation-time backfill), `review_proposals` integration, golden-set additions covering thread retrieval precision.
+3. **Dashboard UI** — thread browsing/curation (lives in `3ngram-platform`).
+
+Phase 1 is useful on its own; phase 2 is what makes threads feel like "clusters with a name" rather than manual tagging.
+
+## Open questions
+
+- **Membership cap per proposal batch** — backfilling a broad thread ("family") over a large corpus could propose hundreds of rows; the review surface needs pagination and probably a per-thread proposal budget per run.
+- **Thread-aware `handoff`** — exporting a thread as a context bundle is attractive but deferred until the base feature proves out.
+- **Centroid weighting** — description-vector vs. member-centroid blend ratio is a tuning question for the eval harness, not a design commitment.

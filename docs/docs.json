@@ -55,6 +55,7 @@
             "pages": [
               "concepts/memory-model",
               "concepts/scopes",
+              "concepts/threads",
               "concepts/data-model",
               "concepts/mcp-design",
               "concepts/architecture",
