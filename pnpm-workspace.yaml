@@ -16,6 +16,7 @@ overrides:
   js-yaml@<3.15.0: ^3.15.0
   js-yaml@>=4.0.0 <4.3.0: ^4.3.0
   nodemailer@<=9.0.0: ^9.0.1
+  postcss@<=8.5.17: 8.5.18
 
 # Supply-chain posture (docs/contributing.mdx — active npm worm era).
 # pnpm 11 reads these from pnpm-workspace.yaml, NOT .npmrc (.npmrc is auth/registry only in v11).
