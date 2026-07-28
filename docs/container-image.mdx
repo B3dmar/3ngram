@@ -17,16 +17,18 @@ Versioned tags identify a release, while `latest` follows the newest stable
 release. Use the published digest below when deployment immutability matters.
 
 ```bash
-docker pull ghcr.io/b3dmar/3ngram:1.0.0
+docker pull ghcr.io/b3dmar/3ngram:latest
 ```
+
+To pin a specific release instead, use its full version tag, e.g. `ghcr.io/b3dmar/3ngram:1.0.2`.
 
 Every release publishes a multi-platform OCI index for `linux/amd64` and
 `linux/arm64`. Docker selects the matching image automatically. To inspect or
 select a platform explicitly:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/b3dmar/3ngram:1.0.0
-docker pull --platform linux/arm64 ghcr.io/b3dmar/3ngram:1.0.0
+docker buildx imagetools inspect ghcr.io/b3dmar/3ngram:latest
+docker pull --platform linux/arm64 ghcr.io/b3dmar/3ngram:latest
 ```
 
 Published tags are the full version (`1.0.0`), major/minor (`1.0`), `latest`,
