@@ -11,7 +11,7 @@ Everything runs on stock Postgres — the schema, row-level-security policies, a
 ## Prerequisites
 
 - Docker with Compose v2
-- Node.js 22 or later and pnpm 11.9.0 — the repo pins `pnpm@11.9.0` via the `packageManager` field, so run `corepack enable` to use the pinned version
+- Node.js 22 or later and pnpm 11.9.0 — the repo pins `pnpm@11.9.0` via the `packageManager` field, so run `corepack enable` to use the pinned version (Node ≥ 25 no longer bundles corepack; if `corepack enable` fails with "command not found", install pnpm directly with `npm install -g pnpm@11.9.0`)
 - A `psql` client (optional, for sanity checks)
 
 ## Quickstart
@@ -62,6 +62,8 @@ Everything runs on stock Postgres — the schema, row-level-security policies, a
   <Step title="Seed data and mint an API key">
     ```bash
     corepack enable                        # use the pinned pnpm@11.9.0
+    # corepack not available (Node ≥ 25 dropped it)? use instead:
+    #   npm install -g pnpm@11.9.0
     pnpm install --frozen-lockfile
     set -a; source .env.selfhost; set +a   # exports the passwords set in step 1
     export DATABASE_URL="postgresql://app_user:${APP_USER_PASSWORD}@localhost:54320/ngram"
@@ -95,7 +97,7 @@ Everything runs on stock Postgres — the schema, row-level-security policies, a
 - **No phone-home by default**: leaving `SENTRY_DSN` empty fully disables error tracking and tracing. This is the self-host default.
 - **Append-only below the application**: the runtime database role has no `DELETE` grant anywhere in the memory domain. Destructive operations are impossible at the grant level, not just discouraged in code.
 - **Worker container**: background consolidation jobs are not part of the Compose stack yet; the server and data plane run without them.
-- **Seeded embeddings are pre-computed**: the seed loads committed cached vectors (`eval/fixtures/embeddings-openai-large-1536.json`) into the seeded memories, so no external API call is needed to embed the seed data itself. The search endpoint (`POST /api/v1/search`) still requires an embedding provider (`LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY`) to embed the **query** — without one it returns `503 embedding_unavailable`. New writes need the same provider to embed their content.
+- **Seeded embeddings are pre-computed**: the seed loads committed cached vectors (`eval/fixtures/embeddings-openai-large-1536.json`) into the seeded memories, so no external API call is needed to embed the seed data itself. The search endpoint (`POST /api/v1/search`) still requires an embedding provider (`LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY`) to embed the **query** — without one it returns `503 embedding_unavailable`. Writes do not require a provider: without one, new memories are still accepted (`201`) with embedding deferred (`"embedded":"off"`).
 
 ## Two surfaces: REST/CLI (API key) vs MCP (OAuth)
 
@@ -123,6 +125,6 @@ Dropping the volume is the supported delete path — runtime-role deletes do not
 - **`server` unhealthy at boot** — check `docker compose --env-file .env.selfhost -f compose.selfhost.yml logs server`; the most common cause is a missing `OAUTH_JWKS` or `LOG_HASH_SALT` under `NODE_ENV=production`.
 - **`pnpm seed` auth error** — re-export `DATABASE_URL` / `DATABASE_URL_UNPOOLED` from the sourced passwords before seeding. They are built from `APP_USER_PASSWORD` / `POSTGRES_PASSWORD`, so a shell sourced before you edited `.env.selfhost` carries the wrong password.
 - **`pnpm seed` says `DATABASE_URL_UNPOOLED must be set`** — export it inline before seeding; it is intentionally not a key in `.env.selfhost` because the server rejects it in its production environment.
-- **Search returns "not configured"** — embeddings are off; set `LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY` to enable vector search.
+- **Search returns `503 {"error":"embedding_unavailable"}`** — embeddings are off; writes still succeed (`201`, `"embedded":"off"`) without a provider, but search needs one to embed the query. Set `LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY` to enable vector search.
 
 For the MCP tool contract, see [MCP server design](/concepts/mcp-design); for the contributor local-dev path (integration tests, `pnpm db:migrate`), see [Local development](/concepts/local-development).

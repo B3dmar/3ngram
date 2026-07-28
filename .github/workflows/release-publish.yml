@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      statuses: read
     outputs:
       commit: ${{ steps.release.outputs.commit }}
       version: ${{ steps.release.outputs.version }}
@@ -111,6 +112,21 @@ jobs:
 
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require private platform compatibility proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          state=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}/status" \
+            --jq '([.statuses[] | select(.context == "platform-contract")] | first | .state) // "missing"')
+          if [[ "$state" != 'success' ]]; then
+            echo "platform-contract must be successful for $RELEASE_COMMIT; got '$state'" >&2
+            exit 1
+          fi
 
   container-scan:
     name: Scan release image (amd64 + arm64)
