@@ -169,6 +169,71 @@ func TestRunPrecheckApplyPatchEmitsHookOutput(t *testing.T) {
 	}
 }
 
+// TestRunPrecheckApplyPatchNoFileSilent pins the fire-and-forget invariant for
+// apply_patch payloads whose command carries no recognizable
+// Update/Add/Delete File header (e.g. a freeform shell-style apply_patch call,
+// or a malformed patch): the hook must exit 0 and write nothing to stdout,
+// never surfacing an empty or malformed hook envelope.
+func TestRunPrecheckApplyPatchNoFileSilent(t *testing.T) {
+	payload := `{"tool_name":"apply_patch","tool_input":{"command":"echo no file headers here"}}`
+
+	out := captureRunPrecheck(t, payload)
+	if out != "" {
+		t.Fatalf("expected silent output for apply_patch with no file header, got %q", out)
+	}
+}
+
+// TestRunPrecheckEditEmitsHookOutput mirrors the apply_patch e2e test for the
+// pre-existing Claude Code Edit path (tool_input.file_path, not .command). The
+// renderer switched from plain stdout to the hookSpecificOutput envelope for
+// every matching tool, not just apply_patch — this proves that conversion end
+// to end for existing Claude Code users, not just Codex's new path.
+func TestRunPrecheckEditEmitsHookOutput(t *testing.T) {
+	searchBody := `{
+		"count": 1,
+		"hits": [
+			{"id": "2", "memoryType": "decision", "topic": "hook envelope", "content": "share the JSON envelope across Claude Code and Codex"}
+		]
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			http.Error(w, "wrong path", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(searchBody))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("THREENGRAM_API_BASE", srv.URL)
+	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
+	t.Setenv("THREENGRAM_PRECHECK_DISABLE", "")
+
+	payload := `{"tool_name":"Edit","tool_input":{"file_path":"cmd/3ngram-hook/precheck.go"}}`
+
+	out := captureRunPrecheck(t, payload)
+
+	var got struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not valid hook JSON: %v\n%s", err, out)
+	}
+	if got.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Fatalf("hookEventName = %q, want PreToolUse", got.HookSpecificOutput.HookEventName)
+	}
+	ctx := got.HookSpecificOutput.AdditionalContext
+	if !strings.Contains(ctx, "topic starting `precheck`") {
+		t.Fatalf("additionalContext missing precheck stem header:\n%s", ctx)
+	}
+	if !strings.Contains(ctx, "hook envelope") {
+		t.Fatalf("additionalContext missing memory topic:\n%s", ctx)
+	}
+}
+
 // captureRunPrecheck drives runPrecheck with payload as stdin and returns
 // everything it writes to stdout, faithful to how the hook runs in production
 // (JSON in, hook JSON out).
