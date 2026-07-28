@@ -49,6 +49,7 @@ type precheckInput struct {
 
 type precheckToolIn struct {
 	FilePath string `json:"file_path"`
+	Command  string `json:"command"`
 }
 
 // Only surface memories before file edits, not for every Bash/Read call.
@@ -56,6 +57,7 @@ var precheckMatchingTools = map[string]struct{}{
 	"Edit":         {},
 	"Write":        {},
 	"NotebookEdit": {},
+	"apply_patch":  {},
 }
 
 // runPrecheck is the PreToolUse hook. It surfaces 3ngram memories related to the
@@ -75,11 +77,15 @@ func runPrecheck() int {
 	if _, ok := precheckMatchingTools[input.ToolName]; !ok {
 		return 0
 	}
-	if input.ToolInput.FilePath == "" {
+	filePath := input.ToolInput.FilePath
+	if filePath == "" && input.ToolName == "apply_patch" {
+		filePath = precheckPatchFilePath(input.ToolInput.Command)
+	}
+	if filePath == "" {
 		return 0
 	}
 
-	stem, ok := precheckTopicStem(input.ToolInput.FilePath)
+	stem, ok := precheckTopicStem(filePath)
 	if !ok {
 		return 0
 	}
@@ -98,8 +104,45 @@ func runPrecheck() int {
 		return 0
 	}
 
-	fmt.Print(renderPrecheck(resp, stem, limit))
+	output, err := renderPrecheckHookOutput(renderPrecheck(resp, stem, limit))
+	if err != nil {
+		return 0
+	}
+	fmt.Println(output)
 	return 0
+}
+
+// precheckPatchFilePath extracts the first file touched by a Codex apply_patch
+// payload. Codex exposes the raw patch under tool_input.command rather than the
+// Claude-style tool_input.file_path field.
+func precheckPatchFilePath(command string) string {
+	prefixes := []string{"*** Update File: ", "*** Add File: ", "*** Delete File: "}
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range prefixes {
+			if path, ok := strings.CutPrefix(line, prefix); ok {
+				return strings.TrimSpace(path)
+			}
+		}
+	}
+	return ""
+}
+
+// renderPrecheckHookOutput emits the shared Claude/Codex hook JSON shape.
+// Codex intentionally ignores plain stdout from PreToolUse hooks, while
+// additionalContext is injected into the model context by both clients.
+func renderPrecheckHookOutput(context string) (string, error) {
+	payload := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PreToolUse",
+			"additionalContext": context,
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 // precheckSearch queries POST /api/v1/search for memories whose topic relates to

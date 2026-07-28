@@ -1,6 +1,6 @@
 # 3ngram-hook
 
-Static, zero-dependency Go binary that integrates Claude Code with the 3ngram
+Static, zero-dependency Go binary that integrates Claude Code and Codex with the 3ngram
 REST API (`/api/v1`). It replaces forked bash hook scripts — fetching a session
 briefing and surfacing relevant memories before file edits — all fire-and-forget
 so a hook never blocks your workflow.
@@ -16,7 +16,7 @@ handled by the `/debrief` skill, not a mechanical hook.
 | Command | Hook Event | Description |
 |---------|-----------|-------------|
 | `3ngram-hook briefing` | SessionStart | Fetch `GET /api/v1/briefing`, render markdown briefing |
-| `3ngram-hook precheck` | PreToolUse | Surface related memories before Write/Edit (`POST /api/v1/search`) |
+| `3ngram-hook precheck` | PreToolUse | Surface related memories before Write/Edit/apply_patch (`POST /api/v1/search`) |
 | `3ngram-hook sync [--push\|--pull\|--both]` | SessionEnd | **Deferred** — currently a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet |
 | `3ngram-hook verify` | (manual) | Print resolved API base + key status, probe `GET /api/v1/briefing` |
 | `3ngram-hook version` | (manual) | Print the binary version (also `--version`) |
@@ -75,6 +75,47 @@ print a one-shot banner to stderr at most once per hour.
 The X-API-Key chain (`apps/server/src/middleware/api-key.ts`) returns `200` for
 a valid key, a uniform `401` for missing/unknown/revoked keys, and `503` if the
 resolver/DB is unavailable.
+
+## Codex hooks
+
+Register the binary in `~/.codex/hooks.json` after installing it on your
+`PATH`. Codex requires the JSON `additionalContext` output that this binary
+emits for `PreToolUse`; plain stdout is intentionally ignored for that event.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "3ngram-hook briefing",
+            "timeout": 10,
+            "statusMessage": "Loading 3ngram briefing"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "3ngram-hook precheck",
+            "timeout": 2,
+            "statusMessage": "Checking 3ngram memory"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Restart Codex, then use `/hooks` to review and trust the hook definition.
 
 ## Environment Variables
 
