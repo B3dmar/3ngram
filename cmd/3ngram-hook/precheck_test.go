@@ -70,36 +70,103 @@ func TestPrecheckTopicStem(t *testing.T) {
 	}
 }
 
-func TestPrecheckPatchFilePath(t *testing.T) {
+func TestPrecheckPatchFilePaths(t *testing.T) {
 	cases := []struct {
 		name    string
 		command string
-		want    string
+		want    []string
 	}{
 		{
 			name:    "update file",
 			command: "*** Begin Patch\n*** Update File: apps/server/src/router.ts\n@@\n*** End Patch",
-			want:    "apps/server/src/router.ts",
+			want:    []string{"apps/server/src/router.ts"},
 		},
 		{
 			name:    "add file",
 			command: "*** Begin Patch\n*** Add File: packages/core/src/new-memory.ts\n+content\n*** End Patch",
-			want:    "packages/core/src/new-memory.ts",
+			want:    []string{"packages/core/src/new-memory.ts"},
 		},
 		{
-			name:    "first file wins",
+			name:    "all files in order",
 			command: "*** Begin Patch\n*** Delete File: old.ts\n*** Add File: nested/new.ts\n*** End Patch",
-			want:    "old.ts",
+			want:    []string{"old.ts", "nested/new.ts"},
 		},
-		{name: "invalid patch", command: "echo no patch", want: ""},
+		{name: "invalid patch", command: "echo no patch", want: nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := precheckPatchFilePath(tc.command); got != tc.want {
-				t.Fatalf("precheckPatchFilePath() = %q, want %q", got, tc.want)
+			got := precheckPatchFilePaths(tc.command)
+			if len(got) != len(tc.want) {
+				t.Fatalf("precheckPatchFilePaths() = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("precheckPatchFilePaths()[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
 			}
 		})
+	}
+}
+
+func TestParseToolInput(t *testing.T) {
+	patch := "*** Begin Patch\n*** Update File: apps/server/src/router.ts\n*** End Patch"
+	cases := []struct {
+		name     string
+		raw      string
+		wantPath string
+		wantCmd  string
+	}{
+		{
+			name:     "claude object with file_path",
+			raw:      `{"file_path":"cmd/3ngram-hook/precheck.go"}`,
+			wantPath: "cmd/3ngram-hook/precheck.go",
+			wantCmd:  "",
+		},
+		{
+			name:     "codex structured object with command",
+			raw:      `{"command":"` + strings.ReplaceAll(patch, "\n", `\n`) + `"}`,
+			wantPath: "",
+			wantCmd:  patch,
+		},
+		{
+			name:     "codex freeform raw string",
+			raw:      `"` + strings.ReplaceAll(patch, "\n", `\n`) + `"`,
+			wantPath: "",
+			wantCmd:  patch,
+		},
+		{name: "empty", raw: "", wantPath: "", wantCmd: ""},
+		{name: "malformed", raw: "not json", wantPath: "", wantCmd: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, cmd := parseToolInput([]byte(tc.raw))
+			if path != tc.wantPath {
+				t.Fatalf("path = %q, want %q", path, tc.wantPath)
+			}
+			if cmd != tc.wantCmd {
+				t.Fatalf("cmd = %q, want %q", cmd, tc.wantCmd)
+			}
+		})
+	}
+}
+
+// TestPrecheckStemSkipsIneligibleHeader pins the P2 fix: a multi-file patch that
+// starts with a repo-root file (rejected by precheckTopicStem) must not suppress
+// the precheck — scanning continues to the nested source file and returns its stem.
+func TestPrecheckStemSkipsIneligibleHeader(t *testing.T) {
+	command := "*** Begin Patch\n*** Update File: README.md\n*** Update File: apps/server/src/router.ts\n*** End Patch"
+	raw, err := json.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stem, ok := precheckStem("apply_patch", raw)
+	if !ok {
+		t.Fatal("expected an eligible stem from a later nested header, got none")
+	}
+	if stem != "router" {
+		t.Fatalf("stem = %q, want %q (README.md header must be skipped)", stem, "router")
 	}
 }
 
@@ -145,6 +212,64 @@ func TestRunPrecheckApplyPatchEmitsHookOutput(t *testing.T) {
 	t.Setenv("THREENGRAM_PRECHECK_DISABLE", "")
 
 	payload := `{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: apps/server/src/router.ts\n@@\n*** End Patch"}}`
+
+	out := captureRunPrecheck(t, payload)
+
+	var got struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not valid hook JSON: %v\n%s", err, out)
+	}
+	if got.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Fatalf("hookEventName = %q, want PreToolUse", got.HookSpecificOutput.HookEventName)
+	}
+	ctx := got.HookSpecificOutput.AdditionalContext
+	if !strings.Contains(ctx, "topic starting `router`") {
+		t.Fatalf("additionalContext missing router stem header:\n%s", ctx)
+	}
+	if !strings.Contains(ctx, "router split") {
+		t.Fatalf("additionalContext missing memory topic:\n%s", ctx)
+	}
+}
+
+// TestRunPrecheckApplyPatchRawStringEmitsHookOutput drives the full PreToolUse
+// path for Codex's FREEFORM apply_patch tool, whose tool_input is the raw patch
+// STRING rather than an object with a command field. The previous struct-only
+// decode failed on this shape and dropped the hook silently for every real
+// freeform Codex patch; this proves the string→patch-parse→search→hook-JSON
+// chain now wires together.
+func TestRunPrecheckApplyPatchRawStringEmitsHookOutput(t *testing.T) {
+	searchBody := `{
+		"count": 1,
+		"hits": [
+			{"id": "1", "memoryType": "decision", "topic": "router split", "content": "split the REST router into modules"}
+		]
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			http.Error(w, "wrong path", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(searchBody))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("THREENGRAM_API_BASE", srv.URL)
+	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
+	t.Setenv("THREENGRAM_PRECHECK_DISABLE", "")
+
+	// tool_input is the raw patch string itself (Codex freeform apply_patch).
+	patch := "*** Begin Patch\n*** Update File: apps/server/src/router.ts\n@@\n*** End Patch"
+	rawInput, err := json.Marshal(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"tool_name":"apply_patch","tool_input":` + string(rawInput) + `}`
 
 	out := captureRunPrecheck(t, payload)
 
