@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,10 +42,13 @@ type searchEnvelope struct {
 	Count int `json:"count"`
 }
 
-// PreToolUse hook input shape — mirrors the bash precheck contract.
+// PreToolUse hook input shape — mirrors the bash precheck contract. tool_input
+// is kept raw because its JSON shape varies by client: Claude Code and Codex's
+// structured apply_patch send an OBJECT, while Codex's freeform apply_patch tool
+// sends the patch as a bare STRING. parseToolInput normalizes both.
 type precheckInput struct {
-	ToolName  string         `json:"tool_name"`
-	ToolInput precheckToolIn `json:"tool_input"`
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
 }
 
 type precheckToolIn struct {
@@ -77,15 +81,8 @@ func runPrecheck() int {
 	if _, ok := precheckMatchingTools[input.ToolName]; !ok {
 		return 0
 	}
-	filePath := input.ToolInput.FilePath
-	if filePath == "" && input.ToolName == "apply_patch" {
-		filePath = precheckPatchFilePath(input.ToolInput.Command)
-	}
-	if filePath == "" {
-		return 0
-	}
 
-	stem, ok := precheckTopicStem(filePath)
+	stem, ok := precheckStem(input.ToolName, input.ToolInput)
 	if !ok {
 		return 0
 	}
@@ -112,20 +109,68 @@ func runPrecheck() int {
 	return 0
 }
 
-// precheckPatchFilePath extracts the first file touched by a Codex apply_patch
-// payload. Codex exposes the raw patch under tool_input.command rather than the
+// precheckStem resolves the topic stem for a matching PreToolUse call. It
+// handles Claude's tool_input.file_path, Codex's structured apply_patch
+// (tool_input.command), and Codex's freeform apply_patch (tool_input is the raw
+// patch string). For patches it scans EVERY touched file and returns the first
+// eligible stem, so an ineligible leading header (a repo-root file or dotfile)
+// does not suppress a later edit to a nested source file.
+func precheckStem(toolName string, raw json.RawMessage) (string, bool) {
+	filePath, command := parseToolInput(raw)
+	if filePath != "" {
+		return precheckTopicStem(filePath)
+	}
+	if toolName == "apply_patch" {
+		for _, path := range precheckPatchFilePaths(command) {
+			if stem, ok := precheckTopicStem(path); ok {
+				return stem, true
+			}
+		}
+	}
+	return "", false
+}
+
+// parseToolInput normalizes a PreToolUse tool_input that arrives either as an
+// object ({"file_path":…,"command":…} — Claude Code and Codex's structured
+// apply_patch) or as the bare patch STRING (Codex's freeform apply_patch tool).
+// A raw string is returned as the command so the patch parser can extract the
+// file; decoding into a struct alone would fail on the string shape and drop the
+// hook silently for every real freeform Codex patch.
+func parseToolInput(raw json.RawMessage) (filePath, command string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", ""
+	}
+	if trimmed[0] == '"' {
+		var patch string
+		if err := json.Unmarshal(trimmed, &patch); err == nil {
+			return "", patch
+		}
+		return "", ""
+	}
+	var obj precheckToolIn
+	if err := json.Unmarshal(trimmed, &obj); err == nil {
+		return obj.FilePath, obj.Command
+	}
+	return "", ""
+}
+
+// precheckPatchFilePaths returns every file touched by a Codex apply_patch
+// payload, in patch order. Codex exposes the raw patch under tool_input.command
+// (structured) or as the tool_input string itself (freeform) rather than the
 // Claude-style tool_input.file_path field.
-func precheckPatchFilePath(command string) string {
+func precheckPatchFilePaths(command string) []string {
 	prefixes := []string{"*** Update File: ", "*** Add File: ", "*** Delete File: "}
+	var paths []string
 	for _, line := range strings.Split(command, "\n") {
 		line = strings.TrimSpace(line)
 		for _, prefix := range prefixes {
 			if path, ok := strings.CutPrefix(line, prefix); ok {
-				return strings.TrimSpace(path)
+				paths = append(paths, strings.TrimSpace(path))
 			}
 		}
 	}
-	return ""
+	return paths
 }
 
 // renderPrecheckHookOutput emits the shared Claude/Codex hook JSON shape.
