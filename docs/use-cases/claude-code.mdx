@@ -90,11 +90,13 @@ The hooks are a small static binary, `3ngram-hook`, that reads from the REST API
 
     <Note>
       You can also wire `3ngram-hook precheck` to `PreToolUse` (matcher `Write|Edit`)
-      to look up related memories before edits. In current Claude Code its output
-      appears in the hook transcript (view with `Ctrl-R`) rather than being injected
-      into the model's context automatically — `PreToolUse` plain stdout is not added
-      as context the way `SessionStart` is. Treat precheck as a diagnostic aid, not a
-      guaranteed model-visible feed.
+      to look up related memories before edits. The precheck emits a structured
+      `hookSpecificOutput.additionalContext` JSON payload, which Claude Code injects
+      into the model's context before the edit runs (plain `PreToolUse` stdout, by
+      contrast, only reaches the hook transcript — view with `Ctrl-R`). So the
+      surfaced memories do reach the model, the same way the `SessionStart` briefing
+      does. It stays fire-and-forget: any failure exits silently and never blocks the
+      edit.
     </Note>
 
     By default the briefing orients by the current project when you are in a git

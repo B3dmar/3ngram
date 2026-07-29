@@ -50,7 +50,7 @@ docker compose --env-file .env.selfhost -f compose.selfhost.yml up -d
 
 A fail-closed preflight refuses to boot on blank or placeholder secrets. The server exposes `/health` and the REST API on port `3000`. Seed a golden dataset and mint a demo API key (`3ng_<prefix>_<secret>`) with `pnpm seed`; the full walkthrough is in [Self-host](https://docs.3ngram.ai/self-host).
 
-Before running a search, configure both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY` in `.env.selfhost` and restart the server. Seeded memories include cached vectors, but the server still needs an embedding provider to embed each query; without one, search returns `503 embedding_unavailable`. Writes are unaffected — they succeed with embedding deferred until a provider is configured.
+Before running a search, configure both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY` in `.env.selfhost` and restart the server. Seeded memories include cached vectors, but the server still needs an embedding provider to embed each query; without one, search returns `503 embedding_unavailable`. Writes still succeed without a gateway, but the memory is stored with a NULL embedding and is **not** queued for automatic backfill — configuring a provider later embeds only subsequent writes, so set the gateway before writing any memory you expect to reach via vector search.
 
 ### Published container
 
