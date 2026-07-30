@@ -22,7 +22,12 @@
 // loadOAuthConfig() fails fast at boot when keys/issuer are missing or invalid,
 // so these handlers can assume a well-formed config.
 import { loadOAuthConfig } from '@3ngram/config'
-import { derivePublicJwks, MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE } from '@3ngram/core/auth'
+import {
+  derivePublicJwks,
+  MEMORY_READ_SCOPE,
+  MEMORY_WRITE_SCOPE,
+  supportsAuthorizationResponseIssuer,
+} from '@3ngram/core/auth'
 import { type Request, type Response, Router } from 'express'
 
 export const wellKnownRouter: Router = Router()
@@ -73,6 +78,9 @@ wellKnownRouter.get('/.well-known/oauth-authorization-server', (_req: Request, r
   const config = loadOAuthConfig()
   res.status(200).json({
     issuer: config.issuer,
+    authorization_response_iss_parameter_supported: supportsAuthorizationResponseIssuer(
+      config.issuer,
+    ),
     authorization_endpoint: new URL('/oauth/authorize', config.issuer).href,
     token_endpoint: new URL('/oauth/token', config.issuer).href,
     registration_endpoint: new URL('/oauth/register', config.issuer).href,

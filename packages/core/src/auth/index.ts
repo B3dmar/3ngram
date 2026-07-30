@@ -56,6 +56,7 @@ export {
 export {
   ACCESS_TOKEN_TTL_SECONDS,
   type AuthorizeCodeGrant,
+  buildAuthorizationResponseUrl,
   createOAuthServerProvider,
   OAuthGrantError,
   type OAuthGrantFailure,
@@ -63,6 +64,7 @@ export {
   type OAuthTokenResponse,
   type RedirectCapable,
   resolveRegisteredRedirectUri,
+  supportsAuthorizationResponseIssuer,
   type VerifiedTokenInfo,
 } from './oauth-provider.js'
 export { getOnboardingStatus, type OnboardingStatus } from './onboarding.js'
