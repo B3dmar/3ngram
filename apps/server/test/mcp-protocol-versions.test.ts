@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/client'
 import type { AuthInfo, ProtocolEra } from '@modelcontextprotocol/server'
 import { afterEach, describe, expect, it } from 'vitest'
+import { MCP_CATALOG_CACHE_TTL_MS } from '../src/mcp/server.js'
 import { createMcpProtocolHandler } from '../src/routes/mcp.js'
 
 const authInfo: AuthInfo = {
@@ -23,14 +24,19 @@ const authInfo: AuthInfo = {
 const clients: McpClient[] = []
 const handlers: ReturnType<typeof createMcpProtocolHandler>[] = []
 
-async function connect(options?: ClientOptions): Promise<McpClient> {
+async function connect(
+  options?: ClientOptions,
+  transformRequest?: (request: Request) => Request,
+): Promise<McpClient> {
   const handler = createMcpProtocolHandler({ gateway: undefined })
   handlers.push(handler)
   const transport = new StreamableHTTPClientTransport(new URL('http://test.local/mcp'), {
-    fetch: (url, init) =>
-      handler.fetch(new Request(url, init), {
+    fetch: (url, init) => {
+      const request = new Request(url, init)
+      return handler.fetch(transformRequest?.(request) ?? request, {
         authInfo,
-      }),
+      })
+    },
   })
   const client = new McpClient({ name: 'protocol-contract', version: '0.0.0' }, options)
   clients.push(client)
@@ -66,9 +72,43 @@ describe('MCP protocol compatibility', () => {
     it(`serves ${contract.name}`, async () => {
       const client = await connect(contract.options)
       expect(client.getProtocolEra()).toBe(contract.era)
-      const { tools } = await client.listTools()
-      expect(tools).toHaveLength(10)
-      expect(tools.map((tool) => tool.name)).toContain('describe_environment')
+      const toolCatalog = await client.listTools()
+      expect(toolCatalog.tools).toHaveLength(10)
+      expect(toolCatalog.tools.map((tool) => tool.name)).toContain('describe_environment')
+      const promptCatalog = await client.listPrompts()
+      expect(promptCatalog.prompts).toHaveLength(2)
+
+      if (contract.era === 'modern') {
+        expect(toolCatalog).toMatchObject({
+          ttlMs: MCP_CATALOG_CACHE_TTL_MS,
+          cacheScope: 'public',
+        })
+        expect(promptCatalog).toMatchObject({
+          ttlMs: MCP_CATALOG_CACHE_TTL_MS,
+          cacheScope: 'public',
+        })
+      } else {
+        expect(toolCatalog).not.toHaveProperty('ttlMs')
+        expect(toolCatalog).not.toHaveProperty('cacheScope')
+        expect(promptCatalog).not.toHaveProperty('ttlMs')
+        expect(promptCatalog).not.toHaveProperty('cacheScope')
+      }
     })
   }
+
+  it('rejects a modern Mcp-Name/body mismatch before tool dispatch', async () => {
+    const client = await connect(
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+      (request) => {
+        if (request.headers.get('mcp-method') !== 'tools/call') return request
+        const headers = new Headers(request.headers)
+        headers.set('mcp-name', 'remember')
+        return new Request(request, { headers })
+      },
+    )
+
+    await expect(
+      client.callTool({ name: 'describe_environment', arguments: {} }),
+    ).rejects.toMatchObject({ code: -32_020 })
+  })
 })
