@@ -11,7 +11,7 @@
 // BEFORE any client-auth or provider (DB) call, so these stay pure transport
 // tests with no @3ngram/db dependency (hard rule 5).
 import type { Server } from 'node:http'
-import { setLogDestination } from '@3ngram/config'
+import { contentDigest, setLogDestination } from '@3ngram/config'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const { createTestApp } = await import('./test-app.js')
@@ -196,8 +196,7 @@ describe('POST /oauth/token — per-request structured outcome line (#242)', () 
     // anything outside the supported RFC tokens collapses to (invalid) — an
     // unbounded client-controlled value must never reach a log line (hard rule 6).
     expect(line?.grant_type).toBe('(invalid)')
-    // The load-bearing safeguard: first 8 chars only, never the full client_id.
-    expect(line?.client_id_prefix).toBe('cl_abcde')
+    expect(line?.client_id_prefix).toBe(`sha8:${contentDigest('cl_abcdefghijklmnop')}`)
     expect(JSON.stringify(line)).not.toContain('cl_abcdefghijklmnop')
   })
 
@@ -260,7 +259,7 @@ describe('POST /oauth/token — per-request structured outcome line (#242)', () 
 
     const line = lastOutcomeLine()
     expect(line?.outcome).toBe('invalid_client')
-    expect(line?.client_id_prefix).toBe('conflict')
+    expect(line?.client_id_prefix).toBe(`sha8:${contentDigest('conflicting-client-id')}`)
     // No secret material (code, secret) ever enters the line.
     const serialized = JSON.stringify(line)
     expect(serialized).not.toContain('a-secret-authorization-code')

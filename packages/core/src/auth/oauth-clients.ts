@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// RFC 7591 dynamic client registration policy. The apps->core->db
-// layer: the /oauth/register route stays
-// thin; this module owns id/secret minting, hashing, and the response shape.
+// OAuth client resolution policy. The apps->core->db layer keeps routes thin:
+// this module owns DCR id/secret minting and DCR-first/CIMD-fallback resolution.
 //
 // Secret scheme (mirrors api-keys.ts): a confidential client's secret is 32
 // bytes of CSPRNG entropy, base64url-encoded; the DB stores ONLY its SHA-256
@@ -24,12 +23,19 @@ import {
   type AuthorizedClient,
   getClientByClientId,
   listClientsAuthorizedByUser,
+  materializeClientMetadata,
   type OAuthClientRow,
   registerClient,
   revokeClientForUser,
   updateLastUsedAt,
 } from '@3ngram/db'
-import type { ClientRegistrationInput, TokenEndpointAuthMethod } from '@3ngram/schema'
+import {
+  type ClientIdMetadataDocument,
+  type ClientRegistrationInput,
+  clientIdMetadataUrlSchema,
+  type TokenEndpointAuthMethod,
+} from '@3ngram/schema'
+import { ClientMetadataError, type ClientMetadataResolver } from './client-metadata.js'
 
 const CLIENT_SECRET_BYTES = 32
 
@@ -42,7 +48,7 @@ const CLIENT_SECRET_BYTES = 32
  */
 export interface OAuthClientInformation {
   client_id: string
-  client_id_issued_at: number
+  client_id_issued_at?: number
   client_name: string
   redirect_uris: string[]
   token_endpoint_auth_method: TokenEndpointAuthMethod
@@ -98,6 +104,18 @@ function toClientInformation(row: OAuthClientRow): OAuthClientInformation {
   }
 }
 
+/** Map live CIMD metadata to the provider shape; no persisted value is policy. */
+function metadataToClientInformation(document: ClientIdMetadataDocument): OAuthClientInformation {
+  return {
+    client_id: document.client_id,
+    client_name: document.client_name,
+    redirect_uris: document.redirect_uris,
+    token_endpoint_auth_method: 'none',
+    grant_types: document.grant_types,
+    response_types: document.response_types,
+  }
+}
+
 /**
  * Register a client from a schema-validated request. Mints a UUID client_id;
  * confidential methods (client_secret_post / client_secret_basic) also mint a
@@ -118,6 +136,7 @@ export async function registerOAuthClient(
     redirectUris: input.redirect_uris,
     tokenEndpointAuthMethod: input.token_endpoint_auth_method,
     clientSecretHash: clientSecret === undefined ? null : hashClientSecret(clientSecret),
+    registrationMethod: 'dynamic_registration',
   })
   const info = toClientInformation(row)
   return clientSecret === undefined
@@ -129,8 +148,34 @@ export async function registerOAuthClient(
 export const oauthClientsStore: OAuthClientsStore = {
   async getClient(clientId: string): Promise<OAuthClientInformation | undefined> {
     const row = await getClientByClientId(clientId)
-    return row === undefined ? undefined : toClientInformation(row)
+    return row?.registrationMethod === 'dynamic_registration' ? toClientInformation(row) : undefined
   },
+}
+
+/**
+ * Resolve a client in MCP priority order: persisted DCR first, then CIMD.
+ * CIMD failures are an unknown/invalid client at the OAuth boundary; unexpected
+ * database failures still propagate. The materialized row is FK/display state,
+ * never the source of authorization policy.
+ */
+export async function resolveOAuthClient(
+  clientId: string,
+  metadataResolver: ClientMetadataResolver,
+): Promise<OAuthClientInformation | undefined> {
+  const row = await getClientByClientId(clientId)
+  if (row?.registrationMethod === 'dynamic_registration') return toClientInformation(row)
+  if (!clientIdMetadataUrlSchema.safeParse(clientId).success) return undefined
+
+  let document: ClientIdMetadataDocument
+  try {
+    document = await metadataResolver.resolve(clientId)
+  } catch (error) {
+    if (error instanceof ClientMetadataError) return undefined
+    throw error
+  }
+  const materialized = await materializeClientMetadata(document)
+  if (materialized === undefined) return undefined
+  return metadataToClientInformation(document)
 }
 
 /**
@@ -156,9 +201,21 @@ export async function authenticateClientCredentials(
   clientId: string,
   clientSecret: string | undefined,
   presentedMethod?: TokenEndpointAuthMethod,
+  metadataResolver?: ClientMetadataResolver,
 ): Promise<OAuthClientInformation | undefined> {
   const row = await getClientByClientId(clientId)
-  if (row === undefined) return undefined
+  if (row?.registrationMethod !== 'dynamic_registration') {
+    // CIMD v1 supports public clients only. Any client authentication channel
+    // is a uniform invalid_client, including a body-carried or Basic secret.
+    if (
+      clientSecret !== undefined ||
+      presentedMethod !== undefined ||
+      metadataResolver === undefined
+    ) {
+      return undefined
+    }
+    return resolveOAuthClient(clientId, metadataResolver)
+  }
   if (row.tokenEndpointAuthMethod === 'none') return toClientInformation(row)
   // Enforce the registered channel: the secret must arrive over the method the
   // client registered with (when the caller can attribute the channel).

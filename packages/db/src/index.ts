@@ -50,6 +50,7 @@ export {
   getClientByClientId,
   listClientsAuthorizedByUser,
   listGarbageCollectableClients,
+  materializeClientMetadata,
   type NewOAuthClient,
   type OAuthClientRow,
   registerClient,

@@ -84,6 +84,7 @@ wellKnownRouter.get('/.well-known/oauth-authorization-server', (_req: Request, r
     authorization_endpoint: new URL('/oauth/authorize', config.issuer).href,
     token_endpoint: new URL('/oauth/token', config.issuer).href,
     registration_endpoint: new URL('/oauth/register', config.issuer).href,
+    client_id_metadata_document_supported: true,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],

@@ -179,6 +179,12 @@ export const clientIdMetadataUrlSchema = z
   .url({ protocol: /^https$/ })
   .max(2048)
   .superRefine((value, ctx) => {
+    // oauth_clients.client_id is UNIQUE-indexed and referenced by grants.
+    // URI syntax is ASCII; requiring its wire form avoids a multi-byte value
+    // exceeding PostgreSQL's btree index-row limit despite the character cap.
+    if (!/^[\x21-\x7e]+$/.test(value)) {
+      ctx.addIssue({ code: 'custom', message: 'client_id must use ASCII URI syntax' })
+    }
     const authority = value.match(/^https:\/\/(?<authority>[^/?#]+)/i)?.groups?.authority
     if (authority?.includes('@') === true) {
       ctx.addIssue({ code: 'custom', message: 'client_id must not contain credentials' })
@@ -242,6 +248,13 @@ export const clientIdMetadataDocumentSchema = z.object({
 })
 export type ClientIdMetadataDocument = z.infer<typeof clientIdMetadataDocumentSchema>
 
+/** How an OAuth client entered the AS registry/materialized FK table. */
+export const oauthClientRegistrationMethodSchema = z.enum([
+  'dynamic_registration',
+  'client_id_metadata',
+])
+export type OAuthClientRegistrationMethod = z.infer<typeof oauthClientRegistrationMethodSchema>
+
 /**
  * OAuth scope parameter (RFC 6749 §3.3): space-delimited, case-sensitive. v1
  * issues exactly two scopes (the literals mirror core's
@@ -269,7 +282,7 @@ const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
  * the registered list in core (policy, not shape — it needs the stored client).
  */
 export const authorizeRequestSchema = z.object({
-  client_id: z.string().min(1).max(255),
+  client_id: z.string().min(1).max(2048),
   redirect_uri: z.string().min(1).max(2048).optional(),
   response_type: z.literal('code'),
   code_challenge: z.string().regex(PKCE_CHALLENGE_PATTERN),
@@ -311,7 +324,7 @@ export type ConsentSubmission = z.infer<typeof consentSubmissionSchema>
  * client, public or confidential.
  */
 const tokenClientAuthShape = {
-  client_id: z.string().min(1).max(255),
+  client_id: z.string().min(1).max(2048),
   client_secret: z.string().min(1).max(1024).optional(),
 }
 export const tokenRequestSchema = z.discriminatedUnion('grant_type', [
@@ -346,10 +359,9 @@ export type ApiKeyId = z.infer<typeof apiKeyIdSchema>
 /**
  * Path-param validation for DELETE /auth/oauth-clients/:clientId — the single
  * validation boundary for the grant-revoke target (hard rule 2).
- * client_id is a minted UUID (core registerOAuthClient), so a non-uuid param can
- * never match a stored grant; the route treats a parse failure as no-live-grant
- * (204, the same idempotent outcome as an unknown/already-revoked grant) so a
- * malformed id never reaches the DB.
+ * DCR client_id values are UUIDs; CIMD client_id values are HTTPS metadata URLs.
+ * Express matches an encoded URL as one path segment and decodes it before this
+ * boundary. A malformed value is treated as the idempotent no-live-grant case.
  */
-export const oauthClientIdParamSchema = z.uuid()
+export const oauthClientIdParamSchema = z.union([z.uuid(), clientIdMetadataUrlSchema])
 export type OAuthClientIdParam = z.infer<typeof oauthClientIdParamSchema>

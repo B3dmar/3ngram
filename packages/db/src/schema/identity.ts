@@ -9,9 +9,11 @@
 // blanket RLS exemption: it goes through narrow SECURITY DEFINER resolver
 // functions (migrations/0003_auth_resolvers.sql), one per credential type.
 // Only `users` (the identity itself) and `oauth_clients` (pre-auth DCR
-// registrations, no user_id) are true system tables.
+// registrations plus CIMD FK materializations, no user_id) are true system tables.
 
 import {
+  type OAuthClientRegistrationMethod,
+  oauthClientRegistrationMethodSchema,
   profileReferralSourceSchema,
   profileRoleSchema,
   profileUseCaseSchema,
@@ -78,10 +80,9 @@ export const apiKeys = pgTable(
   ],
 )
 
-// Dynamically-registered MCP clients (RFC 7591). Public AND confidential —
-// S4 client matrix: Claude registers token_endpoint_auth_method=
-// 'client_secret_post'; the secret is issued on request and stored HASHED
-// (api_keys pattern), validated per the registered method.
+// OAuth client registry: authoritative DCR registrations (RFC 7591) plus CIMD
+// materializations used only for grant foreign keys and connected-app display.
+// DCR supports public AND confidential clients; CIMD v1 is public/PKCE only.
 export const oauthClients = pgTable(
   'oauth_clients',
   {
@@ -94,6 +95,10 @@ export const oauthClients = pgTable(
       .default('none')
       .$type<TokenEndpointAuthMethod>(),
     clientSecretHash: text('client_secret_hash'),
+    registrationMethod: text('registration_method')
+      .notNull()
+      .default('dynamic_registration')
+      .$type<OAuthClientRegistrationMethod>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
   },
@@ -107,6 +112,10 @@ export const oauthClients = pgTable(
       'oauth_clients_secret_consistency_check',
       sql`(${t.tokenEndpointAuthMethod} = 'none' AND ${t.clientSecretHash} IS NULL)
         OR (${t.tokenEndpointAuthMethod} <> 'none' AND ${t.clientSecretHash} IS NOT NULL)`,
+    ),
+    check(
+      'oauth_clients_registration_method_check',
+      enumCheckSql(t.registrationMethod, oauthClientRegistrationMethodSchema.options),
     ),
   ],
 )

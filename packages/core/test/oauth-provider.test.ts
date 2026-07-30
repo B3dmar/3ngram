@@ -473,6 +473,7 @@ describe('authenticateClientCredentials (custom client auth — hashes at rest)'
     clientId: 'client-1',
     clientName: 'Test Client',
     redirectUris: ['https://client.example/cb'],
+    registrationMethod: 'dynamic_registration',
     createdAt: new Date('2026-06-10T12:00:00Z'),
   }
 

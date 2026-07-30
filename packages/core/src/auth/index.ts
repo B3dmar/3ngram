@@ -66,6 +66,7 @@ export {
   type OAuthClientsStore,
   oauthClientsStore,
   registerOAuthClient,
+  resolveOAuthClient,
   revokeAuthorizedClient,
   touchClientLastUsed,
 } from './oauth-clients.js'

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
-import { clientIdMetadataDocumentSchema, clientIdMetadataUrlSchema } from '../src/auth.js'
+import {
+  clientIdMetadataDocumentSchema,
+  clientIdMetadataUrlSchema,
+  oauthClientIdParamSchema,
+} from '../src/auth.js'
 
 const clientId = 'https://client.example/oauth/client.json'
 
@@ -25,8 +29,18 @@ describe('clientIdMetadataUrlSchema', () => {
     'https://client.example/oauth/client.json#fragment',
     'https://client.example/oauth/../client.json',
     'https://client.example/oauth/%2e%2e/client.json',
+    'https://client.example/oauth/cliënt.json',
   ])('rejects an invalid client metadata URL: %s', (value) => {
     expect(clientIdMetadataUrlSchema.safeParse(value).success).toBe(false)
+  })
+})
+
+describe('oauthClientIdParamSchema', () => {
+  it('accepts both DCR UUIDs and CIMD URLs for grant revocation', () => {
+    expect(oauthClientIdParamSchema.safeParse('00000000-0000-4000-8000-000000000000').success).toBe(
+      true,
+    )
+    expect(oauthClientIdParamSchema.safeParse(clientId).success).toBe(true)
   })
 })
 

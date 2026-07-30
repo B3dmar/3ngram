@@ -8,6 +8,7 @@ import {
   eventKindSchema,
   memoryStatusSchema,
   memoryTypeSchema,
+  oauthClientRegistrationMethodSchema,
   proposalStatusSchema,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
@@ -24,6 +25,10 @@ const resolversSql = readFileSync(
 )
 const clientAuthSql = readFileSync(
   join(import.meta.dirname, '../migrations/0005_client_auth_constraints.sql'),
+  'utf8',
+)
+const clientRegistrationMethodSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0027_cimd_clients.sql'),
   'utf8',
 )
 // 0009 widens memory_events_kind_check with 'embed_failed' (the embed-on-write
@@ -76,7 +81,8 @@ const allMigrations =
   passwordResetAtomicSql +
   emailVerificationSql +
   unverifiedSignupRetrySql +
-  signupClientProofSql
+  signupClientProofSql +
+  clientRegistrationMethodSql
 const rolesSql = readFileSync(join(import.meta.dirname, '../provision-roles.sql'), 'utf8')
 
 describe('0000_init.sql ↔ @3ngram/schema drift', () => {
@@ -151,6 +157,16 @@ describe('oauth_clients constraints (0005, PR #53 review)', () => {
     expect(clientAuthSql).toContain('oauth_clients_secret_consistency_check')
     expect(clientAuthSql).toMatch(/= 'none' AND .*client_secret_hash.* IS NULL/)
     expect(clientAuthSql).toMatch(/<> 'none' AND .*client_secret_hash.* IS NOT NULL/)
+  })
+})
+
+describe('oauth_clients registration method (0027)', () => {
+  it('is generated from the schema enum without removing platform tables', () => {
+    for (const method of oauthClientRegistrationMethodSchema.options) {
+      expect(clientRegistrationMethodSql).toContain(`'${method}'`)
+    }
+    expect(clientRegistrationMethodSql).toContain('oauth_clients_registration_method_check')
+    expect(clientRegistrationMethodSql).not.toMatch(/DROP (TABLE|POLICY)/)
   })
 })
 

@@ -23,12 +23,13 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { loadOAuthConfig } from '@3ngram/config'
 import {
+  type ClientMetadataResolver,
   createOAuthServerProvider,
   EmailNotVerifiedError,
   MEMORY_READ_SCOPE,
   MEMORY_WRITE_SCOPE,
   type OAuthClientInformation,
-  oauthClientsStore,
+  resolveOAuthClient,
   resolveRegisteredRedirectUri,
   verifyCredentials,
 } from '@3ngram/core/auth'
@@ -43,6 +44,7 @@ import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 /** Options the boot wiring injects: the per-IP rate limiter seam. */
 export interface OAuthAuthorizeRouterOptions {
   limiter: RateLimiterMiddleware
+  clientMetadataResolver: ClientMetadataResolver
 }
 
 const CSRF_COOKIE = 'oauth_csrf'
@@ -129,6 +131,15 @@ interface ConsentView {
   error?: string
 }
 
+function clientMetadataHost(clientId: string): string | undefined {
+  try {
+    const url = new URL(clientId)
+    return url.protocol === 'https:' ? url.host : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Render the combined credentials + consent page (client name, redirect HOST, scopes). */
 function renderConsentPage(view: ConsentView): string {
   const scopes = view.params.scope ?? `${MEMORY_READ_SCOPE} ${MEMORY_WRITE_SCOPE}`
@@ -137,6 +148,9 @@ function renderConsentPage(view: ConsentView): string {
     .map((s) => `<li><code>${escapeHtml(s)}</code></li>`)
     .join('')
   const errorLine = view.error === undefined ? '' : `<p class="error">${escapeHtml(view.error)}</p>`
+  const metadataHost = clientMetadataHost(view.client.client_id)
+  const clientIdentity =
+    metadataHost === undefined ? '' : `metadata from ${escapeHtml(metadataHost)}; `
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Authorize ${escapeHtml(view.client.client_name)} — 3ngram</title>
@@ -146,7 +160,7 @@ button{margin-top:1rem;padding:.6rem 1.2rem;cursor:pointer}.host{color:#555}.err
 <body>
   <h1>Authorize access</h1>
   <p><strong>${escapeHtml(view.client.client_name)}</strong>
-  <span class="host">(redirects to ${escapeHtml(new URL(view.redirectUri).host)})</span>
+  <span class="host">(${clientIdentity}redirects to ${escapeHtml(new URL(view.redirectUri).host)})</span>
   is requesting access to your 3ngram memory:</p>
   <ul>${scopeItems}</ul>
   ${errorLine}
@@ -169,11 +183,12 @@ button{margin-top:1rem;padding:.6rem 1.2rem;cursor:pointer}.host{color:#555}.err
 async function resolveConsentTarget(
   params: AuthorizeRequest,
   redirectUriSupplied: boolean,
+  clientMetadataResolver: ClientMetadataResolver,
 ): Promise<
   { client: OAuthClientInformation; redirectUri: string; redirectUriSupplied: boolean } | undefined
 > {
-  const client = await oauthClientsStore.getClient(params.client_id)
-  if (client === undefined) return undefined
+  const client = await resolveOAuthClient(params.client_id, clientMetadataResolver)
+  if (client === undefined || !client.grant_types.includes('authorization_code')) return undefined
   const redirectUri = resolveRegisteredRedirectUri(client, params.redirect_uri)
   if (redirectUri === undefined) return undefined
   // RFC 6749 §4.1.3: supplied-ness is captured at the INITIAL GET
@@ -185,7 +200,11 @@ async function resolveConsentTarget(
 }
 
 /** GET: validate, then serve the consent form with a fresh CSRF pair. */
-async function handleAuthorizeGet(req: Request, res: Response): Promise<void> {
+async function handleAuthorizeGet(
+  req: Request,
+  res: Response,
+  clientMetadataResolver: ClientMetadataResolver,
+): Promise<void> {
   const parsed = authorizeRequestSchema.safeParse(req.query)
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid_request' })
@@ -193,7 +212,11 @@ async function handleAuthorizeGet(req: Request, res: Response): Promise<void> {
   }
   // Capture supplied-ness from the CLIENT's authorize request here, GET-time —
   // this is the only point that sees whether redirect_uri was actually sent.
-  const target = await resolveConsentTarget(parsed.data, parsed.data.redirect_uri !== undefined)
+  const target = await resolveConsentTarget(
+    parsed.data,
+    parsed.data.redirect_uri !== undefined,
+    clientMetadataResolver,
+  )
   if (target === undefined) {
     res.status(400).json({ error: 'invalid_client' })
     return
@@ -206,7 +229,11 @@ async function handleAuthorizeGet(req: Request, res: Response): Promise<void> {
 }
 
 /** POST: CSRF + credentials, then issue the code and 302 back with state. */
-async function handleConsentPost(req: Request, res: Response): Promise<void> {
+async function handleConsentPost(
+  req: Request,
+  res: Response,
+  clientMetadataResolver: ClientMetadataResolver,
+): Promise<void> {
   const parsed = consentSubmissionSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid_request' })
@@ -217,6 +244,7 @@ async function handleConsentPost(req: Request, res: Response): Promise<void> {
   const target = await resolveConsentTarget(
     parsed.data,
     parsed.data.redirect_uri_was_supplied === '1',
+    clientMetadataResolver,
   )
   if (target === undefined) {
     res.status(400).json({ error: 'invalid_client' })
@@ -289,14 +317,14 @@ async function handleConsentPost(req: Request, res: Response): Promise<void> {
 export function oauthAuthorizeRouter(options: OAuthAuthorizeRouterOptions): Router {
   const router = Router()
   router.get('/oauth/authorize', options.limiter, (req, res, next) => {
-    handleAuthorizeGet(req, res).catch(next)
+    handleAuthorizeGet(req, res, options.clientMetadataResolver).catch(next)
   })
   router.post(
     '/oauth/authorize',
     options.limiter,
     urlencoded({ extended: false }),
     (req, res, next) => {
-      handleConsentPost(req, res).catch(next)
+      handleConsentPost(req, res, options.clientMetadataResolver).catch(next)
     },
   )
   return router

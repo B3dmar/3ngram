@@ -6,24 +6,55 @@
 // are asserted against the same rows the real table would hold.
 import { createHash } from 'node:crypto'
 import type { NewOAuthClient, OAuthClientRow } from '@3ngram/db'
+import type { ClientIdMetadataDocument } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const FROZEN_NOW = new Date('2026-06-10T12:00:00Z')
 
 const storedRows = new Map<string, OAuthClientRow>()
 const registerClient = vi.fn(async (client: NewOAuthClient): Promise<OAuthClientRow> => {
-  const row: OAuthClientRow = { ...client, createdAt: FROZEN_NOW }
+  const row: OAuthClientRow = {
+    ...client,
+    registrationMethod: client.registrationMethod ?? 'dynamic_registration',
+    createdAt: FROZEN_NOW,
+  }
   storedRows.set(client.clientId, row)
   return row
 })
 const getClientByClientId = vi.fn(
   async (clientId: string): Promise<OAuthClientRow | undefined> => storedRows.get(clientId),
 )
-vi.mock('@3ngram/db', () => ({ registerClient, getClientByClientId }))
-
-const { hashClientSecret, oauthClientsStore, registerOAuthClient } = await import(
-  '../src/auth/oauth-clients.js'
+const materializeClientMetadata = vi.fn(
+  async (document: ClientIdMetadataDocument): Promise<OAuthClientRow | undefined> => {
+    const existing = storedRows.get(document.client_id)
+    if (existing?.registrationMethod === 'dynamic_registration') return undefined
+    const row: OAuthClientRow = {
+      clientId: document.client_id,
+      clientName: document.client_name,
+      redirectUris: document.redirect_uris,
+      tokenEndpointAuthMethod: 'none',
+      clientSecretHash: null,
+      registrationMethod: 'client_id_metadata',
+      createdAt: existing?.createdAt ?? FROZEN_NOW,
+    }
+    storedRows.set(document.client_id, row)
+    return row
+  },
 )
+vi.mock('@3ngram/db', () => ({
+  registerClient,
+  getClientByClientId,
+  materializeClientMetadata,
+}))
+
+const { ClientMetadataResolver } = await import('../src/auth/client-metadata.js')
+const {
+  authenticateClientCredentials,
+  hashClientSecret,
+  oauthClientsStore,
+  registerOAuthClient,
+  resolveOAuthClient,
+} = await import('../src/auth/oauth-clients.js')
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
@@ -126,6 +157,74 @@ describe('oauthClientsStore.getClient (the A2 contract)', () => {
     expect(
       await oauthClientsStore.getClient('00000000-0000-0000-0000-000000000000'),
     ).toBeUndefined()
+  })
+})
+
+describe('resolveOAuthClient — DCR then CIMD', () => {
+  const clientId = 'https://client.example.test/oauth/metadata.json'
+  const document = {
+    client_id: clientId,
+    client_name: 'Metadata Client',
+    redirect_uris: ['https://client.example.test/callback'],
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+  } as const
+
+  it('resolves, validates, and materializes CIMD metadata without treating the row as policy', async () => {
+    const fetchDocument = vi.fn(async () => ({
+      document,
+      headers: new Headers({ 'cache-control': 'max-age=60' }),
+    }))
+    const resolver = new ClientMetadataResolver({ fetchDocument })
+
+    await expect(resolveOAuthClient(clientId, resolver)).resolves.toEqual({
+      client_id: clientId,
+      client_name: 'Metadata Client',
+      redirect_uris: ['https://client.example.test/callback'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    })
+    expect(storedRows.get(clientId)?.registrationMethod).toBe('client_id_metadata')
+    await resolveOAuthClient(clientId, resolver)
+    expect(fetchDocument).toHaveBeenCalledTimes(1)
+    expect(materializeClientMetadata).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a persisted DCR registration ahead of a same-shaped metadata URL', async () => {
+    storedRows.set(clientId, {
+      clientId,
+      clientName: 'Pre-registered',
+      redirectUris: ['https://pre.example.test/callback'],
+      tokenEndpointAuthMethod: 'none',
+      clientSecretHash: null,
+      registrationMethod: 'dynamic_registration',
+      createdAt: FROZEN_NOW,
+    })
+    const fetchDocument = vi.fn(async () => ({
+      document,
+      headers: new Headers(),
+    }))
+    const resolved = await resolveOAuthClient(
+      clientId,
+      new ClientMetadataResolver({ fetchDocument }),
+    )
+    expect(resolved?.client_name).toBe('Pre-registered')
+    expect(fetchDocument).not.toHaveBeenCalled()
+    expect(materializeClientMetadata).not.toHaveBeenCalled()
+  })
+
+  it('allows only the public no-secret token path for CIMD clients', async () => {
+    const resolver = new ClientMetadataResolver({
+      fetchDocument: async () => ({ document, headers: new Headers() }),
+    })
+    await expect(
+      authenticateClientCredentials(clientId, undefined, undefined, resolver),
+    ).resolves.toMatchObject({ client_id: clientId, token_endpoint_auth_method: 'none' })
+    await expect(
+      authenticateClientCredentials(clientId, 'secret', 'client_secret_post', resolver),
+    ).resolves.toBeUndefined()
   })
 })
 
