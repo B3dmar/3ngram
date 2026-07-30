@@ -71,6 +71,27 @@ describe('OAuth env validation', () => {
     ).toThrow(/BASE_URL/)
   })
 
+  it('requires an HTTPS BASE_URL in production', () => {
+    expect(() =>
+      parseEnv({
+        NODE_ENV: 'production',
+        LOG_HASH_SALT: 's',
+        BASE_URL: 'http://api.3ngram.test',
+        OAUTH_JWKS: validJwks,
+      }),
+    ).toThrow(/BASE_URL must use https/)
+  })
+
+  it('allows an HTTP loopback BASE_URL outside production', () => {
+    expect(
+      parseEnv({
+        NODE_ENV: 'development',
+        BASE_URL: 'http://127.0.0.1:3000',
+        OAUTH_JWKS: validJwks,
+      }).BASE_URL,
+    ).toBe('http://127.0.0.1:3000')
+  })
+
   it('requires OAUTH_JWKS in production', () => {
     expect(() =>
       parseEnv({ NODE_ENV: 'production', LOG_HASH_SALT: 's', BASE_URL: 'https://api.x.test' }),

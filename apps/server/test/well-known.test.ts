@@ -97,6 +97,7 @@ describe('RFC 8414 authorization-server metadata (OAuth AS A2)', () => {
     const body = (await res.json()) as Record<string, unknown>
     // The same string the protected-resource docs advertise (and tokens carry as iss).
     expect(body.issuer).toBe('https://api.3ngram.test/')
+    expect(body.authorization_response_iss_parameter_supported).toBe(true)
     expect(body.authorization_endpoint).toBe('https://api.3ngram.test/oauth/authorize')
     expect(body.token_endpoint).toBe('https://api.3ngram.test/oauth/token')
     expect(body.registration_endpoint).toBe('https://api.3ngram.test/oauth/register')

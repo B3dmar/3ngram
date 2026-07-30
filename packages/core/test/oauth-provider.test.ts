@@ -118,6 +118,7 @@ describe('authorize', () => {
     const url = new URL(location)
     expect(url.origin + url.pathname).toBe('https://client.example/cb')
     expect(url.searchParams.get('state')).toBe('xyz')
+    expect(url.searchParams.get('iss')).toBe(ISSUER)
     const code = url.searchParams.get('code') as string
     // The code value in the redirect is NEVER at rest — only its sha256 is.
     expect(row.codeHash).toBe(sha256(code))
@@ -139,6 +140,28 @@ describe('authorize', () => {
     const [, row] = insertOauthCode.mock.calls[0] as [string, Record<string, unknown>]
     expect(row.scope).toBe('memory:read memory:write')
     expect(row.redirectUriSupplied).toBe(false)
+  })
+
+  it('omits iss for an HTTP development issuer', async () => {
+    insertOauthCode.mockResolvedValue(undefined)
+    const res = makeRedirectSpy()
+    const insecureConfig = {
+      ...config,
+      issuer: 'http://127.0.0.1:3000/',
+      resource: 'http://127.0.0.1:3000/mcp',
+    }
+    await createOAuthServerProvider(insecureConfig).authorize(
+      CLIENT,
+      {
+        userId: USER_ID,
+        codeChallenge: s256Challenge(VERIFIER),
+        redirectUri: CLIENT.redirect_uris[0] as string,
+        redirectUriSupplied: false,
+      },
+      res,
+    )
+    const [, location] = res.redirect.mock.calls[0] as [number, string]
+    expect(new URL(location).searchParams.has('iss')).toBe(false)
   })
 })
 
