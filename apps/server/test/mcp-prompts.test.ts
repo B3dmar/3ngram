@@ -8,9 +8,8 @@
 // The PROMPTS registry IS the auditable v1 surface: EXACTLY 2 (docs/concepts/mcp-design.mdx),
 // under MAX_PROMPTS. A prompt orients only — it carries no tenant data and reads
 // no DB, so no context/mock is needed.
-import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Client as McpClient } from '@modelcontextprotocol/client'
+import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { MAX_PROMPTS, PROMPTS, registerPrompts } from '../src/mcp/prompts.js'
 

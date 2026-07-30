@@ -9,8 +9,8 @@
 // returns — but our store never returns secret material (only the SHA-256 hash
 // is at rest), so the SDK default cannot work. authenticateClientCredentials
 // (core) hashes the presented secret and compares against the stored hash.
-// SDK 1.29 reads client credentials from req.body ONLY, so a Basic-auth
-// shim decodes `Authorization: Basic` into the body first (RFC 6749 §2.3.1) —
+// The retained legacy AS helper reads client credentials from req.body, so a
+// Basic-auth shim decodes `Authorization: Basic` into the body first (RFC 6749 §2.3.1) —
 // that is how client_secret_basic (the RFC 7591 default) is honored.
 //
 // ERRORS ARE THE SDK'S TYPED ERRORS ONLY: every failure maps to
@@ -36,10 +36,10 @@ import {
   InvalidTargetError,
   InvalidTokenError,
   OAuthError,
+  type OAuthServerProvider,
   ServerError,
   UnsupportedGrantTypeError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js'
-import type { OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js'
+} from '@modelcontextprotocol/server-legacy/auth'
 import { type NextFunction, type Request, type Response, Router, urlencoded } from 'express'
 import type { Redis } from 'ioredis'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
@@ -452,8 +452,8 @@ async function handleTokenRequest(
     await recordExchangeFailure(input.client_id)
     throw new InvalidClientError('Client authentication failed')
   }
-  // COMPILE PIN: the core provider must remain assignable to the SDK 1.29
-  // OAuthServerProvider (the A2 contract the structural mirror promises).
+  // COMPILE PIN: the core provider must remain assignable to the retained
+  // legacy OAuthServerProvider while DCR compatibility remains supported.
   const provider: OAuthServerProvider = createOAuthServerProvider(loadOAuthConfig(), limits)
   const resource = input.resource === undefined ? undefined : new URL(input.resource)
   let tokens: Awaited<ReturnType<typeof provider.exchangeAuthorizationCode>>

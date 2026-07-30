@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // OAuth authorization-server provider: the
 // authorization-code + PKCE policy behind /oauth/authorize + /oauth/token.
-// Structurally assignable to the MCP SDK 1.29 `OAuthServerProvider` (the types
-// are mirrored locally — core has no SDK dependency, hard rule 7; the token
-// route pins assignability at compile time).
+// Structurally assignable to the legacy auth package's `OAuthServerProvider`
+// while DCR remains a compatibility fallback (the types are mirrored locally
+// so core has no transport SDK dependency; apps/server pins assignability).
 //
 // Grant mechanics:
 // - authorize: mint a 32-byte CSPRNG code, store its SHA-256 hash (the code
@@ -138,7 +138,7 @@ export interface VerifiedTokenInfo {
   expiresAt?: number
 }
 
-/** Structural mirror of the SDK 1.29 `OAuthServerProvider` (compile-pinned in apps/server). */
+/** Structural mirror of the legacy auth package's provider (compile-pinned in apps/server). */
 export interface OAuthServerProviderShape {
   clientsStore: OAuthClientsStore
   /** PKCE is verified INSIDE exchangeAuthorizationCode (consume-then-verify). */

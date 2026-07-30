@@ -13,7 +13,7 @@
 // there — apps/server has no @3ngram/db dependency by layering, hard rule 5).
 import type { Server } from 'node:http'
 import type { ClientRegistrationInput } from '@3ngram/schema'
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js'
+import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface FakeClientInformation {
@@ -37,9 +37,8 @@ vi.mock('@3ngram/core/auth', async (importOriginal) => {
 const { createTestApp } = await import('./test-app.js')
 const { oauthClientsStore } = await import('@3ngram/core/auth')
 
-// COMPILE-TIME contract: the core store must satisfy the SDK 1.29
-// OAuthRegisteredClientsStore interface so it can be handed to mcpAuthRouter
-// unchanged (core mirrors the type structurally — it has no SDK dependency).
+// COMPILE-TIME contract: the core store must satisfy the retained legacy
+// OAuthRegisteredClientsStore interface while DCR compatibility remains.
 const sdkStore: OAuthRegisteredClientsStore = oauthClientsStore
 
 let server: Server

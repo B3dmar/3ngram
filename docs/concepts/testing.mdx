@@ -36,7 +36,7 @@ Pure functions only: schema validation, supersession resolution, commitment FSM 
 
 ### 3. Contract — MCP and REST surfaces
 
-- Spin up the express app in-process (SDK 1.x + express); drive MCP tools through the **official MCP client SDK** (not hand-rolled JSON-RPC) so transport, session, and structured-output semantics are actually exercised.
+- Spin up the Express app in-process through the SDK v2 dual-era handler; drive both legacy and `2026-07-28` clients through the **official MCP client SDK** (not hand-rolled JSON-RPC) so version negotiation, transport, auth bridging, and structured-output semantics are actually exercised.
 - Every tool: happy path + auth-missing + cross-tenant + output-schema validation (the response must parse against the tool's declared `outputSchema` — enforced as plain tests, not a bespoke CI job).
 - REST mirrors: generated OpenAPI is diffed in CI; a contract change shows up in the PR.
 

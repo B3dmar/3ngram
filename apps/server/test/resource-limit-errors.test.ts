@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-
 import { ResourceLimitExceededError } from '@3ngram/core/auth'
-import { InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js'
+import { InvalidGrantError } from '@modelcontextprotocol/server-legacy/auth'
 import { describe, expect, it } from 'vitest'
 import { RESOURCE_LIMITS_ENFORCED } from '../src/app.js'
 import { toOAuthError } from '../src/routes/oauth-token.js'

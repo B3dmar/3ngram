@@ -230,8 +230,8 @@ export type ConsentSubmission = z.infer<typeof consentSubmissionSchema>
  * token request shape (hard rule 2). Discriminated on grant_type: the two
  * supported grants only (the route maps an unknown grant_type to
  * unsupported_grant_type before parsing). client_secret may arrive in the body
- * (client_secret_post) or via the Basic-auth shim (S4: SDK 1.29 client auth
- * reads the body only); public clients omit it and are held to PKCE instead.
+ * (client_secret_post) or via the Basic-auth shim (the compatibility auth
+ * helper reads the body only); public clients omit it and are held to PKCE instead.
  * code_verifier is REQUIRED on the code grant — PKCE is mandatory for every
  * client, public or confidential.
  */
