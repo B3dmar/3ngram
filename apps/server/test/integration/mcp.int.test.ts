@@ -17,10 +17,13 @@ import type { Server } from 'node:http'
 import { resetEnvCache } from '@3ngram/config'
 import { createFakeGateway } from '@3ngram/llm'
 import { EXCERPT_MARKER, MAX_EXCERPT_LENGTH } from '@3ngram/schema'
+import {
+  type ClientOptions,
+  Client as McpClient,
+  StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client'
 // Aliased to McpClient so `new McpClient(...)` does not trip the db-access gate's
 // `new (pg\.)?Client\(` regex (this is the MCP SDK client, not a Postgres client).
-import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closePools, ownerPool } from '../../../../packages/db/test/integration/helpers.js'
 import {
@@ -53,13 +56,17 @@ async function stopApp(handle: AppHandle): Promise<void> {
 }
 
 /** Connect an MCP client to /mcp with a static Authorization header. */
-async function connect(baseUrl: string, authHeader: string | undefined): Promise<McpClient> {
+async function connect(
+  baseUrl: string,
+  authHeader: string | undefined,
+  options?: ClientOptions,
+): Promise<McpClient> {
   const headers: Record<string, string> = {}
   if (authHeader !== undefined) headers.authorization = authHeader
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
     requestInit: { headers },
   })
-  const client = new McpClient({ name: 'int-test', version: '0.0.0' })
+  const client = new McpClient({ name: 'int-test', version: '0.0.0' }, options)
   await client.connect(transport)
   return client
 }
@@ -139,6 +146,16 @@ describe('/mcp transport auth (Bearer-only, strict RS)', () => {
 })
 
 describe('/mcp tools end-to-end (real transport, runtime role)', () => {
+  it('serves an authenticated client pinned to 2026-07-28', async () => {
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`, {
+      versionNegotiation: { mode: { pin: '2026-07-28' } },
+    })
+    expect(client.getProtocolEra()).toBe('modern')
+    const { tools } = await client.listTools()
+    expect(tools).toHaveLength(10)
+    await client.close()
+  })
+
   it('lists exactly the 10 tools (D1 5 + D2 orient 2 + D3 admin 3)', async () => {
     const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
     const { tools } = await client.listTools()
@@ -222,11 +239,10 @@ describe('/mcp tools end-to-end (real transport, runtime role)', () => {
   })
 
   it('rejects an unknown filter key on the real MCP transport (#275)', async () => {
-    // The search tool registers the FULL `.strict()` searchQuerySchema (not its
-    // raw shape), so the SDK parses inbound args strictly at the transport
+    // The search tool registers the FULL `.strict()` searchQuerySchema, so the
+    // SDK parses inbound args strictly at the transport
     // boundary: an unknown key is REJECTED there with an InvalidParams protocol
     // error rather than silently STRIPPED and run as an unfiltered search.
-    // Registering `.shape` would wrap a non-strict z.object that drops the key.
     // The MCP SDK surfaces tool-input validation failure as a RESOLVED result
     // carrying `isError: true` (JSON-RPC -32602), NOT a thrown/rejected promise:
     // the contract is enforced, so assert the resolved error result.

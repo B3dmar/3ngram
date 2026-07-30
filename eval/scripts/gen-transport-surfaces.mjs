@@ -33,20 +33,13 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '../..')
 const serverDir = join(repoRoot, 'apps/server')
-// Resolve the MCP SDK + apps/server dist from apps/server's module graph (the SDK
-// is a dep of @3ngram/server, not of @3ngram/eval — same resolution trick the
+// Resolve the MCP packages + apps/server dist from apps/server's module graph
+// (they are deps of @3ngram/server, not of @3ngram/eval — same resolution trick the
 // previous generator used for zod). createRequire anchored at apps/server's
 // package.json gives us its node_modules.
 const requireFromServer = createRequire(join(serverDir, 'package.json'))
-const clientModuleUrl = pathToUrl(
-  requireFromServer.resolve('@modelcontextprotocol/sdk/client/index.js'),
-)
-const mcpServerModuleUrl = pathToUrl(
-  requireFromServer.resolve('@modelcontextprotocol/sdk/server/mcp.js'),
-)
-const inMemoryModuleUrl = pathToUrl(
-  requireFromServer.resolve('@modelcontextprotocol/sdk/inMemory.js'),
-)
+const clientModuleUrl = pathToUrl(requireFromServer.resolve('@modelcontextprotocol/client'))
+const mcpServerModuleUrl = pathToUrl(requireFromServer.resolve('@modelcontextprotocol/server'))
 const serverFactoryUrl = pathToUrl(join(serverDir, 'dist/mcp/server.js'))
 // @3ngram/schema is a dep of @3ngram/eval; resolve it from THIS package so the
 // REST search surface derives from the SAME schema the REST route parses
@@ -58,8 +51,7 @@ function pathToUrl(p) {
 }
 
 const { Client } = await import(clientModuleUrl)
-const { McpServer } = await import(mcpServerModuleUrl)
-const { InMemoryTransport } = await import(inMemoryModuleUrl)
+const { InMemoryTransport, McpServer } = await import(mcpServerModuleUrl)
 const { createMcpServer } = await import(serverFactoryUrl)
 const { searchQuerySchema } = await import(schemaModuleUrl)
 
@@ -95,13 +87,13 @@ async function captureMcpSurface() {
  * the MCP surface uses (registerTool -> listTools), so a REST request schema that
  * is NOT an MCP tool schema (e.g. searchQuerySchema) is byte-style-identical to
  * the captured tool schemas: draft-07, `$schema` last, SDK annotations. We
- * register the schema's raw shape on a throwaway in-memory McpServer and read
- * back the serialized inputSchema the SDK emits — never invoking the handler, so
+ * register the full schema on a throwaway in-memory McpServer and read back the
+ * serialized inputSchema the SDK emits — never invoking the handler, so
  * no DB/gateway/tenant is touched.
  */
 async function serializeSchemaViaSdk(schema) {
   const server = new McpServer({ name: 'transport-surface-serializer', version: '0.0.0' })
-  server.registerTool('__surface__', { description: '', inputSchema: schema.shape }, async () => ({
+  server.registerTool('__surface__', { description: '', inputSchema: schema }, async () => ({
     content: [],
   }))
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()

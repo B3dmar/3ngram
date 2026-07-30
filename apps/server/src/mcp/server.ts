@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // MCP server factory — builds a per-request McpServer from the {@link TOOLS}
-// registry. STATELESS (docs/concepts/mcp-design.mdx): a fresh server + transport per request
-// (sessionIdGenerator: undefined), so NO in-process session state survives a
+// registry. STATELESS (docs/concepts/mcp-design.mdx): createMcpHandler invokes
+// this factory per request for both eras, so NO tenant/session state survives a
 // request — any instance serves any request and a Railway redeploy is a
 // non-event. The authenticated tenant + optional embedding gateway are captured
 // in the handler closure (the per-request context), never stored on the server.
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer } from '@modelcontextprotocol/server'
 import { SERVER_VERSION } from '../version.js'
 import { registerPrompts } from './prompts.js'
 import { runTool, TOOLS, type ToolContext } from './tools.js'
@@ -16,7 +16,7 @@ const SERVER_INFO = { name: '3ngram', version: SERVER_VERSION } as const
 
 /**
  * Build an McpServer with every registry tool registered, bound to one request's
- * {@link ToolContext}. Each tool registers its Zod input/output RAW SHAPES (the
+ * {@link ToolContext}. Each tool registers its full Zod Standard Schema objects (the
  * SDK validates inbound args against inputSchema and the structured result
  * against outputSchema), and delegates to {@link runTool} for uniform metrics +
  * typed-error mapping. The code-defined PROMPTS (briefing, debrief)

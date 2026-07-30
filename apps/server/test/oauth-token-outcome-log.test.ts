@@ -9,7 +9,7 @@
 // createLogger(stream) precedent from packages/config/test/redaction.test.ts.
 import type { Server } from 'node:http'
 import { setLogDestination } from '@3ngram/config'
-import type { OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js'
+import type { OAuthServerProvider } from '@modelcontextprotocol/server-legacy/auth'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const TOKENS = {

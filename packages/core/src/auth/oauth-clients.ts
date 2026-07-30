@@ -34,11 +34,11 @@ import type { ClientRegistrationInput, TokenEndpointAuthMethod } from '@3ngram/s
 const CLIENT_SECRET_BYTES = 32
 
 /**
- * RFC 7591 client information — structurally assignable to the MCP SDK 1.29
- * `OAuthClientInformationFull` (client_id + redirect_uris required, the rest
- * optional). Declared locally because packages/core does not depend on
- * @modelcontextprotocol/sdk (the lockfile is frozen — hard rule 7); the
- * apps/server contract test pins the assignability at compile time.
+ * RFC 7591 client information — structurally assignable to the legacy auth
+ * package's `OAuthClientInformationFull` (client_id + redirect_uris required,
+ * the rest optional). Declared locally because packages/core does not depend
+ * on the transport SDK; apps/server pins assignability at compile time while
+ * DCR remains a compatibility fallback.
  */
 export interface OAuthClientInformation {
   client_id: string

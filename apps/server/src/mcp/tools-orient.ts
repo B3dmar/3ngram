@@ -31,7 +31,7 @@ import {
   handoffToolInputSchema,
   handoffToolOutputSchema,
 } from '@3ngram/schema'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
 import type { ToolContext, ToolDefinition } from './tools.js'
 
@@ -57,8 +57,8 @@ const briefingTool: ToolDefinition = {
     title: 'Briefing',
     description:
       'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists.',
-    inputSchema: briefingToolInputSchema.shape,
-    outputSchema: briefingToolOutputSchema.shape,
+    inputSchema: briefingToolInputSchema,
+    outputSchema: briefingToolOutputSchema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = briefingToolInputSchema.parse(args)
@@ -90,8 +90,8 @@ const handoffTool: ToolDefinition = {
     title: 'Handoff',
     description:
       'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded.',
-    inputSchema: handoffToolInputSchema.shape,
-    outputSchema: handoffToolOutputSchema.shape,
+    inputSchema: handoffToolInputSchema,
+    outputSchema: handoffToolOutputSchema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = handoffToolInputSchema.parse(args)

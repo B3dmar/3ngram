@@ -40,8 +40,8 @@ import {
   searchQuerySchema,
   searchToolOutputSchema,
 } from '@3ngram/schema'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodObject, ZodRawShape } from 'zod'
+import type { CallToolResult } from '@modelcontextprotocol/server'
+import type { ZodType } from 'zod'
 import { parseOutput } from '../output-validation.js'
 import { mapToolError } from './errors.js'
 // Admin tools: configure_scope / describe_environment /
@@ -55,15 +55,10 @@ import { ORIENT_TOOLS } from './tools-orient.js'
 type ToolResult = CallToolResult
 
 /**
- * A registered tool. `outputSchema` is a Zod RAW SHAPE (the SDK 1.x
- * `registerTool` contract: it wraps a shape in a NON-strict z.object internally).
- * `inputSchema` is either a raw shape OR a full Zod OBJECT schema: the SDK keeps a
- * full schema AS-IS (mcp.js getZodSchemaObject), so a `.strict()` object is parsed
- * strictly at the SDK boundary and an unknown key is REJECTED before the handler
- * runs — a raw shape, by contrast, is wrapped non-strict and silently STRIPS
- * unknown keys. Pass the strict object directly when the tool's contract rejects
- * unknown keys end-to-end (search). The handler receives the
- * SDK-validated args plus the per-request adapter context.
+ * A registered tool. SDK v2 accepts full Standard Schema objects, so every
+ * input/output uses the canonical Zod schema directly. Strict objects and
+ * discriminated unions therefore retain their exact boundary semantics instead
+ * of being widened to permissive raw shapes.
  */
 /**
  * The registry-level scope floor a token must satisfy to reach a tool's handler
@@ -87,8 +82,8 @@ export interface ToolDefinition {
   config: {
     title: string
     description: string
-    inputSchema: ZodRawShape | ZodObject
-    outputSchema: ZodRawShape
+    inputSchema: ZodType
+    outputSchema: ZodType
   }
   handler: (args: unknown, ctx: ToolContext) => Promise<ToolResult>
 }
@@ -165,7 +160,7 @@ const rememberTool: ToolDefinition = {
     description:
       'Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. To surface a commitment or blocker in a PROJECT-scoped briefing, pass `project` — a memory written with a NULL project never matches a project filter (issue #244).',
     inputSchema: rememberToolInputSchema,
-    outputSchema: rememberToolOutputSchema.shape,
+    outputSchema: rememberToolOutputSchema,
   },
   async handler(args, ctx) {
     // core remember() is THE validation boundary; pass the args straight through.
@@ -234,7 +229,7 @@ const searchTool: ToolDefinition = {
     description:
       'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained.',
     inputSchema: searchQuerySchema,
-    outputSchema: searchToolOutputSchema.shape,
+    outputSchema: searchToolOutputSchema,
   },
   async handler(args, ctx) {
     if (ctx.gateway === undefined) {
@@ -293,8 +288,8 @@ const getFactsTool: ToolDefinition = {
     title: 'Get Facts',
     description:
       'Currently-valid facts for a subject, with optional bi-temporal time travel. List mode (no subject) returns the most recent facts, bounded by an optional limit (default 50, max 200).',
-    inputSchema: factsQueryInputSchema.shape,
-    outputSchema: factsToolOutputSchema.shape,
+    inputSchema: factsQueryInputSchema,
+    outputSchema: factsToolOutputSchema,
   },
   async handler(args, ctx) {
     const input = factsQueryInputSchema.parse(args)
@@ -358,7 +353,7 @@ const reviseTool: ToolDefinition = {
     // boundary so a supplied `scope`/`project` reaches the handler and an unknown
     // key is rejected, never silently stripped.
     inputSchema: reviseToolInputSchema,
-    outputSchema: reviseToolOutputSchema.shape,
+    outputSchema: reviseToolOutputSchema,
   },
   async handler(args, ctx) {
     // core revise() is THE validation boundary; pass args straight through. It
@@ -406,8 +401,8 @@ const resolveTool: ToolDefinition = {
     title: 'Resolve',
     description:
       'Settle a memory by its id. A commitment transitions to a target status (open, waiting, resolved, expired) — serves resolve and unresolve (resolved -> open); illegal transitions are rejected. A blocker is archived (status active -> archived) and leaves the active-blocker briefing; the passed status is ignored for blockers and the result reports archived. Commitments AND blockers must be written WITH a project to be resolvable from a project-scoped briefing.',
-    inputSchema: resolveToolInputSchema.shape,
-    outputSchema: resolveToolOutputSchema.shape,
+    inputSchema: resolveToolInputSchema,
+    outputSchema: resolveToolOutputSchema,
   },
   async handler(args, ctx) {
     const input = resolveToolInputSchema.parse(args)

@@ -14,7 +14,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import { MAX_PROMPTS, PROMPTS } from '../src/mcp/prompts.js'
 import { MAX_TOOLS, TOOLS } from '../src/mcp/tools.js'
@@ -29,14 +29,12 @@ function mdx(text: string): string {
 
 /**
  * Render a tool/prompt schema as a fenced JSON Schema block (draft 2020-12).
- * `inputSchema` may be either a raw Zod shape (the SDK wraps it non-strict) or a
- * full ZodObject (a `.strict()` schema passed AS-IS so unknown keys reject, e.g.
- * search). Wrap a raw shape in `z.object`; pass a ZodObject through directly
- * so its strict mode is preserved in the generated reference.
+ * SDK v2 registry entries carry full Standard Schema objects. The 3ngram
+ * registry uses Zod, so render those canonical objects directly and preserve
+ * strict/discriminated-union semantics in the generated reference.
  */
-function schemaBlock(schema: z.ZodRawShape | z.ZodObject, io: 'input' | 'output'): string {
-  const object = schema instanceof z.ZodType ? schema : z.object(schema)
-  const json = z.toJSONSchema(object, { target: 'draft-2020-12', io })
+function schemaBlock(schema: z.ZodType, io: 'input' | 'output'): string {
+  const json = z.toJSONSchema(schema, { target: 'draft-2020-12', io })
   delete json.$schema
   return `\`\`\`json\n${JSON.stringify(json, null, 2)}\n\`\`\``
 }
@@ -89,7 +87,7 @@ interface CapturedPrompt {
   name: string
   title: string
   description: string
-  argsSchema: z.ZodRawShape
+  argsSchema: z.ZodType
 }
 
 /**
@@ -101,7 +99,7 @@ function capturePrompts(): CapturedPrompt[] {
   const stub = {
     registerPrompt(
       name: string,
-      config: { title: string; description: string; argsSchema: z.ZodRawShape },
+      config: { title: string; description: string; argsSchema: z.ZodType },
     ): void {
       captured.push({ name, ...config })
     },

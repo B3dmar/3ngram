@@ -35,7 +35,7 @@ The MCP surface is designed from **jobs to be done** and capped at **10 tools** 
 
 ## Server architecture
 
-- Official **TS SDK pinned `1.29.0`** + **express**. Streamable HTTP, stateless. Hono revisited at SDK v2 GA as a deliberate bump.
+- Official **TS SDK v2 packages pinned `2.0.0`** + **Express**. One stateless dual-era handler serves legacy and `2026-07-28` clients. Keep Express: changing the protocol generation and HTTP framework together would add migration risk without a product benefit.
 - **Strict OAuth resource server**: validate JWT `aud` + RFC 8707 resource indicators. No token proxying (the FastMCP CVE class).
 - Every tool: Zod input schema + `outputSchema` (structured output) from `packages/schema` — same types the REST API and SDK use.
 - Output size discipline: structured, `brief` modes, pagination — oversized responses are an easy trap, so design the size discipline in from the start.
@@ -51,6 +51,6 @@ Short queries (≤2 whitespace tokens) activate a topic entity-match bonus (topi
 
 ## Rate limiting & sessions
 
-Redis-backed, per-user + per-key. Session binding to authenticated principal per SDK ≥1.27 semantics.
+Redis-backed, per-user + per-key. The Node adapter receives only the verified `AuthInfo` produced by bearer middleware; tenant and tool authorization stay inside the per-request handler.
 
 **Sessions are stateless by design**: all MCP session state lives in Postgres/Redis, never in-process — any server instance serves any request. This makes redeploys non-events. `.well-known/mcp` server metadata (SEP-1649) is tracked but **deferred until the SEP stabilizes**.
