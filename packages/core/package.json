@@ -47,6 +47,7 @@
     "@3ngram/llm": "workspace:*",
     "@3ngram/schema": "workspace:*",
     "@node-rs/argon2": "2.0.2",
+    "ipaddr.js": "2.4.0",
     "jose": "6.2.3"
   },
   "devDependencies": {

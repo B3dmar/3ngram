@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // DuplicateEmailError: provisioning error surface; AuditLogEntry+insertAuditLog:
 // re-exported to keep apps/* off @3ngram/db (layering hard rule 5)
+
 export {
   type AuditLogEntry,
   DuplicateEmailError,
@@ -17,6 +18,21 @@ export {
   revokeApiKey,
   touchApiKeyLastUsed,
 } from './api-keys.js'
+export {
+  type ClientMetadataAddress,
+  type ClientMetadataDocumentFetcher,
+  ClientMetadataError,
+  type ClientMetadataFailure,
+  type ClientMetadataFetchOptions,
+  type ClientMetadataFetchResult,
+  type ClientMetadataHostnameResolver,
+  type ClientMetadataHttpResponse,
+  type ClientMetadataPinnedGet,
+  ClientMetadataResolver,
+  type ClientMetadataResolverOptions,
+  fetchClientMetadataDocument,
+  isPublicClientMetadataAddress,
+} from './client-metadata.js'
 export {
   InvalidEmailVerificationTokenError,
   requestEmailVerification,
