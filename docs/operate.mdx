@@ -44,7 +44,8 @@ curl -fsS "$BASE/.well-known/jwks.json"
 
 3ngram is its own OAuth 2.1 authorization server and resource server.
 
-- MCP clients use dynamic client registration, PKCE, and OAuth bearer tokens.
+- MCP clients use Client ID Metadata Documents or dynamic registration fallback,
+  PKCE, and OAuth bearer tokens.
 - Scripts, CLI, and SDK integrations use API keys through `X-API-Key`.
 - All user-owned database access is tenant-scoped through RLS and the runtime
   `app_user` role.
@@ -71,7 +72,29 @@ degraded-protection incident.
 ## Caching
 
 3ngram does not use an application cache for memory data in v1. Postgres is the
-source of truth; Redis is not a memory cache.
+source of truth; Redis is not a memory cache. The MCP tool and prompt definitions
+are a separate, deployment-versioned catalog: `2026-07-28` responses mark those
+tenant-independent lists public-cacheable for one hour.
+
+## MCP 2026 compatibility rollout
+
+Keep the migration on a dedicated compatibility track and promote it only after
+a staging soak:
+
+1. Apply database migration `0027_cimd_clients.sql` before starting the new server.
+2. Exercise one retained DCR client and one public CIMD+PKCE client through
+   authorization, code exchange, refresh, and `/mcp`.
+3. Run the official-client contract tests for both legacy and `2026-07-28`.
+4. Verify authorization-server metadata advertises
+   `client_id_metadata_document_supported: true` while retaining
+   `registration_endpoint`.
+5. Monitor OAuth `invalid_client`/metadata-fetch failures, protocol negotiation,
+   and the bounded `mcp.header_requests` status labels during the soak.
+
+Do not remove DCR during rollback or cleanup. Before CIMD grants are issued, the
+server can roll back without data cleanup; after issuance, retain a CIMD-capable
+binary so existing grants continue to resolve. Materialized client rows are
+foreign-key/display state and must not be treated as fetched-metadata authority.
 
 ## Scaling
 

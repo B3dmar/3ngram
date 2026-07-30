@@ -19,7 +19,7 @@ Connecting Codex is two steps: register the HTTP server, then log in.
 1. Add an HTTP MCP server entry for 3ngram in your Codex config (a `[mcp_servers.3ngram]` block with `url` set to the endpoint above).
 2. Authenticate it with `codex mcp login 3ngram`. Adding the config alone does not sign you in — the login step is what runs the OAuth flow.
 
-Once you log in, Codex follows the same OAuth flow as every other client: it registers itself via dynamic client registration, opens the consent page for you to approve `memory:read` and `memory:write`, then receives an access token and a rotating refresh token. No client IDs or secrets to paste by hand. See Codex's own MCP documentation for the exact config keys and command names, which can vary by version.
+Once you log in, Codex follows the same OAuth flow as every other client: it identifies itself using a mechanism advertised by the server, opens the consent page for you to approve `memory:read` and `memory:write`, then receives an access token and a rotating refresh token. 3ngram accepts modern Client ID Metadata Documents and retains dynamic registration for older clients. No client IDs or secrets to paste by hand. See Codex's own MCP documentation for the exact config keys and command names, which can vary by version.
 
 ## A generic MCP client
 
@@ -43,8 +43,9 @@ Any MCP client that supports remote servers over Streamable HTTP works the same 
   <Step title="Complete OAuth">
     3ngram is its own OAuth 2.1 authorization server — there is no third-party
     identity provider in the token path. The client discovers the OAuth metadata,
-    registers itself, and opens the consent page. Approve the two scopes and tokens
-    are issued. See the [Quickstart](/quickstart) for the step-by-step flow.
+    identifies itself via CIMD or dynamic registration, and opens the consent page.
+    Approve the two scopes and tokens are issued. See the [Quickstart](/quickstart)
+    for the step-by-step flow.
   </Step>
   <Step title="Confirm the tools are live">
     The client now sees the [10 tools](/reference/tools) and [2 prompts](/reference/prompts).
@@ -55,7 +56,7 @@ Any MCP client that supports remote servers over Streamable HTTP works the same 
 
 ## Reconnect a broken client
 
-If a client stops reaching 3ngram — after a revoked grant, an expired refresh token, or a change to the server's public host — the stored connection is stale and needs to be re-established. There is no separate "reconnect" command — you re-run the connection, which re-registers the client and issues fresh tokens.
+If a client stops reaching 3ngram — after a revoked grant, an expired refresh token, or a change to the server's public host — the stored connection is stale and needs to be re-established. There is no separate "reconnect" command — you re-run the connection, which resolves or registers the client and issues fresh tokens.
 
 <Steps>
   <Step title="Re-run the client's add/connect step">
@@ -65,8 +66,9 @@ If a client stops reaching 3ngram — after a revoked grant, an expired refresh 
     claude mcp add --transport http 3ngram https://mcp.3ngram.ai/mcp
     ```
 
-    then `/mcp` → **3ngram**. Dynamic client registration runs again, the consent
-    page opens, and a new access token plus rotating refresh token are issued.
+    then `/mcp` → **3ngram**. Client identification runs again (CIMD for modern
+    clients, dynamic registration as fallback), the consent page opens, and a new
+    access token plus rotating refresh token are issued.
   </Step>
   <Step title="If it still fails, disconnect the old grant first">
     In the dashboard, open **Settings → Connected apps**, find the stale 3ngram
@@ -86,8 +88,8 @@ If a client stops reaching 3ngram — after a revoked grant, an expired refresh 
 </Note>
 
 <Note>
-  A deployment may inject an active-client resource cap. Dynamic registration
-  still succeeds, but first token issuance for a new client at the cap returns
+  A deployment may inject an active-client resource cap. Client registration or
+  metadata resolution still succeeds, but first token issuance for a new client at the cap returns
   OAuth `invalid_grant` with `Active MCP client limit reached`. Reconnecting an
   already-active client remains possible while usage is at or below the cap.
   After a limit reduction, only the deterministically newest allowed clients can

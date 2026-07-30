@@ -53,9 +53,10 @@ https://mcp.3ngram.ai/mcp
 3ngram is its own OAuth 2.1 authorization server — there is no third-party identity provider in the token path. The flow is automatic from the client's side:
 
 <Steps>
-  <Step title="The client registers itself">
-    Your MCP client discovers the server's OAuth metadata and registers via dynamic
-    client registration. No manual client IDs or secrets.
+  <Step title="The client identifies itself">
+    Your MCP client discovers the server's OAuth metadata. Modern clients can use
+    an HTTPS Client ID Metadata Document; older clients fall back to dynamic client
+    registration. No manual client IDs or secrets.
   </Step>
   <Step title="Sign in and consent">
     A browser window opens with the 3ngram consent page. Sign in with your account
