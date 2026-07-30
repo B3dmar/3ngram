@@ -51,6 +51,7 @@ Plus **metrics counters** (vendor-neutral `@opentelemetry/api` instruments; expo
 ## 6. MCP-specific observability
 
 - Per-tool error-rate and latency labels (tool_name × client UA) — version skew between MCP clients (different clients ship different spec vintages) is a known operational hazard; per-client breakdowns are how we see it.
+- `Mcp-Method`/`Mcp-Name` are observed before body parsing through bounded allowlists. Unknown values collapse to sentinel labels, so attacker-controlled headers cannot create metric cardinality or enter logs. This signal includes rejected requests; the post-validation tool-call counter remains the validated-dispatch source.
 - Tool-call rejections (auth, rate limit, validation) are logged with reason codes — a spike in validation rejections after a client update is the skew alarm.
 - Structured-output validation failures are `warn`-logged with the schema name — silent retry loops hide contract drift.
 
