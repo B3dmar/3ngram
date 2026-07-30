@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// Typed wrappers over oauth_clients — RFC 7591 dynamic client registration
-// storage (confidential-client support).
+// Typed wrappers over oauth_clients — RFC 7591 registrations and CIMD
+// materialized FK/display rows (confidential-client support remains DCR-only).
 //
-// oauth_clients is a true SYSTEM table: DCR registrations happen PRE-AUTH, so
+// oauth_clients is a true SYSTEM table: client resolution happens PRE-AUTH, so
 // rows carry no user_id and no RLS applies (schema/identity.ts). These helpers
 // therefore mirror the auth-admin.ts discipline: getAdminDb() stays internal to
 // packages/db (the barrel never re-exports it). registerClient / getClientByClientId
@@ -30,7 +30,11 @@
 // methods at the boundary and core derives the hash from the validated method,
 // so a CHECK violation here would be a programming bug, not a user error.
 
-import type { TokenEndpointAuthMethod } from '@3ngram/schema'
+import type {
+  ClientIdMetadataDocument,
+  OAuthClientRegistrationMethod,
+  TokenEndpointAuthMethod,
+} from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { getAdminDb, withTenant } from './client.js'
 import { oauthClients, oauthCodes, oauthTokens } from './schema/identity.js'
@@ -42,11 +46,14 @@ export interface OAuthClientRow {
   redirectUris: string[]
   tokenEndpointAuthMethod: TokenEndpointAuthMethod
   clientSecretHash: string | null
+  registrationMethod: OAuthClientRegistrationMethod
   createdAt: Date
 }
 
-/** Insert shape: core supplies the minted client_id and the pre-hashed secret (or null). */
-export type NewOAuthClient = Omit<OAuthClientRow, 'createdAt'>
+/** Insert shape: direct callers default to DCR; CIMD uses its dedicated upsert. */
+export type NewOAuthClient = Omit<OAuthClientRow, 'createdAt' | 'registrationMethod'> & {
+  registrationMethod?: OAuthClientRegistrationMethod
+}
 
 const clientColumns = {
   clientId: oauthClients.clientId,
@@ -54,6 +61,7 @@ const clientColumns = {
   redirectUris: oauthClients.redirectUris,
   tokenEndpointAuthMethod: oauthClients.tokenEndpointAuthMethod,
   clientSecretHash: oauthClients.clientSecretHash,
+  registrationMethod: oauthClients.registrationMethod,
   createdAt: oauthClients.createdAt,
 }
 
@@ -63,8 +71,48 @@ const clientColumns = {
  * violation is a programming bug and may surface as the generic 500.
  */
 export async function registerClient(client: NewOAuthClient): Promise<OAuthClientRow> {
-  const [row] = await getAdminDb().insert(oauthClients).values(client).returning(clientColumns)
+  const [row] = await getAdminDb()
+    .insert(oauthClients)
+    .values({
+      ...client,
+      registrationMethod: client.registrationMethod ?? 'dynamic_registration',
+    })
+    .returning(clientColumns)
   if (!row) throw new Error('registerClient returned no row')
+  return row
+}
+
+/**
+ * Materialize validated CIMD metadata into oauth_clients. The row exists to
+ * satisfy the oauth_codes/oauth_tokens foreign keys and to provide display
+ * metadata for grant management; authorization policy always re-resolves the
+ * cache-aware metadata document in core.
+ *
+ * A conflict may update only another CIMD row. It can never overwrite a DCR
+ * registration, preserving the registration priority required by MCP.
+ */
+export async function materializeClientMetadata(
+  document: ClientIdMetadataDocument,
+): Promise<OAuthClientRow | undefined> {
+  const [row] = await getAdminDb()
+    .insert(oauthClients)
+    .values({
+      clientId: document.client_id,
+      clientName: document.client_name,
+      redirectUris: document.redirect_uris,
+      tokenEndpointAuthMethod: 'none',
+      clientSecretHash: null,
+      registrationMethod: 'client_id_metadata',
+    })
+    .onConflictDoUpdate({
+      target: oauthClients.clientId,
+      set: {
+        clientName: document.client_name,
+        redirectUris: document.redirect_uris,
+      },
+      setWhere: eq(oauthClients.registrationMethod, 'client_id_metadata'),
+    })
+    .returning(clientColumns)
   return row
 }
 

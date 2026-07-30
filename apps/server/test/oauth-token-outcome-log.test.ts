@@ -8,7 +8,7 @@
 // DB-backed harness. The capture seam is setLogDestination() — the same
 // createLogger(stream) precedent from packages/config/test/redaction.test.ts.
 import type { Server } from 'node:http'
-import { setLogDestination } from '@3ngram/config'
+import { contentDigest, setLogDestination } from '@3ngram/config'
 import type { OAuthServerProvider } from '@modelcontextprotocol/server-legacy/auth'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -49,6 +49,7 @@ vi.mock('@3ngram/core/auth', async (importOriginal) => {
     authenticateClientCredentials: vi.fn(async () => ({
       client_id: 'cl_logtest_client',
       redirect_uris: ['https://client.example/cb'],
+      grant_types: ['authorization_code', 'refresh_token'],
     })),
     createOAuthServerProvider: () =>
       ({
@@ -128,7 +129,7 @@ describe('POST /oauth/token — success(200) outcome line (#242)', () => {
     const line = lastOutcomeLine()
     expect(line?.outcome).toBe('success')
     expect(line?.grant_type).toBe('authorization_code')
-    expect(line?.client_id_prefix).toBe('cl_logte')
+    expect(line?.client_id_prefix).toBe(`sha8:${contentDigest('cl_logtest_client')}`)
 
     const serialized = JSON.stringify(line)
     expect(serialized).not.toContain('minted-access-token-secret')
@@ -147,7 +148,7 @@ describe('POST /oauth/token — server_error(500) outcome line (#242)', () => {
     const line = lastOutcomeLine()
     expect(line?.outcome).toBe('server_error')
     expect(line?.grant_type).toBe('authorization_code')
-    expect(line?.client_id_prefix).toBe('cl_logte')
+    expect(line?.client_id_prefix).toBe(`sha8:${contentDigest('cl_logtest_client')}`)
 
     const serialized = JSON.stringify(line)
     expect(serialized).not.toContain('super-secret-client-credential')

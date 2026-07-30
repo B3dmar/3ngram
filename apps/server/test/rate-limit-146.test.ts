@@ -13,7 +13,7 @@
 // (setExchangeFailureRedis) so the Redis path is covered with NO real Redis,
 // matching the rate-limiter's "no real Redis in CI" contract.
 import type { Server } from 'node:http'
-import { runWithContext } from '@3ngram/config'
+import { contentDigest, runWithContext } from '@3ngram/config'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import type { Redis } from 'ioredis'
 import RedisMock from 'ioredis-mock'
@@ -43,7 +43,7 @@ const {
 
 // The Redis key prefix the tracker uses; the tests inspect the mock directly.
 const FAILURE_KEY_PREFIX = 'oauth:exchange-failure:'
-const failureKey = (clientId: string): string => `${FAILURE_KEY_PREFIX}${clientId}`
+const failureKey = (clientId: string): string => `${FAILURE_KEY_PREFIX}${contentDigest(clientId)}`
 
 function mockRes() {
   const res = {
@@ -442,16 +442,16 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
       await recordExchangeFailure(`cl_cap_${i}`)
     }
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.has('cl_cap_0')).toBe(true)
+    expect(_exchangeFailures.has(contentDigest('cl_cap_0'))).toBe(true)
     // One more distinct client_id evicts the oldest (cl_cap_0) and stays at cap.
     await recordExchangeFailure('cl_cap_overflow')
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.has('cl_cap_0')).toBe(false)
-    expect(_exchangeFailures.has('cl_cap_overflow')).toBe(true)
+    expect(_exchangeFailures.has(contentDigest('cl_cap_0'))).toBe(false)
+    expect(_exchangeFailures.has(contentDigest('cl_cap_overflow'))).toBe(true)
     // An EXISTING client_id only increments — no eviction, no size change.
     await recordExchangeFailure('cl_cap_overflow')
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.get('cl_cap_overflow')).toBe(2)
+    expect(_exchangeFailures.get(contentDigest('cl_cap_overflow'))).toBe(2)
     _exchangeFailures.clear()
   })
 })

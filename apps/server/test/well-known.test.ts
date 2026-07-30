@@ -101,6 +101,7 @@ describe('RFC 8414 authorization-server metadata (OAuth AS A2)', () => {
     expect(body.authorization_endpoint).toBe('https://api.3ngram.test/oauth/authorize')
     expect(body.token_endpoint).toBe('https://api.3ngram.test/oauth/token')
     expect(body.registration_endpoint).toBe('https://api.3ngram.test/oauth/register')
+    expect(body.client_id_metadata_document_supported).toBe(true)
     expect(body.response_types_supported).toEqual(['code'])
     expect(body.grant_types_supported).toEqual(['authorization_code', 'refresh_token'])
     expect(body.code_challenge_methods_supported).toEqual(['S256'])
