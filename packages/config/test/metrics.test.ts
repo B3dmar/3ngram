@@ -6,6 +6,7 @@ import {
   consolidationProposed,
   consolidationRejected,
   METRIC_PREFIX,
+  mcpHeaderRequests,
   mcpToolCalls,
   mcpToolErrors,
   memorySuperseded,
@@ -24,6 +25,7 @@ describe('metric naming (OpenTelemetry instrument-name spec)', () => {
     'consolidation.proposed',
     'consolidation.accepted',
     'consolidation.rejected',
+    'mcp.header_requests',
     'mcp.tool_calls',
     'mcp.tool_errors',
     'rate_limit.store_failure',
@@ -51,6 +53,11 @@ describe('domain metrics (docs/concepts/observability.mdx §4)', () => {
       consolidationProposed.add(1)
       consolidationAccepted.add(1)
       consolidationRejected.add(1)
+      mcpHeaderRequests.add(1, {
+        method: 'tools/call',
+        name: 'remember',
+        status: 'recognized',
+      })
       mcpToolCalls.add(1, { tool_name: 'remember', client_ua: 'claude' })
       mcpToolErrors.add(1, { tool_name: 'remember', reason_code: 'validation' })
       rateLimitStoreFailure.add(1, { key_prefix: 'auth:ip', fail_open: true })

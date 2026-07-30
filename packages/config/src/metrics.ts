@@ -106,6 +106,16 @@ export const mcpToolErrors = lazyCounter(metricName('mcp.tool_errors'), {
 })
 
 /**
+ * Pre-parser MCP routing hints. All attributes are closed, sanitized sets:
+ * callers must never pass raw header values. This is an observability signal
+ * for accepted and rejected requests, not an authorization or validated tool
+ * dispatch counter (mcpToolCalls owns the latter).
+ */
+export const mcpHeaderRequests = lazyCounter(metricName('mcp.header_requests'), {
+  description: 'MCP requests observed before body parsing, by bounded method, name, and status',
+})
+
+/**
  * Rate-limit STORE failures (Redis unreachable), labelled by key_prefix (the
  * limiter/route class — no secrets, no principal ids). This is the alert signal
  * for a fail-open outage: when the store is down a fail-open limiter passes every

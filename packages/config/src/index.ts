@@ -34,6 +34,7 @@ export {
   consolidationProposed,
   consolidationRejected,
   generationCostObserved,
+  mcpHeaderRequests,
   mcpToolCalls,
   mcpToolErrors,
   memorySuperseded,

@@ -12,6 +12,7 @@ import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
 import express, { type Express, type NextFunction, type Request, type Response } from 'express'
 import type { Redis } from 'ioredis'
 import { baseCapabilities, type Extension, noOpExtension } from './composition/extension.js'
+import { mcpHeaderObservability } from './middleware/mcp-header-observability.js'
 import {
   apiKeyIdKey,
   createRateLimiter,
@@ -350,6 +351,11 @@ export function createApp(options: AppOptions = {}): Express {
   // an overloaded API from a dead process. Every other surface gets a coarse
   // per-IP cap before body parsing or any handler work.
   app.use(edgeLimiter)
+  // SEP-2243 routing headers are useful before JSON parsing, but untrusted.
+  // This narrow middleware records only allowlisted values and sets MCP log
+  // context. The SDK later cross-checks headers against the body; authorization
+  // remains inside the verified handler.
+  app.use('/mcp', mcpHeaderObservability)
   // Capture the exact raw bytes alongside JSON parsing so a private webhook
   // (mounted by the extension below) can verify the signature over the
   // unmodified payload — re-serializing a parsed body would change the bytes and
