@@ -37,7 +37,7 @@ export class MemoryNotFoundError extends Error {
  * @throws {@link MemoryNotFoundError} when no such memory exists for the tenant.
  */
 export async function getMemoryById(userId: string, memoryId: string): Promise<MemoryDetailRow> {
-  const row = await withTenant(userId, (tx) => getMemoryByIdDb(tx, memoryId))
+  const row = await withTenant(userId, (tx) => getMemoryByIdDb(tx, userId, memoryId))
   if (row === undefined) throw new MemoryNotFoundError(memoryId)
   return row
 }

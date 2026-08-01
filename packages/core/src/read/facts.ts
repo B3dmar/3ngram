@@ -53,5 +53,5 @@ export async function getFacts(userId: string, query: FactsQuery = {}): Promise<
   // table (no-firehose). A caller that omits `limit` gets the default; the MCP
   // schema also defaults it, so this is the fail-safe for any direct core caller.
   const bounded = { ...query, limit: query.limit ?? DEFAULT_FACTS_LIMIT }
-  return withTenant(userId, (tx) => getFactsDb(tx, bounded))
+  return withTenant(userId, (tx) => getFactsDb(tx, userId, bounded))
 }

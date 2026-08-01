@@ -133,9 +133,9 @@ export async function handoff(userId: string, query: HandoffQuery): Promise<Hand
   // statement for the briefing's exact-count contract); a handoff only needs the
   // bounded item slices, so it reads `.items` and ignores the count.
   const { decisionRows, commitmentRows, preferenceRows } = await withTenant(userId, async (tx) => ({
-    decisionRows: (await recentDecisions(tx, selector, limit)).items,
-    commitmentRows: (await openCommitments(tx, selector, limit)).items,
-    preferenceRows: (await activePreferences(tx, selector, limit)).items,
+    decisionRows: (await recentDecisions(tx, userId, selector, limit)).items,
+    commitmentRows: (await openCommitments(tx, userId, selector, limit)).items,
+    preferenceRows: (await activePreferences(tx, userId, selector, limit)).items,
   }))
 
   return {

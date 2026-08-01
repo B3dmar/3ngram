@@ -173,9 +173,9 @@ describe('briefing — modes + bounds', () => {
   it('always fetches the ceiling so counts are meaningful regardless of mode', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // The db limit arg (3rd positional) is the MAX ceiling, not the brief slice.
-    expect(openCommitments.mock.calls[0]?.[2]).toBe(MAX_BRIEFING_SECTION)
-    expect(recentDecisions.mock.calls[0]?.[2]).toBe(MAX_BRIEFING_SECTION)
+    // The db limit arg (4th positional) is the MAX ceiling, not the brief slice.
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION)
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION)
   })
 })
 
@@ -224,16 +224,16 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
   it('forwards now + ceiling limit to the overdue query', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // overdueCommitments(tx, selector, now, limit)
-    expect(overdueCommitments.mock.calls[0]?.[2]).toBe(NOW)
-    expect(overdueCommitments.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION)
+    // overdueCommitments(tx, userId, selector, now, limit)
+    expect(overdueCommitments.mock.calls[0]?.[3]).toBe(NOW)
+    expect(overdueCommitments.mock.calls[0]?.[4]).toBe(MAX_BRIEFING_SECTION)
   })
 
   it('derives the stale-before instant as now minus the documented window', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // staleCandidates(tx, selector, staleBefore, limit): the 3rd arg is the cutoff.
-    const staleBefore = staleCandidates.mock.calls[0]?.[2] as Date
+    // staleCandidates(tx, userId, selector, staleBefore, limit): the 4th arg is the cutoff.
+    const staleBefore = staleCandidates.mock.calls[0]?.[3] as Date
     const expected = NOW.getTime() - STALE_WINDOW_DAYS * 86_400_000
     expect(staleBefore.getTime()).toBe(expected)
   })
@@ -249,8 +249,8 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
       recentDecisions,
       activePreferences,
     ]) {
-      expect(fn.mock.calls[0]?.[1]).toEqual(selector)
+      expect(fn.mock.calls[0]?.[2]).toEqual(selector)
     }
-    expect(staleCandidates.mock.calls[0]?.[1]).toEqual(selector)
+    expect(staleCandidates.mock.calls[0]?.[2]).toEqual(selector)
   })
 })
