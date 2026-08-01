@@ -62,13 +62,9 @@
         "budget_reservations_user_id_users_id_fk": {
           "name": "budget_reservations_user_id_users_id_fk",
           "tableFrom": "budget_reservations",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -80,9 +76,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -307,13 +301,9 @@
         "subscriptions_user_id_users_id_fk": {
           "name": "subscriptions_user_id_users_id_fk",
           "tableFrom": "subscriptions",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -325,9 +315,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -408,13 +396,9 @@
         "user_budgets_user_id_users_id_fk": {
           "name": "user_budgets_user_id_users_id_fk",
           "tableFrom": "user_budgets",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -426,9 +410,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -527,13 +509,9 @@
         "api_keys_user_id_users_id_fk": {
           "name": "api_keys_user_id_users_id_fk",
           "tableFrom": "api_keys",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -542,9 +520,7 @@
       "uniqueConstraints": {
         "api_keys_key_hash_unique": {
           "name": "api_keys_key_hash_unique",
-          "columns": [
-            "key_hash"
-          ],
+          "columns": ["key_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -553,9 +529,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -633,13 +607,9 @@
         "email_verification_tokens_user_id_users_id_fk": {
           "name": "email_verification_tokens_user_id_users_id_fk",
           "tableFrom": "email_verification_tokens",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -648,9 +618,7 @@
       "uniqueConstraints": {
         "email_verification_tokens_token_hash_unique": {
           "name": "email_verification_tokens_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -659,9 +627,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -743,9 +709,7 @@
       "uniqueConstraints": {
         "oauth_clients_client_id_unique": {
           "name": "oauth_clients_client_id_unique",
-          "columns": [
-            "client_id"
-          ],
+          "columns": ["client_id"],
           "nullsNotDistinct": false
         }
       },
@@ -861,26 +825,18 @@
         "oauth_codes_client_id_oauth_clients_client_id_fk": {
           "name": "oauth_codes_client_id_oauth_clients_client_id_fk",
           "tableFrom": "oauth_codes",
-          "columnsFrom": [
-            "client_id"
-          ],
+          "columnsFrom": ["client_id"],
           "tableTo": "oauth_clients",
-          "columnsTo": [
-            "client_id"
-          ],
+          "columnsTo": ["client_id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "oauth_codes_user_id_users_id_fk": {
           "name": "oauth_codes_user_id_users_id_fk",
           "tableFrom": "oauth_codes",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -889,9 +845,7 @@
       "uniqueConstraints": {
         "oauth_codes_code_hash_unique": {
           "name": "oauth_codes_code_hash_unique",
-          "columns": [
-            "code_hash"
-          ],
+          "columns": ["code_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -900,9 +854,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1020,26 +972,18 @@
         "oauth_tokens_client_id_oauth_clients_client_id_fk": {
           "name": "oauth_tokens_client_id_oauth_clients_client_id_fk",
           "tableFrom": "oauth_tokens",
-          "columnsFrom": [
-            "client_id"
-          ],
+          "columnsFrom": ["client_id"],
           "tableTo": "oauth_clients",
-          "columnsTo": [
-            "client_id"
-          ],
+          "columnsTo": ["client_id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "oauth_tokens_user_id_users_id_fk": {
           "name": "oauth_tokens_user_id_users_id_fk",
           "tableFrom": "oauth_tokens",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1048,9 +992,7 @@
       "uniqueConstraints": {
         "oauth_tokens_token_hash_unique": {
           "name": "oauth_tokens_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -1059,9 +1001,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1133,13 +1073,9 @@
         "password_reset_tokens_user_id_users_id_fk": {
           "name": "password_reset_tokens_user_id_users_id_fk",
           "tableFrom": "password_reset_tokens",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1148,9 +1084,7 @@
       "uniqueConstraints": {
         "password_reset_tokens_token_hash_unique": {
           "name": "password_reset_tokens_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -1159,9 +1093,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1223,13 +1155,9 @@
         "user_profile_attributes_user_id_users_id_fk": {
           "name": "user_profile_attributes_user_id_users_id_fk",
           "tableFrom": "user_profile_attributes",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1241,9 +1169,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1322,13 +1248,9 @@
         "user_sessions_user_id_users_id_fk": {
           "name": "user_sessions_user_id_users_id_fk",
           "tableFrom": "user_sessions",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1337,9 +1259,7 @@
       "uniqueConstraints": {
         "user_sessions_token_hash_unique": {
           "name": "user_sessions_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "nullsNotDistinct": false
         }
       },
@@ -1348,9 +1268,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1408,9 +1326,7 @@
       "uniqueConstraints": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "columns": [
-            "email"
-          ],
+          "columns": ["email"],
           "nullsNotDistinct": false
         }
       },
@@ -1547,28 +1463,18 @@
         "commitments_user_id_users_id_fk": {
           "name": "commitments_user_id_users_id_fk",
           "tableFrom": "commitments",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "commitments_memory_fk": {
           "name": "commitments_memory_fk",
           "tableFrom": "commitments",
-          "columnsFrom": [
-            "user_id",
-            "memory_id"
-          ],
+          "columnsFrom": ["user_id", "memory_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1580,9 +1486,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1736,43 +1640,27 @@
         "consolidation_proposals_user_id_users_id_fk": {
           "name": "consolidation_proposals_user_id_users_id_fk",
           "tableFrom": "consolidation_proposals",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "proposals_from_fk": {
           "name": "proposals_from_fk",
           "tableFrom": "consolidation_proposals",
-          "columnsFrom": [
-            "user_id",
-            "from_id"
-          ],
+          "columnsFrom": ["user_id", "from_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "proposals_to_fk": {
           "name": "proposals_to_fk",
           "tableFrom": "consolidation_proposals",
-          "columnsFrom": [
-            "user_id",
-            "to_id"
-          ],
+          "columnsFrom": ["user_id", "to_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1784,9 +1672,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -1915,28 +1801,18 @@
         "facts_user_id_users_id_fk": {
           "name": "facts_user_id_users_id_fk",
           "tableFrom": "facts",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "facts_memory_fk": {
           "name": "facts_memory_fk",
           "tableFrom": "facts",
-          "columnsFrom": [
-            "user_id",
-            "memory_id"
-          ],
+          "columnsFrom": ["user_id", "memory_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -1948,9 +1824,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -2207,13 +2081,9 @@
         "memories_user_id_users_id_fk": {
           "name": "memories_user_id_users_id_fk",
           "tableFrom": "memories",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -2222,10 +2092,7 @@
       "uniqueConstraints": {
         "memories_tenant_id_uq": {
           "name": "memories_tenant_id_uq",
-          "columns": [
-            "user_id",
-            "id"
-          ],
+          "columns": ["user_id", "id"],
           "nullsNotDistinct": false
         }
       },
@@ -2234,9 +2101,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -2345,43 +2210,27 @@
         "memory_edges_user_id_users_id_fk": {
           "name": "memory_edges_user_id_users_id_fk",
           "tableFrom": "memory_edges",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "memory_edges_from_fk": {
           "name": "memory_edges_from_fk",
           "tableFrom": "memory_edges",
-          "columnsFrom": [
-            "user_id",
-            "from_id"
-          ],
+          "columnsFrom": ["user_id", "from_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "memory_edges_to_fk": {
           "name": "memory_edges_to_fk",
           "tableFrom": "memory_edges",
-          "columnsFrom": [
-            "user_id",
-            "to_id"
-          ],
+          "columnsFrom": ["user_id", "to_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -2393,9 +2242,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -2498,28 +2345,18 @@
         "memory_events_user_id_users_id_fk": {
           "name": "memory_events_user_id_users_id_fk",
           "tableFrom": "memory_events",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         },
         "memory_events_memory_fk": {
           "name": "memory_events_memory_fk",
           "tableFrom": "memory_events",
-          "columnsFrom": [
-            "user_id",
-            "memory_id"
-          ],
+          "columnsFrom": ["user_id", "memory_id"],
           "tableTo": "memories",
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
+          "columnsTo": ["user_id", "id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -2531,9 +2368,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -2615,13 +2450,9 @@
         "scopes_user_id_users_id_fk": {
           "name": "scopes_user_id_users_id_fk",
           "tableFrom": "scopes",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -2633,9 +2464,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
@@ -2725,13 +2554,9 @@
         "audit_log_user_id_users_id_fk": {
           "name": "audit_log_user_id_users_id_fk",
           "tableFrom": "audit_log",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "set null"
         }
@@ -2916,13 +2741,9 @@
         "llm_usage_user_id_users_id_fk": {
           "name": "llm_usage_user_id_users_id_fk",
           "tableFrom": "llm_usage",
-          "columnsFrom": [
-            "user_id"
-          ],
+          "columnsFrom": ["user_id"],
           "tableTo": "users",
-          "columnsTo": [
-            "id"
-          ],
+          "columnsTo": ["id"],
           "onUpdate": "no action",
           "onDelete": "cascade"
         }
@@ -2934,9 +2755,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
