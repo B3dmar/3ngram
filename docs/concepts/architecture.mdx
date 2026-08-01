@@ -39,6 +39,7 @@ apps/* → packages/core → packages/db → postgres
 
 - **Transport layers (REST routes, MCP tools) contain zero business logic** — they parse (schema), call `packages/core`, format. Oversized router files are the anti-pattern to avoid.
 - `packages/core` never imports express/MCP/Next types.
+- **`packages/db` enforces two-layer tenant isolation**: every tenant-scoped query runs inside `withTenant()` (RLS) **and** carries an explicit caller-bound `user_id` predicate — defense in depth, per `docs/concepts/data-model.mdx`.
 - **50-line function / 500-line file budget**, enforced by lint warning + review. Oversized files in core paths are exactly the failure mode this budget prevents.
 - Dependency direction checked in CI (`dependency-cruiser` or Turborepo boundaries).
 

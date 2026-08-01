@@ -75,7 +75,7 @@ await withTenant(userId, async (tx) => {
 
 - `SET LOCAL` inside a transaction, per request — never bare `SET` (a pooled connection leaks session state otherwise).
 - Raw pool access outside `withTenant` fails lint (custom Biome/ESLint rule).
-- Defense-in-depth: queries still carry explicit `WHERE user_id = ...`; RLS catches the one you forget.
+- **Two-layer tenant isolation (defense in depth)**: every tenant-scoped query — reads included — carries an explicit `WHERE user_id = ...` predicate bound to the **same `userId` passed into `withTenant()`**, in addition to the RLS policy. The predicate matches exactly the rows RLS admits, so it changes nothing while RLS functions; it exists so isolation never rests on a single mechanism. Neither layer is optional: RLS catches a forgotten predicate, the predicate keeps queries caller-scoped independently of policy state.
 - Migrations/seeds: unpooled URL only.
 - Roles/GRANTs: one idempotent `scripts/provision-roles.sql`, never per-migration guards.
 
