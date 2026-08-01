@@ -191,7 +191,14 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     // successor — proving the demotion is the penalty, not an artifact of the
     // base FTS/recency scores.
     const noPenalty = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'session handoff release canary validation', 200, DEFAULT_FUSION_WEIGHTS, 0),
+      searchFused(
+        tx,
+        uid,
+        'session handoff release canary validation',
+        200,
+        DEFAULT_FUSION_WEIGHTS,
+        0,
+      ),
     )
     const withPenalty = await withTenant(uid, (tx) =>
       searchFused(tx, uid, 'session handoff release canary validation', 200),
@@ -448,7 +455,9 @@ describe('fusion (searchFused) — vector leg', () => {
     // tenant's rows: withTenant() binds app.user_id, RLS does the rest.
     const otherUid = await seedUser('search-vector-other@test.local')
     try {
-      const hits = await withTenant(otherUid, (tx) => searchVector(tx, otherUid, targetEmbedding(), 10))
+      const hits = await withTenant(otherUid, (tx) =>
+        searchVector(tx, otherUid, targetEmbedding(), 10),
+      )
       expect(hits).toHaveLength(0)
       const fused = await withTenant(otherUid, (tx) =>
         searchFused(

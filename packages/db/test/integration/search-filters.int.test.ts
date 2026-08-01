@@ -371,7 +371,9 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
   it('no asOf keeps the supersession-aware live view (successor ranks above predecessor)', async () => {
     // Default (no asOf): the live view ranks the superseded predecessor BELOW its
     // successor via the tier penalty, both retrievable (docs/concepts/memory-model.mdx default).
-    const hits = await withTenant(chainUid, (tx) => searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY))
+    const hits = await withTenant(chainUid, (tx) =>
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY),
+    )
     const ids = hits.map((h) => h.id)
     expect(ids).toContain(succId)
     expect(ids).toContain(predId)

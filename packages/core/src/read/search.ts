@@ -282,7 +282,17 @@ export async function search(
   const filters = opts.filters ?? {}
 
   const hits = await withTenant(userId, (tx) =>
-    searchFused(tx, userId, query, limit, weights, supersessionPenalty, queryEmbedding, filters, cursor),
+    searchFused(
+      tx,
+      userId,
+      query,
+      limit,
+      weights,
+      supersessionPenalty,
+      queryEmbedding,
+      filters,
+      cursor,
+    ),
   )
   // Read-path excerpting: bound each hit's content to the schema
   // excerpt cap BEFORE any transport sees it (docs/concepts/architecture.mdx — policy in core, so
