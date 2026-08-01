@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   actorKindSchema,
@@ -15,10 +15,6 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const initSql = readFileSync(join(import.meta.dirname, '../migrations/0000_init.sql'), 'utf8')
-const authRlsSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0002_auth_rls.sql'),
-  'utf8',
-)
 const resolversSql = readFileSync(
   join(import.meta.dirname, '../migrations/0003_auth_resolvers.sql'),
   'utf8',
@@ -29,13 +25,6 @@ const clientAuthSql = readFileSync(
 )
 const clientRegistrationMethodSql = readFileSync(
   join(import.meta.dirname, '../migrations/0027_cimd_clients.sql'),
-  'utf8',
-)
-// 0009 widens memory_events_kind_check with 'embed_failed' (the embed-on-write
-// failure path slice 3) — fold it into the drift corpus so the
-// generated CHECK is asserted to carry the new enum value.
-const eventKindSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0009_event_kind_embed_failed.sql'),
   'utf8',
 )
 // 0015 adds password_reset_tokens (RLS-enabled, tenant_isolation policy) + the
@@ -82,21 +71,33 @@ const auditRlsSql = readFileSync(
   join(import.meta.dirname, '../migrations/0029_audit_log_rls.sql'),
   'utf8',
 )
-const allMigrations =
-  initSql +
-  authRlsSql +
-  resolversSql +
-  clientAuthSql +
-  eventKindSql +
-  passwordResetSql +
-  passwordResetAtomicSql +
-  emailVerificationSql +
-  unverifiedSignupRetrySql +
-  signupClientProofSql +
-  clientRegistrationMethodSql +
-  forceRlsSql +
-  auditRlsSql
+// Drift corpus = EVERY migration, enumerated dynamically. Previously this was a
+// hand-curated concatenation of ~10 named files; a new tenant table shipped in a
+// migration nobody remembered to add to that list would slip past the RLS/policy
+// invariants below. Globbing the whole migrations directory closes that gap: any
+// *.sql that enables RLS without a matching tenant_isolation policy now fails the
+// suite automatically.
+const migrationsDir = join(import.meta.dirname, '../migrations')
+const migrationFiles = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+const allMigrations = migrationFiles
+  .map((f) => readFileSync(join(migrationsDir, f), 'utf8'))
+  .join('\n')
 const rolesSql = readFileSync(join(import.meta.dirname, '../provision-roles.sql'), 'utf8')
+
+/** Tables named in `ALTER TABLE "x" <verb> ROW LEVEL SECURITY` across all migrations. */
+function tablesWith(verb: 'ENABLE' | 'FORCE'): Set<string> {
+  const re = new RegExp(`ALTER TABLE "([^"]+)" ${verb} ROW LEVEL SECURITY`, 'g')
+  return new Set([...allMigrations.matchAll(re)].map((m) => m[1]))
+}
+
+/** Tables carrying a `CREATE POLICY "tenant_isolation" ON "x"` across all migrations. */
+function tablesWithTenantPolicy(): Set<string> {
+  return new Set(
+    [...allMigrations.matchAll(/CREATE POLICY "tenant_isolation" ON "([^"]+)"/g)].map((m) => m[1]),
+  )
+}
 
 describe('0000_init.sql ↔ @3ngram/schema drift', () => {
   it('every enum value appears in its generated CHECK constraint', () => {
@@ -117,12 +118,34 @@ describe('0000_init.sql ↔ @3ngram/schema drift', () => {
 
   it('every RLS policy carries the NULLIF guard (S3 finding 1)', () => {
     const policies = allMigrations.match(/CREATE POLICY "tenant_isolation"[^;]+;/g) ?? []
-    // 8 memory-domain/ops + 6 identity (user_sessions, api_keys, oauth_codes,
-    // oauth_tokens, password_reset_tokens, email_verification_tokens)
-    // + 1 audit_log (0029, tenant-less-aware variant)
-    expect(policies.length).toBe(15)
+    expect(policies.length).toBeGreaterThan(0)
     for (const p of policies) {
       expect(p).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    }
+  })
+
+  it('every RLS-enabled table has a tenant_isolation policy (dynamic drift corpus)', () => {
+    // The expected set is DERIVED from the migrations, not hardcoded: whatever
+    // tables enable RLS must each carry a tenant_isolation policy, and no policy
+    // may reference a table that never enabled RLS. A new tenant table shipped
+    // with ENABLE ROW LEVEL SECURITY but no policy (or vice versa) fails here,
+    // regardless of which migration file introduced it.
+    const enabled = [...tablesWith('ENABLE')].sort()
+    const policied = [...tablesWithTenantPolicy()].sort()
+    expect(enabled.length).toBeGreaterThan(0)
+    expect(policied).toEqual(enabled)
+  })
+
+  it('every FORCE-protected table also enables RLS and has a policy', () => {
+    // FORCE without ENABLE + policy is meaningless. Derived from the migrations
+    // so a future FORCE on a new table is checked without editing this test.
+    const enabled = tablesWith('ENABLE')
+    const policied = tablesWithTenantPolicy()
+    const forced = [...tablesWith('FORCE')].sort()
+    expect(forced.length).toBeGreaterThan(0)
+    for (const t of forced) {
+      expect(enabled.has(t), `${t} is FORCEd but never ENABLEd RLS`).toBe(true)
+      expect(policied.has(t), `${t} is FORCEd but has no tenant_isolation policy`).toBe(true)
     }
   })
 
