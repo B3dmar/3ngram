@@ -112,6 +112,7 @@ describe('embed-on-write (runtime role, FakeGateway, real withTenant)', () => {
     const hits = await withTenant(userA, (tx) =>
       searchFused(
         tx,
+        userA,
         'nonmatching lexical query xyzzy',
         10,
         { fts: 1, recency: 0, vector: 1 },

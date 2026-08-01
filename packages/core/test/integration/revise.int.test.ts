@@ -258,7 +258,7 @@ describe('revise (runtime role, real withTenant)', () => {
       ACTOR,
     )
 
-    const hits = await withTenant(userA, (tx) => searchFused(tx, 'terraform provider', 10))
+    const hits = await withTenant(userA, (tx) => searchFused(tx, userA, 'terraform provider', 10))
     const predHit = hits.find((h) => h.id === predId)
     const succHit = hits.find((h) => h.id === succId)
 
@@ -295,7 +295,7 @@ describe('revise (runtime role, real withTenant)', () => {
       ACTOR,
     )
 
-    const hits = await withTenant(userA, (tx) => searchFused(tx, 'kubernetes rollout', 10))
+    const hits = await withTenant(userA, (tx) => searchFused(tx, userA, 'kubernetes rollout', 10))
     const ids = hits.map((h) => h.id)
 
     // Both retrievable (ranking, not filtering)...

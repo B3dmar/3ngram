@@ -282,7 +282,7 @@ export async function search(
   const filters = opts.filters ?? {}
 
   const hits = await withTenant(userId, (tx) =>
-    searchFused(tx, query, limit, weights, supersessionPenalty, queryEmbedding, filters, cursor),
+    searchFused(tx, userId, query, limit, weights, supersessionPenalty, queryEmbedding, filters, cursor),
   )
   // Read-path excerpting: bound each hit's content to the schema
   // excerpt cap BEFORE any transport sees it (docs/concepts/architecture.mdx — policy in core, so
@@ -361,7 +361,7 @@ export async function searchDashboardPage(
     let cursor = off
     while (collected.length <= limit && cursor < ids.length) {
       const sliceIds = ids.slice(cursor, cursor + limit)
-      const rows = await withTenant(userId, (tx) => fetchHitsByIds(tx, sliceIds, filters))
+      const rows = await withTenant(userId, (tx) => fetchHitsByIds(tx, userId, sliceIds, filters))
       const byId = new Map(rows.map((row) => [row.id, row]))
       sliceIds.forEach((id, i) => {
         const row = byId.get(id)
@@ -400,6 +400,7 @@ export async function searchDashboardPage(
   const ranked = await withTenant(userId, (tx) =>
     searchFused(
       tx,
+      userId,
       query,
       limit,
       weights,
