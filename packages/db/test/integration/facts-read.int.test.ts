@@ -141,7 +141,11 @@ describe('get_facts — as_of valid-time (validAt: what was TRUE at t)', () => {
   it('boundary is half-open: valid_to is exclusive (the successor wins at T)', async () => {
     // At exactly T1, v1's window [T0, T1) has ended and v2's [T1, T2) has begun.
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, uid, { subject: 'employee:42', predicate: 'role', asOf: { validAt: new Date(T1) } }),
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        asOf: { validAt: new Date(T1) },
+      }),
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.value).toBe('lead')

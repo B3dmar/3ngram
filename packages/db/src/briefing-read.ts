@@ -369,7 +369,11 @@ export function activePreferences(
  * their own (open/waiting) list, not by staleness. Leads with the caller-bound
  * `memories.user_id = userId` tenant condition (module header).
  */
-function staleCandidatePredicate(userId: string, selector: BriefingSelector, staleBefore: Date): SQL {
+function staleCandidatePredicate(
+  userId: string,
+  selector: BriefingSelector,
+  staleBefore: Date,
+): SQL {
   const conditions: SQL[] = [
     eq(memories.userId, userId),
     isNull(memories.validTo),

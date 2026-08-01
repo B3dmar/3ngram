@@ -274,7 +274,9 @@ describe('staleCandidates (runtime role)', () => {
     })
     await seedCommitment(userA, staleCommitment)
 
-    const page = await withTenant(userA, (tx) => staleCandidates(tx, userA, ALL, new Date(cutoff), 25))
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, new Date(cutoff), 25),
+    )
     const ids = page.items.map((r) => r.id)
     expect(ids).toContain(stale)
     expect(ids).not.toContain(fresh)
