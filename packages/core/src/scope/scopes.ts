@@ -28,7 +28,7 @@ export type ScopeRecord = ScopeRow
 
 /** List the tenant's registered scopes (name-ordered). Runs under withTenant/RLS. */
 export function listScopes(userId: string): Promise<ScopeRecord[]> {
-  return withTenant(userId, (tx) => listScopesDb(tx))
+  return withTenant(userId, (tx) => listScopesDb(tx, userId))
 }
 
 /** Register a new scope. Name collision -> ScopeNameConflictError. */
@@ -42,7 +42,7 @@ export function createScope(
 
 /** Rename a scope. Missing -> ScopeNotFoundError; new name taken -> conflict. */
 export function renameScope(userId: string, from: string, to: string): Promise<ScopeRecord> {
-  return withTenant(userId, (tx) => renameScopeDb(tx, from, to))
+  return withTenant(userId, (tx) => renameScopeDb(tx, userId, from, to))
 }
 
 /** Replace a scope's alias list (full replace). Missing -> ScopeNotFoundError. */
@@ -51,10 +51,10 @@ export function setScopeAliases(
   name: string,
   aliases: readonly string[],
 ): Promise<ScopeRecord> {
-  return withTenant(userId, (tx) => setScopeAliasesDb(tx, name, [...aliases]))
+  return withTenant(userId, (tx) => setScopeAliasesDb(tx, userId, name, [...aliases]))
 }
 
 /** Delete a scope from the registry (memory rows untouched). Missing -> not-found. */
 export function deleteScope(userId: string, name: string): Promise<void> {
-  return withTenant(userId, (tx) => deleteScopeDb(tx, name))
+  return withTenant(userId, (tx) => deleteScopeDb(tx, userId, name))
 }
