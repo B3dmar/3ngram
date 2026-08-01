@@ -3,9 +3,11 @@
 //
 // audit_log is a SYSTEM table (ops.ts comment: 'audit_log gets INSERT-only
 // grants'; provision-roles.sql: `GRANT SELECT, INSERT ON memory_events,
-// audit_log`). It carries no RLS and no user_id NOT NULL constraint —
-// pre-auth OAuth events carry no tenant. Access goes through getAdminDb()
-// NOT withTenant(), mirroring the auth-admin / auth-oauth-clients discipline.
+// audit_log`). Its user_id is NULLABLE — pre-auth OAuth events carry no
+// tenant. Access goes through getAdminDb() NOT withTenant(), mirroring the
+// auth-admin / auth-oauth-clients discipline: the tenant_isolation policy on
+// audit_log (schema/ops.ts) grants tenant-less sessions full access and pins
+// tenant-bound transactions to their own rows (defense in depth).
 // getAdminDb stays internal to this package; the public barrel exports only
 // this narrow typed helper.
 //
@@ -52,7 +54,8 @@ export async function insertAuditLog(entry: AuditLogEntry): Promise<void> {
  * Used to make a once-only side-effect (e.g. the account-deletion tombstone)
  * idempotent under retry: a prior run that committed its DB work but failed
  * before/at the audit insert can be completed without writing a duplicate.
- * Reads via getAdminDb() (audit_log carries no RLS), mirroring insertAuditLog.
+ * Reads via getAdminDb() (tenant-less, which the audit_log tenant_isolation
+ * policy permits), mirroring insertAuditLog.
  */
 export async function auditLogEntryExists(userId: string, action: string): Promise<boolean> {
   const rows = await getAdminDb()
