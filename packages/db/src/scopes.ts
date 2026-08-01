@@ -232,11 +232,7 @@ export async function getEnvironmentStats(tx: TenantTx, userId: string): Promise
     .select({ n: count() })
     .from(memories)
     .where(
-      and(
-        eq(memories.userId, userId),
-        eq(memories.status, 'archived'),
-        isNull(memories.validTo),
-      ),
+      and(eq(memories.userId, userId), eq(memories.status, 'archived'), isNull(memories.validTo)),
     )
 
   const byStatus = await tx
