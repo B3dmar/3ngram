@@ -176,7 +176,7 @@ const keysOf = (hits: { id: string }[]): string[] => {
 
 describe('searchFused filters — dimensional narrowing (#134)', () => {
   it('no filter returns all ACTIVE rows (archived excluded by the live default)', async () => {
-    const hits = await withTenant(uid, (tx) => searchFused(tx, 'alpha', BIG, FTS_ONLY))
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, 'alpha', BIG, FTS_ONLY))
     const keys = keysOf(hits)
     expect(keys).not.toContain('d_archived')
     expect(keys).toContain('d_dec_work_p1')
@@ -185,35 +185,35 @@ describe('searchFused filters — dimensional narrowing (#134)', () => {
 
   it('type filter narrows to that memory_type', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { memoryType: 'note' }),
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { memoryType: 'note' }),
     )
     expect(keysOf(hits)).toEqual(['d_note_work_p1'])
   })
 
   it('scope filter narrows to that scope', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { scope: 'personal' }),
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { scope: 'personal' }),
     )
     expect(keysOf(hits)).toEqual(['d_dec_personal_p1'])
   })
 
   it('project filter narrows to that project (null projects excluded)', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { project: 'p2' }),
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { project: 'p2' }),
     )
     expect(keysOf(hits)).toEqual(['d_dec_work_p2'])
   })
 
   it('status filter OVERRIDES the active-only default (surfaces archived)', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { status: 'archived' }),
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { status: 'archived' }),
     )
     expect(keysOf(hits)).toEqual(['d_archived'])
   })
 
   it('filters compose (AND) across axes', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         memoryType: 'decision',
         scope: 'work',
         project: 'p1',
@@ -231,6 +231,7 @@ describe('searchFused filters — dimensional narrowing (#134)', () => {
     const hits = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'zzzznolexicalmatch qqwx',
         BIG,
         { fts: 0, recency: 1, vector: 1 },
@@ -253,7 +254,7 @@ describe('searchFused filters — dimensional narrowing (#134)', () => {
     // over rather than disturbing the weighted-sum math.
     const target = fakeEmbedding('d_dec_work_p2')
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, { fts: 0.2, recency: 0, vector: 1 }, undefined, target, {
+      searchFused(tx, uid, 'alpha', BIG, { fts: 0.2, recency: 0, vector: 1 }, undefined, target, {
         scope: 'work',
       }),
     )
@@ -266,7 +267,7 @@ describe('searchFused filters — dimensional narrowing (#134)', () => {
     const other = await seedUser('search-filters-other@test.local')
     try {
       const hits = await withTenant(other, (tx) =>
-        searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { scope: 'work' }),
+        searchFused(tx, other, 'alpha', BIG, FTS_ONLY, undefined, undefined, { scope: 'work' }),
       )
       expect(hits).toHaveLength(0)
     } finally {
@@ -318,7 +319,7 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
 
   it('validAt selects the row that was TRUE at the instant (Jan -> predecessor)', async () => {
     const hits = await withTenant(chainUid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: { validAt: new Date('2026-01-15T00:00:00Z') },
       }),
     )
@@ -329,7 +330,7 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
 
   it('validAt in the successor window selects the successor (Mar -> successor)', async () => {
     const hits = await withTenant(chainUid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: { validAt: new Date('2026-03-15T00:00:00Z') },
       }),
     )
@@ -341,7 +342,7 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
   it('asKnownAt hides not-yet-recorded rows (transaction time)', async () => {
     // The successor was recorded Mar 1; an asKnownAt of Feb 15 must not see it.
     const hits = await withTenant(chainUid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: { asKnownAt: new Date('2026-02-15T00:00:00Z') },
       }),
     )
@@ -355,7 +356,7 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
     // successor was recorded): the late-recorded successor is invisible, and the
     // predecessor's valid window does not cover Mar -> empty chain result.
     const hits = await withTenant(chainUid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: {
           validAt: new Date('2026-03-15T00:00:00Z'),
           asKnownAt: new Date('2026-02-15T00:00:00Z'),
@@ -370,7 +371,9 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
   it('no asOf keeps the supersession-aware live view (successor ranks above predecessor)', async () => {
     // Default (no asOf): the live view ranks the superseded predecessor BELOW its
     // successor via the tier penalty, both retrievable (docs/concepts/memory-model.mdx default).
-    const hits = await withTenant(chainUid, (tx) => searchFused(tx, 'alpha', BIG, FTS_ONLY))
+    const hits = await withTenant(chainUid, (tx) =>
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY),
+    )
     const ids = hits.map((h) => h.id)
     expect(ids).toContain(succId)
     expect(ids).toContain(predId)
@@ -379,7 +382,7 @@ describe('searchFused filters — as_of bi-temporal time travel (#134, docs/conc
 
   it('asOf composes with a dimensional filter (validAt + scope)', async () => {
     const hits = await withTenant(chainUid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, chainUid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: { validAt: new Date('2026-01-15T00:00:00Z') },
         scope: 'personal', // no personal-scope rows in the chain
       }),
@@ -394,9 +397,9 @@ describe('searchFused asOf-guard — empty asOf keeps the live default (#134, P2
   // active-only default (that would silently surface archived/superseded rows).
   it('asOf:{} (no coordinate) keeps the active default — archived stays excluded', async () => {
     const empty = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, { asOf: {} }),
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { asOf: {} }),
     )
-    const live = await withTenant(uid, (tx) => searchFused(tx, 'alpha', BIG, FTS_ONLY))
+    const live = await withTenant(uid, (tx) => searchFused(tx, uid, 'alpha', BIG, FTS_ONLY))
     const emptyKeys = keysOf(empty).sort()
     // Identical to the no-asOf live view: archived excluded, all active present.
     expect(emptyKeys).not.toContain('d_archived')
@@ -410,7 +413,7 @@ describe('searchFused asOf-guard — empty asOf keeps the live default (#134, P2
     // valid-time predicate can surface it — proving a real coordinate (unlike {})
     // lifts the default AND applies a temporal predicate.
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
+      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
         asOf: { validAt: new Date('2026-02-01T00:00:00Z') },
       }),
     )

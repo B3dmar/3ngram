@@ -82,6 +82,7 @@ describe('search — policy defaults', () => {
     await search('u1', 'find it now', { queryEmbedding: dim() })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'find it now',
       5,
       DEFAULT_SEARCH_WEIGHTS,
@@ -106,6 +107,7 @@ describe('search — policy defaults', () => {
     )
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'explicit weights query',
       3,
       weights,
@@ -121,8 +123,8 @@ describe('search — policy defaults', () => {
     const cursor = { score: 1.5, id: '00000000-0000-0000-0000-000000000001' }
     await search('u1', 'continuation query', { queryEmbedding: dim() }, { limit: 10, cursor })
 
-    expect(searchFused.mock.calls[0]?.[2]).toBe(10)
-    expect(searchFused.mock.calls[0]?.[7]).toEqual(cursor)
+    expect(searchFused.mock.calls[0]?.[3]).toBe(10)
+    expect(searchFused.mock.calls[0]?.[8]).toEqual(cursor)
   })
 })
 
@@ -132,6 +134,7 @@ describe('short-query topic boost (issue #339)', () => {
     await search('u1', 'Ana', { queryEmbedding: dim() })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'Ana',
       5,
       { ...DEFAULT_SEARCH_WEIGHTS, topicMatch: 0.5 },
@@ -145,7 +148,7 @@ describe('short-query topic boost (issue #339)', () => {
   it('4-token query does not activate the topic boost (topicMatch stays undefined)', async () => {
     searchFused.mockResolvedValue([])
     await search('u1', 'find all meeting notes', { queryEmbedding: dim() })
-    const calledWeights = searchFused.mock.calls[0]?.[3] as Record<string, unknown>
+    const calledWeights = searchFused.mock.calls[0]?.[4] as Record<string, unknown>
     // topicMatch must not be set (or be 0) for long queries
     expect(calledWeights.topicMatch == null || calledWeights.topicMatch === 0).toBe(true)
   })
@@ -156,6 +159,7 @@ describe('short-query topic boost (issue #339)', () => {
     await search('u1', 'Ana', { queryEmbedding: dim() }, { weights })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'Ana',
       5,
       weights,
@@ -175,6 +179,7 @@ describe('short-query topic boost (issue #339)', () => {
     await search('u1', 'Ana', { queryEmbedding: dim() }, { weights })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'Ana',
       5,
       weights,
@@ -197,6 +202,7 @@ describe('search — filter threading (issue #134)', () => {
     await search('u1', 'filter threading query', { queryEmbedding: dim() }, { filters })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'filter threading query',
       5,
       DEFAULT_SEARCH_WEIGHTS,
@@ -214,7 +220,7 @@ describe('search — filter threading (issue #134)', () => {
     searchFused.mockResolvedValue([])
     const asOf = { validAt: new Date('2026-01-01T00:00:00Z') }
     await search('u1', 'temporal query test', { queryEmbedding: dim() }, { filters: { asOf } })
-    expect(searchFused.mock.calls[0]?.[6]).toEqual({ asOf })
+    expect(searchFused.mock.calls[0]?.[7]).toEqual({ asOf })
   })
 
   it('composes filters WITH explicit fusion-weight overrides (filters do not touch weights)', async () => {
@@ -225,6 +231,7 @@ describe('search — filter threading (issue #134)', () => {
     await search('u1', 'filter weight compose', { queryEmbedding: dim() }, { weights, filters })
     expect(searchFused).toHaveBeenCalledWith(
       expect.anything(),
+      'u1',
       'filter weight compose',
       5,
       weights,
@@ -247,7 +254,7 @@ describe('search — embedding acquisition', () => {
       operation: 'search',
     })
     // the gateway-produced vector is forwarded to the fused query
-    const forwarded = searchFused.mock.calls[0]?.[5]
+    const forwarded = searchFused.mock.calls[0]?.[6]
     expect(forwarded).toHaveLength(EMBEDDING_DIMENSIONS)
     // the hit gains the read-path excerpt metadata: short content
     // passes through verbatim with the full-length/truncated coordinates.
@@ -261,7 +268,7 @@ describe('search — embedding acquisition', () => {
     searchFused.mockResolvedValue([HIT])
     const embedding = dim()
     await search('u1', 'q', { queryEmbedding: embedding })
-    expect(searchFused.mock.calls[0]?.[5]).toBe(embedding)
+    expect(searchFused.mock.calls[0]?.[6]).toBe(embedding)
     // No gateway call -> no cost row (the cached path incurs no spend).
     expect(insertLlmUsage).not.toHaveBeenCalled()
   })
@@ -300,7 +307,7 @@ describe('search — redaction (hard rule 6)', () => {
     // intact while core emits no log line carrying it (core has no logger here).
     searchFused.mockResolvedValue([])
     await search('u1', 'lexical term', { queryEmbedding: dim() })
-    expect(searchFused.mock.calls[0]?.[1]).toBe('lexical term')
+    expect(searchFused.mock.calls[0]?.[2]).toBe('lexical term')
   })
 })
 
