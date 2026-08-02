@@ -1,5 +1,30 @@
 # @3ngram/server
 
+## 1.1.0
+
+### Minor Changes
+
+- b88a6fa: Support Client ID Metadata Documents across OAuth discovery, authorization, token exchange, and grant management while retaining dynamic registration fallback.
+- 8bf4847: Serve legacy and `2026-07-28` MCP clients from one stateless SDK v2 handler.
+
+### Patch Changes
+
+- 69a66b3: Add RFC 9207 issuer identification to OAuth authorization responses and metadata.
+- 63ebb77: Tenant-isolation hardening (fail-closed runtime guard): add a runtime RLS guard that asks the live database whether isolation is provably in force — the connected role is the expected NOBYPASSRLS/non-superuser runtime role and FORCE ROW LEVEL SECURITY is set on the tenant-data tables (forced-table set derived from the migrations). Wire it into a new `/ready` readiness endpoint (503 when it fails, keeping a misconfigured instance out of rotation) and as a boot-time fail-fast so a broken DB config can never begin serving traffic. Replace the string-match proof with a behavioral integration test and make the migration-drift RLS/policy checks enumerate migrations dynamically so a new tenant table that enables RLS without a tenant_isolation policy fails automatically.
+- dcc98b7: Add modern MCP catalog cache hints and bounded pre-parser header observability.
+- 99be80f: Document the 2000-character content cap in the remember MCP tool description.
+- Updated dependencies [d5080cd]
+- Updated dependencies [b88a6fa]
+- Updated dependencies [69a66b3]
+- Updated dependencies [63ebb77]
+- Updated dependencies [2eb1ca8]
+- Updated dependencies [7c0c627]
+- Updated dependencies [e5c1a2e]
+- Updated dependencies [dcc98b7]
+  - @3ngram/core@0.6.0
+  - @3ngram/schema@0.5.0
+  - @3ngram/config@0.2.2
+
 ## 1.0.2
 
 ### Patch Changes
