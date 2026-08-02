@@ -1,5 +1,12 @@
 # @3ngram/config
 
+## 0.2.2
+
+### Patch Changes
+
+- 69a66b3: Add RFC 9207 issuer identification to OAuth authorization responses and metadata.
+- dcc98b7: Add modern MCP catalog cache hints and bounded pre-parser header observability.
+
 ## 0.2.1
 
 ### Patch Changes
