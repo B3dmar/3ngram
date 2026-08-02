@@ -421,11 +421,15 @@ export const envSchema = z
             'DATABASE_URL must use the runtime app_user role, not an owner or migration role',
         })
       }
-      if (env.NODE_ENV === 'production' && username !== 'app_user') {
+      // Runtime role name defaults to app_user; a deployment that re-provisions
+      // its NOBYPASSRLS runtime role under a different name sets RUNTIME_DB_ROLE
+      // (the RLS guard reads the same var).
+      const expectedRuntimeRole = process.env.RUNTIME_DB_ROLE ?? 'app_user'
+      if (env.NODE_ENV === 'production' && username !== expectedRuntimeRole) {
         ctx.addIssue({
           code: 'custom',
           path: ['DATABASE_URL'],
-          message: 'DATABASE_URL must use app_user in production',
+          message: `DATABASE_URL must use the ${expectedRuntimeRole} runtime role in production`,
         })
       }
       // Fail closed on placeholder/weak DB passwords in production/self-host.
