@@ -6,11 +6,14 @@
 // UNBOUNDED BY DESIGN: unlike the dashboard list (memory-read.ts, LIVE-only +
 // paged), a portability export must return EVERY row the user owns — including
 // superseded memories and closed bi-temporal fact generations (docs/concepts/memory-model.mdx keeps
-// them; the export must too). It is therefore deliberately not paged. Each table
-// read runs inside withTenant(): RLS scopes the tenant-owned tables to the caller
-// (facts-read.ts precedent), so no query here references user_id. The `users`
-// table is the pre-tenant SYSTEM table (no RLS) and is keyed by id = userId,
-// exactly as users-read.ts does for /me.
+// them; the export must too). It is therefore deliberately not paged. TENANT
+// ISOLATION IS TWO-LAYER (defense in depth): each table read runs inside
+// withTenant(), where RLS scopes the tenant-owned tables to the caller, AND
+// carries an explicit caller-bound `user_id = userId` predicate (the same userId
+// the caller passed into withTenant(), facts-read.ts precedent) — an export
+// aggregates a tenant's ENTIRE dataset, so its isolation must never rest on a
+// single mechanism. The `users` table is the pre-tenant SYSTEM table (no RLS)
+// and is keyed by id = userId, exactly as users-read.ts does for /me.
 //
 // CONSISTENT SNAPSHOT: the multi-table read is correct only under a single
 // snapshot — under READ COMMITTED a concurrent write/import between SELECTs could
@@ -209,8 +212,9 @@ export type ExportEnricher = (tx: TenantTx, userId: string) => Promise<Record<st
 
 /**
  * Read the complete user-owned dataset for `userId` inside one withTenant
- * transaction so the export is a consistent snapshot. RLS scopes the
- * memory-domain tables to the caller; the `users` row is keyed by id. The account
+ * transaction so the export is a consistent snapshot. RLS plus the explicit
+ * caller-bound `user_id = userId` predicate on every tenant-table read scope the
+ * archive to the caller (module header); the `users` row is keyed by id. The account
  * row is an INVARIANT (the caller just authenticated as this id) — its absence is
  * thrown by the core wrapper, not handled here.
  *
@@ -256,6 +260,7 @@ export async function readUserDataExport(
       updatedAt: memories.updatedAt,
     })
     .from(memories)
+    .where(eq(memories.userId, userId))
     .orderBy(asc(memories.createdAt), asc(memories.id))
 
   const factRows = await tx
@@ -272,6 +277,7 @@ export async function readUserDataExport(
       createdAt: facts.createdAt,
     })
     .from(facts)
+    .where(eq(facts.userId, userId))
     .orderBy(asc(facts.createdAt), asc(facts.id))
 
   const commitmentRows = await tx
@@ -288,6 +294,7 @@ export async function readUserDataExport(
       updatedAt: commitments.updatedAt,
     })
     .from(commitments)
+    .where(eq(commitments.userId, userId))
     .orderBy(asc(commitments.createdAt), asc(commitments.id))
 
   const scopeRows = await tx
@@ -298,6 +305,7 @@ export async function readUserDataExport(
       createdAt: scopes.createdAt,
     })
     .from(scopes)
+    .where(eq(scopes.userId, userId))
     .orderBy(asc(scopes.name))
 
   const edgeRows = await tx
@@ -310,6 +318,7 @@ export async function readUserDataExport(
       createdAt: memoryEdges.createdAt,
     })
     .from(memoryEdges)
+    .where(eq(memoryEdges.userId, userId))
     .orderBy(asc(memoryEdges.createdAt), asc(memoryEdges.id))
 
   const eventRows = await tx
@@ -322,6 +331,7 @@ export async function readUserDataExport(
       createdAt: memoryEvents.createdAt,
     })
     .from(memoryEvents)
+    .where(eq(memoryEvents.userId, userId))
     .orderBy(asc(memoryEvents.createdAt), asc(memoryEvents.id))
 
   const proposalRows = await tx
@@ -338,6 +348,7 @@ export async function readUserDataExport(
       createdAt: consolidationProposals.createdAt,
     })
     .from(consolidationProposals)
+    .where(eq(consolidationProposals.userId, userId))
     .orderBy(asc(consolidationProposals.createdAt), asc(consolidationProposals.id))
 
   const budgetRows = await tx
@@ -349,6 +360,7 @@ export async function readUserDataExport(
       updatedAt: userBudgets.updatedAt,
     })
     .from(userBudgets)
+    .where(eq(userBudgets.userId, userId))
     .orderBy(asc(userBudgets.updatedAt), asc(userBudgets.id))
 
   const usageRows = await tx
@@ -362,6 +374,7 @@ export async function readUserDataExport(
       createdAt: llmUsage.createdAt,
     })
     .from(llmUsage)
+    .where(eq(llmUsage.userId, userId))
     .orderBy(asc(llmUsage.createdAt), asc(llmUsage.id))
 
   const [profileRow] = await tx
@@ -374,6 +387,7 @@ export async function readUserDataExport(
       updatedAt: userProfileAttributes.updatedAt,
     })
     .from(userProfileAttributes)
+    .where(eq(userProfileAttributes.userId, userId))
     .limit(1)
 
   const base: UserDataExport = {
