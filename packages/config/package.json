@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/config",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Env parsing, structured logger, request context, and observability bootstrap (docs/concepts/observability.mdx).",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",
