@@ -55,7 +55,7 @@ describe('dashboard memory reads', () => {
     })
     await seedCommitment(userA, commitmentId, 'resolved')
 
-    const rows = await withTenant(userA, (tx) => listMemories(tx, { limit: 10, offset: 0 }))
+    const rows = await withTenant(userA, (tx) => listMemories(tx, userA, { limit: 10, offset: 0 }))
     const byId = new Map(rows.map((row) => [row.id, row]))
 
     expect(byId.get(commitmentId)?.status).toBe('active')
@@ -63,7 +63,7 @@ describe('dashboard memory reads', () => {
     expect(byId.get(noteId)?.commitmentStatus).toBeNull()
     expect(byId.get(commitmentId) as Record<string, unknown>).not.toHaveProperty('content')
 
-    const detail = await withTenant(userA, (tx) => getMemoryById(tx, commitmentId))
+    const detail = await withTenant(userA, (tx) => getMemoryById(tx, userA, commitmentId))
     expect(detail?.status).toBe('active')
     expect(detail?.commitmentStatus).toBe('resolved')
   })

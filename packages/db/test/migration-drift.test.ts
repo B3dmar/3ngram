@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   actorKindSchema,
@@ -8,16 +8,13 @@ import {
   eventKindSchema,
   memoryStatusSchema,
   memoryTypeSchema,
+  oauthClientRegistrationMethodSchema,
   proposalStatusSchema,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
 
 const initSql = readFileSync(join(import.meta.dirname, '../migrations/0000_init.sql'), 'utf8')
-const authRlsSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0002_auth_rls.sql'),
-  'utf8',
-)
 const resolversSql = readFileSync(
   join(import.meta.dirname, '../migrations/0003_auth_resolvers.sql'),
   'utf8',
@@ -26,11 +23,8 @@ const clientAuthSql = readFileSync(
   join(import.meta.dirname, '../migrations/0005_client_auth_constraints.sql'),
   'utf8',
 )
-// 0009 widens memory_events_kind_check with 'embed_failed' (the embed-on-write
-// failure path slice 3) — fold it into the drift corpus so the
-// generated CHECK is asserted to carry the new enum value.
-const eventKindSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0009_event_kind_embed_failed.sql'),
+const clientRegistrationMethodSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0027_cimd_clients.sql'),
   'utf8',
 )
 // 0015 adds password_reset_tokens (RLS-enabled, tenant_isolation policy) + the
@@ -66,18 +60,44 @@ const signupClientProofSql = readFileSync(
   join(import.meta.dirname, '../migrations/0019_signup_client_proof.sql'),
   'utf8',
 )
-const allMigrations =
-  initSql +
-  authRlsSql +
-  resolversSql +
-  clientAuthSql +
-  eventKindSql +
-  passwordResetSql +
-  passwordResetAtomicSql +
-  emailVerificationSql +
-  unverifiedSignupRetrySql +
-  signupClientProofSql
+// 0028/0029 tenant-isolation hardening: FORCE RLS on the withTenant()-only
+// tenant-data tables and add the audit_log policy — fold both into the corpus
+// so the hardening is drift-checked alongside the policies it strengthens.
+const forceRlsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0028_force_tenant_rls.sql'),
+  'utf8',
+)
+const auditRlsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0029_audit_log_rls.sql'),
+  'utf8',
+)
+// Drift corpus = EVERY migration, enumerated dynamically. Previously this was a
+// hand-curated concatenation of ~10 named files; a new tenant table shipped in a
+// migration nobody remembered to add to that list would slip past the RLS/policy
+// invariants below. Globbing the whole migrations directory closes that gap: any
+// *.sql that enables RLS without a matching tenant_isolation policy now fails the
+// suite automatically.
+const migrationsDir = join(import.meta.dirname, '../migrations')
+const migrationFiles = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+const allMigrations = migrationFiles
+  .map((f) => readFileSync(join(migrationsDir, f), 'utf8'))
+  .join('\n')
 const rolesSql = readFileSync(join(import.meta.dirname, '../provision-roles.sql'), 'utf8')
+
+/** Tables named in `ALTER TABLE "x" <verb> ROW LEVEL SECURITY` across all migrations. */
+function tablesWith(verb: 'ENABLE' | 'FORCE'): Set<string> {
+  const re = new RegExp(`ALTER TABLE "([^"]+)" ${verb} ROW LEVEL SECURITY`, 'g')
+  return new Set([...allMigrations.matchAll(re)].map((m) => m[1]))
+}
+
+/** Tables carrying a `CREATE POLICY "tenant_isolation" ON "x"` across all migrations. */
+function tablesWithTenantPolicy(): Set<string> {
+  return new Set(
+    [...allMigrations.matchAll(/CREATE POLICY "tenant_isolation" ON "([^"]+)"/g)].map((m) => m[1]),
+  )
+}
 
 describe('0000_init.sql ↔ @3ngram/schema drift', () => {
   it('every enum value appears in its generated CHECK constraint', () => {
@@ -98,11 +118,34 @@ describe('0000_init.sql ↔ @3ngram/schema drift', () => {
 
   it('every RLS policy carries the NULLIF guard (S3 finding 1)', () => {
     const policies = allMigrations.match(/CREATE POLICY "tenant_isolation"[^;]+;/g) ?? []
-    // 8 memory-domain/ops + 6 identity (user_sessions, api_keys, oauth_codes,
-    // oauth_tokens, password_reset_tokens, email_verification_tokens)
-    expect(policies.length).toBe(14)
+    expect(policies.length).toBeGreaterThan(0)
     for (const p of policies) {
       expect(p).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    }
+  })
+
+  it('every RLS-enabled table has a tenant_isolation policy (dynamic drift corpus)', () => {
+    // The expected set is DERIVED from the migrations, not hardcoded: whatever
+    // tables enable RLS must each carry a tenant_isolation policy, and no policy
+    // may reference a table that never enabled RLS. A new tenant table shipped
+    // with ENABLE ROW LEVEL SECURITY but no policy (or vice versa) fails here,
+    // regardless of which migration file introduced it.
+    const enabled = [...tablesWith('ENABLE')].sort()
+    const policied = [...tablesWithTenantPolicy()].sort()
+    expect(enabled.length).toBeGreaterThan(0)
+    expect(policied).toEqual(enabled)
+  })
+
+  it('every FORCE-protected table also enables RLS and has a policy', () => {
+    // FORCE without ENABLE + policy is meaningless. Derived from the migrations
+    // so a future FORCE on a new table is checked without editing this test.
+    const enabled = tablesWith('ENABLE')
+    const policied = tablesWithTenantPolicy()
+    const forced = [...tablesWith('FORCE')].sort()
+    expect(forced.length).toBeGreaterThan(0)
+    for (const t of forced) {
+      expect(enabled.has(t), `${t} is FORCEd but never ENABLEd RLS`).toBe(true)
+      expect(policied.has(t), `${t} is FORCEd but has no tenant_isolation policy`).toBe(true)
     }
   })
 
@@ -151,6 +194,16 @@ describe('oauth_clients constraints (0005, PR #53 review)', () => {
     expect(clientAuthSql).toContain('oauth_clients_secret_consistency_check')
     expect(clientAuthSql).toMatch(/= 'none' AND .*client_secret_hash.* IS NULL/)
     expect(clientAuthSql).toMatch(/<> 'none' AND .*client_secret_hash.* IS NOT NULL/)
+  })
+})
+
+describe('oauth_clients registration method (0027)', () => {
+  it('is generated from the schema enum without removing platform tables', () => {
+    for (const method of oauthClientRegistrationMethodSchema.options) {
+      expect(clientRegistrationMethodSql).toContain(`'${method}'`)
+    }
+    expect(clientRegistrationMethodSql).toContain('oauth_clients_registration_method_check')
+    expect(clientRegistrationMethodSql).not.toMatch(/DROP (TABLE|POLICY)/)
   })
 })
 
@@ -418,6 +471,57 @@ describe('signup verification client proof binding (0019, PR #356 P2)', () => {
     expect(signupClientProofSql).toMatch(
       /INSERT INTO email_verification_tokens \(user_id, token_hash, client_proof_hash, expires_at\)\s+VALUES \(p_user_id, p_token_hash, p_client_proof_hash, p_expires_at\)/,
     )
+  })
+})
+
+describe('tenant-isolation hardening (0028/0029)', () => {
+  const forcedTables = [
+    'commitments',
+    'consolidation_proposals',
+    'facts',
+    'memories',
+    'memory_edges',
+    'memory_events',
+    'scopes',
+    'llm_usage',
+    'user_budgets',
+    'budget_reservations',
+    'subscriptions',
+    'user_profile_attributes',
+  ]
+  const resolverTables = [
+    'api_keys',
+    'oauth_codes',
+    'oauth_tokens',
+    'user_sessions',
+    'password_reset_tokens',
+    'email_verification_tokens',
+  ]
+
+  it('FORCEs RLS on every withTenant()-only tenant-data table', () => {
+    for (const t of forcedTables) {
+      expect(forceRlsSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY`)
+    }
+  })
+
+  it('does NOT force the auth/token tables the SECURITY DEFINER resolvers read tenant-less', () => {
+    for (const t of resolverTables) {
+      expect(forceRlsSql).not.toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY`)
+    }
+  })
+
+  it('audit_log gains RLS with a tenant-less-aware policy (system inserts keep working)', () => {
+    expect(auditRlsSql).toContain('ALTER TABLE "audit_log" ENABLE ROW LEVEL SECURITY')
+    // the tenant-less escape hatch getAdminDb() (audit-log.ts) depends on:
+    expect(auditRlsSql).toContain(
+      `NULLIF(current_setting('app.user_id', true), '') IS NULL OR user_id = NULLIF(current_setting('app.user_id', true), '')::uuid`,
+    )
+    expect(auditRlsSql).not.toMatch(/DROP (TABLE|POLICY)/)
+    expect(auditRlsSql).not.toContain('FORCE ROW LEVEL SECURITY')
+  })
+
+  it('provisioning re-asserts NOBYPASSRLS unconditionally on the runtime role', () => {
+    expect(rolesSql).toContain('ALTER ROLE app_user NOBYPASSRLS;')
   })
 })
 

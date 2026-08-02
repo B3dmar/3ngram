@@ -35,13 +35,26 @@ The MCP surface is designed from **jobs to be done** and capped at **10 tools** 
 
 ## Server architecture
 
-- Official **TS SDK pinned `1.29.0`** + **express**. Streamable HTTP, stateless. Hono revisited at SDK v2 GA as a deliberate bump.
+- Official **TS SDK v2 packages pinned `2.0.0`** + **Express**, following the [dual-era migration path](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/migration/support-2026-07-28.md). One stateless handler serves legacy and `2026-07-28` clients. Keep Express: changing the protocol generation and HTTP framework together would add migration risk without a product benefit.
 - **Strict OAuth resource server**: validate JWT `aud` + RFC 8707 resource indicators. No token proxying (the FastMCP CVE class).
 - Every tool: Zod input schema + `outputSchema` (structured output) from `packages/schema` — same types the REST API and SDK use.
 - Output size discipline: structured, `brief` modes, pagination — oversized responses are an easy trap, so design the size discipline in from the start.
 - MCP and REST are thin adapters over the same `packages/core` service layer — no logic in the transport layer, no MCP↔API drift.
 - Prompts: start with 2 (`briefing`, `debrief`) as code-defined templates. Resources: defer until a client demonstrably uses them.
 - **`GET /api/v1/memories/facets`**: returns `{ scopes: string[], projects: string[] }` — DISTINCT live-corpus values for the browse filter UI. Registered before `GET /api/v1/memories/:id` to prevent Express matching "facets" as an `:id` param. Also extends `GET /api/v1/memories` to accept repeated `?project=` params for multi-project IN filtering.
+
+## Protocol compatibility
+
+- The v2 handler creates a fresh `McpServer` for every request. It serves legacy clients through the stateless compatibility path and `2026-07-28` clients through `server/discover`; protocol-version contract tests drive both paths with the official client SDK.
+- `tools/list` and `prompts/list` are deterministic, tenant-independent catalogs. Modern responses use the protocol's [cache hints](https://modelcontextprotocol.io/specification/draft/server/utilities/caching) to advertise a one-hour `ttlMs` with `cacheScope: public`; the SDK omits those fields from legacy responses. Cached definitions never bypass bearer authentication or the scope gate on `tools/call`.
+- Modern Streamable HTTP clients mirror the request body into `Mcp-Method` and, for named primitives, `Mcp-Name`. A pre-parser middleware reduces those headers to closed allowlists for routing telemetry. The headers are untrusted: the SDK cross-checks them against the body, and neither authorization nor completed-call accounting reads them.
+- `server/discover` advertises protocol capabilities. It does not replace `describe_environment`, which reports tenant scopes, configured capabilities, and memory statistics.
+
+## OAuth client registration
+
+[Client ID Metadata Documents (CIMD)](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration) are supported alongside RFC 7591 Dynamic Client Registration (DCR). A persisted DCR client wins; an HTTPS URL-shaped `client_id` otherwise resolves as CIMD. DCR remains advertised as a compatibility fallback.
+
+CIMD fetching is a security boundary: validate the URL and document at the schema boundary, resolve every hop, reject any non-public DNS answer, connect to the validated IP while verifying TLS for the original hostname, and cap redirects, bytes, time, concurrency, and cache size. Cache only valid documents and honor shared-cache directives. The materialized `oauth_clients` row exists for foreign keys and connected-app display; the fetched document remains the authorization source.
 
 ## Search — fusion detail
 
@@ -51,6 +64,10 @@ Short queries (≤2 whitespace tokens) activate a topic entity-match bonus (topi
 
 ## Rate limiting & sessions
 
-Redis-backed, per-user + per-key. Session binding to authenticated principal per SDK ≥1.27 semantics.
+Redis-backed, per-user + per-key. The Node adapter receives only the verified `AuthInfo` produced by bearer middleware; tenant and tool authorization stay inside the per-request handler.
 
 **Sessions are stateless by design**: all MCP session state lives in Postgres/Redis, never in-process — any server instance serves any request. This makes redeploys non-events. `.well-known/mcp` server metadata (SEP-1649) is tracked but **deferred until the SEP stabilizes**.
+
+## Deferred protocol features
+
+Multi-round-trip responses could add explicit confirmation to `review_proposals` or future scope changes. Standard Tasks could represent long-running imports, consolidation, and repair jobs backed by BullMQ. Both require separate product and persistence designs and do not gate protocol compatibility. The Roots, Sampling, and Logging deprecations have no migration cost because 3ngram does not depend on those client features.

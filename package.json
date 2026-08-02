@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "check": "turbo run check",
+    "lint": "biome ci .",
+    "check": "biome ci . && turbo run check",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration --concurrency=1",
     "docs:generate": "turbo run docs:generate",

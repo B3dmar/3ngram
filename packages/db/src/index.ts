@@ -50,6 +50,7 @@ export {
   getClientByClientId,
   listClientsAuthorizedByUser,
   listGarbageCollectableClients,
+  materializeClientMetadata,
   type NewOAuthClient,
   type OAuthClientRow,
   registerClient,
@@ -251,6 +252,14 @@ export {
 } from './proposals-read.js'
 export { insertProposals, type ProposalWrite } from './proposals-write.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
+// --- runtime fail-closed RLS guard (readiness/boot verification) ---
+export {
+  assertRlsInForce,
+  DEFAULT_RUNTIME_ROLE,
+  RlsGuardError,
+  type RlsGuardOptions,
+  readForcedTenantTables,
+} from './rls-guard.js'
 export * from './schema/budget.js'
 export * from './schema/identity.js'
 export * from './schema/memory.js'

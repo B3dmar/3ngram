@@ -35,8 +35,8 @@ export interface EnvironmentReport {
  */
 export function describeEnvironment(userId: string): Promise<EnvironmentReport> {
   return withTenant(userId, async (tx) => {
-    const scopes = await listScopes(tx)
-    const stats = await getEnvironmentStats(tx)
+    const scopes = await listScopes(tx, userId)
+    const stats = await getEnvironmentStats(tx, userId)
     return { scopes, stats }
   })
 }

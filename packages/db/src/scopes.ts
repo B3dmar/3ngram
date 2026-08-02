@@ -3,8 +3,13 @@
 //
 // This module owns the SQL ONLY (hard rule 5: business policy — defaults,
 // param shaping, the read-vs-write scope split — lives in packages/core). Every
-// query runs inside withTenant(): RLS scopes every row to the caller, so no
-// query here references user_id (facts-read.ts / search.ts precedent).
+// query runs inside withTenant(): RLS scopes every row to the caller, AND every
+// query here ALSO carries an explicit caller-bound predicate (user_id = the
+// withTenant userId). Two layers, tenant-isolation hardening: RLS is the primary
+// boundary; the in-query predicate is defense in depth so a mutation can never
+// match another owner's row even if RLS were inert. (user_id, name) is the
+// natural key — the scopes_name_idx unique index — so the predicate is a no-op
+// when RLS is active: it matches exactly the caller's rows.
 //
 // SCOPES REGISTRY vs memories.scope TEXT (the D3 design tension). The scopes
 // table is a NAME/ALIAS REGISTRY: a user-defined set of scope names plus their
@@ -78,8 +83,12 @@ const SCOPE_COLUMNS = {
 } as const
 
 /** List the tenant's registered scopes, ordered by name for a stable surface. */
-export async function listScopes(tx: TenantTx): Promise<ScopeRow[]> {
-  const rows = await tx.select(SCOPE_COLUMNS).from(scopes).orderBy(asc(scopes.name))
+export async function listScopes(tx: TenantTx, userId: string): Promise<ScopeRow[]> {
+  const rows = await tx
+    .select(SCOPE_COLUMNS)
+    .from(scopes)
+    .where(eq(scopes.userId, userId))
+    .orderBy(asc(scopes.name))
   return rows.map(toScopeRow)
 }
 
@@ -109,12 +118,17 @@ export async function createScope(
 }
 
 /** Rename a scope. Missing -> {@link ScopeNotFoundError}; new-name collision -> conflict. */
-export async function renameScope(tx: TenantTx, from: string, to: string): Promise<ScopeRow> {
+export async function renameScope(
+  tx: TenantTx,
+  userId: string,
+  from: string,
+  to: string,
+): Promise<ScopeRow> {
   try {
     const [row] = await tx
       .update(scopes)
       .set({ name: to })
-      .where(eq(scopes.name, from))
+      .where(and(eq(scopes.userId, userId), eq(scopes.name, from)))
       .returning(SCOPE_COLUMNS)
     if (row === undefined) throw new ScopeNotFoundError(from)
     return toScopeRow(row)
@@ -127,13 +141,14 @@ export async function renameScope(tx: TenantTx, from: string, to: string): Promi
 /** Replace a scope's alias list (full replace, not merge). Missing -> not-found. */
 export async function setScopeAliases(
   tx: TenantTx,
+  userId: string,
   name: string,
   aliases: string[],
 ): Promise<ScopeRow> {
   const [row] = await tx
     .update(scopes)
     .set({ aliases })
-    .where(eq(scopes.name, name))
+    .where(and(eq(scopes.userId, userId), eq(scopes.name, name)))
     .returning(SCOPE_COLUMNS)
   if (row === undefined) throw new ScopeNotFoundError(name)
   return toScopeRow(row)
@@ -144,8 +159,11 @@ export async function setScopeAliases(
  * matches are UNTOUCHED (no FK, no cascade) — they keep the text and stay valid
  * (see module header). Missing -> {@link ScopeNotFoundError}.
  */
-export async function deleteScope(tx: TenantTx, name: string): Promise<void> {
-  const deleted = await tx.delete(scopes).where(eq(scopes.name, name)).returning({ id: scopes.id })
+export async function deleteScope(tx: TenantTx, userId: string, name: string): Promise<void> {
+  const deleted = await tx
+    .delete(scopes)
+    .where(and(eq(scopes.userId, userId), eq(scopes.name, name)))
+    .returning({ id: scopes.id })
   if (deleted.length === 0) throw new ScopeNotFoundError(name)
 }
 
@@ -183,18 +201,21 @@ const toCountMap = (rows: { key: string; n: number }[]): Record<string, number> 
  * and marks it ONLY via valid_to, so without the valid_to gate every revise would
  * inflate `activeMemories` / `memoriesByType` (Codex P2, comment 3372115945).
  */
-const liveMemoryPredicate = (): SQL =>
-  and(eq(memories.status, 'active'), isNull(memories.validTo)) as SQL
+const liveMemoryPredicate = (userId: string): SQL =>
+  and(eq(memories.userId, userId), eq(memories.status, 'active'), isNull(memories.validTo)) as SQL
 
 /** Gather the bounded count aggregates for the tenant. Empty tenant -> all zeros. */
-export async function getEnvironmentStats(tx: TenantTx): Promise<EnvironmentStats> {
+export async function getEnvironmentStats(tx: TenantTx, userId: string): Promise<EnvironmentStats> {
   const byType = await tx
     .select({ key: memories.memoryType, n: count() })
     .from(memories)
-    .where(liveMemoryPredicate())
+    .where(liveMemoryPredicate(userId))
     .groupBy(memories.memoryType)
 
-  const [activeRow] = await tx.select({ n: count() }).from(memories).where(liveMemoryPredicate())
+  const [activeRow] = await tx
+    .select({ n: count() })
+    .from(memories)
+    .where(liveMemoryPredicate(userId))
 
   // Superseded = a closed validity window (valid_to set), the docs/concepts/memory-model.mdx marker of
   // a memory that a successor replaced. NOT derived from status, which is a
@@ -202,7 +223,7 @@ export async function getEnvironmentStats(tx: TenantTx): Promise<EnvironmentStat
   const [supersededRow] = await tx
     .select({ n: count() })
     .from(memories)
-    .where(isNotNull(memories.validTo))
+    .where(and(eq(memories.userId, userId), isNotNull(memories.validTo)))
 
   // Archived = explicitly soft-deleted (status='archived') but still open-window
   // (valid_to IS NULL). A revise of an archived memory sets valid_to, so archived+
@@ -210,11 +231,14 @@ export async function getEnvironmentStats(tx: TenantTx): Promise<EnvironmentStat
   const [archivedRow] = await tx
     .select({ n: count() })
     .from(memories)
-    .where(and(eq(memories.status, 'archived'), isNull(memories.validTo)))
+    .where(
+      and(eq(memories.userId, userId), eq(memories.status, 'archived'), isNull(memories.validTo)),
+    )
 
   const byStatus = await tx
     .select({ key: commitments.status, n: count() })
     .from(commitments)
+    .where(eq(commitments.userId, userId))
     .groupBy(commitments.status)
 
   return {

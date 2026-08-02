@@ -30,7 +30,7 @@ import {
   ScopeNotFoundError,
   SuccessorNotLiveError,
 } from '@3ngram/core'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult } from '@modelcontextprotocol/server'
 import { ZodError } from 'zod'
 import { OutputValidationError } from '../output-validation.js'
 

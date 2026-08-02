@@ -23,11 +23,9 @@
 // an env value, DSN, key, or base URL. The output schema has no field for one and
 // no handler here reads process.env or a secret.
 //
-// REGISTRATION SHAPES: configure_scope and review_proposals are action
-// discriminated unions, which the SDK's registerTool (ZodRawShape contract)
-// cannot take directly. They register a PERMISSIVE flat raw shape (every field
-// optional) and re-parse with the STRICT union in the handler — the precise
-// per-action validation still happens, at the one boundary.
+// REGISTRATION SCHEMAS: SDK v2 accepts Standard Schema objects directly, so the
+// action-discriminated unions are registered without a permissive raw-shape
+// bridge. The exact per-action contract is enforced at the transport boundary.
 import { log, mcpToolErrors } from '@3ngram/config'
 import {
   applyProposal,
@@ -47,17 +45,13 @@ import {
   type ConfigureScopeInput,
   configureScopeInputSchema,
   configureScopeOutputSchema,
-  configureScopeRegisterOutputShape,
-  configureScopeRegisterShape,
   describeEnvironmentInputSchema,
   describeEnvironmentOutputSchema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputSchema,
-  reviewProposalsRegisterOutputShape,
-  reviewProposalsRegisterShape,
 } from '@3ngram/schema'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
 import type { ToolContext, ToolDefinition } from './tools.js'
@@ -256,8 +250,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       title: 'Configure Scope',
       description:
         'Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). Mutating actions require the write scope.',
-      inputSchema: configureScopeRegisterShape,
-      outputSchema: configureScopeRegisterOutputShape,
+      inputSchema: configureScopeInputSchema,
+      outputSchema: configureScopeOutputSchema,
     },
     async handler(args, ctx) {
       const input = configureScopeInputSchema.parse(args)
@@ -272,8 +266,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       title: 'Describe Environment',
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, and bounded memory/commitment counts. Exposes no secrets or configuration values.',
-      inputSchema: describeEnvironmentInputSchema.shape,
-      outputSchema: describeEnvironmentOutputSchema.shape,
+      inputSchema: describeEnvironmentInputSchema,
+      outputSchema: describeEnvironmentOutputSchema,
     },
     async handler(args, ctx) {
       describeEnvironmentInputSchema.parse(args)
@@ -307,8 +301,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       title: 'Review Proposals',
       description:
         'List consolidation proposals (optionally by status), reject one, or accept one (materializes the proposed edge; a supersedes/updates edge also closes the predecessor). Reject and accept require the write scope.',
-      inputSchema: reviewProposalsRegisterShape,
-      outputSchema: reviewProposalsRegisterOutputShape,
+      inputSchema: reviewProposalsInputSchema,
+      outputSchema: reviewProposalsOutputSchema,
     },
     async handler(args, ctx) {
       const input = reviewProposalsInputSchema.parse(args)

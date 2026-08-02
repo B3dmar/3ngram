@@ -18,16 +18,16 @@ describe('migration round-trip structure', () => {
     expect(Number(r.rows[0].n)).toBe(24)
   })
 
-  it('18 tenant_isolation policies, all with the NULLIF guard', async () => {
+  it('19 tenant_isolation policies, all with the NULLIF guard', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM pg_policies WHERE policyname = 'tenant_isolation'
        AND qual LIKE '%NULLIF%'`,
     )
     // 12 + password_reset_tokens (0015) + email_verification_tokens (0017)
     // + the two 0022 tenant-scoped cost tables + budget_reservations (0023)
-    // + user_profile_attributes (0026) = 18
+    // + user_profile_attributes (0026) = 18, + audit_log (0029) = 19
     // (the two 0022 service/global tables have no RLS)
-    expect(Number(r.rows[0].n)).toBe(18)
+    expect(Number(r.rows[0].n)).toBe(19)
   })
 
   it('FSM trigger is armed on commitments', async () => {
@@ -79,6 +79,23 @@ describe('migration round-trip structure', () => {
        VALUES ('probe4', 'p', '[]', 'client_secret_post', 'hash')`,
     )
     await ownerPool.query(`DELETE FROM oauth_clients WHERE client_id LIKE 'probe%'`)
+  })
+
+  it('oauth_clients defaults DCR and accepts only known registration methods (0027)', async () => {
+    const inserted = await ownerPool.query(
+      `INSERT INTO oauth_clients (client_id, client_name, redirect_uris)
+       VALUES ('probe-registration-default', 'p', '[]')
+       RETURNING registration_method`,
+    )
+    expect(inserted.rows[0].registration_method).toBe('dynamic_registration')
+    await expect(
+      ownerPool.query(
+        `INSERT INTO oauth_clients
+           (client_id, client_name, redirect_uris, registration_method)
+         VALUES ('probe-registration-invalid', 'p', '[]', 'unknown')`,
+      ),
+    ).rejects.toThrow(/oauth_clients_registration_method_check/)
+    await ownerPool.query(`DELETE FROM oauth_clients WHERE client_id LIKE 'probe-registration-%'`)
   })
 
   it('HNSW index exists on memories.embedding', async () => {

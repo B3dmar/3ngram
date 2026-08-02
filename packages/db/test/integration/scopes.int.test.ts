@@ -9,11 +9,15 @@
 //   - DELETE semantics: deleting a scope leaves a memory's denormalized scope
 //     TEXT intact (registry edit only, no FK, no cascade — orchestrator decision)
 //   - tenant isolation: user B never sees / mutates user A's scopes
+//   - caller-bound predicates (tenant-isolation hardening): every scope query
+//     ALSO filters on user_id in SQL, so even on an RLS-bypassing connection
+//     (owner role) a mutation can only ever match the caller's own rows
 //   - environment stats: bounded counts (by type, active vs superseded, by status)
 //   - proposals list/reject round-trip (seed a row directly), reject is an UPDATE
 //     not a DELETE, already-decided -> ProposalNotFoundError
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { withTenant } from '../../src/client.js'
+import { type TenantTx, withTenant } from '../../src/client.js'
 import {
   countProposalsByStatus,
   listProposals,
@@ -50,17 +54,17 @@ describe('scopes registry CRUD (runtime role, withTenant)', () => {
       expect(created.name).toBe('research')
       expect(created.aliases).toEqual(['r'])
 
-      const listed = await listScopes(tx)
+      const listed = await listScopes(tx, userA)
       expect(listed.map((s) => s.name)).toEqual(['research'])
 
-      const renamed = await renameScope(tx, 'research', 'r-and-d')
+      const renamed = await renameScope(tx, userA, 'research', 'r-and-d')
       expect(renamed.name).toBe('r-and-d')
 
-      const aliased = await setScopeAliases(tx, 'r-and-d', ['rnd', 'lab'])
+      const aliased = await setScopeAliases(tx, userA, 'r-and-d', ['rnd', 'lab'])
       expect(aliased.aliases).toEqual(['rnd', 'lab'])
 
-      await deleteScope(tx, 'r-and-d')
-      expect(await listScopes(tx)).toEqual([])
+      await deleteScope(tx, userA, 'r-and-d')
+      expect(await listScopes(tx, userA)).toEqual([])
     })
   })
 
@@ -76,19 +80,19 @@ describe('scopes registry CRUD (runtime role, withTenant)', () => {
       await createScope(tx, userA, 'a', [])
       await createScope(tx, userA, 'b', [])
     })
-    await expect(withTenant(userA, (tx) => renameScope(tx, 'a', 'b'))).rejects.toBeInstanceOf(
-      ScopeNameConflictError,
-    )
+    await expect(
+      withTenant(userA, (tx) => renameScope(tx, userA, 'a', 'b')),
+    ).rejects.toBeInstanceOf(ScopeNameConflictError)
   })
 
   it('rejects rename/set_aliases/delete of a missing scope with not-found', async () => {
-    await expect(withTenant(userA, (tx) => renameScope(tx, 'ghost', 'x'))).rejects.toBeInstanceOf(
-      ScopeNotFoundError,
-    )
     await expect(
-      withTenant(userA, (tx) => setScopeAliases(tx, 'ghost', ['x'])),
+      withTenant(userA, (tx) => renameScope(tx, userA, 'ghost', 'x')),
     ).rejects.toBeInstanceOf(ScopeNotFoundError)
-    await expect(withTenant(userA, (tx) => deleteScope(tx, 'ghost'))).rejects.toBeInstanceOf(
+    await expect(
+      withTenant(userA, (tx) => setScopeAliases(tx, userA, 'ghost', ['x'])),
+    ).rejects.toBeInstanceOf(ScopeNotFoundError)
+    await expect(withTenant(userA, (tx) => deleteScope(tx, userA, 'ghost'))).rejects.toBeInstanceOf(
       ScopeNotFoundError,
     )
   })
@@ -104,7 +108,7 @@ describe('scopes registry CRUD (runtime role, withTenant)', () => {
     )
     await withTenant(userA, async (tx) => {
       await createScope(tx, userA, 'research', [])
-      await deleteScope(tx, 'research')
+      await deleteScope(tx, userA, 'research')
     })
     const memo = await ownerPool.query(
       `SELECT scope FROM memories WHERE user_id = $1 AND scope = 'research'`,
@@ -117,17 +121,77 @@ describe('scopes registry CRUD (runtime role, withTenant)', () => {
   it('enforces tenant isolation: B never sees or mutates A scopes', async () => {
     await withTenant(userA, (tx) => createScope(tx, userA, 'a-private', []))
     // B lists nothing of A's.
-    expect(await withTenant(userB, (tx) => listScopes(tx))).toEqual([])
+    expect(await withTenant(userB, (tx) => listScopes(tx, userB))).toEqual([])
     // B cannot rename A's scope — RLS hides the row, so it is not-found for B.
     await expect(
-      withTenant(userB, (tx) => renameScope(tx, 'a-private', 'b-grab')),
+      withTenant(userB, (tx) => renameScope(tx, userB, 'a-private', 'b-grab')),
     ).rejects.toBeInstanceOf(ScopeNotFoundError)
     // B can register the SAME name independently (unique is per-user).
     const bScope = await withTenant(userB, (tx) => createScope(tx, userB, 'a-private', []))
     expect(bScope.name).toBe('a-private')
     // A still sees only its own row.
-    const aList = await withTenant(userA, (tx) => listScopes(tx))
+    const aList = await withTenant(userA, (tx) => listScopes(tx, userA))
     expect(aList.map((s) => s.name)).toEqual(['a-private'])
+  })
+})
+
+describe('caller-bound predicates hold WITHOUT RLS (tenant-isolation hardening)', () => {
+  // Run the scope queries over the OWNER connection, which bypasses RLS. With
+  // RLS out of the picture, ONLY the explicit user_id predicate in the SQL
+  // separates tenants — exactly the defense-in-depth layer under test. (For RLS
+  // itself the runtime-role suite above remains the proof; docs/concepts/testing.mdx.)
+  const withOwnerTx = <T>(fn: (tx: TenantTx) => Promise<T>): Promise<T> =>
+    drizzle(ownerPool).transaction((tx) => fn(tx))
+
+  beforeEach(async () => {
+    // Both tenants own a scope with the SAME name — the collision the
+    // name-keyed WHERE used to be exposed to.
+    await withTenant(userA, (tx) => createScope(tx, userA, 'personal', ['a-alias']))
+    await withTenant(userB, (tx) => createScope(tx, userB, 'personal', ['b-alias']))
+  })
+
+  const scopeOwners = async (name: string): Promise<string[]> => {
+    const r = await ownerPool.query(`SELECT user_id FROM scopes WHERE name = $1`, [name])
+    return r.rows.map((row) => row.user_id)
+  }
+
+  it("deleteScope removes ONLY the caller's same-named row", async () => {
+    await withOwnerTx((tx) => deleteScope(tx, userB, 'personal'))
+    expect(await scopeOwners('personal')).toEqual([userA])
+  })
+
+  it("renameScope touches ONLY the caller's same-named row", async () => {
+    await withOwnerTx((tx) => renameScope(tx, userB, 'personal', 'b-renamed'))
+    expect(await scopeOwners('personal')).toEqual([userA])
+    expect(await scopeOwners('b-renamed')).toEqual([userB])
+  })
+
+  it("setScopeAliases rewrites ONLY the caller's same-named row", async () => {
+    await withOwnerTx((tx) => setScopeAliases(tx, userB, 'personal', ['b-new']))
+    const r = await ownerPool.query(
+      `SELECT user_id, aliases FROM scopes WHERE name = 'personal' ORDER BY user_id = $1 DESC`,
+      [userA],
+    )
+    expect(r.rows.find((row) => row.user_id === userA)?.aliases).toEqual(['a-alias'])
+    expect(r.rows.find((row) => row.user_id === userB)?.aliases).toEqual(['b-new'])
+  })
+
+  it("listScopes returns ONLY the caller's rows", async () => {
+    const rows = await withOwnerTx((tx) => listScopes(tx, userB))
+    expect(rows.map((s) => s.name)).toEqual(['personal'])
+    expect(rows[0]?.aliases).toEqual(['b-alias'])
+  })
+
+  it("getEnvironmentStats counts ONLY the caller's rows", async () => {
+    await ownerPool.query(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1,'note','t','c',$2)`,
+      [userA, `hardening-${crypto.randomUUID()}`],
+    )
+    const stats = await withOwnerTx((tx) => getEnvironmentStats(tx, userB))
+    expect(stats.activeMemories).toBe(0)
+    expect(stats.memoriesByType).toEqual({})
+    expect(stats.commitmentsByStatus).toEqual({})
   })
 })
 
@@ -156,7 +220,7 @@ describe('environment stats (bounded counts, runtime role)', () => {
       [userA, commitMemo.rows[0].id],
     )
 
-    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx))
+    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx, userA))
     // LIVE counts = status='active' AND valid_to IS NULL. The superseded note keeps
     // status='active' (docs/concepts/memory-model.mdx marks it via valid_to only) so it must NOT inflate
     // the live by-type or active totals (Codex P2, comment 3372115945).
@@ -185,14 +249,14 @@ describe('environment stats (bounded counts, runtime role)', () => {
       [userA, h()],
     )
 
-    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx))
+    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx, userA))
     expect(stats.memoriesByType.decision).toBe(1) // only the live successor
     expect(stats.activeMemories).toBe(1) // predecessor (valid_to set) excluded
     expect(stats.supersededMemories).toBe(1) // the predecessor is the superseded one
   })
 
   it('returns zeros for an empty tenant (no firehose, no throw)', async () => {
-    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx))
+    const stats = await withTenant(userA, (tx) => getEnvironmentStats(tx, userA))
     expect(stats.activeMemories).toBe(0)
     expect(stats.supersededMemories).toBe(0)
     expect(stats.memoriesByType).toEqual({})

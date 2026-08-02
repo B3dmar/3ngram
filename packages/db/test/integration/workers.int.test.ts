@@ -186,7 +186,7 @@ describe('findSimilarPairs (F1)', () => {
     await seedMemory(userB, 'fact', 'b-dup-1', 9)
     await seedMemory(userB, 'fact', 'b-dup-2', 9)
 
-    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, 0.9, 50))
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
     // Exactly the identical-axis pair clears the 0.9 bar; the orthogonal one (sim 0)
     // does not. RLS keeps userB's pair invisible.
     expect(pairs.length).toBe(1)
@@ -213,7 +213,7 @@ describe('findSimilarPairs (F1)', () => {
       [userA, embedding(11)],
     )
 
-    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, 0.9, 50))
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
     expect(pairs.length).toBe(1)
     // Successor (from) is the more recently created memory; predecessor (to) older.
     expect(pairs[0]?.fromId).toBe(newer.rows[0].id)
@@ -243,7 +243,7 @@ describe('findSimilarPairs (F1)', () => {
       superseded,
     ])
 
-    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, 0.9, 50))
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
     // The only same-axis partner of `live` is closed, so no live pair remains.
     expect(pairs.length).toBe(0)
     // Sanity: the superseded row never appears on either side of any returned pair.

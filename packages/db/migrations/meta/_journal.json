@@ -190,6 +190,27 @@
       "when": 1782739908358,
       "tag": "0026_user_profile_attributes",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785414369932,
+      "tag": "0027_cimd_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785592922385,
+      "tag": "0028_force_tenant_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785592998112,
+      "tag": "0029_audit_log_rls",
+      "breakpoints": true
     }
   ]
 }

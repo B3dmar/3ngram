@@ -125,8 +125,8 @@ describe('handoff — export shape', () => {
     const selector = { kind: 'scope', scope: 'work' } as const
     await handoff('u1', { selector, now: NOW })
     for (const fn of [openCommitments, recentDecisions, activePreferences]) {
-      expect(fn.mock.calls[0]?.[1]).toEqual(selector)
-      expect(fn.mock.calls[0]?.[2]).toBe(MAX_HANDOFF_SECTION)
+      expect(fn.mock.calls[0]?.[2]).toEqual(selector)
+      expect(fn.mock.calls[0]?.[3]).toBe(MAX_HANDOFF_SECTION)
     }
   })
 

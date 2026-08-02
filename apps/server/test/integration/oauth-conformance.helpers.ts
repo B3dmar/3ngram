@@ -11,12 +11,12 @@ import type { Server } from 'node:http'
 import { resetEnvCache } from '@3ngram/config'
 import { createUser } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
+import { Client as McpClient, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 // Aliased to McpClient so `new McpClient(...)` does not trip the db-access gate's
 // `new (pg\.)?Client\(` regex (this is the MCP SDK client, not a Postgres client).
-import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { expect } from 'vitest'
 import { closePools, ownerPool } from '../../../../packages/db/test/integration/helpers.js'
+import type { AppOptions } from '../../src/app.js'
 import { TEST_BASE_URL, TEST_JWKS } from '../oauth-token-helper.js'
 import { createTestApp } from '../test-app.js'
 
@@ -39,6 +39,7 @@ export interface RegisteredClient {
 
 export interface ConsentPage {
   status: number
+  html: string
   csrfCookie: string | undefined
   csrfToken: string | undefined
   /** Every hidden <input> the server rendered — the faithful browser POST body. */
@@ -125,8 +126,8 @@ export interface OAuthConformanceContext {
 
 const gateway = createFakeGateway()
 
-async function startApp(): Promise<AppHandle> {
-  const server = createTestApp({ gateway }).listen(0)
+async function startApp(options: AppOptions = {}): Promise<AppHandle> {
+  const server = createTestApp({ gateway, ...options }).listen(0)
   await new Promise<void>((resolve) => server.once('listening', resolve))
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('expected a TCP address')
@@ -145,7 +146,7 @@ async function stopApp(handle: AppHandle): Promise<void> {
  * resets env, deletes the registered clients (oauth_codes/oauth_tokens cascade)
  * and the user, and closes the pools.
  */
-export async function setupConformance(): Promise<{
+export async function setupConformance(options: AppOptions = {}): Promise<{
   ctx: OAuthConformanceContext
   teardown: () => Promise<void>
 }> {
@@ -154,7 +155,7 @@ export async function setupConformance(): Promise<{
   resetEnvCache()
   const email = `oauth-conf-${crypto.randomUUID()}@test.local`
   await createUser(email, PASSWORD)
-  let app = await startApp()
+  let app = await startApp(options)
   const registeredClientIds: string[] = []
 
   const registerClient: OAuthConformanceContext['registerClient'] = async (authMethod) => {
@@ -182,6 +183,7 @@ export async function setupConformance(): Promise<{
     const hiddenFields = parseHiddenFields(html)
     return {
       status: res.status,
+      html,
       csrfCookie: /oauth_csrf=([^;]+)/.exec(cookie)?.[1],
       csrfToken: hiddenFields.csrf_token,
       hiddenFields,
@@ -297,7 +299,7 @@ export async function setupConformance(): Promise<{
     await stopApp(app)
     // Pick up any process.env mutation made by the caller (e.g. OAUTH_JWKS rotation).
     resetEnvCache()
-    app = await startApp()
+    app = await startApp(options)
   }
 
   const ctx: OAuthConformanceContext = {

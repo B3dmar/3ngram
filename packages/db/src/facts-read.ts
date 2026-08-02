@@ -3,10 +3,12 @@
 //
 // This module owns the SQL for READING facts only. Business policy (defaults,
 // param shaping, response transport) belongs to packages/core (read/facts.ts)
-// per the layering rule — keep this at the query layer. Every query runs inside
-// withTenant(): RLS scopes rows to the caller, so no query here references
-// user_id (search.ts precedent; the extra defense-in-depth predicate is
-// optional and omitted here to match that file-local convention).
+// per the layering rule — keep this at the query layer. TENANT ISOLATION IS
+// TWO-LAYER (defense in depth): every query runs inside withTenant(), where RLS
+// scopes rows to the caller, AND carries an explicit caller-bound
+// `facts.user_id = userId` predicate (the same userId the caller passed into
+// withTenant(), search.ts precedent). The predicate is a no-op while RLS
+// functions — isolation never rests on a single mechanism.
 //
 // THE TWO TEMPORAL AXES (docs/concepts/data-model.mdx, docs/concepts/memory-model.mdx append-and-supersede). The
 // facts table is append-only — a fact is never updated or deleted, only closed
@@ -141,8 +143,9 @@ export function transactionTimePredicate(asKnownAt?: Date): SQL | undefined {
  *                     case — e.g. a late-recorded correction is invisible until
  *                     asKnownAt reaches its recorded_at)
  *
- * Empty result is empty, never a throw. Runs inside withTenant(): RLS enforces
- * tenant isolation on every path.
+ * Empty result is empty, never a throw. Runs inside withTenant(): RLS plus the
+ * caller-bound `facts.user_id = userId` predicate enforce tenant isolation on
+ * every path (module header).
  *
  * Primitive inputs (subject/predicate strings, asOf Dates) are validated at
  * this boundary by the caller in packages/core: there is NO facts-query Zod
@@ -150,11 +153,17 @@ export function transactionTimePredicate(asKnownAt?: Date): SQL | undefined {
  * core, so core validates primitives inline and documents the gap. This helper
  * trusts its typed arguments.
  *
- * @param tx     Tenant-scoped transaction from withTenant().
- * @param query  Optional subject/predicate filters and as_of coordinates.
+ * @param tx      Tenant-scoped transaction from withTenant().
+ * @param userId  The authenticated tenant (the withTenant userId) — bound as an
+ *                explicit predicate alongside RLS.
+ * @param query   Optional subject/predicate filters and as_of coordinates.
  */
-export async function getFacts(tx: TenantTx, query: FactsQuery = {}): Promise<FactRow[]> {
-  const conditions: SQL[] = [validTimePredicate(query.asOf?.validAt)]
+export async function getFacts(
+  tx: TenantTx,
+  userId: string,
+  query: FactsQuery = {},
+): Promise<FactRow[]> {
+  const conditions: SQL[] = [eq(facts.userId, userId), validTimePredicate(query.asOf?.validAt)]
 
   const txTime = transactionTimePredicate(query.asOf?.asKnownAt)
   if (txTime !== undefined) conditions.push(txTime)

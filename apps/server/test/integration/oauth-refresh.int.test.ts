@@ -10,7 +10,7 @@
 // resource_metadata pointer (MCP authorization spec, 2025-06-18 revision), and
 // the full refresh lifecycle holds for a PUBLIC ('none') client — the shape a
 // DCR-registered Claude Code connector uses in production.
-import { setLogDestination } from '@3ngram/config'
+import { contentDigest, setLogDestination } from '@3ngram/config'
 import { importJWK, SignJWT } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { TEST_BASE_URL, TEST_ISSUER, TEST_PRIVATE_JWK } from '../oauth-token-helper.js'
@@ -261,7 +261,7 @@ describe('#242: a real token mint emits the success outcome line', () => {
       const line = lines.filter((l) => l.msg === 'oauth: token endpoint').at(-1)
       expect(line?.outcome).toBe('success')
       expect(line?.grant_type).toBe('authorization_code')
-      expect(line?.client_id_prefix).toBe(tokens.client.client_id.slice(0, 8))
+      expect(line?.client_id_prefix).toBe(`sha8:${contentDigest(tokens.client.client_id)}`)
       const serialized = JSON.stringify(line)
       expect(serialized).not.toContain(tokens.access_token)
       expect(serialized).not.toContain(tokens.refresh_token)

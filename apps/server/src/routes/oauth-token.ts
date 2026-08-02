@@ -9,8 +9,8 @@
 // returns — but our store never returns secret material (only the SHA-256 hash
 // is at rest), so the SDK default cannot work. authenticateClientCredentials
 // (core) hashes the presented secret and compares against the stored hash.
-// SDK 1.29 reads client credentials from req.body ONLY, so a Basic-auth
-// shim decodes `Authorization: Basic` into the body first (RFC 6749 §2.3.1) —
+// The retained legacy AS helper reads client credentials from req.body, so a
+// Basic-auth shim decodes `Authorization: Basic` into the body first (RFC 6749 §2.3.1) —
 // that is how client_secret_basic (the RFC 7591 default) is honored.
 //
 // ERRORS ARE THE SDK'S TYPED ERRORS ONLY: every failure maps to
@@ -22,6 +22,7 @@ import { crashSafeError } from '@3ngram/config/otel'
 import type { LimitsResolver } from '@3ngram/core'
 import {
   authenticateClientCredentials,
+  type ClientMetadataResolver,
   createOAuthServerProvider,
   insertAuditLog,
   OAuthGrantError,
@@ -36,10 +37,10 @@ import {
   InvalidTargetError,
   InvalidTokenError,
   OAuthError,
+  type OAuthServerProvider,
   ServerError,
   UnsupportedGrantTypeError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js'
-import type { OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js'
+} from '@modelcontextprotocol/server-legacy/auth'
 import { type NextFunction, type Request, type Response, Router, urlencoded } from 'express'
 import type { Redis } from 'ioredis'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
@@ -57,6 +58,7 @@ export interface OAuthTokenRouterOptions {
   redis?: Redis | undefined
   /** Billing-neutral active-client limit resolver. */
   limits?: LimitsResolver | undefined
+  clientMetadataResolver: ClientMetadataResolver
 }
 
 /** Which channel carried the client credentials — used to enforce the registered method. */
@@ -215,7 +217,11 @@ const EXCHANGE_FAILURES_MAX = 10_000
 
 /** Redis key for a client_id's failure counter (client_id is never logged). */
 function exchangeFailureKey(clientId: string): string {
-  return `${EXCHANGE_FAILURE_KEY_PREFIX}${clientId}`
+  return `${EXCHANGE_FAILURE_KEY_PREFIX}${contentDigest(clientId)}`
+}
+
+function exchangeFailureId(clientId: string): string {
+  return contentDigest(clientId)
 }
 
 /**
@@ -240,14 +246,15 @@ export function setExchangeFailureRedis(redis: Redis | undefined): void {
 /** Increment the failure counter for a client_id and refresh its reset TTL. */
 export async function recordExchangeFailure(clientId: string): Promise<void> {
   if (exchangeFailureRedis === undefined) {
+    const id = exchangeFailureId(clientId)
     // Enforce the cap before inserting a NEW key: drop the oldest insertion so
     // attacker-enumerated client_ids cannot grow the Map without bound. An
     // existing key just increments (no size change).
-    if (!_exchangeFailures.has(clientId) && _exchangeFailures.size >= EXCHANGE_FAILURES_MAX) {
+    if (!_exchangeFailures.has(id) && _exchangeFailures.size >= EXCHANGE_FAILURES_MAX) {
       const oldest = _exchangeFailures.keys().next().value
       if (oldest !== undefined) _exchangeFailures.delete(oldest)
     }
-    _exchangeFailures.set(clientId, (_exchangeFailures.get(clientId) ?? 0) + 1)
+    _exchangeFailures.set(id, (_exchangeFailures.get(id) ?? 0) + 1)
     return
   }
   try {
@@ -280,7 +287,7 @@ export async function recordExchangeFailure(clientId: string): Promise<void> {
 /** Clear the failure counter for a client_id (a successful exchange forgives it). */
 export async function clearExchangeFailures(clientId: string): Promise<void> {
   if (exchangeFailureRedis === undefined) {
-    _exchangeFailures.delete(clientId)
+    _exchangeFailures.delete(exchangeFailureId(clientId))
     return
   }
   try {
@@ -296,7 +303,7 @@ export async function clearExchangeFailures(clientId: string): Promise<void> {
 /** Read the current failure count for a client_id (0 on store failure — fail-open). */
 async function readExchangeFailureCount(clientId: string): Promise<number> {
   if (exchangeFailureRedis === undefined) {
-    return _exchangeFailures.get(clientId) ?? 0
+    return _exchangeFailures.get(exchangeFailureId(clientId)) ?? 0
   }
   try {
     const raw = await exchangeFailureRedis.get(exchangeFailureKey(clientId))
@@ -319,25 +326,14 @@ export async function applyProgressiveDelay(clientId: string): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-// First N chars of a client_id we are willing to log. redaction.ts does NOT
-// cover client_id, so the truncation is the load-bearing secret safeguard: a
-// client_secret_basic credential can carry a long opaque id, and we never want
-// the full value (or any code/secret/refresh_token) in a log line (hard rule 6).
-const CLIENT_ID_PREFIX_LEN = 8
-
 /**
- * A non-throwing, content-free preview of the presented client_id for the audit
- * line. Legitimate ids are long (`cl_` + uuid), so the first 8 chars are a safe,
- * human-readable strict prefix. But the value is read raw off req.body on the
- * error path: a SHORT (<= 8 char) client-controlled value would be echoed in
- * full, leaking short secret/token material a malformed request could smuggle
- * in. For those, emit a non-reversible `sha8:` fingerprint (the redaction.ts
- * sha256-8 convention) that can NEVER equal the raw input. '(none)' when absent.
+ * A non-throwing, content-free fingerprint of the presented client_id. CIMD
+ * identifiers are URLs and may contain a discouraged query component, so no
+ * raw prefix is safe to log.
  */
 function clientIdPrefix(clientId: unknown): string {
   if (typeof clientId !== 'string' || clientId.length === 0) return '(none)'
-  if (clientId.length <= CLIENT_ID_PREFIX_LEN) return `sha8:${contentDigest(clientId)}`
-  return clientId.slice(0, CLIENT_ID_PREFIX_LEN)
+  return `sha8:${contentDigest(clientId)}`
 }
 
 // The only grant_type values RFC 6749 §4.1.3/§6 lets this server log verbatim.
@@ -417,6 +413,7 @@ async function handleTokenRequest(
   req: Request,
   res: Response,
   limits: LimitsResolver | undefined,
+  clientMetadataResolver: ClientMetadataResolver,
 ): Promise<void> {
   res.setHeader('Cache-Control', 'no-store')
   // RFC 6749 §5.1 also mandates Pragma: no-cache on token-bearing responses.
@@ -447,13 +444,14 @@ async function handleTokenRequest(
     input.client_id,
     input.client_secret,
     presentedAuthMethod(req),
+    clientMetadataResolver,
   )
-  if (client === undefined) {
+  if (client === undefined || !client.grant_types.includes(input.grant_type)) {
     await recordExchangeFailure(input.client_id)
     throw new InvalidClientError('Client authentication failed')
   }
-  // COMPILE PIN: the core provider must remain assignable to the SDK 1.29
-  // OAuthServerProvider (the A2 contract the structural mirror promises).
+  // COMPILE PIN: the core provider must remain assignable to the retained
+  // legacy OAuthServerProvider while DCR compatibility remains supported.
   const provider: OAuthServerProvider = createOAuthServerProvider(loadOAuthConfig(), limits)
   const resource = input.resource === undefined ? undefined : new URL(input.resource)
   let tokens: Awaited<ReturnType<typeof provider.exchangeAuthorizationCode>>
@@ -486,11 +484,11 @@ async function handleTokenRequest(
     log().warn({ err: err instanceof Error ? err.name : 'unknown' }, 'oauth: client touch failed')
   })
   // Fire-and-forget: audit the successful token issuance. NEVER include the raw
-  // token, code, client_secret, or refresh_token — only the client_id.
+  // token, code, client_secret, refresh_token, or raw URL client_id.
   insertAuditLog({
     actorKind: 'system',
     action: 'token.issue',
-    resource: input.client_id,
+    resource: `client:sha8:${contentDigest(input.client_id)}`,
     ...(req.ip !== undefined ? { ip: req.ip } : {}),
   }).catch((err: unknown) => {
     log().warn({ err: err instanceof Error ? err.name : 'unknown' }, 'audit: token.issue failed')
@@ -511,30 +509,32 @@ export function oauthTokenRouter(options: OAuthTokenRouterOptions): Router {
     urlencoded({ extended: false }),
     shimBasicAuth,
     (req, res) => {
-      handleTokenRequest(req, res, options.limits).catch((err: unknown) => {
-        const oauthError = toOAuthError(err)
-        const body = (req.body ?? {}) as Record<string, unknown>
-        // outcome IS the mapped RFC error code (invalid_grant|invalid_client|
-        // invalid_request|unsupported_grant_type|server_error) — docs/concepts/observability.mdx
-        // wants the same vocabulary the client sees in the response body.
-        logTokenOutcome(body.grant_type, body.client_id, oauthError.errorCode)
-        if (oauthError instanceof ServerError) {
-          log().error(crashSafeError(err), 'oauth: token endpoint failure')
-        }
-        // RFC 6749 §5.2: a failed client authentication is 401, not 400; and
-        // when the client authenticated via the Authorization header, the
-        // response MUST carry a matching WWW-Authenticate challenge.
-        if (oauthError instanceof InvalidClientError) {
-          if (req.header('authorization')?.toLowerCase().startsWith('basic ') === true) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="oauth"')
+      handleTokenRequest(req, res, options.limits, options.clientMetadataResolver).catch(
+        (err: unknown) => {
+          const oauthError = toOAuthError(err)
+          const body = (req.body ?? {}) as Record<string, unknown>
+          // outcome IS the mapped RFC error code (invalid_grant|invalid_client|
+          // invalid_request|unsupported_grant_type|server_error) — docs/concepts/observability.mdx
+          // wants the same vocabulary the client sees in the response body.
+          logTokenOutcome(body.grant_type, body.client_id, oauthError.errorCode)
+          if (oauthError instanceof ServerError) {
+            log().error(crashSafeError(err), 'oauth: token endpoint failure')
           }
-          res.status(401).json(oauthError.toResponseObject())
-          return
-        }
-        res
-          .status(oauthError instanceof ServerError ? 500 : 400)
-          .json(oauthError.toResponseObject())
-      })
+          // RFC 6749 §5.2: a failed client authentication is 401, not 400; and
+          // when the client authenticated via the Authorization header, the
+          // response MUST carry a matching WWW-Authenticate challenge.
+          if (oauthError instanceof InvalidClientError) {
+            if (req.header('authorization')?.toLowerCase().startsWith('basic ') === true) {
+              res.setHeader('WWW-Authenticate', 'Basic realm="oauth"')
+            }
+            res.status(401).json(oauthError.toResponseObject())
+            return
+          }
+          res
+            .status(oauthError instanceof ServerError ? 500 : 400)
+            .json(oauthError.toResponseObject())
+        },
+      )
     },
   )
   return router

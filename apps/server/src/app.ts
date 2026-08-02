@@ -7,10 +7,12 @@ import {
 } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
 import { allowAllAccess, type BudgetEnforcement, SELFHOST_LIMITS } from '@3ngram/core'
+import { ClientMetadataResolver } from '@3ngram/core/auth'
 import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
 import express, { type Express, type NextFunction, type Request, type Response } from 'express'
 import type { Redis } from 'ioredis'
 import { baseCapabilities, type Extension, noOpExtension } from './composition/extension.js'
+import { mcpHeaderObservability } from './middleware/mcp-header-observability.js'
 import {
   apiKeyIdKey,
   createRateLimiter,
@@ -100,6 +102,11 @@ export interface AppOptions {
    * injection-only change (incl. failed-exchange progressive delay).
    */
   oauthLimiter?: RateLimiterMiddleware
+  /**
+   * Shared CIMD resolver/cache. Tests inject a networkless resolver; production
+   * gets one bounded SSRF-safe instance per app process.
+   */
+  clientMetadataResolver?: ClientMetadataResolver
   /**
    * Per-API-key limiter on /api/v1. Keyed on req.apiKeyId (the prefix
    * segment set by apiKeyAuth after a successful key lookup). Mounted before
@@ -319,6 +326,7 @@ export function createApp(options: AppOptions = {}): Express {
   // would open a redundant connection. An explicit override wins (the test
   // seam); else the env-derived client (undefined ⇒ in-memory fallbacks).
   const redis = options.redis ?? resolveRedis()
+  const clientMetadataResolver = options.clientMetadataResolver ?? new ClientMetadataResolver()
   const {
     edgeLimiter,
     mcpLimiter,
@@ -343,6 +351,11 @@ export function createApp(options: AppOptions = {}): Express {
   // an overloaded API from a dead process. Every other surface gets a coarse
   // per-IP cap before body parsing or any handler work.
   app.use(edgeLimiter)
+  // SEP-2243 routing headers are useful before JSON parsing, but untrusted.
+  // This narrow middleware records only allowlisted values and sets MCP log
+  // context. The SDK later cross-checks headers against the body; authorization
+  // remains inside the verified handler.
+  app.use('/mcp', mcpHeaderObservability)
   // Capture the exact raw bytes alongside JSON parsing so a private webhook
   // (mounted by the extension below) can verify the signature over the
   // unmodified payload — re-serializing a parsed body would change the bytes and
@@ -406,11 +419,11 @@ export function createApp(options: AppOptions = {}): Express {
   // APPEND-ONLY after the existing routers, before the error handler. Both are
   // unauthenticated and sit behind the shared injected per-IP limiter seam
   // (real bucket by default).
-  app.use(oauthAuthorizeRouter({ limiter: oauthLimiter }))
+  app.use(oauthAuthorizeRouter({ limiter: oauthLimiter, clientMetadataResolver }))
   // The same shared ioredis client backs the progressive-delay failure counter
   // so the budget is shared across Railway replicas; a missing client
   // makes the tracker fall back to a per-process Map.
-  app.use(oauthTokenRouter({ limiter: oauthLimiter, redis, limits }))
+  app.use(oauthTokenRouter({ limiter: oauthLimiter, redis, limits, clientMetadataResolver }))
 
   // Composition seam: the injected extension attaches its hosted-only
   // routes/handlers here, at the composition root, AFTER every Apache router and

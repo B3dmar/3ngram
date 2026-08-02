@@ -30,11 +30,13 @@ import { getFacts as coreGetFacts, search as coreSearch } from '@3ngram/core'
 import { createUser, login } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
 import { EXCERPT_MARKER, MAX_EXCERPT_LENGTH } from '@3ngram/schema'
+import {
+  type CallToolResult,
+  Client as McpClient,
+  StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client'
 // Aliased to McpClient so `new McpClient(...)` does not trip the db-access gate's
 // `new (pg\.)?Client\(` regex (this is the MCP SDK client, not a Postgres client).
-import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closePools, ownerPool } from '../../../../packages/db/test/integration/helpers.js'
 import {

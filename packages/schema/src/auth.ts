@@ -140,7 +140,7 @@ export type IssueApiKeyInput = z.infer<typeof issueApiKeyInputSchema>
  * and the authorize endpoint can byte-equality match a presented
  * redirect_uri against the registered list.
  */
-const redirectUriSchema = z
+export const redirectUriSchema = z
   .union([
     z.url({ protocol: /^https$/ }).max(2048),
     z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1)$/ }).max(2048),
@@ -166,6 +166,94 @@ export const clientRegistrationInputSchema = z.object({
   client_name: z.string().min(1).max(255).optional(),
 })
 export type ClientRegistrationInput = z.infer<typeof clientRegistrationInputSchema>
+
+/**
+ * OAuth Client ID Metadata Document URL. The client_id stays byte-exact for the
+ * document self-match; this schema validates without transforming it.
+ *
+ * draft-ietf-oauth-client-id-metadata-document-00 §3 requires HTTPS, a real
+ * path, no credentials/fragment, and no single-dot or double-dot path segments.
+ * Query strings are discouraged by the draft but remain valid.
+ */
+export const clientIdMetadataUrlSchema = z
+  .url({ protocol: /^https$/ })
+  .max(2048)
+  .superRefine((value, ctx) => {
+    // oauth_clients.client_id is UNIQUE-indexed and referenced by grants.
+    // URI syntax is ASCII; requiring its wire form avoids a multi-byte value
+    // exceeding PostgreSQL's btree index-row limit despite the character cap.
+    if (!/^[\x21-\x7e]+$/.test(value)) {
+      ctx.addIssue({ code: 'custom', message: 'client_id must use ASCII URI syntax' })
+    }
+    const authority = value.match(/^https:\/\/(?<authority>[^/?#]+)/i)?.groups?.authority
+    if (authority?.includes('@') === true) {
+      ctx.addIssue({ code: 'custom', message: 'client_id must not contain credentials' })
+    }
+    if (value.includes('#')) {
+      ctx.addIssue({ code: 'custom', message: 'client_id must not contain a fragment' })
+    }
+    const rawPath = value.match(/^https:\/\/[^/?#]+(?<path>\/[^?#]*)/i)?.groups?.path
+    if (rawPath === undefined || rawPath === '/') {
+      ctx.addIssue({ code: 'custom', message: 'client_id must contain a document path' })
+    }
+
+    if (rawPath === undefined) return
+    for (const rawSegment of rawPath.split('/')) {
+      let segment: string
+      try {
+        segment = decodeURIComponent(rawSegment)
+      } catch {
+        ctx.addIssue({ code: 'custom', message: 'client_id path must use valid encoding' })
+        return
+      }
+      if (segment === '.' || segment === '..') {
+        ctx.addIssue({ code: 'custom', message: 'client_id must not contain dot path segments' })
+        return
+      }
+    }
+  })
+export type ClientIdMetadataUrl = z.infer<typeof clientIdMetadataUrlSchema>
+
+/**
+ * Client ID Metadata Document — the single structural validation boundary.
+ * MCP requires client_id, client_name, and redirect_uris. This first
+ * implementation deliberately supports public PKCE clients only; symmetric
+ * secrets are impossible with a self-hosted document, and private_key_jwt is a
+ * separate auth-method project.
+ *
+ * Unknown registered metadata members are ignored. Secret-bearing members are
+ * rejected explicitly instead of being stripped.
+ */
+export const clientIdMetadataDocumentSchema = z.object({
+  client_id: clientIdMetadataUrlSchema,
+  client_name: z.string().min(1).max(255),
+  redirect_uris: z.array(redirectUriSchema).min(1).max(16),
+  token_endpoint_auth_method: z.literal('none').default('none'),
+  grant_types: z
+    .array(z.enum(['authorization_code', 'refresh_token']))
+    .min(1)
+    .max(2)
+    .default(['authorization_code']),
+  response_types: z.array(z.literal('code')).min(1).max(1).default(['code']),
+  client_uri: z
+    .url({ protocol: /^https$/ })
+    .max(2048)
+    .optional(),
+  logo_uri: z
+    .url({ protocol: /^https$/ })
+    .max(2048)
+    .optional(),
+  client_secret: z.never().optional(),
+  client_secret_expires_at: z.never().optional(),
+})
+export type ClientIdMetadataDocument = z.infer<typeof clientIdMetadataDocumentSchema>
+
+/** How an OAuth client entered the AS registry/materialized FK table. */
+export const oauthClientRegistrationMethodSchema = z.enum([
+  'dynamic_registration',
+  'client_id_metadata',
+])
+export type OAuthClientRegistrationMethod = z.infer<typeof oauthClientRegistrationMethodSchema>
 
 /**
  * OAuth scope parameter (RFC 6749 §3.3): space-delimited, case-sensitive. v1
@@ -194,7 +282,7 @@ const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
  * the registered list in core (policy, not shape — it needs the stored client).
  */
 export const authorizeRequestSchema = z.object({
-  client_id: z.string().min(1).max(255),
+  client_id: z.string().min(1).max(2048),
   redirect_uri: z.string().min(1).max(2048).optional(),
   response_type: z.literal('code'),
   code_challenge: z.string().regex(PKCE_CHALLENGE_PATTERN),
@@ -230,13 +318,13 @@ export type ConsentSubmission = z.infer<typeof consentSubmissionSchema>
  * token request shape (hard rule 2). Discriminated on grant_type: the two
  * supported grants only (the route maps an unknown grant_type to
  * unsupported_grant_type before parsing). client_secret may arrive in the body
- * (client_secret_post) or via the Basic-auth shim (S4: SDK 1.29 client auth
- * reads the body only); public clients omit it and are held to PKCE instead.
+ * (client_secret_post) or via the Basic-auth shim (the compatibility auth
+ * helper reads the body only); public clients omit it and are held to PKCE instead.
  * code_verifier is REQUIRED on the code grant — PKCE is mandatory for every
  * client, public or confidential.
  */
 const tokenClientAuthShape = {
-  client_id: z.string().min(1).max(255),
+  client_id: z.string().min(1).max(2048),
   client_secret: z.string().min(1).max(1024).optional(),
 }
 export const tokenRequestSchema = z.discriminatedUnion('grant_type', [
@@ -271,10 +359,9 @@ export type ApiKeyId = z.infer<typeof apiKeyIdSchema>
 /**
  * Path-param validation for DELETE /auth/oauth-clients/:clientId — the single
  * validation boundary for the grant-revoke target (hard rule 2).
- * client_id is a minted UUID (core registerOAuthClient), so a non-uuid param can
- * never match a stored grant; the route treats a parse failure as no-live-grant
- * (204, the same idempotent outcome as an unknown/already-revoked grant) so a
- * malformed id never reaches the DB.
+ * DCR client_id values are UUIDs; CIMD client_id values are HTTPS metadata URLs.
+ * Express matches an encoded URL as one path segment and decodes it before this
+ * boundary. A malformed value is treated as the idempotent no-live-grant case.
  */
-export const oauthClientIdParamSchema = z.uuid()
+export const oauthClientIdParamSchema = z.union([z.uuid(), clientIdMetadataUrlSchema])
 export type OAuthClientIdParam = z.infer<typeof oauthClientIdParamSchema>

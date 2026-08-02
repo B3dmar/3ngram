@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Memory read layer for the dashboard surface. SQL ONLY (hard rule
 // 5): defaults, paging policy, and transport shaping live in packages/core
-// (read/list-memories.ts, read/memory.ts). Every query runs inside withTenant():
-// RLS scopes rows to the caller (facts-read.ts precedent), so no query here
-// references user_id.
+// (read/list-memories.ts, read/memory.ts). TENANT ISOLATION IS TWO-LAYER
+// (defense in depth): every query runs inside withTenant(), where RLS scopes
+// rows to the caller, AND carries an explicit caller-bound
+// `memories.user_id = userId` predicate (the same userId the caller passed into
+// withTenant(), facts-read.ts precedent). The predicate is a no-op while RLS
+// functions — isolation never rests on a single mechanism.
 //
 // LIVE-ONLY (the dashboard list JTBD): the list selects only LIVE memories — the
 // SAME two-condition liveness scopes.ts / briefing-read.ts use (status = 'active'
@@ -71,8 +74,11 @@ export interface MemoriesListQuery {
 const liveMemoryPredicate = (): SQL =>
   and(eq(memories.status, 'active'), isNull(memories.validTo)) as SQL
 
-/** Build the WHERE conditions for a list query: the live gate + the supplied filters. */
-function listConditions(query: MemoriesListQuery): SQL {
+/**
+ * Build the WHERE conditions for a list query: the caller-bound tenant condition
+ * (module header) + the live gate + the supplied filters.
+ */
+function listConditions(userId: string, query: MemoriesListQuery): SQL {
   // The status filter controls which status predicate we apply. All branches keep
   // valid_to IS NULL (current-version gate: an docs/concepts/memory-model.mdx revise marks the superseded
   // predecessor only via valid_to, so without it every revise inflates the list).
@@ -89,7 +95,7 @@ function listConditions(query: MemoriesListQuery): SQL {
     baseCondition = isNull(memories.validTo)
   }
 
-  const conditions: SQL[] = [baseCondition]
+  const conditions: SQL[] = [eq(memories.userId, userId), baseCondition]
   if (query.memoryType !== undefined) conditions.push(eq(memories.memoryType, query.memoryType))
   if (query.scope !== undefined) conditions.push(eq(memories.scope, query.scope))
   if (query.project !== undefined) {
@@ -103,8 +109,12 @@ function listConditions(query: MemoriesListQuery): SQL {
 }
 
 /** The unpaged total for a list query (same filters), for the dashboard's pagination. */
-export async function countMemories(tx: TenantTx, query: MemoriesListQuery): Promise<number> {
-  const [row] = await tx.select({ n: count() }).from(memories).where(listConditions(query))
+export async function countMemories(
+  tx: TenantTx,
+  userId: string,
+  query: MemoriesListQuery,
+): Promise<number> {
+  const [row] = await tx.select({ n: count() }).from(memories).where(listConditions(userId, query))
   return row?.n ?? 0
 }
 
@@ -119,6 +129,7 @@ export async function countMemories(tx: TenantTx, query: MemoriesListQuery): Pro
  */
 export async function listMemories(
   tx: TenantTx,
+  userId: string,
   query: MemoriesListQuery,
 ): Promise<MemoryListRow[]> {
   return (
@@ -139,7 +150,7 @@ export async function listMemories(
         commitments,
         and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
       )
-      .where(listConditions(query))
+      .where(listConditions(userId, query))
       // Served by memories_recorded_at_idx (user_id, recorded_at DESC NULLS FIRST,
       // id) — migration 0012,. The index's NULLS FIRST matches ORDER BY DESC's
       // default so the planner reads it in order (Index Scan) instead of Seq Scan +
@@ -164,18 +175,20 @@ export interface MemoryFacets {
  * Used by GET /api/v1/memories/facets so the UI can populate filter dropdowns
  * from the actual corpus rather than a hardcoded list.
  */
-export async function listMemoryFacets(tx: TenantTx): Promise<MemoryFacets> {
+export async function listMemoryFacets(tx: TenantTx, userId: string): Promise<MemoryFacets> {
   const [scopeRows, projectRows] = await Promise.all([
     tx
       .select({ scope: memories.scope })
       .from(memories)
-      .where(liveMemoryPredicate())
+      .where(and(eq(memories.userId, userId), liveMemoryPredicate()) as SQL)
       .groupBy(memories.scope)
       .orderBy(asc(memories.scope)),
     tx
       .select({ project: memories.project })
       .from(memories)
-      .where(and(liveMemoryPredicate(), isNotNull(memories.project)) as SQL)
+      .where(
+        and(eq(memories.userId, userId), liveMemoryPredicate(), isNotNull(memories.project)) as SQL,
+      )
       .groupBy(memories.project)
       .orderBy(asc(memories.project)),
   ])
@@ -186,13 +199,16 @@ export async function listMemoryFacets(tx: TenantTx): Promise<MemoryFacets> {
 }
 
 /**
- * Fetch one memory by id for the tenant, or undefined when absent (RLS hides
- * cross-tenant rows, so not-found and not-owned collapse to undefined). NO live
+ * Fetch one memory by id for the tenant, or undefined when absent. The WHERE
+ * keys on (user_id, id): RLS hides cross-tenant rows AND the caller-bound
+ * user_id predicate keeps the read caller-only independently of it (module
+ * header), so not-found and not-owned collapse to undefined either way. NO live
  * gate: inspecting a specific id may target a superseded row. Returns the full
  * row including content + tags (inspect is its JTBD).
  */
 export async function getMemoryById(
   tx: TenantTx,
+  userId: string,
   memoryId: string,
 ): Promise<MemoryDetailRow | undefined> {
   const [row] = await tx
@@ -216,7 +232,7 @@ export async function getMemoryById(
       commitments,
       and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
     )
-    .where(eq(memories.id, memoryId))
+    .where(and(eq(memories.userId, userId), eq(memories.id, memoryId)))
     .limit(1)
   return row
 }

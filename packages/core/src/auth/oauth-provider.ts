@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // OAuth authorization-server provider: the
 // authorization-code + PKCE policy behind /oauth/authorize + /oauth/token.
-// Structurally assignable to the MCP SDK 1.29 `OAuthServerProvider` (the types
-// are mirrored locally — core has no SDK dependency, hard rule 7; the token
-// route pins assignability at compile time).
+// Structurally assignable to the legacy auth package's `OAuthServerProvider`
+// while DCR remains a compatibility fallback (the types are mirrored locally
+// so core has no transport SDK dependency; apps/server pins assignability).
 //
 // Grant mechanics:
 // - authorize: mint a 32-byte CSPRNG code, store its SHA-256 hash (the code
@@ -107,6 +107,29 @@ export interface RedirectCapable {
   redirect(status: number, url: string): void
 }
 
+/** RFC 9207 requires an HTTPS issuer in authorization responses. */
+export function supportsAuthorizationResponseIssuer(issuer: string): boolean {
+  return new URL(issuer).protocol === 'https:'
+}
+
+/**
+ * Build an OAuth authorization response without drifting the issuer parameter
+ * from authorization-server metadata. HTTP loopback development remains
+ * available, but cannot claim RFC 9207 support.
+ */
+export function buildAuthorizationResponseUrl(
+  redirectUri: string,
+  issuer: string,
+  params: { code?: string; error?: string; state?: string },
+): string {
+  const url = new URL(redirectUri)
+  if (params.code !== undefined) url.searchParams.set('code', params.code)
+  if (params.error !== undefined) url.searchParams.set('error', params.error)
+  if (params.state !== undefined) url.searchParams.set('state', params.state)
+  if (supportsAuthorizationResponseIssuer(issuer)) url.searchParams.set('iss', issuer)
+  return url.href
+}
+
 /** Structural mirror of the SDK `AuthInfo` the bearer middleware consumes. */
 export interface VerifiedTokenInfo {
   token: string
@@ -115,7 +138,7 @@ export interface VerifiedTokenInfo {
   expiresAt?: number
 }
 
-/** Structural mirror of the SDK 1.29 `OAuthServerProvider` (compile-pinned in apps/server). */
+/** Structural mirror of the legacy auth package's provider (compile-pinned in apps/server). */
 export interface OAuthServerProviderShape {
   clientsStore: OAuthClientsStore
   /** PKCE is verified INSIDE exchangeAuthorizationCode (consume-then-verify). */
@@ -251,10 +274,13 @@ export function createOAuthServerProvider(
         scope,
         expiresAt: new Date(Date.now() + CODE_TTL_MS),
       })
-      const url = new URL(params.redirectUri)
-      url.searchParams.set('code', code)
-      if (params.state !== undefined) url.searchParams.set('state', params.state)
-      res.redirect(302, url.href)
+      res.redirect(
+        302,
+        buildAuthorizationResponseUrl(params.redirectUri, config.issuer, {
+          code,
+          ...(params.state === undefined ? {} : { state: params.state }),
+        }),
+      )
     },
 
     async challengeForAuthorizationCode(): Promise<string> {

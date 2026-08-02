@@ -156,7 +156,7 @@ export async function consolidate(
 export const dbConsolidateRepo: ConsolidateRepo = {
   listTenantIds,
   findSimilarPairs: (userId, minSimilarity, limit) =>
-    withTenant(userId, (tx) => findSimilarPairsDb(tx, minSimilarity, limit)),
+    withTenant(userId, (tx) => findSimilarPairsDb(tx, userId, minSimilarity, limit)),
   insertProposals: (userId, proposals) =>
     withTenant(userId, (tx) => insertProposals(tx, proposals)),
 }

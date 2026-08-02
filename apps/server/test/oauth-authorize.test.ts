@@ -16,17 +16,14 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-// Mock the @3ngram/core/auth module at the seam (mirrors oauth-register.test.ts).
-// We need oauthClientsStore.getClient to return a test client without hitting the DB.
+// Mock the @3ngram/core/auth resolver seam so no DB or metadata network is needed.
 const mockGetClient = vi.fn<(clientId: string) => Promise<object | undefined>>()
 
 vi.mock('@3ngram/core/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@3ngram/core/auth')>()
   return {
     ...actual,
-    oauthClientsStore: {
-      getClient: mockGetClient,
-    },
+    resolveOAuthClient: mockGetClient,
   }
 })
 

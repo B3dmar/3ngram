@@ -59,6 +59,12 @@ async function resolveExtension(
  *     keeps core's graph behind initObservability, like the app graph below.
  *  5. Dynamic-import createApp (express graph) and listen; wire signal handlers.
  *
+ * The fail-closed tenant-isolation check (runtime role is NOBYPASSRLS/
+ * non-superuser, FORCE RLS set on the tenant-data tables) runs in readiness
+ * (`GET /ready`), not here: boot must stay DB-free so liveness comes up without
+ * a database (the S5 capture hook and the container smoke both rely on that),
+ * while a misprovisioned DB is held OUT of rotation by /ready reporting 503.
+ *
  * Reused verbatim by both entrypoints so hosted cloud gets the SAME fail-closed
  * env/key checks and OTel/request instrumentation as the Apache server.
  */

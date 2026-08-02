@@ -46,8 +46,8 @@ export async function listMemories(
   query: MemoriesListQuery,
 ): Promise<MemoriesPage> {
   return withTenant(userId, async (tx) => {
-    const memories = await listMemoriesDb(tx, query)
-    const total = await countMemories(tx, query)
+    const memories = await listMemoriesDb(tx, userId, query)
+    const total = await countMemories(tx, userId, query)
     return { memories, total }
   })
 }
@@ -60,5 +60,5 @@ export async function listMemories(
  * @param userId  Tenant whose RLS context the read runs under.
  */
 export async function listMemoryFacets(userId: string): Promise<MemoryFacets> {
-  return withTenant(userId, (tx) => listMemoryFacetsDb(tx))
+  return withTenant(userId, (tx) => listMemoryFacetsDb(tx, userId))
 }

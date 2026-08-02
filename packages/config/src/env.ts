@@ -378,6 +378,17 @@ export const envSchema = z
         message: 'BASE_URL is required in production (derives issuer + resource)',
       })
     }
+    if (
+      env.NODE_ENV === 'production' &&
+      env.BASE_URL !== undefined &&
+      new URL(env.BASE_URL).protocol !== 'https:'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['BASE_URL'],
+        message: 'BASE_URL must use https in production (OAuth issuer requirement)',
+      })
+    }
     if (env.NODE_ENV === 'production' && env.OAUTH_JWKS === undefined) {
       ctx.addIssue({
         code: 'custom',

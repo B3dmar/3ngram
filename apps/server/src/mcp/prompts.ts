@@ -21,8 +21,8 @@
 // is the ceiling.
 //
 // ARG TYPING: MCP delivers prompt arguments as STRINGS over the wire, so every
-// arg shape is string-valued — z.enum for the bounded selectors/modes, the SDK
-// validates inbound args against the raw shape (mirrors registerTool).
+// arg shape is string-valued — z.enum for the bounded selectors/modes. The
+// registry wraps that shape into a full Zod Standard Schema object for SDK v2.
 //
 // SCHEMA ALIGNMENT (hard rule 2 — constraints live in @3ngram/schema): the
 // rendered text instructs the agent to call the briefing/remember TOOLS, so the
@@ -33,8 +33,7 @@
 // {@link briefingSelectorSchema} discriminator and validate the debrief `scope`
 // against the canonical {@link scopeSchema} before rendering.
 import { briefingModeSchema, briefingSelectorSchema, scopeSchema } from '@3ngram/schema'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { GetPromptResult } from '@modelcontextprotocol/sdk/types.js'
+import type { GetPromptResult, McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
 /**
@@ -49,10 +48,9 @@ interface RegisterablePrompt {
 }
 
 /**
- * Define a code-defined prompt. `argsSchema` is a Zod RAW SHAPE (the SDK 1.x
- * `registerPrompt` contract: it wraps the shape in z.object internally and
- * validates the inbound, string-valued arguments against it — the same shape
- * convention as `registerTool`). `render` returns the bounded
+ * Define a code-defined prompt. The local raw shape is wrapped once into a full
+ * Zod object because SDK v2 registers Standard Schema objects directly.
+ * `render` returns the bounded
  * {@link GetPromptResult}: a single user message whose text orients the agent;
  * it receives the SDK-VALIDATED, re-parsed args and reads NOTHING else (no DB,
  * no env). The returned registrar binds the prompt onto an McpServer;
@@ -63,17 +61,12 @@ function definePrompt<Args extends z.ZodRawShape>(prompt: {
   config: { title: string; description: string; argsSchema: Args }
   render: (args: z.infer<z.ZodObject<Args>>) => GetPromptResult
 }): RegisterablePrompt {
-  // The SDK already validates inbound args against `argsSchema` before invoking
+  // The SDK already validates inbound args against `argsObject` before invoking
   // the callback; re-parsing through the same z.object is a zero-risk TYPE BRIDGE
   // that yields the exact `z.infer<z.ZodObject<Args>>` `render` declares (the
   // SDK's structurally-equal arg type does not generically unify with zod's).
   const argsObject = z.object(prompt.config.argsSchema)
-  // Widen the config's argsSchema to the non-generic ZodRawShape so registerPrompt
-  // infers a CONCRETE `Args` (mirrors how server.ts calls registerTool with the
-  // wide tool config): a callback taking `unknown` is then assignable to the
-  // resolved PromptCallback. A conditional PromptCallback over an UNRESOLVED
-  // generic `Args` blocks assignability, so we must register non-generically.
-  const config: { title: string; description: string; argsSchema: z.ZodRawShape } = prompt.config
+  const config = { ...prompt.config, argsSchema: argsObject }
   return {
     name: prompt.name,
     register: (server) =>

@@ -11,6 +11,10 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Re-assert NOBYPASSRLS on every provisioning run (defense in depth): the DO
+-- block above only sets it when the role is first created.
+ALTER ROLE app_user NOBYPASSRLS;
+
 -- Baseline: nothing.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM app_user;
 GRANT USAGE ON SCHEMA public TO app_user;

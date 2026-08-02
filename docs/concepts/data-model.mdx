@@ -25,7 +25,7 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 | `users` | Account, email, argon2id hash | No RLS (system table) |
 | `user_sessions` | Dashboard sessions | RLS |
 | `api_keys` | Hashed, prefix-indexed, revocable | RLS |
-| `oauth_clients` / `oauth_codes` / `oauth_tokens` | 3ngram's own OAuth 2.1 AS+RS: DCR clients (public AND confidential — `client_secret_hash` nullable column, since Claude requires `client_secret_post`), short-lived PKCE codes, rotating access/refresh state | Device flow cut; revocation surfaces in dashboard. `oauth_codes`/`oauth_tokens` are RLS tables |
+| `oauth_clients` / `oauth_codes` / `oauth_tokens` | 3ngram's own OAuth 2.1 AS+RS: authoritative DCR clients (public or confidential) plus materialized public CIMD clients, short-lived PKCE codes, rotating access/refresh state | `registration_method` distinguishes DCR from CIMD; fetched CIMD remains the authorization source. Device flow cut; `oauth_codes`/`oauth_tokens` are RLS tables |
 | `password_reset_tokens` | Single-use, time-boxed forgotten-password reset tokens (hashed) | RLS |
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
@@ -75,7 +75,7 @@ await withTenant(userId, async (tx) => {
 
 - `SET LOCAL` inside a transaction, per request — never bare `SET` (a pooled connection leaks session state otherwise).
 - Raw pool access outside `withTenant` fails lint (custom Biome/ESLint rule).
-- Defense-in-depth: queries still carry explicit `WHERE user_id = ...`; RLS catches the one you forget.
+- **Two-layer tenant isolation (defense in depth)**: every tenant-scoped query — reads included — carries an explicit `WHERE user_id = ...` predicate bound to the **same `userId` passed into `withTenant()`**, in addition to the RLS policy. The predicate matches exactly the rows RLS admits, so it changes nothing while RLS functions; it exists so isolation never rests on a single mechanism. Neither layer is optional: RLS catches a forgotten predicate, the predicate keeps queries caller-scoped independently of policy state.
 - Migrations/seeds: unpooled URL only.
 - Roles/GRANTs: one idempotent `scripts/provision-roles.sql`, never per-migration guards.
 

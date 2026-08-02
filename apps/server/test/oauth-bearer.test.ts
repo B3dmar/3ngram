@@ -14,7 +14,10 @@ const verifyAccessToken =
     (
       token: string,
       config: unknown,
-    ) => Promise<{ ok: boolean; token?: { userId: string; scope?: string } }>
+    ) => Promise<{
+      ok: boolean
+      token?: { userId: string; clientId: string; scope?: string; expiresAt: Date }
+    }>
   >()
 // parseScopes is the REAL implementation: the middleware parses the verified
 // token's `scope` claim through it, and the binding shape (empty set when the
@@ -86,12 +89,19 @@ async function run(req: Request, res: Response): Promise<ReturnType<typeof vi.fn
 afterEach(() => vi.clearAllMocks())
 
 const UID = '11111111-1111-1111-1111-111111111111'
+const CLIENT_ID = '22222222-2222-2222-2222-222222222222'
+const EXPIRES_AT = new Date('2030-01-01T00:00:00.000Z')
 
 describe('oauthBearerAuth middleware', () => {
   it('binds req.userId + parsed scopes and calls next for a valid token', async () => {
     verifyAccessToken.mockResolvedValue({
       ok: true,
-      token: { userId: UID, scope: 'memory:read memory:write' },
+      token: {
+        userId: UID,
+        clientId: CLIENT_ID,
+        scope: 'memory:read memory:write',
+        expiresAt: EXPIRES_AT,
+      },
     })
     const req = reqWith('Bearer good.jwt.token')
     const res = mockRes()
@@ -99,20 +109,35 @@ describe('oauthBearerAuth middleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
     expect(req.userId).toBe(UID)
     expect(req.oauthScopes).toEqual(['memory:read', 'memory:write'])
+    expect(req.auth).toMatchObject({
+      token: 'good.jwt.token',
+      clientId: CLIENT_ID,
+      scopes: ['memory:read', 'memory:write'],
+      expiresAt: Math.floor(EXPIRES_AT.getTime() / 1000),
+      extra: { userId: UID },
+    })
+    expect(req.auth?.resource?.href).toBe('https://rs.test/mcp')
     expect(res.statusCode).toBe(0)
   })
 
   it('FAILS CLOSED: a token with no scope claim binds an empty scope set', async () => {
-    verifyAccessToken.mockResolvedValue({ ok: true, token: { userId: UID } })
+    verifyAccessToken.mockResolvedValue({
+      ok: true,
+      token: { userId: UID, clientId: CLIENT_ID, expiresAt: EXPIRES_AT },
+    })
     const req = reqWith('Bearer good.jwt.token')
     const res = mockRes()
     const next = await run(req, res)
     expect(next).toHaveBeenCalledTimes(1)
     expect(req.oauthScopes).toEqual([])
+    expect(req.auth?.scopes).toEqual([])
   })
 
   it('accepts a lowercase bearer scheme (PR #95 case-insensitive)', async () => {
-    verifyAccessToken.mockResolvedValue({ ok: true, token: { userId: UID } })
+    verifyAccessToken.mockResolvedValue({
+      ok: true,
+      token: { userId: UID, clientId: CLIENT_ID, expiresAt: EXPIRES_AT },
+    })
     const req = reqWith('bearer good.jwt.token')
     const res = mockRes()
     const next = await run(req, res)

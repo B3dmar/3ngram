@@ -95,7 +95,8 @@ export function oauthBearerAuth(req: Request, res: Response, next: NextFunction)
     challenge(res)
     return
   }
-  verifyAccessToken(token, loadOAuthConfig())
+  const config = loadOAuthConfig()
+  verifyAccessToken(token, config)
     .then((result) => {
       if (!result.ok) {
         challenge(res, 'invalid_token')
@@ -107,7 +108,16 @@ export function oauthBearerAuth(req: Request, res: Response, next: NextFunction)
       // a token with no/empty scope claim yields an empty set, so a later
       // memory:write check fails. Scope VALUES are not content, but they are not
       // logged either (only the user-id hash enters the log context).
-      req.oauthScopes = [...parseScopes(result.token.scope)]
+      const scopes = [...parseScopes(result.token.scope)]
+      req.oauthScopes = scopes
+      req.auth = {
+        token,
+        clientId: result.token.clientId,
+        scopes,
+        expiresAt: Math.floor(result.token.expiresAt.getTime() / 1000),
+        resource: new URL(config.resource),
+        extra: { userId: result.token.userId },
+      }
       bindContext({ userIdHash: hashUserId(result.token.userId) })
       next()
     })

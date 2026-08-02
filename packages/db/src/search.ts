@@ -5,9 +5,13 @@
 // This module owns the SQL for retrieval LEGS only. Business policy (default
 // weights, query parsing, embedding acquisition, response shaping) belongs to
 // packages/core (1B slice 2) per the layering rule — keep this at the query
-// layer. Every query runs inside withTenant(): RLS scopes rows to the caller,
-// so no query here references user_id. Query TEXT is never logged here (it is a
-// REDACTED field); callers log lengths/hashes.
+// layer. TENANT ISOLATION IS TWO-LAYER (defense in depth): every query runs
+// inside withTenant(), where RLS scopes rows to the caller, AND every query
+// carries an explicit caller-bound `user_id = $userId` predicate bound to the
+// SAME userId the caller passed into withTenant(). When RLS is functioning the
+// predicate is a no-op (it matches exactly the rows RLS admits); it exists so
+// tenant isolation never rests on a single mechanism. Query TEXT is never
+// logged here (it is a REDACTED field); callers log lengths/hashes.
 //
 // Fusion strategy: WEIGHTED SUM, not RRF. Each leg already yields a bounded,
 // comparable score in [0, 1] (ts_rank is normalized below; recency decay is a
@@ -201,14 +205,19 @@ export const CANDIDATE_POOL_FLOOR = 50
  * Score is min-max normalized to [0, 1] over the result window so it composes
  * with the other legs. Only rows matching the query are returned.
  */
-export async function searchFts(tx: TenantTx, query: string, limit: number): Promise<SearchHit[]> {
+export async function searchFts(
+  tx: TenantTx,
+  userId: string,
+  query: string,
+  limit: number,
+): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
     WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS tsq),
     ranked AS (
       SELECT m.id, m.memory_type, m.topic, m.content,
              ts_rank(m.search_tsv, q.tsq) AS rank
       FROM memories m, q
-      WHERE m.status = 'active' AND m.search_tsv @@ q.tsq
+      WHERE m.user_id = ${userId}::uuid AND m.status = 'active' AND m.search_tsv @@ q.tsq
       ORDER BY rank DESC
       LIMIT ${limit}
     )
@@ -227,13 +236,17 @@ export async function searchFts(tx: TenantTx, query: string, limit: number): Pro
  * 0.5 ^ (age_days / half_life). Returns the most recent `limit` active rows.
  * Standalone it is rarely useful; it exists as a fusion input.
  */
-export async function searchRecency(tx: TenantTx, limit: number): Promise<SearchHit[]> {
+export async function searchRecency(
+  tx: TenantTx,
+  userId: string,
+  limit: number,
+): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
            power(0.5, EXTRACT(EPOCH FROM (now() - recorded_at)) / 86400.0
                       / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS score
     FROM memories
-    WHERE status = 'active'
+    WHERE user_id = ${userId}::uuid AND status = 'active'
     ORDER BY recorded_at DESC
     LIMIT ${limit}
   `)
@@ -259,6 +272,7 @@ export async function searchRecency(tx: TenantTx, limit: number): Promise<Search
  */
 export async function searchVector(
   tx: TenantTx,
+  userId: string,
   queryEmbedding: number[],
   limit: number,
 ): Promise<SearchHit[]> {
@@ -271,7 +285,7 @@ export async function searchVector(
     SELECT id, memory_type, topic, content,
            GREATEST(0, 1 - (embedding <=> ${vec}::vector)) AS score
     FROM memories
-    WHERE status = 'active' AND embedding IS NOT NULL
+    WHERE user_id = ${userId}::uuid AND status = 'active' AND embedding IS NOT NULL
     ORDER BY embedding <=> ${vec}::vector
     LIMIT ${limit}
   `)
@@ -385,11 +399,15 @@ export const KNN_EF_SEARCH = 200
  * (extends/derives) direction is not load-bearing, but this single recency rule
  * gives every pair a deterministic, meaningful orientation.
  *
- * Runs inside withTenant() so RLS already scopes both sides of the join to the
- * caller — no query references user_id.
+ * Runs inside withTenant() so RLS scopes both sides of the join to the caller,
+ * AND both aliases carry an explicit caller-bound `user_id = $userId` predicate
+ * (defense in depth, module header): a candidate pair — and therefore a
+ * consolidation proposal — can only ever be formed from two rows the caller
+ * owns, independent of the RLS layer.
  */
 export async function findSimilarPairs(
   tx: TenantTx,
+  userId: string,
   minSimilarity: number,
   limit: number,
 ): Promise<SimilarPair[]> {
@@ -442,12 +460,14 @@ export async function findSimilarPairs(
       CROSS JOIN LATERAL (
         SELECT b.id, b.memory_type, b.created_at, b.embedding
         FROM memories b
-        WHERE b.status = 'active' AND b.valid_to IS NULL AND b.embedding IS NOT NULL
+        WHERE b.user_id = ${userId}::uuid
+          AND b.status = 'active' AND b.valid_to IS NULL AND b.embedding IS NOT NULL
           AND b.id <> a.id
         ORDER BY b.embedding <=> a.embedding
         LIMIT ${candidateK}
       ) AS b
-      WHERE a.status = 'active' AND a.valid_to IS NULL AND a.embedding IS NOT NULL
+      WHERE a.user_id = ${userId}::uuid
+        AND a.status = 'active' AND a.valid_to IS NULL AND a.embedding IS NOT NULL
         AND (1 - (a.embedding <=> b.embedding)) >= ${minSimilarity}
       ORDER BY LEAST(a.id, b.id), GREATEST(a.id, b.id), (a.embedding <=> b.embedding)
     )
@@ -487,12 +507,16 @@ export async function findSimilarPairs(
  *     valid-time predicate selects the live row. An empty `asOf:{}` is NOT
  *     time-travel and does NOT lift the default (Codex P2, comment 3372942604).
  *
- * Returns `sql\`true\`` when nothing constrains the axis, so the no-filter path
- * composes to `status = 'active' AND true` — identical to the pre-slice form.
+ * The predicate ALWAYS leads with the caller-bound `user_id = $userId` tenant
+ * condition (defense in depth, module header): splicing it into the shared
+ * eligibility fragment binds EVERY leg, pool, and the candidates clause to the
+ * caller's rows without touching each splice site individually.
  */
-function rowEligibility(prefix: '' | 'm.', filters: SearchFilters): SQL {
+function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilters): SQL {
   const col = (name: string): SQL => sql.raw(`${prefix}${name}`)
-  const conditions: SQL[] = []
+  // Caller-bound tenant predicate first: matches exactly the rows RLS admits
+  // when RLS is functioning, and stays correct independently of it.
+  const conditions: SQL[] = [sql`${col('user_id')} = ${userId}::uuid`]
 
   // Status axis. With no time-travel, default to the live view (status='active');
   // an explicit status filter overrides it. The active-only default is lifted
@@ -530,7 +554,6 @@ function rowEligibility(prefix: '' | 'm.', filters: SearchFilters): SQL {
   if (filters.scope !== undefined) conditions.push(sql`${col('scope')} = ${filters.scope}`)
   if (filters.project !== undefined) conditions.push(sql`${col('project')} = ${filters.project}`)
 
-  if (conditions.length === 0) return sql`true`
   return sql.join(conditions, sql` AND `)
 }
 
@@ -576,6 +599,7 @@ function buildCursorPredicate(cursor?: { score: number; id: string }): SQL {
 
 export async function searchFused(
   tx: TenantTx,
+  userId: string,
   query: string,
   limit: number,
   weights: FusionWeights = DEFAULT_FUSION_WEIGHTS,
@@ -594,12 +618,14 @@ export async function searchFused(
   // The shared per-row eligibility predicate (status / asOf / dimensional
   // filters). Spliced into EVERY leg, pool, and the candidates clause so a
   // filtered read narrows the SAME candidate set the fusion ranks.
-  // With no filters it is `status = 'active' AND true` (pools) /
-  // `m.status = 'active' AND true` (candidates) — the unfiltered output is
-  // unchanged. The unaliased form serves the `FROM memories` pool subqueries;
-  // the `m.`-aliased form serves the `FROM memories m` candidates clause.
-  const poolEligibility = rowEligibility('', filters)
-  const candidateEligibility = rowEligibility('m.', filters)
+  // With no filters it is `user_id = $userId AND status = 'active'` (pools) /
+  // the `m.`-qualified twin (candidates) — the caller-bound tenant predicate
+  // rides every splice (defense in depth, module header) and the unfiltered
+  // output is unchanged while RLS functions. The unaliased form serves the
+  // `FROM memories` pool subqueries; the `m.`-aliased form serves the
+  // `FROM memories m` candidates clause.
+  const poolEligibility = rowEligibility('', userId, filters)
+  const candidateEligibility = rowEligibility('m.', userId, filters)
   // The vector leg runs only when enabled AND fed an embedding; otherwise it is
   // inert. Both the app guard and the composed SQL key on this SAME flag, so a
   // non-zero vector weight WITHOUT an embedding stays inert (pattern).
@@ -746,11 +772,12 @@ export async function searchFused(
  */
 export async function fetchHitsByIds(
   tx: TenantTx,
+  userId: string,
   ids: string[],
   filters: SearchFilters = {},
 ): Promise<SearchHit[]> {
   if (ids.length === 0) return []
-  const eligibility = rowEligibility('m.', filters)
+  const eligibility = rowEligibility('m.', userId, filters)
   const idList = sql.join(
     ids.map((id) => sql`${id}::uuid`),
     sql`, `,

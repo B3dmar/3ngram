@@ -132,7 +132,7 @@ describe('migration 0006 structure', () => {
 describe('FTS leg (searchFts)', () => {
   it('returns matching rows ranked by descending normalized score in [0,1]', async () => {
     const hits = await withTenant(uid, (tx) =>
-      searchFts(tx, 'session handoff release canary validation', 10),
+      searchFts(tx, uid, 'session handoff release canary validation', 10),
     )
     expect(hits.length).toBeGreaterThan(0)
     // both members of the g116/g115 supersession pair match this query
@@ -148,14 +148,14 @@ describe('FTS leg (searchFts)', () => {
   })
 
   it('returns nothing for a query with no lexical match', async () => {
-    const hits = await withTenant(uid, (tx) => searchFts(tx, 'zzzznonexistentlexeme qqwx', 10))
+    const hits = await withTenant(uid, (tx) => searchFts(tx, uid, 'zzzznonexistentlexeme qqwx', 10))
     expect(hits).toHaveLength(0)
   })
 })
 
 describe('recency leg (searchRecency)', () => {
   it('returns active rows in descending recency with decayed scores in (0,1]', async () => {
-    const hits = await withTenant(uid, (tx) => searchRecency(tx, 20))
+    const hits = await withTenant(uid, (tx) => searchRecency(tx, uid, 20))
     expect(hits.length).toBe(20)
     for (const h of hits) {
       expect(h.score).toBeGreaterThan(0)
@@ -172,7 +172,7 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     // predecessor below even zero-relevance recency candidates, so a small
     // limit would CUT it — which is exactly the filtering this test forbids.
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200),
+      searchFused(tx, uid, 'session handoff release canary validation', 200),
     )
     const ids = hits.map((h) => h.id)
     const succ = dbIdByGoldenId.get('g116') as string
@@ -191,10 +191,17 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     // successor — proving the demotion is the penalty, not an artifact of the
     // base FTS/recency scores.
     const noPenalty = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200, DEFAULT_FUSION_WEIGHTS, 0),
+      searchFused(
+        tx,
+        uid,
+        'session handoff release canary validation',
+        200,
+        DEFAULT_FUSION_WEIGHTS,
+        0,
+      ),
     )
     const withPenalty = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200),
+      searchFused(tx, uid, 'session handoff release canary validation', 200),
     )
     const pred = dbIdByGoldenId.get('g115') as string
     const rank = (hits: { id: string }[]) => hits.findIndex((h) => h.id === pred)
@@ -206,14 +213,14 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     // empty even at recency weight 1, and recent-but-non-matching rows could
     // never enter fusion. The recency pool now unions into the candidate set.
     const recencyOnly = await withTenant(uid, (tx) =>
-      searchFused(tx, 'zzzznonexistentlexeme qqwx', 10, { fts: 0, recency: 1, vector: 0 }),
+      searchFused(tx, uid, 'zzzznonexistentlexeme qqwx', 10, { fts: 0, recency: 1, vector: 0 }),
     )
     expect(recencyOnly.length).toBeGreaterThan(0)
     const scores = recencyOnly.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
     // default weights surface recency-ranked rows for a no-match query too
     const defaults = await withTenant(uid, (tx) =>
-      searchFused(tx, 'zzzznonexistentlexeme qqwx', 10),
+      searchFused(tx, uid, 'zzzznonexistentlexeme qqwx', 10),
     )
     expect(defaults.length).toBeGreaterThan(0)
   })
@@ -223,7 +230,7 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     // filler rows into the response (Codex P2 on): the fused result is
     // exactly the lexical matches, nothing more.
     const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200, {
+      searchFused(tx, uid, 'session handoff release canary validation', 200, {
         fts: 1,
         recency: 0,
         vector: 0,
@@ -231,7 +238,7 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     )
     expect(hits.length).toBeGreaterThan(0)
     const ftsHits = await withTenant(uid, (tx) =>
-      searchFts(tx, 'session handoff release canary validation', 200),
+      searchFts(tx, uid, 'session handoff release canary validation', 200),
     )
     expect(hits.length).toBe(ftsHits.length)
   })
@@ -248,11 +255,11 @@ describe('fusion (searchFused) — keyset cursor continuation (PR #358)', () => 
   const QUERY = 'session handoff release canary validation'
 
   it('continues strictly after the (score, id) cursor with no skips or repeats', async () => {
-    const all = await withTenant(uid, (tx) => searchFused(tx, QUERY, 200, FTS_ONLY))
+    const all = await withTenant(uid, (tx) => searchFused(tx, uid, QUERY, 200, FTS_ONLY))
     expect(all.length).toBeGreaterThanOrEqual(2)
     const PAGE = Math.max(1, Math.floor(all.length / 2))
 
-    const page1 = await withTenant(uid, (tx) => searchFused(tx, QUERY, PAGE, FTS_ONLY))
+    const page1 = await withTenant(uid, (tx) => searchFused(tx, uid, QUERY, PAGE, FTS_ONLY))
     expect(page1.length).toBe(PAGE)
     const last = page1[page1.length - 1]
     if (last === undefined) throw new Error('expected a full first page')
@@ -260,6 +267,7 @@ describe('fusion (searchFused) — keyset cursor continuation (PR #358)', () => 
     const page2 = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         QUERY,
         PAGE,
         FTS_ONLY,
@@ -295,7 +303,7 @@ describe('vector leg (searchVector)', () => {
     // vectors are not semantically clustered, so this is the only ranking
     // assertion a wiring fake can make — exact match dominates.)
     const target = embeddingByGoldenId.get('g001') as number[]
-    const hits = await withTenant(uid, (tx) => searchVector(tx, target, 10))
+    const hits = await withTenant(uid, (tx) => searchVector(tx, uid, target, 10))
     expect(hits.length).toBeGreaterThan(0)
     expect(hits[0]?.id).toBe(dbIdByGoldenId.get('g001'))
     expect(hits[0]?.score).toBeGreaterThan(0.999)
@@ -318,6 +326,7 @@ describe('fusion (searchFused) — vector leg', () => {
     const hits = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'zzzznonexistentlexeme qqwx',
         10,
         { fts: 0, recency: 0, vector: 1 },
@@ -338,11 +347,12 @@ describe('fusion (searchFused) — vector leg', () => {
     const baseWeights = { fts: 1, recency: 0.3, vector: 0 }
     const withVector = { fts: 1, recency: 0.3, vector: 1 }
     const baseline = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 50, baseWeights),
+      searchFused(tx, uid, 'session handoff release canary validation', 50, baseWeights),
     )
     const fused = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'session handoff release canary validation',
         50,
         withVector,
@@ -371,6 +381,7 @@ describe('fusion (searchFused) — vector leg', () => {
     const hits = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'session handoff release canary validation',
         200,
         { fts: 1, recency: 0.3, vector: 1 },
@@ -391,6 +402,7 @@ describe('fusion (searchFused) — vector leg', () => {
     const gated = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'session handoff release canary validation',
         200,
         { fts: 1, recency: 0, vector: 0 },
@@ -399,12 +411,12 @@ describe('fusion (searchFused) — vector leg', () => {
       ),
     )
     const ftsHits = await withTenant(uid, (tx) =>
-      searchFts(tx, 'session handoff release canary validation', 200),
+      searchFts(tx, uid, 'session handoff release canary validation', 200),
     )
     expect(gated.length).toBe(ftsHits.length)
     // and identical to the same call with NO embedding passed at all
     const gatedNoEmbedding = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200, {
+      searchFused(tx, uid, 'session handoff release canary validation', 200, {
         fts: 1,
         recency: 0,
         vector: 0,
@@ -422,14 +434,14 @@ describe('fusion (searchFused) — vector leg', () => {
     // the SAME `vectorActive` flag, so this call must succeed and equal the
     // no-vector result byte-for-byte.
     const noEmbedding = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200, {
+      searchFused(tx, uid, 'session handoff release canary validation', 200, {
         fts: 1,
         recency: 0.3,
         vector: 1,
       }),
     )
     const vectorOff = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 200, {
+      searchFused(tx, uid, 'session handoff release canary validation', 200, {
         fts: 1,
         recency: 0.3,
         vector: 0,
@@ -443,11 +455,14 @@ describe('fusion (searchFused) — vector leg', () => {
     // tenant's rows: withTenant() binds app.user_id, RLS does the rest.
     const otherUid = await seedUser('search-vector-other@test.local')
     try {
-      const hits = await withTenant(otherUid, (tx) => searchVector(tx, targetEmbedding(), 10))
+      const hits = await withTenant(otherUid, (tx) =>
+        searchVector(tx, otherUid, targetEmbedding(), 10),
+      )
       expect(hits).toHaveLength(0)
       const fused = await withTenant(otherUid, (tx) =>
         searchFused(
           tx,
+          otherUid,
           'session handoff release canary validation',
           50,
           { fts: 1, recency: 0.3, vector: 1 },
@@ -475,7 +490,7 @@ describe('fusion (searchFused) — vector leg', () => {
     try {
       // With topicMatch: 0.5, the seeded memory must rank first.
       const withBonus = await withTenant(uid, (tx) =>
-        searchFused(tx, 'Ana', 5, { fts: 0.2, recency: 0, vector: 0, topicMatch: 0.5 }),
+        searchFused(tx, uid, 'Ana', 5, { fts: 0.2, recency: 0, vector: 0, topicMatch: 0.5 }),
       )
       expect(withBonus[0]?.id).toBe(seedId)
 
@@ -484,7 +499,7 @@ describe('fusion (searchFused) — vector leg', () => {
       // is not a meaningful assertion. Instead verify the raw score delta: the
       // topicMatch leg must add weight to the fused score.
       const withoutBonus = await withTenant(uid, (tx) =>
-        searchFused(tx, 'Ana', 5, { fts: 0.2, recency: 0, vector: 0, topicMatch: 0 }),
+        searchFused(tx, uid, 'Ana', 5, { fts: 0.2, recency: 0, vector: 0, topicMatch: 0 }),
       )
       const hitWith = withBonus.find((h) => h.id === seedId)!
       const hitWithout = withoutBonus.find((h) => h.id === seedId)!
@@ -505,6 +520,7 @@ describe('fusion (searchFused) — vector leg', () => {
     const active = await withTenant(uid, (tx) =>
       searchFused(
         tx,
+        uid,
         'session handoff release canary validation',
         50,
         {
@@ -525,7 +541,7 @@ describe('fusion (searchFused) — vector leg', () => {
     }
     // inert path (vector weight 0): vectorScore is undefined, never 0
     const inert = await withTenant(uid, (tx) =>
-      searchFused(tx, 'session handoff release canary validation', 50, {
+      searchFused(tx, uid, 'session handoff release canary validation', 50, {
         fts: 1,
         recency: 0.3,
         vector: 0,

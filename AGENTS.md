@@ -25,6 +25,7 @@ pnpm + Turborepo monorepo (`pnpm-workspace.yaml`).
 ```bash
 pnpm install --frozen-lockfile   # never plain install in CI
 pnpm build                       # turbo run build
+pnpm lint                        # Biome only (biome ci .) — format + no-raw-db rule
 pnpm check                       # lint + typecheck (Biome + tsc)
 pnpm test                        # unit tests
 pnpm test:integration            # integration suites (require an ephemeral DB — see below)

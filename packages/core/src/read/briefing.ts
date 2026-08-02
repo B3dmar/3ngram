@@ -236,15 +236,15 @@ export async function briefing(userId: string, query: BriefingQuery): Promise<Br
   // slice even under READ COMMITTED, where a separate COUNT(*) could see a different
   // snapshot. Run in ONE withTenant transaction.
   const fetched = await withTenant(userId, async (tx) => ({
-    commitments: await openCommitments(tx, selector, fetchLimit),
+    commitments: await openCommitments(tx, userId, selector, fetchLimit),
     // Overdue is a DEDICATED bounded read with its OWN exact total, never a filter
     // over the capped general slice — a late commitment that sorts after the cap
     // must never be dropped.
-    overdue: await overdueCommitments(tx, selector, query.now, fetchLimit),
-    blockers: await activeBlockers(tx, selector, fetchLimit),
-    stale: await staleCandidates(tx, selector, staleBefore, fetchLimit),
-    decisions: await recentDecisions(tx, selector, fetchLimit),
-    preferences: await activePreferences(tx, selector, fetchLimit),
+    overdue: await overdueCommitments(tx, userId, selector, query.now, fetchLimit),
+    blockers: await activeBlockers(tx, userId, selector, fetchLimit),
+    stale: await staleCandidates(tx, userId, selector, staleBefore, fetchLimit),
+    decisions: await recentDecisions(tx, userId, selector, fetchLimit),
+    preferences: await activePreferences(tx, userId, selector, fetchLimit),
   }))
 
   const allCommitments = fetched.commitments.items.map((row) => toCommitment(row, query.now))

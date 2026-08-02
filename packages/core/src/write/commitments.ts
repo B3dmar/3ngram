@@ -164,7 +164,7 @@ export async function resolveByMemoryId(
   // Inspect the memory type (no live gate: getMemoryById returns superseded rows
   // too, but archiveBlockerMemory's UPDATE re-asserts liveness, so a superseded
   // or already-archived blocker still maps to the not-found contract below).
-  const memory = await withTenant(userId, (tx) => getMemoryById(tx, memoryId))
+  const memory = await withTenant(userId, (tx) => getMemoryById(tx, userId, memoryId))
   if (memory?.memoryType === 'blocker') {
     try {
       return await archiveBlockerMemory(userId, memoryId, actorKind)
