@@ -1,5 +1,12 @@
 # @3ngram/worker
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies [cea2989]
+  - @3ngram/core@0.6.1
+
 ## 1.1.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/db",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Drizzle schema, withTenant() access discipline, migrations. The ONLY package that touches Postgres.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",

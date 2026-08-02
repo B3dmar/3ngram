@@ -1,5 +1,13 @@
 # @3ngram/server
 
+## 1.1.1
+
+### Patch Changes
+
+- cea2989: Make the runtime RLS guard's expected role name configurable via the `RUNTIME_DB_ROLE` environment variable (defaulting to `app_user`). This lets a deployment whose runtime connects as a differently-named `NOBYPASSRLS` role pass the readiness check, instead of the role name being hardcoded.
+- Updated dependencies [cea2989]
+  - @3ngram/core@0.6.1
+
 ## 1.1.0
 
 ### Minor Changes
