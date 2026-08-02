@@ -4,7 +4,7 @@
 // block below.
 // --- account lifecycle: self-serve deletion ---
 
-export { ResourceLimitExceededError } from '@3ngram/db'
+export { assertRlsInForce, ResourceLimitExceededError, RlsGuardError } from '@3ngram/db'
 // --- budget: access gate port + Apache budget gate ---
 export type {
   ResourceLimitKind,
