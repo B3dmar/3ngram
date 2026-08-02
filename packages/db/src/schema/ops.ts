@@ -10,6 +10,7 @@ import {
   integer,
   jsonb,
   numeric,
+  pgPolicy,
   pgTable,
   real,
   text,
@@ -20,6 +21,18 @@ import { enumCheckSql, tenantPolicy } from './helpers.js'
 import { users } from './identity.js'
 
 const uuidv7 = () => sql`uuidv7()`
+
+/**
+ * audit_log tenant-isolation policy (defense in depth). audit_log is written
+ * by the runtime role WITHOUT tenant context (getAdminDb() in audit-log.ts),
+ * and system rows (pre-auth OAuth events) carry a NULL user_id — a standard
+ * tenantPolicy() would reject that entire insert path. This variant keeps the
+ * tenant-less system path open (no app.user_id bound => same trust boundary
+ * getAdminDb() already represents) while pinning any tenant-bound transaction
+ * (withTenant()) to its own rows, closing cross-tenant reads from
+ * tenant-scoped code paths. NULLIF guard per S3 finding 1 (helpers.ts).
+ */
+const auditTenantExpr = sql`NULLIF(current_setting('app.user_id', true), '') IS NULL OR user_id = NULLIF(current_setting('app.user_id', true), '')::uuid`
 
 export const llmUsage = pgTable(
   'llm_usage',
@@ -71,5 +84,10 @@ export const auditLog = pgTable(
   (t) => [
     index('audit_log_user_time_idx').on(t.userId, t.createdAt),
     check('audit_log_actor_check', enumCheckSql(t.actorKind, actorKindSchema.options)),
+    pgPolicy('tenant_isolation', {
+      for: 'all',
+      using: auditTenantExpr,
+      withCheck: auditTenantExpr,
+    }),
   ],
 )
