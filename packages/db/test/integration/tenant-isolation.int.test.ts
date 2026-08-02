@@ -168,8 +168,8 @@ async function seedTenantAAllForced(): Promise<void> {
           VALUES (${a}, ${id2}, ${id1}, 'extends', 'fact', 0.93)`,
     )
     await tx.execute(
-      sql`INSERT INTO memory_events (user_id, memory_id, event_kind)
-          VALUES (${a}, ${id1}, 'create')`,
+      sql`INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind)
+          VALUES (${a}, ${id1}, 'create', 'system')`,
     )
     await tx.execute(
       sql`INSERT INTO llm_usage (user_id, operation, model, input_tokens, output_tokens)
