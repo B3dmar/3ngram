@@ -57,12 +57,13 @@ async function resolveExtension(
  *     assertSigningKeysUsable validates KEY MATERIAL as RS256 (an
  *     unusable key kills the process before the first request). Dynamic import
  *     keeps core's graph behind initObservability, like the app graph below.
- *  5. assertRlsInForce() — ask the LIVE database whether tenant isolation is
- *     actually in force (runtime role is NOBYPASSRLS/non-superuser, FORCE RLS
- *     set on the tenant-data tables). A fundamentally misprovisioned DB dies at
- *     boot rather than flapping in readiness forever. Dynamic import keeps the
- *     pg graph behind the OTel load-order contract.
- *  6. Dynamic-import createApp (express graph) and listen; wire signal handlers.
+ *  5. Dynamic-import createApp (express graph) and listen; wire signal handlers.
+ *
+ * The fail-closed tenant-isolation check (runtime role is NOBYPASSRLS/
+ * non-superuser, FORCE RLS set on the tenant-data tables) runs in readiness
+ * (`GET /ready`), not here: boot must stay DB-free so liveness comes up without
+ * a database (the S5 capture hook and the container smoke both rely on that),
+ * while a misprovisioned DB is held OUT of rotation by /ready reporting 503.
  *
  * Reused verbatim by both entrypoints so hosted cloud gets the SAME fail-closed
  * env/key checks and OTel/request instrumentation as the Apache server.
@@ -75,14 +76,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Server>
     const { assertSigningKeysUsable } = await import('@3ngram/core/auth')
     await assertSigningKeysUsable(loadOAuthConfig().keys)
   }
-
-  // Fail-closed tenant-isolation check against the live DB. A misconfigured
-  // connection (wrong role, BYPASSRLS, missing FORCE) must never begin serving
-  // traffic — this hard-fails boot; readiness (/ready) re-runs the same guard
-  // for transient states. Dynamic import (pulls the pg graph) stays behind
-  // initObservability, like createApp below.
-  const { assertRlsInForce } = await import('@3ngram/core')
-  await assertRlsInForce()
 
   // Resolve the extension AFTER initObservability(): a factory pulls its
   // express/pg graph in here, behind the OTel load-order contract.
