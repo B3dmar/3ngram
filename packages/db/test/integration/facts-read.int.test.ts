@@ -82,7 +82,7 @@ afterAll(async () => {
 describe('get_facts — current-row default (valid_to IS NULL)', () => {
   it('returns only the LIVE generation for a (subject, predicate)', async () => {
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, { subject: 'employee:42', predicate: 'role' }),
+      getFacts(tx, uid, { subject: 'employee:42', predicate: 'role' }),
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.value).toBe('manager')
@@ -90,7 +90,7 @@ describe('get_facts — current-row default (valid_to IS NULL)', () => {
   })
 
   it('list mode (no filters) returns one live row per key, recency-ordered', async () => {
-    const rows = await withTenant(uid, (tx) => getFacts(tx))
+    const rows = await withTenant(uid, (tx) => getFacts(tx, uid))
     // two live keys: role->manager (recorded R2) and city->berlin (recorded RLATE)
     expect(rows.map((r) => r.value).sort()).toEqual(['berlin', 'manager'])
     // recency axis = recorded_at DESC: city (RLATE 2023) before role (R2 2022)
@@ -101,14 +101,14 @@ describe('get_facts — current-row default (valid_to IS NULL)', () => {
 
   it('empty result for an unknown key is an empty array, not a throw', async () => {
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, { subject: 'employee:42', predicate: 'nonexistent' }),
+      getFacts(tx, uid, { subject: 'employee:42', predicate: 'nonexistent' }),
     )
     expect(rows).toEqual([])
   })
 
   it('limit bounds the list-mode window to the N most-recent rows (no-firehose)', async () => {
     // Two live keys exist; limit 1 returns only the single most-recent row.
-    const rows = await withTenant(uid, (tx) => getFacts(tx, { limit: 1 }))
+    const rows = await withTenant(uid, (tx) => getFacts(tx, uid, { limit: 1 }))
     expect(rows).toHaveLength(1)
     expect(rows[0]?.value).toBe('berlin') // recency-ordered: most recent first
   })
@@ -118,7 +118,7 @@ describe('get_facts — as_of valid-time (validAt: what was TRUE at t)', () => {
   it('returns the historically-true generation at three points', async () => {
     const at = (iso: string) =>
       withTenant(uid, (tx) =>
-        getFacts(tx, {
+        getFacts(tx, uid, {
           subject: 'employee:42',
           predicate: 'role',
           asOf: { validAt: new Date(iso) },
@@ -141,7 +141,11 @@ describe('get_facts — as_of valid-time (validAt: what was TRUE at t)', () => {
   it('boundary is half-open: valid_to is exclusive (the successor wins at T)', async () => {
     // At exactly T1, v1's window [T0, T1) has ended and v2's [T1, T2) has begun.
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, { subject: 'employee:42', predicate: 'role', asOf: { validAt: new Date(T1) } }),
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        asOf: { validAt: new Date(T1) },
+      }),
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.value).toBe('lead')
@@ -149,7 +153,7 @@ describe('get_facts — as_of valid-time (validAt: what was TRUE at t)', () => {
 
   it('before the first generation existed, nothing was true (empty)', async () => {
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, {
+      getFacts(tx, uid, {
         subject: 'employee:42',
         predicate: 'role',
         asOf: { validAt: new Date('2010-01-01T00:00:00.000Z') },
@@ -163,7 +167,7 @@ describe('get_facts — as_of transaction-time (asKnownAt: what we KNEW at t)', 
   it('differs before vs after a late-recorded correction', async () => {
     const cityAt = (iso: string) =>
       withTenant(uid, (tx) =>
-        getFacts(tx, {
+        getFacts(tx, uid, {
           subject: 'employee:42',
           predicate: 'city',
           asOf: { asKnownAt: new Date(iso) },
@@ -186,7 +190,7 @@ describe('get_facts — as_of transaction-time (asKnownAt: what we KNEW at t)', 
     // with the current-row default: at R1 the live (valid_to IS NULL) row v3 is
     // not yet known, so the default (live) read returns nothing.
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, {
+      getFacts(tx, uid, {
         subject: 'employee:42',
         predicate: 'role',
         asOf: { asKnownAt: new Date(R1) },
@@ -202,7 +206,7 @@ describe('get_facts — combined axes (true-at-X as-known-at-Y)', () => {
     // At valid-time inside [T1, T2) the true role was "lead" (recorded R1). As
     // known at R1, lead IS recorded, so it surfaces.
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, {
+      getFacts(tx, uid, {
         subject: 'employee:42',
         predicate: 'role',
         asOf: { validAt: new Date('2021-06-01T00:00:00.000Z'), asKnownAt: new Date(R1) },
@@ -216,7 +220,7 @@ describe('get_facts — combined axes (true-at-X as-known-at-Y)', () => {
     // The currently-true role ("manager") was recorded at R2. Travelling to
     // knowledge-time R1 (< R2), that generation did not yet exist for us.
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, {
+      getFacts(tx, uid, {
         subject: 'employee:42',
         predicate: 'role',
         asOf: { validAt: new Date('2022-06-01T00:00:00.000Z'), asKnownAt: new Date(R1) },
@@ -227,7 +231,7 @@ describe('get_facts — combined axes (true-at-X as-known-at-Y)', () => {
 
   it('city true-at-2020 as-known-at-now: late record visible, past truth holds', async () => {
     const rows = await withTenant(uid, (tx) =>
-      getFacts(tx, {
+      getFacts(tx, uid, {
         subject: 'employee:42',
         predicate: 'city',
         asOf: {
@@ -260,7 +264,7 @@ describe('get_facts — tenant isolation (RLS on every path)', () => {
         },
       ]
       for (const q of liveQueries) {
-        const rows = await withTenant(otherUid, (tx) => getFacts(tx, q))
+        const rows = await withTenant(otherUid, (tx) => getFacts(tx, otherUid, q))
         expect(rows).toEqual([])
       }
     } finally {

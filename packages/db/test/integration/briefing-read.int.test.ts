@@ -97,7 +97,7 @@ describe('openCommitments (runtime role, real withTenant)', () => {
     await seedCommitment(userA, m2, { status: 'waiting' })
     await seedCommitment(userA, m3, { status: 'resolved' })
 
-    const page = await withTenant(userA, (tx) => openCommitments(tx, ALL, 25))
+    const page = await withTenant(userA, (tx) => openCommitments(tx, userA, ALL, 25))
     const ids = page.items.map((r) => r.memoryId)
     expect(ids).toContain(m1)
     expect(ids).toContain(m2)
@@ -111,7 +111,7 @@ describe('openCommitments (runtime role, real withTenant)', () => {
     await seedCommitment(userA, personal)
 
     const scoped = await withTenant(userA, (tx) =>
-      openCommitments(tx, { kind: 'scope', scope: 'work' }, 25),
+      openCommitments(tx, userA, { kind: 'scope', scope: 'work' }, 25),
     )
     expect(scoped.items.map((r) => r.memoryId)).toEqual([work])
 
@@ -121,7 +121,7 @@ describe('openCommitments (runtime role, real withTenant)', () => {
       await seedCommitment(userA, m)
     }
     const bounded = await withTenant(userA, (tx) =>
-      openCommitments(tx, { kind: 'scope', scope: 'work' }, 2),
+      openCommitments(tx, userA, { kind: 'scope', scope: 'work' }, 2),
     )
     expect(bounded.items).toHaveLength(2)
   })
@@ -129,7 +129,7 @@ describe('openCommitments (runtime role, real withTenant)', () => {
   it('RLS isolates: B does not see A commitments', async () => {
     const m = await seedMemory(userA, 'commitment')
     await seedCommitment(userA, m)
-    const page = await withTenant(userB, (tx) => openCommitments(tx, ALL, 25))
+    const page = await withTenant(userB, (tx) => openCommitments(tx, userB, ALL, 25))
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
   })
@@ -143,7 +143,7 @@ describe('openCommitments (runtime role, real withTenant)', () => {
     await seedCommitment(userA, live, { status: 'open' })
     await seedCommitment(userA, archived, { status: 'open' })
 
-    const page = await withTenant(userA, (tx) => openCommitments(tx, ALL, 25))
+    const page = await withTenant(userA, (tx) => openCommitments(tx, userA, ALL, 25))
     const ids = page.items.map((r) => r.memoryId)
     expect(ids).toContain(live)
     expect(ids).not.toContain(archived)
@@ -165,7 +165,7 @@ describe('overdueCommitments (runtime role)', () => {
     await seedCommitment(userA, future, { dueAt: FUTURE })
     await seedCommitment(userA, noDue, { dueAt: null })
 
-    const page = await withTenant(userA, (tx) => overdueCommitments(tx, ALL, NOW, 25))
+    const page = await withTenant(userA, (tx) => overdueCommitments(tx, userA, ALL, NOW, 25))
     // Only the two past-due; ordered by due_at ASC (most overdue leads).
     expect(page.items.map((r) => r.memoryId)).toEqual([earlier, later])
   })
@@ -176,7 +176,7 @@ describe('overdueCommitments (runtime role)', () => {
     await seedCommitment(userA, resolvedMem, { status: 'resolved', dueAt: PAST })
     await seedCommitment(userA, archivedMem, { status: 'open', dueAt: PAST })
 
-    const page = await withTenant(userA, (tx) => overdueCommitments(tx, ALL, NOW, 25))
+    const page = await withTenant(userA, (tx) => overdueCommitments(tx, userA, ALL, NOW, 25))
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
   })
@@ -209,13 +209,13 @@ describe('overdueCommitments (runtime role)', () => {
     })
 
     // The general slice, capped at CAP, must NOT contain the overdue commitment.
-    const general = await withTenant(userA, (tx) => openCommitments(tx, ALL, CAP))
+    const general = await withTenant(userA, (tx) => openCommitments(tx, userA, ALL, CAP))
     expect(general.items).toHaveLength(CAP)
     expect(general.items.map((r) => r.memoryId)).not.toContain(overdueMem)
 
     // The dedicated overdue query surfaces it regardless of the general cap, and
     // ships the exact total in the SAME statement.
-    const overdue = await withTenant(userA, (tx) => overdueCommitments(tx, ALL, NOW, CAP))
+    const overdue = await withTenant(userA, (tx) => overdueCommitments(tx, userA, ALL, NOW, CAP))
     expect(overdue.items.map((r) => r.memoryId)).toContain(overdueMem)
     expect(overdue.totalCount).toBe(1)
   })
@@ -230,7 +230,7 @@ describe('overdueCommitments (runtime role)', () => {
 
     const scoped = { kind: 'scope', scope: 'work' } as const
     // List capped at 2, but the window count in the SAME statement reports all 3.
-    const bounded = await withTenant(userA, (tx) => overdueCommitments(tx, scoped, NOW, 2))
+    const bounded = await withTenant(userA, (tx) => overdueCommitments(tx, userA, scoped, NOW, 2))
     expect(bounded.items).toHaveLength(2)
     expect(bounded.totalCount).toBe(3)
   })
@@ -238,7 +238,7 @@ describe('overdueCommitments (runtime role)', () => {
   it('RLS isolates: B does not see A overdue commitments', async () => {
     const m = await seedMemory(userA, 'commitment')
     await seedCommitment(userA, m, { dueAt: PAST })
-    const page = await withTenant(userB, (tx) => overdueCommitments(tx, ALL, NOW, 25))
+    const page = await withTenant(userB, (tx) => overdueCommitments(tx, userB, ALL, NOW, 25))
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
   })
@@ -249,15 +249,15 @@ describe('typed memory sections (runtime role)', () => {
     const blocker = await seedMemory(userA, 'blocker')
     await seedMemory(userA, 'decision')
     await seedMemory(userA, 'blocker', { status: 'archived' })
-    const page = await withTenant(userA, (tx) => activeBlockers(tx, ALL, 25))
+    const page = await withTenant(userA, (tx) => activeBlockers(tx, userA, ALL, 25))
     expect(page.items.map((r) => r.id)).toEqual([blocker])
   })
 
   it('recentDecisions and activePreferences filter by their type', async () => {
     const decision = await seedMemory(userA, 'decision')
     const preference = await seedMemory(userA, 'preference')
-    const decisions = await withTenant(userA, (tx) => recentDecisions(tx, ALL, 25))
-    const preferences = await withTenant(userA, (tx) => activePreferences(tx, ALL, 25))
+    const decisions = await withTenant(userA, (tx) => recentDecisions(tx, userA, ALL, 25))
+    const preferences = await withTenant(userA, (tx) => activePreferences(tx, userA, ALL, 25))
     expect(decisions.items.map((r) => r.id)).toEqual([decision])
     expect(preferences.items.map((r) => r.id)).toEqual([preference])
   })
@@ -274,7 +274,9 @@ describe('staleCandidates (runtime role)', () => {
     })
     await seedCommitment(userA, staleCommitment)
 
-    const page = await withTenant(userA, (tx) => staleCandidates(tx, ALL, new Date(cutoff), 25))
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, new Date(cutoff), 25),
+    )
     const ids = page.items.map((r) => r.id)
     expect(ids).toContain(stale)
     expect(ids).not.toContain(fresh)
@@ -284,7 +286,7 @@ describe('staleCandidates (runtime role)', () => {
   it('RLS isolates: B does not see A stale memories', async () => {
     await seedMemory(userA, 'note', { updatedAt: '2025-06-01T00:00:00.000Z' })
     const page = await withTenant(userB, (tx) =>
-      staleCandidates(tx, ALL, new Date('2026-01-01T00:00:00.000Z'), 25),
+      staleCandidates(tx, userB, ALL, new Date('2026-01-01T00:00:00.000Z'), 25),
     )
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
@@ -308,28 +310,28 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
         await seedCommitment(userA, m, { status: 'open' })
       }),
     )
-    const page = await withTenant(userA, (tx) => openCommitments(tx, ALL, CAP))
+    const page = await withTenant(userA, (tx) => openCommitments(tx, userA, ALL, CAP))
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })
 
   it('activeBlockers: totalCount is exact while items caps at the limit', async () => {
     await Promise.all(Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'blocker')))
-    const page = await withTenant(userA, (tx) => activeBlockers(tx, ALL, CAP))
+    const page = await withTenant(userA, (tx) => activeBlockers(tx, userA, ALL, CAP))
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })
 
   it('recentDecisions: totalCount is exact while items caps at the limit', async () => {
     await Promise.all(Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'decision')))
-    const page = await withTenant(userA, (tx) => recentDecisions(tx, ALL, CAP))
+    const page = await withTenant(userA, (tx) => recentDecisions(tx, userA, ALL, CAP))
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })
 
   it('activePreferences: totalCount is exact while items caps at the limit', async () => {
     await Promise.all(Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'preference')))
-    const page = await withTenant(userA, (tx) => activePreferences(tx, ALL, CAP))
+    const page = await withTenant(userA, (tx) => activePreferences(tx, userA, ALL, CAP))
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })
@@ -338,7 +340,7 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
     await Promise.all(
       Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'note', { updatedAt: STALE_AT })),
     )
-    const page = await withTenant(userA, (tx) => staleCandidates(tx, ALL, STALE_BEFORE, CAP))
+    const page = await withTenant(userA, (tx) => staleCandidates(tx, userA, ALL, STALE_BEFORE, CAP))
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })
@@ -354,13 +356,13 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
        VALUES ($1,'blocker','t','c',$2,'active', now())`,
       [userA, `briefing-superseded-${crypto.randomUUID()}`],
     )
-    const page = await withTenant(userA, (tx) => activeBlockers(tx, ALL, 25))
+    const page = await withTenant(userA, (tx) => activeBlockers(tx, userA, ALL, 25))
     expect(page.items).toHaveLength(1)
     expect(page.totalCount).toBe(1)
   })
 
   it('empty result yields totalCount 0 (no row to read the window from)', async () => {
-    const page = await withTenant(userA, (tx) => activeBlockers(tx, ALL, CAP))
+    const page = await withTenant(userA, (tx) => activeBlockers(tx, userA, ALL, CAP))
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
   })
@@ -369,8 +371,8 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
     const m = await seedMemory(userA, 'commitment')
     await seedCommitment(userA, m, { status: 'open' })
     await seedMemory(userA, 'blocker')
-    const commitB = await withTenant(userB, (tx) => openCommitments(tx, ALL, 25))
-    const blockB = await withTenant(userB, (tx) => activeBlockers(tx, ALL, 25))
+    const commitB = await withTenant(userB, (tx) => openCommitments(tx, userB, ALL, 25))
+    const blockB = await withTenant(userB, (tx) => activeBlockers(tx, userB, ALL, 25))
     expect(commitB.totalCount).toBe(0)
     expect(blockB.totalCount).toBe(0)
   })

@@ -6,8 +6,12 @@
 // overdue split, blockers, stale candidates, recent decisions, preferences).
 // Business policy (the selector discipline, brief vs full mode, defaults) belongs
 // to packages/core (read/briefing.ts) per the layering rule (hard rule 5) — keep
-// this at the query layer. Every query runs inside withTenant(): RLS scopes rows
-// to the caller (facts-read.ts precedent; no query here references user_id).
+// this at the query layer. TENANT ISOLATION IS TWO-LAYER (defense in depth):
+// every query runs inside withTenant(), where RLS scopes rows to the caller, AND
+// every predicate carries an explicit caller-bound `memories.user_id = userId`
+// condition (the same userId the caller passed into withTenant()). The predicate
+// is a no-op while RLS functions and keeps the read caller-only if it ever does
+// not — isolation never rests on a single mechanism.
 //
 // NO-FIREHOSE (docs/concepts/mcp-design.mdx, hard rule "output size discipline"): EVERY list is
 // BOUNDED by an explicit LIMIT the caller supplies — there is no unbounded path.
@@ -129,9 +133,15 @@ function memoryScopePredicate(selector: BriefingSelector): SQL | undefined {
  * status = 'active' (not archived). Without the status check an archived but
  * un-superseded commitment topic would still surface in briefing/handoff,
  * contradicting the liveness definition the module enforces.
+ *
+ * Leads with the caller-bound `memories.user_id = userId` tenant condition
+ * (module header): the join's `commitments.user_id = memories.user_id` is only
+ * a key-equality between the two tables, so the caller binding must be its own
+ * condition.
  */
-function openCommitmentPredicate(selector: BriefingSelector): SQL {
+function openCommitmentPredicate(userId: string, selector: BriefingSelector): SQL {
   const conditions: SQL[] = [
+    eq(memories.userId, userId),
     or(eq(commitments.status, 'open'), eq(commitments.status, 'waiting')) as SQL,
     isNull(memories.validTo),
     eq(memories.status, 'active'),
@@ -159,6 +169,7 @@ function openCommitmentPredicate(selector: BriefingSelector): SQL {
  */
 export async function openCommitments(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   limit: number,
 ): Promise<BriefingPage<BriefingCommitmentRow>> {
@@ -177,7 +188,7 @@ export async function openCommitments(
       memories,
       and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
     )
-    .where(openCommitmentPredicate(selector))
+    .where(openCommitmentPredicate(userId, selector))
     // Most-urgent first: a due/surfacing instant outranks an open-ended one.
     .orderBy(asc(commitments.nextSurfacingAt), asc(commitments.dueAt), asc(commitments.id))
     .limit(limit)
@@ -191,9 +202,12 @@ export async function openCommitments(
  * due_at is strictly in the past relative to the injected `now`.
  *
  * `now` is injected (no wall-clock read here) so the read is deterministic.
+ * Leads with the caller-bound `memories.user_id = userId` tenant condition
+ * (module header) — the join equality alone does not bind to the caller.
  */
-function overduePredicate(selector: BriefingSelector, now: Date): SQL {
+function overduePredicate(userId: string, selector: BriefingSelector, now: Date): SQL {
   const conditions: SQL[] = [
+    eq(memories.userId, userId),
     or(eq(commitments.status, 'open'), eq(commitments.status, 'waiting')) as SQL,
     isNull(memories.validTo),
     eq(memories.status, 'active'),
@@ -221,6 +235,7 @@ function overduePredicate(selector: BriefingSelector, now: Date): SQL {
  */
 export async function overdueCommitments(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   now: Date,
   limit: number,
@@ -240,7 +255,7 @@ export async function overdueCommitments(
       memories,
       and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
     )
-    .where(overduePredicate(selector, now))
+    .where(overduePredicate(userId, selector, now))
     // Most overdue first: the earliest past-due instant leads.
     .orderBy(asc(commitments.dueAt), asc(commitments.id))
     .limit(limit)
@@ -262,10 +277,16 @@ function stripMemoryCount(row: BriefingMemoryRow & { totalCount: number }): Brie
 /**
  * The LIVE-memory-by-type predicate for {@link liveMemoriesByType}: rows of
  * `memoryType` whose liveness holds — "Live/active" == valid_to IS NULL AND
- * status = 'active' — scope/project-narrowed.
+ * status = 'active' — scope/project-narrowed. Leads with the caller-bound
+ * `memories.user_id = userId` tenant condition (module header).
  */
-function liveMemoryByTypePredicate(selector: BriefingSelector, memoryType: string): SQL {
+function liveMemoryByTypePredicate(
+  userId: string,
+  selector: BriefingSelector,
+  memoryType: string,
+): SQL {
   const conditions: SQL[] = [
+    eq(memories.userId, userId),
     eq(memories.memoryType, memoryType),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
@@ -287,6 +308,7 @@ function liveMemoryByTypePredicate(selector: BriefingSelector, memoryType: strin
  */
 async function liveMemoriesByType(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   memoryType: string,
   limit: number,
@@ -304,7 +326,7 @@ async function liveMemoriesByType(
       totalCount: TOTAL_COUNT,
     })
     .from(memories)
-    .where(liveMemoryByTypePredicate(selector, memoryType))
+    .where(liveMemoryByTypePredicate(userId, selector, memoryType))
     .orderBy(desc(memories.recordedAt), asc(memories.id))
     .limit(limit)
   return { items: rows.map(stripMemoryCount), totalCount: totalFrom(rows) }
@@ -313,38 +335,47 @@ async function liveMemoriesByType(
 /** Active blockers (memory_type = 'blocker'), most-recent first, bounded + exact total. */
 export function activeBlockers(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   limit: number,
 ): Promise<BriefingPage<BriefingMemoryRow>> {
-  return liveMemoriesByType(tx, selector, 'blocker', limit)
+  return liveMemoriesByType(tx, userId, selector, 'blocker', limit)
 }
 
 /** Recent decisions (memory_type = 'decision'), recorded_at DESC, bounded + exact total. */
 export function recentDecisions(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   limit: number,
 ): Promise<BriefingPage<BriefingMemoryRow>> {
-  return liveMemoriesByType(tx, selector, 'decision', limit)
+  return liveMemoriesByType(tx, userId, selector, 'decision', limit)
 }
 
 /** Active preferences (memory_type = 'preference'), most-recent first, bounded + exact total. */
 export function activePreferences(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   limit: number,
 ): Promise<BriefingPage<BriefingMemoryRow>> {
-  return liveMemoriesByType(tx, selector, 'preference', limit)
+  return liveMemoriesByType(tx, userId, selector, 'preference', limit)
 }
 
 /**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
  * non-commitment memories untouched (updated_at) since `staleBefore`,
  * scope/project-narrowed. Commitment-type rows are excluded — they surface via
- * their own (open/waiting) list, not by staleness.
+ * their own (open/waiting) list, not by staleness. Leads with the caller-bound
+ * `memories.user_id = userId` tenant condition (module header).
  */
-function staleCandidatePredicate(selector: BriefingSelector, staleBefore: Date): SQL {
+function staleCandidatePredicate(
+  userId: string,
+  selector: BriefingSelector,
+  staleBefore: Date,
+): SQL {
   const conditions: SQL[] = [
+    eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
     lt(memories.updatedAt, staleBefore),
@@ -377,6 +408,7 @@ function staleCandidatePredicate(selector: BriefingSelector, staleBefore: Date):
  */
 export async function staleCandidates(
   tx: TenantTx,
+  userId: string,
   selector: BriefingSelector,
   staleBefore: Date,
   limit: number,
@@ -394,7 +426,7 @@ export async function staleCandidates(
       totalCount: TOTAL_COUNT,
     })
     .from(memories)
-    .where(staleCandidatePredicate(selector, staleBefore))
+    .where(staleCandidatePredicate(userId, selector, staleBefore))
     // Oldest-touched first: the most-stale memory leads.
     .orderBy(asc(memories.updatedAt), asc(memories.id))
     .limit(limit)

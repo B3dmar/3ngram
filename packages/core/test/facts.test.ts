@@ -31,7 +31,7 @@ describe('getFacts — delegation', () => {
     const rows = await getFacts('u1', query)
     expect(withTenant).toHaveBeenCalledWith('u1', expect.any(Function))
     // The query is forwarded with the no-firehose default limit injected.
-    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), { ...query, limit: 50 })
+    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), 'u1', { ...query, limit: 50 })
     expect(rows).toEqual([{ value: 'engineer' }])
   })
 
@@ -39,12 +39,12 @@ describe('getFacts — delegation', () => {
     getFactsDb.mockResolvedValue([])
     await getFacts('u1')
     // List mode (no filters) is bounded by the default limit, never unbounded.
-    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), { limit: 50 })
+    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), 'u1', { limit: 50 })
   })
 
   it('honours an explicit limit', async () => {
     getFactsDb.mockResolvedValue([])
     await getFacts('u1', { limit: 10 })
-    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), { limit: 10 })
+    expect(getFactsDb).toHaveBeenCalledWith(expect.anything(), 'u1', { limit: 10 })
   })
 })
