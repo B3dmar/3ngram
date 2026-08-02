@@ -1,5 +1,11 @@
 # @3ngram/config
 
+## 0.2.3
+
+### Patch Changes
+
+- 310e515: Make the production `DATABASE_URL` role-name check honor the `RUNTIME_DB_ROLE` environment variable (defaulting to `app_user`), matching the RLS readiness guard. A deployment whose runtime connects as a differently-named `NOBYPASSRLS` role now passes env validation instead of being rejected for not using `app_user`.
+
 ## 0.2.2
 
 ### Patch Changes
