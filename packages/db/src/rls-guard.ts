@@ -20,7 +20,11 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { getAdminDb } from './client.js'
 
-/** Default runtime role production traffic connects as (provision-roles.sql). */
+/**
+ * Default runtime role production traffic connects as (provision-roles.sql).
+ * Override with the `RUNTIME_DB_ROLE` env var when the deployment connects as a
+ * differently-named NOBYPASSRLS role (e.g. a re-provisioned runtime role).
+ */
 export const DEFAULT_RUNTIME_ROLE = 'app_user'
 
 export interface RlsGuardOptions {
@@ -104,7 +108,7 @@ type ForcedRow = {
  */
 export async function assertRlsInForce(options: RlsGuardOptions = {}): Promise<void> {
   const db = options.db ?? getAdminDb()
-  const expectedRole = options.expectedRole ?? DEFAULT_RUNTIME_ROLE
+  const expectedRole = options.expectedRole ?? process.env.RUNTIME_DB_ROLE ?? DEFAULT_RUNTIME_ROLE
   const forcedTables = options.forcedTables ?? readForcedTenantTables()
 
   const roleResult = await db.execute<RoleRow>(
