@@ -1,5 +1,12 @@
 # @3ngram/schema
 
+## 0.5.0
+
+### Minor Changes
+
+- d5080cd: Add validated, SSRF-safe OAuth Client ID Metadata Document resolution and bounded HTTP caching.
+- b88a6fa: Support Client ID Metadata Documents across OAuth discovery, authorization, token exchange, and grant management while retaining dynamic registration fallback.
+
 ## 0.4.1
 
 ### Patch Changes
