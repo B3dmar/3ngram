@@ -895,9 +895,28 @@ export const MAX_MEMORY_TYPES_FILTER = 8
  */
 export const searchFiltersV2Schema = z
   .object({
-    memoryTypes: z.array(memoryTypeSchema).min(1).max(MAX_MEMORY_TYPES_FILTER),
-    recordedAfter: z.iso.datetime(),
-    recordedBefore: z.iso.datetime(),
+    // The mutual exclusion with memoryType is RUNTIME-enforced by the
+    // searchQueryV2Schema superRefine below; a custom refinement is invisible
+    // in the JSON Schema tools/list advertises, so the constraint is ALSO
+    // stated in both fields' descriptions (memoryType's V2 override lives in
+    // searchQueryV2Schema) for schema-driven clients and generated docs.
+    memoryTypes: z
+      .array(memoryTypeSchema)
+      .min(1)
+      .max(MAX_MEMORY_TYPES_FILTER)
+      .describe(
+        'OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both.',
+      ),
+    recordedAfter: z.iso
+      .datetime()
+      .describe(
+        'Inclusive lower bound on recorded_at. Must not be later than recordedBefore when both are given.',
+      ),
+    recordedBefore: z.iso
+      .datetime()
+      .describe(
+        'Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given.',
+      ),
   })
   .partial()
   .strict()
@@ -912,10 +931,24 @@ export type SearchFiltersV2Input = z.infer<typeof searchFiltersV2Schema>
  *
  * MUTUAL EXCLUSION: `memoryTypes` is the PLURAL form of the V1 `memoryType`
  * axis. Supplying both is ambiguous (intersect? union?), so it is REJECTED at
- * the boundary rather than silently resolved — pass one or the other.
+ * the boundary rather than silently resolved — pass one or the other. The
+ * superRefine is the ENFORCEMENT; because a custom refinement does not survive
+ * into the emitted JSON Schema, the constraint is also ADVERTISED in both
+ * fields' descriptions (memoryTypes in searchFiltersV2Schema; memoryType via
+ * the V2-only override below — the shipped V1 schemas stay untouched).
+ *
+ * RANGE SANITY: an INVERTED recorded_at range (recordedAfter later than
+ * recordedBefore) can never match anything — a caller error, rejected loudly
+ * instead of silently returning an empty result. Equal bounds are a valid
+ * single-instant range (both bounds inclusive).
  */
 export const searchQueryV2Schema = searchQuerySchema
-  .extend(searchFiltersV2Schema.shape)
+  .extend({
+    ...searchFiltersV2Schema.shape,
+    memoryType: searchQuerySchema.shape.memoryType.describe(
+      'Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.',
+    ),
+  })
   .strict()
   .superRefine((v, ctx) => {
     if (v.memoryType !== undefined && v.memoryTypes !== undefined) {
@@ -923,6 +956,17 @@ export const searchQueryV2Schema = searchQuerySchema
         code: 'custom',
         path: ['memoryTypes'],
         message: 'memoryTypes is mutually exclusive with memoryType — pass one or the other',
+      })
+    }
+    if (
+      v.recordedAfter !== undefined &&
+      v.recordedBefore !== undefined &&
+      Date.parse(v.recordedAfter) > Date.parse(v.recordedBefore)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['recordedAfter'],
+        message: 'recordedAfter must not be later than recordedBefore — inverted range',
       })
     }
   })

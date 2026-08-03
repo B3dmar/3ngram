@@ -7,6 +7,7 @@
 // invariant — the MCP `search` tool surface (searchInputSchema) stays byte-
 // identical, i.e. it does NOT admit the filter keys (docs/concepts/architecture.mdx).
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   DEFAULT_DASHBOARD_SEARCH_LIMIT,
   dashboardSearchQuerySchema,
@@ -300,6 +301,40 @@ describe('searchFiltersV2Schema / searchQueryV2Schema — V2 axes (issue #48)', 
     expect(searchQueryV2Schema.safeParse({ query: 'q', memoryTypes: ['decision'] }).success).toBe(
       true,
     )
+  })
+
+  it('REJECTS an inverted recorded_at range (recordedAfter later than recordedBefore)', () => {
+    const inverted = searchQueryV2Schema.safeParse({
+      query: 'q',
+      recordedAfter: '2026-02-01T00:00:00Z',
+      recordedBefore: '2026-01-01T00:00:00Z',
+    })
+    expect(inverted.success).toBe(false)
+    // Equal bounds are a valid single-instant range (both bounds inclusive).
+    expect(
+      searchQueryV2Schema.safeParse({
+        query: 'q',
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+    // A well-ordered range still parses.
+    expect(
+      searchQueryV2Schema.safeParse({
+        query: 'q',
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-02-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('ADVERTISES the mutual exclusion in the emitted JSON Schema descriptions', () => {
+    // The superRefine is runtime-only — invisible in tools/list. The constraint
+    // must therefore ride the field descriptions the JSON Schema DOES carry.
+    const json = z.toJSONSchema(searchQueryV2Schema, { target: 'draft-2020-12', io: 'input' })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.memoryType?.description).toMatch(/mutually exclusive with memoryTypes/i)
+    expect(props.memoryTypes?.description).toMatch(/mutually exclusive with memoryType\b/i)
   })
 
   it('leaves the shipped V1 schemas untouched: searchQuerySchema rejects the V2 keys', () => {
