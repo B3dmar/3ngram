@@ -157,7 +157,7 @@ Append a new memory (decision, fact, preference, blocker, commitment, ...). Neve
 
 ## search
 
-Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content.
+Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.
 
 **Title:** Search · **Required scope:** `memory:read`
 
@@ -255,6 +255,20 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
       "description": "Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given."
+    },
+    "cursor": {
+      "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep query and filters identical across pages of one walk.",
+      "type": "string",
+      "minLength": 1
+    },
+    "projection": {
+      "default": "full",
+      "description": "Per-hit output shape: full (default) includes the content excerpt; compact omits content/contentLength/truncated for cheap broad scans — batch-fetch interesting ids with get_memories.",
+      "type": "string",
+      "enum": [
+        "full",
+        "compact"
+      ]
     }
   },
   "required": [
@@ -274,56 +288,94 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
       "maxItems": 25,
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "memoryType": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 600
+              },
+              "contentLength": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "memoryType",
+              "topic",
+              "content",
+              "contentLength",
+              "truncated",
+              "score"
+            ],
+            "additionalProperties": false
           },
-          "memoryType": {
-            "type": "string"
-          },
-          "topic": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string",
-            "maxLength": 600
-          },
-          "contentLength": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "truncated": {
-            "type": "boolean"
-          },
-          "score": {
-            "type": "number"
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "memoryType": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "memoryType",
+              "topic",
+              "score"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "id",
-          "memoryType",
-          "topic",
-          "content",
-          "contentLength",
-          "truncated",
-          "score"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     "count": {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "hasMore": {
+      "type": "boolean"
+    },
+    "nextCursor": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "required": [
     "hits",
-    "count"
+    "count",
+    "hasMore"
   ],
   "additionalProperties": false
 }
