@@ -1,5 +1,11 @@
 # @3ngram/server
 
+## 1.1.3
+
+### Patch Changes
+
+- @3ngram/core@0.6.3
+
 ## 1.1.2
 
 ### Patch Changes
