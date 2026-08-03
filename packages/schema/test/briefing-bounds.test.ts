@@ -182,6 +182,28 @@ describe('briefingToolOutputV2Schema — sections gain hasMore, subsets omit key
     expect(briefingToolOutputV2Schema.safeParse(under).success).toBe(false)
   })
 
+  it('bounds section items at MAX_BRIEFING_SECTION_CEILING', () => {
+    const atCeiling = fullEnvelope()
+    atCeiling.recentDecisions = sectionOf(
+      Array.from({ length: MAX_BRIEFING_SECTION_CEILING }, () => memoryItem()),
+    )
+    expect(briefingToolOutputV2Schema.safeParse(atCeiling).success).toBe(true)
+    const pastCeiling = fullEnvelope()
+    pastCeiling.recentDecisions = sectionOf(
+      Array.from({ length: MAX_BRIEFING_SECTION_CEILING + 1 }, () => memoryItem()),
+    )
+    expect(briefingToolOutputV2Schema.safeParse(pastCeiling).success).toBe(false)
+  })
+
+  it('rejects an envelope with zero sections — an empty briefing is a producer bug', () => {
+    const empty = {
+      selector,
+      mode: 'brief',
+      generatedAt: new Date().toISOString(),
+    }
+    expect(briefingToolOutputV2Schema.safeParse(empty).success).toBe(false)
+  })
+
   it('stays strict on the envelope and each section', () => {
     expect(briefingToolOutputV2Schema.safeParse({ ...fullEnvelope(), extra: 1 }).success).toBe(
       false,
@@ -250,6 +272,19 @@ describe('handoffToolOutputV2Schema — counts + per-section truncated flags', (
     under.counts.commitments = 0
     under.truncated.commitments = false
     expect(handoffToolOutputV2Schema.safeParse(under).success).toBe(false)
+  })
+
+  it('bounds each inherited list at MAX_HANDOFF_SECTION_CEILING (V2 only)', () => {
+    const atCeiling = envelope()
+    atCeiling.decisions = Array.from({ length: MAX_HANDOFF_SECTION_CEILING }, () => handoffMemory())
+    atCeiling.counts.decisions = MAX_HANDOFF_SECTION_CEILING
+    expect(handoffToolOutputV2Schema.safeParse(atCeiling).success).toBe(true)
+    const pastCeiling = envelope()
+    pastCeiling.decisions = Array.from({ length: MAX_HANDOFF_SECTION_CEILING + 1 }, () =>
+      handoffMemory(),
+    )
+    pastCeiling.counts.decisions = MAX_HANDOFF_SECTION_CEILING + 1
+    expect(handoffToolOutputV2Schema.safeParse(pastCeiling).success).toBe(false)
   })
 
   it('requires counts and truncated on the V2 envelope and stays strict', () => {
