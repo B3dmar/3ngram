@@ -236,6 +236,23 @@ describe('briefing — sectionLimit (bounds V2, issue #45)', () => {
     await briefing('u1', { selector: { kind: 'all' }, sectionLimit: 0, now: NOW })
     expect(openCommitments.mock.calls[0]?.[3]).toBe(1)
   })
+
+  // sectionLimit is typed only as `number`, so valid TypeScript can hand core a
+  // fractional or non-finite value the transport schema would have rejected —
+  // it must be normalized before it reaches a SQL LIMIT clause.
+  it.each([
+    { sectionLimit: 2.5, forwarded: 2 }, // truncated toward zero
+    { sectionLimit: Number.NaN, forwarded: MAX_BRIEFING_SECTION }, // non-finite → mode default
+    { sectionLimit: Number.POSITIVE_INFINITY, forwarded: MAX_BRIEFING_SECTION },
+    { sectionLimit: -5, forwarded: 1 }, // truncated, then clamped up
+  ])('normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded (full mode)', async ({
+    sectionLimit,
+    forwarded,
+  }) => {
+    resetAll()
+    await briefing('u1', { selector: { kind: 'all' }, mode: 'full', sectionLimit, now: NOW })
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(forwarded)
+  })
 })
 
 describe('briefing — sections subset (bounds V2, issue #45)', () => {

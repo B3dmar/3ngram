@@ -20,8 +20,10 @@ import { fileURLToPath } from 'node:url'
 import {
   accountDeleteBodySchema,
   asOfSchema,
+  BRIEFING_SECTION_NAMES,
   briefingModeSchema,
   briefingSelectorSchema,
+  briefingToolInputV2Schema,
   briefingToolOutputV2Schema,
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
@@ -81,6 +83,16 @@ for (const option of briefingSelectorSchema.options) {
   }
 }
 briefingQueryShape.mode = briefingModeSchema.optional()
+// Bounds V2 (issue #45): `sections` rides the querystring comma-separated
+// (router.ts splits before the single V2 parse — a querystring has no natural
+// array); `sectionLimit` reuses the EXACT V2 input field (hard rule 2).
+briefingQueryShape.sections = z
+  .string()
+  .describe(
+    `Comma-separated subset of sections to compute (unique names from: ${BRIEFING_SECTION_NAMES.join(', ')}). Absent = all sections; un-requested sections are skipped and omitted from the result.`,
+  )
+  .optional()
+briefingQueryShape.sectionLimit = briefingToolInputV2Schema.shape.sectionLimit
 
 /** Proposal decision echo ({id,status}) — composed from schema exports. */
 const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }).strict()

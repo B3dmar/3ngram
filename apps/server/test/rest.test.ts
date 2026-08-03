@@ -776,6 +776,74 @@ describe('GET /api/v1/briefing', () => {
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'invalid_input' })
   })
+
+  // --- bounds V2 (issue #45): sections + sectionLimit through the querystring ---
+
+  it('plumbs comma-separated sections and sectionLimit through to core', async () => {
+    briefing.mockResolvedValue(BRIEFING)
+    const res = await call(
+      '/api/v1/briefing?kind=all&sections=commitments,overdue&sectionLimit=50',
+      {
+        key: VALID_KEY,
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(briefing).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({
+        selector: { kind: 'all' },
+        sections: ['commitments', 'overdue'],
+        sectionLimit: 50,
+      }),
+    )
+  })
+
+  it('accepts repeated sections params (qs array form)', async () => {
+    briefing.mockResolvedValue(BRIEFING)
+    const res = await call('/api/v1/briefing?kind=all&sections=blockers&sections=preferences', {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    expect(briefing).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ sections: ['blockers', 'preferences'] }),
+    )
+  })
+
+  it('400s an unknown or duplicated section name (single V2 schema boundary)', async () => {
+    for (const qs of ['sections=bogus', 'sections=overdue,overdue']) {
+      const res = await call(`/api/v1/briefing?kind=all&${qs}`, { key: VALID_KEY })
+      expect(res.status).toBe(400)
+      expect(briefing).not.toHaveBeenCalled()
+    }
+  })
+
+  it('400s an out-of-range, fractional, or non-numeric sectionLimit', async () => {
+    for (const qs of [
+      'sectionLimit=0',
+      'sectionLimit=101',
+      'sectionLimit=2.5',
+      'sectionLimit=abc',
+    ]) {
+      const res = await call(`/api/v1/briefing?kind=all&${qs}`, { key: VALID_KEY })
+      expect(res.status).toBe(400)
+      expect(briefing).not.toHaveBeenCalled()
+    }
+  })
+
+  it('legacy params stay byte-stable: no V2 knobs reach core and the payload is verbatim', async () => {
+    briefing.mockResolvedValue(BRIEFING)
+    const res = await call('/api/v1/briefing?kind=all&mode=brief', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    // EXACT argument match (not objectContaining): a legacy query must produce
+    // exactly the V1 core call — no sections/sectionLimit keys ride along.
+    expect(briefing).toHaveBeenCalledWith(TENANT, {
+      selector: { kind: 'all' },
+      mode: 'brief',
+      now: expect.any(Date),
+    })
+    expect(JSON.stringify(await res.json())).toBe(JSON.stringify(BRIEFING))
+  })
 })
 
 describe('POST /api/v1/memories/:id/revise', () => {

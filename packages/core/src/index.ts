@@ -10,6 +10,10 @@ export type {
   ResourceLimitKind,
   ResourceLimits,
 } from '@3ngram/schema'
+// The hard briefing sectionLimit ceiling (bounds V2) — re-exported so core
+// consumers see the ACTUAL max next to the full-mode default
+// MAX_BRIEFING_SECTION below.
+export { MAX_BRIEFING_SECTION_CEILING } from '@3ngram/schema'
 export {
   type AccountDeletionResult,
   type AccountErasureResult,
