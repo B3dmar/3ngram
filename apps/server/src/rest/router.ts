@@ -263,7 +263,8 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // GET /api/v1/memories — bounded LIVE-memory list for the dashboard.
-  // Query params (limit/offset/type/scope/project/status) arrive as
+  // Query params (limit/offset/type/scope/project/status, plus the V2 filters
+  // memoryTypes/recordedAfter/recordedBefore — issue #48) arrive as
   // strings over a GET; the numeric ones are coerced BEFORE the single parse
   // against memoriesListQuerySchema. Core listMemories runs the
   // page + its unpaged total in one withTenant tx; the route shapes the
@@ -280,6 +281,11 @@ export function restRouter(options: RestRouterOptions): Router {
           scope: req.query.scope,
           project: req.query.project,
           status: req.query.status,
+          // Filters V2 (issue #48): memoryTypes repeats like project (string
+          // once, string[] repeated); the range bounds arrive as ISO strings.
+          memoryTypes: req.query.memoryTypes,
+          recordedAfter: req.query.recordedAfter,
+          recordedBefore: req.query.recordedBefore,
         }),
       )
       // ACCESS GUARD: read access is asserted BEFORE the db op runs (self-host
@@ -294,9 +300,16 @@ export function restRouter(options: RestRouterOptions): Router {
         offset: query.offset,
         ...defined({
           memoryType: query.type,
+          memoryTypes: query.memoryTypes,
           scope: query.scope,
           project: query.project,
           status: query.status,
+          // ISO -> Date at the transport boundary (the same coercion the MCP
+          // search tool applies to its recorded_at range bounds).
+          recordedAfter:
+            query.recordedAfter === undefined ? undefined : new Date(query.recordedAfter),
+          recordedBefore:
+            query.recordedBefore === undefined ? undefined : new Date(query.recordedBefore),
         }),
       })
       res.status(200).json({

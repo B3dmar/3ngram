@@ -17,7 +17,7 @@
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
-import { searchFiltersSchema } from './mcp.js'
+import { MAX_MEMORY_TYPES_FILTER, searchFiltersSchema } from './mcp.js'
 import {
   actorKindSchema,
   edgeTypeSchema,
@@ -119,8 +119,32 @@ export const memoriesListQuerySchema = z
     // Express gives string when param appears once, string[] when repeated (?project=a&project=b).
     project: z.union([projectSchema, z.array(projectSchema)]).optional(),
     status: memoryStatusSchema.optional(),
+    // Filters V2 (issue #48) — REST parity with the MCP search V2 axes.
+    // memoryTypes: an OR-set over memory_type. Repeated-param handling mirrors
+    // `project` above (string once, string[] when repeated); bounded by
+    // MAX_MEMORY_TYPES_FILTER when repeated. Mutually exclusive with the scalar
+    // `type` axis — enforced by the superRefine below, same rule as the MCP
+    // searchQueryV2Schema boundary.
+    memoryTypes: z
+      .union([memoryTypeSchema, z.array(memoryTypeSchema).min(1).max(MAX_MEMORY_TYPES_FILTER)])
+      .optional(),
+    // recordedAfter/recordedBefore: an INCLUSIVE recorded_at range. The list is
+    // ALWAYS live-gated (valid_to IS NULL), so the range narrows within the live
+    // view — consistent with search filters V2: a recorded_at range is never
+    // time travel and never widens what a read surfaces.
+    recordedAfter: z.iso.datetime().optional(),
+    recordedBefore: z.iso.datetime().optional(),
   })
   .strict()
+  .superRefine((v, ctx) => {
+    if (v.type !== undefined && v.memoryTypes !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['memoryTypes'],
+        message: 'memoryTypes is mutually exclusive with type — pass one or the other',
+      })
+    }
+  })
 export type MemoriesListQuery = z.infer<typeof memoriesListQuerySchema>
 
 /**
