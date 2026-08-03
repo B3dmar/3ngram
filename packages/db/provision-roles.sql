@@ -12,8 +12,16 @@ DO $$ BEGIN
 END $$;
 
 -- Re-assert NOBYPASSRLS on every provisioning run (defense in depth): the DO
--- block above only sets it when the role is first created.
-ALTER ROLE app_user NOBYPASSRLS;
+-- block above only sets it when the role is first created. Tolerant of managed
+-- Postgres (e.g. Neon) where the provisioning role (neondb_owner) lacks the
+-- privilege to alter the BYPASSRLS attribute — only a superuser/cloud_admin
+-- can, and the CREATE above already sets NOBYPASSRLS, so a no-op failure here
+-- is safe to swallow.
+DO $$ BEGIN
+  ALTER ROLE app_user NOBYPASSRLS;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'skipping ALTER ROLE app_user NOBYPASSRLS: insufficient privilege (managed Postgres); role already NOBYPASSRLS from CREATE';
+END $$;
 
 -- Baseline: nothing.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM app_user;

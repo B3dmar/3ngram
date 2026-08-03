@@ -2,11 +2,26 @@
 // Mandatory suite 4 (docs/concepts/testing.mdx): the migrated database matches the schema
 // the code believes in — structure drift detector (owner connection).
 import { afterAll, describe, expect, it } from 'vitest'
+import { runMigrations } from '../../src/migrate.js'
 import { closePools, ownerPool } from './helpers.js'
 
 afterAll(closePools)
 
 describe('migration round-trip structure', () => {
+  it('runMigrations() completes: drizzle migrate + provision-roles via simple protocol (DO-block safe)', async () => {
+    // Regression for the migrator bug: provision-roles.sql was executed via
+    // db.execute(sql.raw(...)) (extended protocol), which rejects its `DO $$…$$`
+    // block and multi-statement body. runMigrations() now runs it over the pg
+    // simple protocol. This asserts the whole path completes (idempotent re-run)
+    // and that provision-roles grants landed for the runtime role.
+    await expect(runMigrations()).resolves.toBeUndefined()
+    const role = process.env.RUNTIME_DB_ROLE ?? 'app_user'
+    const r = await ownerPool.query(`SELECT has_schema_privilege($1, 'public', 'USAGE') AS ok`, [
+      role,
+    ])
+    expect(r.rows[0].ok).toBe(true)
+  })
+
   it('all 24 tables exist', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables

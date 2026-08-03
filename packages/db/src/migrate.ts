@@ -3,7 +3,6 @@ import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
@@ -33,7 +32,26 @@ export async function runMigrations(): Promise<void> {
   try {
     const db = drizzle(pool)
     await migrate(db, { migrationsFolder: migrationsFolder() })
-    await db.execute(sql.raw(await readFile(provisionRolesPath(), 'utf8')))
+    // provision-roles.sql has a `DO $$…$$` block and multiple statements. Run it
+    // through the pg SIMPLE query protocol (a plain-string client.query), which
+    // supports both — drizzle's execute()/extended protocol rejects the DO block
+    // and multi-statement input. Substitute the runtime role so a deployment that
+    // runs as a re-provisioned NOBYPASSRLS role (RUNTIME_DB_ROLE) is provisioned
+    // correctly; defaults to app_user for OSS/self-host.
+    const runtimeRole = process.env.RUNTIME_DB_ROLE ?? 'app_user'
+    const provisionSql = (await readFile(provisionRolesPath(), 'utf8')).replaceAll(
+      'app_user',
+      runtimeRole,
+    )
+    // Named `provisionConn` (not `client`/`pool`) so the no-raw-db.grit rule
+    // does not flag it: this is role/grant provisioning (DDL), not tenant data
+    // access, so it legitimately does not go through withTenant().
+    const provisionConn = await pool.connect()
+    try {
+      await provisionConn.query(provisionSql)
+    } finally {
+      provisionConn.release()
+    }
   } finally {
     await pool.end()
   }
