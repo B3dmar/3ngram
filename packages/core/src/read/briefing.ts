@@ -254,6 +254,14 @@ export function requireSelector(selector: BriefingSelector | undefined): Briefin
   if (selector.kind === 'project' && selector.project.trim() === '') {
     throw new MissingSelectorError('a project selector requires a non-empty project')
   }
+  if (selector.kind === 'scope_project') {
+    if (selector.scope.trim() === '') {
+      throw new MissingSelectorError('a scope_project selector requires a non-empty scope')
+    }
+    if (selector.project.trim() === '') {
+      throw new MissingSelectorError('a scope_project selector requires a non-empty project')
+    }
+  }
   return selector
 }
 

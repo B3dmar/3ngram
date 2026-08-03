@@ -46,6 +46,7 @@ export {
 // --- briefing/handoff bounds V2 (sectionLimit + sections, issue #45) ---
 export type {
   BriefingSectionName,
+  BriefingSelectorV2Input,
   BriefingToolArgsV2,
   BriefingToolInputV2,
   BriefingToolOutputV2,
@@ -54,10 +55,12 @@ export type {
   HandoffToolInputV2,
   HandoffToolOutputV2,
   HandoffTruncatedOutput,
+  ScopeProjectSelectorInput,
 } from './briefing-bounds.js'
 export {
   BRIEFING_SECTION_NAMES,
   briefingSectionNameSchema,
+  briefingSelectorV2Schema,
   briefingToolInputV2Schema,
   briefingToolOutputV2Schema,
   HANDOFF_SECTION_NAMES,
@@ -67,6 +70,7 @@ export {
   handoffTruncatedSchema,
   MAX_BRIEFING_SECTION_CEILING,
   MAX_HANDOFF_SECTION_CEILING,
+  scopeProjectSelectorSchema,
 } from './briefing-bounds.js'
 export type { BudgetStatusResponse, PlanTier } from './budget.js'
 export { budgetStatusResponseSchema, PLAN_TIERS, planTierSchema } from './budget.js'

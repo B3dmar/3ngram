@@ -56,11 +56,19 @@ import { commitments, memories } from './schema/memory.js'
  *      by each list's LIMIT; "all" widens the row space, not the row count).
  *   - `{ kind: 'scope', scope }`     — one scope.
  *   - `{ kind: 'project', project }` — one project.
+ *   - `{ kind: 'scope_project', scope, project, includeUnscoped }` — the
+ *      scope AND project INTERSECTION (issue #46). `includeUnscoped: true`
+ *      additionally admits the scope's NULL-project rows (a memory written
+ *      without a project is otherwise invisible through the project lens —
+ *      internal tracker item 244); false is the strict intersection. REQUIRED
+ *      (not optional) so a direct caller states the choice explicitly — the
+ *      transport schema defaults it to false.
  */
 export type BriefingSelector =
   | { kind: 'all' }
   | { kind: 'scope'; scope: string }
   | { kind: 'project'; project: string }
+  | { kind: 'scope_project'; scope: string; project: string; includeUnscoped: boolean }
 
 /** A commitment row for the briefing (ids/status/timestamps only — no content). */
 export interface BriefingCommitmentRow {
@@ -119,10 +127,26 @@ function totalFrom(rows: ReadonlyArray<{ totalCount: number }>): number {
 /**
  * Build the scope/project narrowing predicate for the `memories` table from a
  * {@link BriefingSelector}. Returns `undefined` for `kind: 'all'` (no narrowing).
+ *
+ * THE single predicate function: all six briefing sections AND handoff inherit
+ * it, so a selector kind behaves identically on every orientation read.
+ * `scope_project` (issue #46) compiles to
+ * `scope = $s AND (project = $p OR ($includeUnscoped AND project IS NULL))` —
+ * with `includeUnscoped: false` the OR branch is omitted entirely (strict
+ * intersection, no dead clause in the plan).
+ *
+ * EXPORTED for the unit-level SQL matrix (briefing-read.test.ts, the
+ * facts-read predicate-testing precedent); production callers stay in-module.
  */
-function memoryScopePredicate(selector: BriefingSelector): SQL | undefined {
+export function memoryScopePredicate(selector: BriefingSelector): SQL | undefined {
   if (selector.kind === 'scope') return eq(memories.scope, selector.scope)
   if (selector.kind === 'project') return eq(memories.project, selector.project)
+  if (selector.kind === 'scope_project') {
+    const projectMatch = selector.includeUnscoped
+      ? (or(eq(memories.project, selector.project), isNull(memories.project)) as SQL)
+      : eq(memories.project, selector.project)
+    return and(eq(memories.scope, selector.scope), projectMatch) as SQL
+  }
   return undefined
 }
 
