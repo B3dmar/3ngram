@@ -189,6 +189,26 @@
               ],
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "sections",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated subset of sections to compute (unique names from: commitments, overdue, blockers, staleCandidates, recentDecisions, preferences). Absent = all sections; un-requested sections are skipped and omitted from the result.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sectionLimit",
+            "required": false,
+            "schema": {
+              "description": "Per-section item bound (1..100). Absent = the mode default (3 brief / 25 full).",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -274,6 +294,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
@@ -347,6 +368,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
@@ -432,6 +454,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
@@ -518,6 +541,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
@@ -604,6 +628,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
@@ -746,6 +771,7 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },

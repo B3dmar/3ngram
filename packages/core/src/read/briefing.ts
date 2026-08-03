@@ -117,8 +117,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 export const DEFAULT_BRIEFING_TOP = 3
 
 /**
- * `full` mode per-section ceiling — the MAX a single section ever returns. Even
- * `full` is bounded (no-firehose); a caller wanting more pages via search/get_facts.
+ * `full`-mode DEFAULT section bound — the per-section item count a `full`
+ * briefing returns when the caller does not tune `sectionLimit`. NOT the max
+ * (bounds V2, issue #45): the hard server-side ceiling is
+ * {@link MAX_BRIEFING_SECTION_CEILING} (re-exported from `@3ngram/schema`);
+ * a caller may tune up to it, never past it.
  */
 export const MAX_BRIEFING_SECTION = 25
 
@@ -226,11 +229,18 @@ export function requireSelector(selector: BriefingSelector | undefined): Briefin
  * `sectionLimit` when present, else the mode default (brief top slice / full
  * bounded list) — clamped into [1, {@link MAX_BRIEFING_SECTION_CEILING}] so the
  * server-side no-firehose ceiling ALWAYS wins. The transport schema already
- * rejects an out-of-range value; the clamp keeps the invariant for direct core
- * callers (the inline-stand-in pattern, module header).
+ * rejects an out-of-range or fractional value; core NORMALIZES for direct
+ * callers (the inline-stand-in pattern, module header): `sectionLimit` is typed
+ * only as `number`, so a fractional value is truncated toward zero and a
+ * non-finite one (NaN/±Infinity) falls back to the mode default BEFORE the
+ * clamp — a raw fractional/NaN limit must never reach the SQL LIMIT clause.
  */
 function effectiveSectionLimit(mode: BriefingMode, sectionLimit: number | undefined): number {
-  const requested = sectionLimit ?? (mode === 'brief' ? DEFAULT_BRIEFING_TOP : MAX_BRIEFING_SECTION)
+  const fallback = mode === 'brief' ? DEFAULT_BRIEFING_TOP : MAX_BRIEFING_SECTION
+  const requested =
+    sectionLimit !== undefined && Number.isFinite(sectionLimit)
+      ? Math.trunc(sectionLimit)
+      : fallback
   return Math.min(Math.max(requested, 1), MAX_BRIEFING_SECTION_CEILING)
 }
 
