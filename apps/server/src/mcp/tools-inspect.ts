@@ -13,7 +13,8 @@
 // OUTPUT DISCIPLINE (docs/concepts/mcp-design.mdx): content is bounded
 // PER ITEM at the caller-requested `maxContentChars` (default 10,000, ceiling
 // 65,536 — import rows reach 262,144 chars and must never ride back verbatim),
-// and the batch is bounded at MAX_GET_MEMORIES_IDS. A missing or cross-tenant
+// the batch is bounded at MAX_GET_MEMORIES_IDS, and the AGGREGATE at
+// MAX_GET_TOTAL_CHARS (ids × maxContentChars ≤ one worst-case import row). A missing or cross-tenant
 // id lands in `notFound` — DATA, never an error: one bad id must not fail the
 // batch, and the collapse of not-found/not-owned (RLS + caller-bound
 // predicate, resolved in core/db) means the result never leaks whether a
@@ -30,6 +31,7 @@ import {
   getMemoriesOutputSchema,
   MAX_GET_CONTENT_CHARS,
   MAX_GET_MEMORIES_IDS,
+  MAX_GET_TOTAL_CHARS,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -57,7 +59,7 @@ const getMemoriesTool: ToolDefinition = {
   requiredScope: MEMORY_READ_SCOPE,
   config: {
     title: 'Get Memories',
-    description: `Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to ${MAX_GET_MEMORIES_IDS} ids plus an optional maxContentChars per-item bound (default ${DEFAULT_GET_CONTENT_CHARS}, max ${MAX_GET_CONTENT_CHARS}); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.`,
+    description: `Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to ${MAX_GET_MEMORIES_IDS} ids plus an optional maxContentChars per-item bound (default ${DEFAULT_GET_CONTENT_CHARS}, max ${MAX_GET_CONTENT_CHARS}; ids × maxContentChars may not exceed ${MAX_GET_TOTAL_CHARS} per call); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.`,
     inputSchema: getMemoriesInputSchema,
     outputSchema: getMemoriesOutputSchema,
   },

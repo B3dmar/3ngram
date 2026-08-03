@@ -64,7 +64,7 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [16882, 136872, 34736],
+      mcp: [16896, 136984, 34763],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },

@@ -1664,7 +1664,7 @@ Export structured context (decisions, open commitments, preferences — with con
 
 ## get_memories
 
-Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to 20 ids plus an optional maxContentChars per-item bound (default 10000, max 65536); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.
+Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to 20 ids plus an optional maxContentChars per-item bound (default 10000, max 65536; ids × maxContentChars may not exceed 262144 per call); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.
 
 **Title:** Get Memories · **Required scope:** `memory:read`
 
@@ -1687,7 +1687,7 @@ Fetch the full content of memories by id — use this after search or handoff re
     "maxContentChars": {
       "default": 10000,
       "type": "integer",
-      "minimum": 200,
+      "minimum": 600,
       "maximum": 65536
     }
   },
