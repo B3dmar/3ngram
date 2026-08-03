@@ -11,8 +11,10 @@ import {
   getMemoriesInputSchema,
   getMemoriesItemSchema,
   getMemoriesOutputSchema,
+  MAX_EXCERPT_LENGTH,
   MAX_GET_CONTENT_CHARS,
   MAX_GET_MEMORIES_IDS,
+  MAX_GET_TOTAL_CHARS,
   MIN_GET_CONTENT_CHARS,
 } from '../src/index.js'
 
@@ -55,6 +57,40 @@ describe('getMemoriesInputSchema — bounded batch input', () => {
     ).toBe(true)
   })
 
+  it('floors maxContentChars at the excerpt cap — expansion never returns less', () => {
+    expect(MIN_GET_CONTENT_CHARS).toBe(MAX_EXCERPT_LENGTH)
+    const ids = [uuid()]
+    expect(
+      getMemoriesInputSchema.safeParse({ ids, maxContentChars: MAX_EXCERPT_LENGTH }).success,
+    ).toBe(true)
+    expect(
+      getMemoriesInputSchema.safeParse({ ids, maxContentChars: MAX_EXCERPT_LENGTH - 1 }).success,
+    ).toBe(false)
+  })
+
+  it('bounds the aggregate response: ids.length × maxContentChars ≤ MAX_GET_TOTAL_CHARS', () => {
+    // At the per-item ceiling the batch narrows to exactly the aggregate budget.
+    const idsAtBudget = Math.floor(MAX_GET_TOTAL_CHARS / MAX_GET_CONTENT_CHARS)
+    const accept = Array.from({ length: idsAtBudget }, uuid)
+    expect(
+      getMemoriesInputSchema.safeParse({ ids: accept, maxContentChars: MAX_GET_CONTENT_CHARS })
+        .success,
+    ).toBe(true)
+    const reject = Array.from({ length: idsAtBudget + 1 }, uuid)
+    expect(
+      getMemoriesInputSchema.safeParse({ ids: reject, maxContentChars: MAX_GET_CONTENT_CHARS })
+        .success,
+    ).toBe(false)
+  })
+
+  it('keeps a full batch at the default budget within the aggregate cap', () => {
+    expect(MAX_GET_MEMORIES_IDS * DEFAULT_GET_CONTENT_CHARS).toBeLessThanOrEqual(
+      MAX_GET_TOTAL_CHARS,
+    )
+    const ids = Array.from({ length: MAX_GET_MEMORIES_IDS }, uuid)
+    expect(getMemoriesInputSchema.safeParse({ ids }).success).toBe(true)
+  })
+
   it('is strict: an unknown key is rejected, never silently dropped', () => {
     expect(getMemoriesInputSchema.safeParse({ ids: [uuid()], scope: 'work' }).success).toBe(false)
   })
@@ -95,6 +131,18 @@ describe('getMemoriesOutputSchema — envelope with notFound as data', () => {
     ).toBe(false)
     expect(
       getMemoriesItemSchema.safeParse(item({ content: 'x'.repeat(MAX_GET_CONTENT_CHARS) })).success,
+    ).toBe(true)
+  })
+
+  it('rejects a count that does not equal memories.length', () => {
+    expect(
+      getMemoriesOutputSchema.safeParse({ memories: [item()], count: 2, notFound: [] }).success,
+    ).toBe(false)
+    expect(
+      getMemoriesOutputSchema.safeParse({ memories: [], count: 1, notFound: [] }).success,
+    ).toBe(false)
+    expect(
+      getMemoriesOutputSchema.safeParse({ memories: [item()], count: 1, notFound: [] }).success,
     ).toBe(true)
   })
 

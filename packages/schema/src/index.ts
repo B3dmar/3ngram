@@ -61,6 +61,23 @@ export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
 export type { CursorPayload } from './cursor.js'
 export { cursorPayloadSchema, legacyCursorPayloadSchema } from './cursor.js'
+// --- get_memories batched bounded-content read (MCP tool IO) ---
+export type {
+  GetMemoriesArgs,
+  GetMemoriesInput,
+  GetMemoriesItemOutput,
+  GetMemoriesOutput,
+} from './get-memories.js'
+export {
+  DEFAULT_GET_CONTENT_CHARS,
+  getMemoriesInputSchema,
+  getMemoriesItemSchema,
+  getMemoriesOutputSchema,
+  MAX_GET_CONTENT_CHARS,
+  MAX_GET_MEMORIES_IDS,
+  MAX_GET_TOTAL_CHARS,
+  MIN_GET_CONTENT_CHARS,
+} from './get-memories.js'
 // --- import write contracts (groundwork for batch importers) ---
 export type {
   ImportCommitmentInput,
@@ -83,7 +100,7 @@ export {
   MAX_IMPORT_CONTENT_LENGTH,
   MAX_IMPORT_PAYLOAD_LENGTH,
 } from './import.js'
-// --- MCP tool IO (briefing/handoff orientation + get_memories batched read) ---
+// --- MCP tool IO (briefing/handoff orientation) — appended ---
 export type {
   AsOfInput,
   BriefingCommitmentOutput,
@@ -101,10 +118,6 @@ export type {
   FactsQueryArgs,
   FactsQueryInput,
   FactsToolOutput,
-  GetMemoriesArgs,
-  GetMemoriesInput,
-  GetMemoriesItemOutput,
-  GetMemoriesOutput,
   HandoffCommitmentOutput,
   HandoffMemoryOutput,
   HandoffToolInput,
@@ -143,7 +156,6 @@ export {
   configureScopeOutputSchema,
   configureScopeRegisterOutputShape,
   configureScopeRegisterShape,
-  DEFAULT_GET_CONTENT_CHARS,
   DEFAULT_PROPOSALS_LIMIT,
   DEFAULT_SEARCH_LIMIT,
   describeEnvironmentInputSchema,
@@ -153,20 +165,14 @@ export {
   factSchema,
   factsQueryInputSchema,
   factsToolOutputSchema,
-  getMemoriesInputSchema,
-  getMemoriesItemSchema,
-  getMemoriesOutputSchema,
   handoffCommitmentSchema,
   handoffMemorySchema,
   handoffToolInputSchema,
   handoffToolOutputSchema,
   MAX_EXCERPT_LENGTH,
-  MAX_GET_CONTENT_CHARS,
-  MAX_GET_MEMORIES_IDS,
   MAX_PROPOSALS_LIMIT,
   MAX_SCOPE_ALIASES,
   MAX_SEARCH_LIMIT,
-  MIN_GET_CONTENT_CHARS,
   proposalRecordSchema,
   rememberToolInputSchema,
   rememberToolOutputSchema,
