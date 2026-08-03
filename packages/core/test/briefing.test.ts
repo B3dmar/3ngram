@@ -10,7 +10,8 @@
 // window in ONE statement, so the count is snapshot-consistent with the slice
 // (READ COMMITTED would let a separate COUNT(*) see a different snapshot). These
 // mocks model that single-return shape; the count is no longer a second call.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import type { BriefingCommitment, BriefingSection } from '../src/read/briefing.js'
 
 const openCommitments = vi.fn()
 const overdueCommitments = vi.fn()
@@ -35,6 +36,7 @@ vi.mock('@3ngram/db', () => ({
 const {
   briefing,
   DEFAULT_BRIEFING_TOP,
+  EmptySectionsError,
   MissingSelectorError,
   requireSelector,
   STALE_CANDIDATE_TYPES,
@@ -290,6 +292,44 @@ describe('briefing — sections subset (bounds V2, issue #45)', () => {
     ]) {
       expect(fn).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('rejects an empty sections array with a typed error (never a metadata-only briefing)', async () => {
+    resetAll()
+    // The transport schema .min(1)s this away; a direct core caller gets the
+    // SAME decision as a typed error, mirroring the V2 output contract that
+    // forbids a zero-section envelope.
+    await expect(
+      briefing('u1', { selector: { kind: 'all' }, sections: [], now: NOW }),
+    ).rejects.toBeInstanceOf(EmptySectionsError)
+    expect(withTenant).not.toHaveBeenCalled()
+  })
+
+  it('type-level: no sections → FullBriefing (required sections); a subset → partial', async () => {
+    resetAll()
+    // COMPILE check (overloads, round-2 P1): a legacy call without `sections`
+    // returns FullBriefing — every section accessed WITHOUT optional chaining.
+    // Enforced by `tsc --noEmit -p tsconfig.test.json`-style spot checks; vitest
+    // transpiles without typechecking, so the runtime asserts keep it honest.
+    const full = await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+    expect(full.commitments.count).toBe(0)
+    expect(full.overdue.items).toEqual([])
+    expect(full.blockers.hasMore).toBe(false)
+    expect(full.staleCandidates.count).toBe(0)
+    expect(full.recentDecisions.items).toEqual([])
+    expect(full.preferences.hasMore).toBe(false)
+    resetAll()
+    const subset = await briefing('u1', {
+      selector: { kind: 'all' },
+      sections: ['overdue'],
+      now: NOW,
+    })
+    // A subset result is the partial Briefing: sections may be absent.
+    expectTypeOf(subset.commitments).toEqualTypeOf<
+      BriefingSection<BriefingCommitment> | undefined
+    >()
+    expect(subset.overdue?.count).toBe(0)
+    expect(subset.commitments).toBeUndefined()
   })
 })
 

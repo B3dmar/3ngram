@@ -11,6 +11,8 @@ export {
   type BriefingSelector,
   briefing,
   DEFAULT_BRIEFING_TOP,
+  EmptySectionsError,
+  type FullBriefing,
   MAX_BRIEFING_SECTION,
   MissingSelectorError,
   requireSelector,

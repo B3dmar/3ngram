@@ -209,6 +209,39 @@ export interface Briefing {
 }
 
 /**
+ * A briefing computed WITHOUT section selection: all six sections PRESENT —
+ * the shipped V1 result shape. {@link briefing}'s overloads return THIS type
+ * for a query carrying no `sections`, so a strict legacy consumer
+ * (`result.commitments.items`) keeps compiling unchanged; only an actual
+ * subset call yields the partial {@link Briefing}.
+ */
+export interface FullBriefing extends Briefing {
+  commitments: BriefingSection<BriefingCommitment>
+  overdue: BriefingSection<BriefingCommitment>
+  blockers: BriefingSection<BriefingMemoryItem>
+  staleCandidates: BriefingSection<BriefingMemoryItem>
+  recentDecisions: BriefingSection<BriefingMemoryItem>
+  preferences: BriefingSection<BriefingMemoryItem>
+}
+
+/**
+ * Thrown when a direct core caller passes an EMPTY `sections` array. The
+ * transport boundary already rejects it (`.min(1)` on the V2 input) and the V2
+ * output contract forbids a zero-section briefing — core mirrors the same
+ * decision for the published API (the inline-stand-in pattern, module header)
+ * instead of silently returning a metadata-only envelope. Omit `sections`
+ * entirely to compute all six.
+ */
+export class EmptySectionsError extends Error {
+  constructor(
+    message = 'sections must name at least one briefing section — omit it to compute all sections',
+  ) {
+    super(message)
+    this.name = 'EmptySectionsError'
+  }
+}
+
+/**
  * Validate the selector invariant and return the typed selector, or throw
  * {@link MissingSelectorError}. Shared by briefing() and handoff() so the
  * no-firehose rule has ONE enforcement point.
@@ -350,10 +383,27 @@ function toSections(fetched: FetchedSections, top: number, now: Date): Partial<B
  * Runs every requested section in ONE withTenant transaction so the snapshot is
  * consistent; RLS scopes every read to the tenant on every path.
  *
+ * OVERLOADS (published-API stability): a query with NO `sections` is
+ * runtime-guaranteed all six sections, so it returns {@link FullBriefing}
+ * (required sections — the shipped V1 result type); a query that MAY carry a
+ * subset returns the partial {@link Briefing}. Legacy strict-TS consumers
+ * keep compiling without optional chaining.
+ *
  * @throws {@link MissingSelectorError} no selector / empty scope|project value.
+ * @throws {@link EmptySectionsError} `sections: []` — a zero-section briefing
+ *   is a caller error (the transport `.min(1)` decision, mirrored for direct
+ *   core callers), never a metadata-only envelope.
  */
+export async function briefing(
+  userId: string,
+  query: BriefingQuery & { sections?: undefined },
+): Promise<FullBriefing>
+export async function briefing(userId: string, query: BriefingQuery): Promise<Briefing>
 export async function briefing(userId: string, query: BriefingQuery): Promise<Briefing> {
   const selector = requireSelector(query.selector)
+  if (query.sections !== undefined && query.sections.length === 0) {
+    throw new EmptySectionsError()
+  }
   const mode: BriefingMode = query.mode ?? 'brief'
   const top = effectiveSectionLimit(mode, query.sectionLimit)
   // FETCH exactly what is returned: the EXACT total rides `count(*) OVER()` in
