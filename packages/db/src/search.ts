@@ -505,6 +505,45 @@ export async function findSimilarPairs(
 }
 
 /**
+ * V2 OR-set predicate (issue #48): `memory_type = ANY(ARRAY[...])` over
+ * individually-bound text params (the fetchHitsByIds idList pattern — drizzle's
+ * sql template expands a raw JS-array param into a parenthesized list, which a
+ * single `::text[]` cast cannot consume). The schema boundary guarantees a
+ * non-empty list and its mutual exclusion with the scalar memoryType axis
+ * (rowEligibility handles that one). Helper of {@link rowEligibility} ONLY —
+ * every predicate still splices through that single point.
+ */
+function memoryTypesPredicate(col: (name: string) => SQL, memoryTypes: readonly string[]): SQL {
+  const typeList = sql.join(
+    memoryTypes.map((t) => sql`${t}`),
+    sql`, `,
+  )
+  return sql`${col('memory_type')} = ANY(ARRAY[${typeList}]::text[])`
+}
+
+/**
+ * V2 transaction-time RANGE predicates (issue #48): inclusive bounds on
+ * recorded_at, bound as timestamptz like the asOf coordinates. DELIBERATELY a
+ * dimensional filter, NOT time-travel: a recorded_at range narrows the live
+ * view and must never lift the active-only default (only an asOf coordinate
+ * does — see hasTimeTravel in {@link rowEligibility}, this helper's ONLY
+ * caller).
+ */
+function recordedRangePredicates(
+  col: (name: string) => SQL,
+  filters: Pick<SearchFilters, 'recordedAfter' | 'recordedBefore'>,
+): SQL[] {
+  const conditions: SQL[] = []
+  if (filters.recordedAfter !== undefined) {
+    conditions.push(sql`${col('recorded_at')} >= ${filters.recordedAfter}::timestamptz`)
+  }
+  if (filters.recordedBefore !== undefined) {
+    conditions.push(sql`${col('recorded_at')} <= ${filters.recordedBefore}::timestamptz`)
+  }
+  return conditions
+}
+
+/**
  * Build the per-row ELIGIBILITY predicate every leg/pool and the candidates CTE
  * share. It REPLACES the bare `status = 'active'` literal:
  * the SAME composed fragment is spliced into the FTS leg, the recency pool, the
@@ -570,32 +609,12 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
   if (filters.memoryType !== undefined) {
     conditions.push(sql`${col('memory_type')} = ${filters.memoryType}`)
   }
-  // V2 OR-set (issue #48): matched with = ANY over an ARRAY[...] of
-  // individually-bound text params (the fetchHitsByIds idList pattern —
-  // drizzle's sql template expands a raw JS-array param into a parenthesized
-  // list, which a single `::text[]` cast cannot consume). The schema boundary
-  // guarantees a non-empty list and its mutual exclusion with the scalar
-  // memoryType axis above.
   if (filters.memoryTypes !== undefined) {
-    const typeList = sql.join(
-      filters.memoryTypes.map((t) => sql`${t}`),
-      sql`, `,
-    )
-    conditions.push(sql`${col('memory_type')} = ANY(ARRAY[${typeList}]::text[])`)
+    conditions.push(memoryTypesPredicate(col, filters.memoryTypes))
   }
   if (filters.scope !== undefined) conditions.push(sql`${col('scope')} = ${filters.scope}`)
   if (filters.project !== undefined) conditions.push(sql`${col('project')} = ${filters.project}`)
-  // V2 transaction-time RANGE (issue #48): inclusive bounds on recorded_at,
-  // bound as timestamptz like the asOf coordinates. DELIBERATELY placed with
-  // the dimensional filters, NOT the time-travel block: a recorded_at range
-  // narrows the live view and must never lift the active-only default (only an
-  // asOf coordinate does — see hasTimeTravel above).
-  if (filters.recordedAfter !== undefined) {
-    conditions.push(sql`${col('recorded_at')} >= ${filters.recordedAfter}::timestamptz`)
-  }
-  if (filters.recordedBefore !== undefined) {
-    conditions.push(sql`${col('recorded_at')} <= ${filters.recordedBefore}::timestamptz`)
-  }
+  conditions.push(...recordedRangePredicates(col, filters))
 
   return sql.join(conditions, sql` AND `)
 }
