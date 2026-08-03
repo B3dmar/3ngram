@@ -149,13 +149,15 @@ export type HandoffToolArgsV2 = z.input<typeof handoffToolInputV2Schema>
  * the explicit truncation signal (`count > items.length`) callers previously
  * had to derive by hand. The refinement ENFORCES the identity (and that the
  * exact window `count` can never under-report the returned slice), so a
- * drifting flag can never reach a caller.
+ * drifting flag can never reach a caller. `items` is BOUNDED at
+ * {@link MAX_BRIEFING_SECTION_CEILING}: no caller can request past the ceiling,
+ * so a longer slice is a producer bug the contract rejects rather than relays.
  */
 function briefingSectionV2Schema<T extends z.ZodType>(item: T) {
   return z
     .object({
       count: z.number().int().min(0),
-      items: z.array(item),
+      items: z.array(item).max(MAX_BRIEFING_SECTION_CEILING),
       hasMore: z.boolean(),
     })
     .strict()
@@ -175,6 +177,11 @@ function briefingSectionV2Schema<T extends z.ZodType>(item: T) {
  * Composed field-by-field rather than via `.extend()` overrides so each
  * section's succession (V1 envelope → V2 + hasMore) is explicit; the
  * selector/mode/generatedAt trio reuses the exact shipped schemas.
+ *
+ * AT LEAST ONE section must be present: every valid V2 input computes ≥ 1
+ * section (`sections` is absent = all six, or a non-empty subset), so an
+ * all-metadata envelope with zero sections is a producer bug the group
+ * refinement rejects rather than relays.
  */
 export const briefingToolOutputV2Schema = z
   .object({
@@ -189,6 +196,10 @@ export const briefingToolOutputV2Schema = z
     preferences: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
   })
   .strict()
+  .refine((v) => BRIEFING_SECTION_NAMES.some((name) => v[name] !== undefined), {
+    message:
+      'at least one briefing section must be present — every valid input computes one or more sections',
+  })
 export type BriefingToolOutputV2 = z.infer<typeof briefingToolOutputV2Schema>
 
 /** The three handoff sections (fixed — a handoff has no section selection). */
@@ -220,15 +231,21 @@ export const handoffTruncatedSchema = z
 export type HandoffTruncatedOutput = z.infer<typeof handoffTruncatedSchema>
 
 /**
- * `handoff` output V2 — the shipped {@link handoffToolOutputSchema} (every field
- * untouched) EXTENDED with the totals core ALREADY computes but V1 discarded:
- * `counts` (exact per-section window totals) + `truncated` (per-section
- * incompleteness flags). The refinement enforces both identities per section —
- * the count covers the exported slice and the flag equals `count > length` — so
- * neither can drift from the lists they describe.
+ * `handoff` output V2 — the shipped {@link handoffToolOutputSchema} EXTENDED
+ * with the totals core ALREADY computes but V1 discarded: `counts` (exact
+ * per-section window totals) + `truncated` (per-section incompleteness flags).
+ * The refinement enforces both identities per section — the count covers the
+ * exported slice and the flag equals `count > length` — so neither can drift
+ * from the lists they describe. The three inherited lists keep the exact V1
+ * item schemas but gain a {@link MAX_HANDOFF_SECTION_CEILING} bound on the V2
+ * successor ONLY (V1 untouched): no caller can request past the ceiling, so a
+ * longer list is a producer bug the contract rejects rather than relays.
  */
 export const handoffToolOutputV2Schema = handoffToolOutputSchema
   .extend({
+    decisions: handoffToolOutputSchema.shape.decisions.max(MAX_HANDOFF_SECTION_CEILING),
+    commitments: handoffToolOutputSchema.shape.commitments.max(MAX_HANDOFF_SECTION_CEILING),
+    preferences: handoffToolOutputSchema.shape.preferences.max(MAX_HANDOFF_SECTION_CEILING),
     counts: handoffCountsSchema,
     truncated: handoffTruncatedSchema,
   })
