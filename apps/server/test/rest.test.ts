@@ -14,7 +14,7 @@ import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { decodeCursor, encodeCursor } from '../src/rest/cursor.js'
+import { decodeCursor, encodeCursor } from '../src/cursor.js'
 
 // --- core memory tools (the thin adapter's target) ---
 const remember = vi.fn()

@@ -65,9 +65,9 @@ import {
 } from '@3ngram/schema'
 import { type Request, type Response, Router } from 'express'
 import { z } from 'zod'
+import { decodeCursor, encodeCursor } from '../cursor.js'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
-import { decodeCursor, encodeCursor } from './cursor.js'
 import { mapRestError } from './errors.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a

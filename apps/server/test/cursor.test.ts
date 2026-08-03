@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ZodError } from 'zod'
-import { decodeCursor, encodeCursor } from '../src/rest/cursor.js'
+import { decodeCursor, encodeCursor } from '../src/cursor.js'
 
 const ID_A = '11111111-1111-4111-8111-111111111111'
 const ID_B = '22222222-2222-4222-8222-222222222222'

@@ -16,9 +16,9 @@
 //
 // Only the PAYLOAD SHAPE lives here (the ONE validation boundary, hard rule 2).
 // The opaque base64url encode/decode is Node-side and lives in apps/server
-// (apps/server/src/rest/cursor.ts) so this package stays dependency-light (zod
-// only — no @types/node). The browser treats the token as opaque and never
-// decodes it.
+// (apps/server/src/cursor.ts, shared by REST and MCP) so this package stays
+// dependency-light (zod only — no @types/node). Clients treat the token as
+// opaque and never decode it.
 import { z } from 'zod'
 
 /** Upper bound on the frozen ordering carried in the cursor (candidate-pool sized). */
