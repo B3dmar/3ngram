@@ -206,4 +206,26 @@ describe('dashboard search "Load more" under mid-session corpus drift (#361)', (
     // page 1 (2) + exactly one full continuation (2); no trailing no-op page.
     expect(continuationPages).toBe(1)
   }, 30_000)
+
+  it('rejects a cursor replayed against a changed query (bound, never silently re-paged)', async () => {
+    for (let i = 0; i < 5; i++) await remember(`${TERM} bound row ${i} ${crypto.randomUUID()}`)
+
+    const page1 = await searchPage()
+    expect(page1.hasMore).toBe(true)
+
+    // Same cursor, DIFFERENT query: the fingerprint frozen into the cursor no
+    // longer matches — a typed 400 invalid_input, not a silent page of the
+    // frozen ids from the old query.
+    const res = await fetch(`${baseUrl}/api/v1/dashboard/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key },
+      body: JSON.stringify({ query: 'a different query', limit: 2, cursor: page1.nextCursor }),
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_input')
+
+    // The unchanged query keeps paging fine with the same cursor.
+    const page2 = await searchPage(page1.nextCursor)
+    expect(page2.hits.length).toBeGreaterThan(0)
+  }, 30_000)
 })

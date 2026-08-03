@@ -306,6 +306,20 @@ export {
 } from './rest.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
+// --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---
+export type {
+  SearchHitCompactOutput,
+  SearchProjection,
+  SearchQueryV3Args,
+  SearchQueryV3Input,
+  SearchToolOutputV2,
+} from './search-cursor.js'
+export {
+  searchHitCompactSchema,
+  searchProjectionSchema,
+  searchQueryV3Schema,
+  searchToolOutputV2Schema,
+} from './search-cursor.js'
 export type {
   EdgeInput,
   Project,
