@@ -70,7 +70,7 @@ export interface MemoryBatchItem extends Omit<MemoryDetailRow, 'content'> {
 /** A batch read result: the found rows plus the ids that resolved to nothing. */
 export interface MemoriesBatchRead {
   memories: MemoryBatchItem[]
-  /** Requested ids (deduped, request order) with no row for THIS tenant — unknown and cross-tenant alike. */
+  /** Requested ids (lowercased, deduped, request order) with no row for THIS tenant — unknown and cross-tenant alike. */
   notFound: string[]
 }
 
@@ -83,7 +83,11 @@ export interface MemoriesBatchRead {
  * verbatim. A missing or cross-tenant id lands in `notFound`, NEVER an error
  * (unlike the single-id inspect's typed 404): one bad id must not fail the
  * batch, and RLS + the caller-bound predicate collapse not-found/not-owned so
- * the result never leaks whether a foreign id exists.
+ * the result never leaks whether a foreign id exists. Ids are lowercased and
+ * deduped ONCE at entry: z.uuid() accepts mixed-case spellings and Postgres's
+ * uuid type matches them (so the row IS found), but rows come back with
+ * lowercase ids — without normalization the case-sensitive diff would put a
+ * FOUND memory's requested id into notFound too.
  */
 export async function getMemoriesByIds(
   userId: string,
@@ -91,9 +95,10 @@ export async function getMemoriesByIds(
   options: GetMemoriesOptions = {},
 ): Promise<MemoriesBatchRead> {
   const maxContentChars = options.maxContentChars ?? DEFAULT_GET_CONTENT_CHARS
-  const rows = await withTenant(userId, (tx) => getMemoriesByIdsDb(tx, userId, memoryIds))
+  const requestedIds = [...new Set(memoryIds.map((id) => id.toLowerCase()))]
+  const rows = await withTenant(userId, (tx) => getMemoriesByIdsDb(tx, userId, requestedIds))
   const found = new Set(rows.map((row) => row.id))
-  const notFound = [...new Set(memoryIds)].filter((id) => !found.has(id))
+  const notFound = requestedIds.filter((id) => !found.has(id))
   return {
     memories: rows.map((row) => ({ ...row, ...excerptContent(row.content, maxContentChars) })),
     notFound,
