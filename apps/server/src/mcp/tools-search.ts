@@ -18,7 +18,7 @@ import {
   searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
-import { decodeCursor, encodeCursor } from '../cursor.js'
+import { decodeSearchCursor, encodeCursor, searchFingerprint } from '../cursor.js'
 import { parseOutput } from '../output-validation.js'
 import type { ToolDefinition } from './tools.js'
 
@@ -118,7 +118,12 @@ function projectHit(hit: SearchHit, projection: SearchProjection): Record<string
  * the pre-cursor path (returnFullPool ranks the same pool), so the eval floors
  * are untouched. A garbled cursor throws a ZodError -> runTool's ladder labels
  * it invalid input (never a 500); a stale pre-v2 cursor decodes to undefined
- * and restarts at page 1.
+ * and restarts at page 1. The cursor is BOUND to the query+filters that issued
+ * it (the shared codec's fingerprint, verified in decodeSearchCursor): a
+ * continuation under a CHANGED query/filters is a typed
+ * CursorQueryMismatchError -> invalid_input, never a silent re-page of the old
+ * search's frozen ordering. Fingerprint-less cursors minted before the binding
+ * stay valid (verify-when-present).
  */
 const searchTool: ToolDefinition = {
   name: 'search',
@@ -126,7 +131,7 @@ const searchTool: ToolDefinition = {
   config: {
     title: 'Search',
     description:
-      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.',
+      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query and filters that issued it: passing it with a changed query or filters is rejected as invalid input — omit the cursor to start a new search. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.',
     inputSchema: searchQueryV3Schema,
     outputSchema: searchToolOutputV2Schema,
   },
@@ -135,9 +140,16 @@ const searchTool: ToolDefinition = {
       return fail('embedding gateway not configured')
     }
     const input = searchQueryV3Schema.parse(args)
+    const filters = toFilters(input)
     // Frozen-ordering continuation: a malformed token throws here (client
-    // input, mapped by runTool); a legacy token restarts at page 1.
-    const decoded = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
+    // input, mapped by runTool); a legacy token restarts at page 1. The
+    // fingerprint binds the cursor to THIS query+filter set — a cursor
+    // replayed under a changed query/filters throws the typed mismatch
+    // (mapped to invalid_input), never silently paging the old frozen ids.
+    // Fingerprint-less cursors stay valid (verify-when-present).
+    const fingerprint = searchFingerprint(input.query, filters)
+    const decoded =
+      input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
     const frozen =
       decoded === undefined
         ? undefined
@@ -148,7 +160,7 @@ const searchTool: ToolDefinition = {
       { gateway: ctx.gateway },
       defined({
         limit: input.limit,
-        filters: toFilters(input),
+        filters,
         frozen,
         budget: ctx.budget,
         access: ctx.access,
@@ -162,6 +174,7 @@ const searchTool: ToolDefinition = {
           ids: page.frozen.ids,
           scores: page.frozen.scores,
           off: page.nextOffset,
+          fp: fingerprint,
         })
       : undefined
     const output = parseOutput(

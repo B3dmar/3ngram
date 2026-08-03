@@ -26,7 +26,7 @@ import {
   searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { decodeCursor, encodeCursor } from '../src/cursor.js'
+import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
@@ -526,16 +526,20 @@ describe('search tool', () => {
     expect(result.isError).toBeFalsy()
     const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
     expect(parsed.hasMore).toBe(true)
-    // The token is the SAME v2 frozen-ordering cursor the dashboard mints.
+    // The token is the SAME v2 frozen-ordering cursor the dashboard mints,
+    // fingerprint-BOUND to the issuing query+filters.
     expect(decodeCursor(parsed.nextCursor as string)).toEqual({
       v: 2,
       ids: [MEMO_ID],
       scores: [0.9],
       off: 1,
+      fp: searchFingerprint('sdk pin', {}),
     })
   })
 
-  it('decodes an inbound cursor and threads the frozen ordering to core (#49)', async () => {
+  it('decodes a fingerprint-less legacy cursor and threads the frozen ordering to core (#49)', async () => {
+    // verify-when-present compatibility: a v2 cursor minted BEFORE the
+    // query-binding carries no fp and must keep paging, not 400 mid-session.
     searchDashboardPage.mockResolvedValue(pageOf([]))
     const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1 })
     const result = await call('search', { query: 'sdk pin', cursor }, ctx())
@@ -547,6 +551,31 @@ describe('search tool', () => {
       { frozen?: { ids: string[]; scores: number[]; off: number } },
     ]
     expect(options.frozen).toEqual({ ids: [MEMO_ID], scores: [0.9], off: 1 })
+  })
+
+  it('continues a bound cursor under the SAME query+filters', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    const fp = searchFingerprint('sdk pin', { scope: 'work' })
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    const result = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(searchDashboardPage).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a cursor replayed under a CHANGED query/filters as typed invalid input', async () => {
+    const fp = searchFingerprint('sdk pin', {})
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    // Changed query text.
+    const changedQuery = await call('search', { query: 'something else', cursor }, ctx())
+    expect(changedQuery.isError).toBe(true)
+    expect((changedQuery.content[0] as { text: string }).text).toBe(
+      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
+    )
+    // Same query, changed filter set.
+    const changedFilters = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(changedFilters.isError).toBe(true)
+    // Never a silent re-page of the old frozen ordering.
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('rejects a garbled cursor as CLIENT input without reaching core (#49)', async () => {
