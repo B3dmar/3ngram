@@ -65,6 +65,19 @@ describe('getMemoriesByIds (runtime role, real withTenant)', () => {
     expect(result.notFound).toEqual([missing])
   })
 
+  it('normalizes mixed-case ids: a FOUND memory never lands in notFound', async () => {
+    // z.uuid() accepts uppercase spellings and Postgres's uuid type matches
+    // them, but rows come back lowercase — without normalization the diff
+    // would report this FOUND memory as notFound too.
+    const id = await seedMemory(userA, 'cased', 'cased body')
+    const upper = id.toUpperCase()
+
+    const result = await getMemoriesByIds(userA, [upper, id]) // dupe after lowercasing
+
+    expect(result.memories.map((m) => m.id)).toEqual([id])
+    expect(result.notFound).toEqual([])
+  })
+
   it('puts a cross-tenant id in notFound — identical to unknown, NEVER an error', async () => {
     const ownId = await seedMemory(userA, 'mine', 'my body')
     const foreignId = await seedMemory(userB, 'theirs', 'their body')
