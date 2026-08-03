@@ -12,12 +12,12 @@
 import { runWithContext } from '@3ngram/config'
 import { fakeEmbedding } from '@3ngram/llm'
 import {
-  briefingToolOutputSchema,
+  briefingToolOutputV2Schema,
   configureScopeOutputSchema,
   describeEnvironmentOutputSchema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
-  handoffToolOutputSchema,
+  handoffToolOutputV2Schema,
   rememberToolOutputSchema,
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
@@ -1008,7 +1008,7 @@ describe('resolve tool', () => {
 })
 
 describe('briefing tool (D2 orientation)', () => {
-  const briefSection = () => ({ count: 0, items: [] })
+  const briefSection = () => ({ count: 0, items: [], hasMore: false })
   const fakeBriefing = (overrides: Record<string, unknown> = {}) => ({
     selector: { kind: 'all' },
     mode: 'brief',
@@ -1036,12 +1036,65 @@ describe('briefing tool (D2 orientation)', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = briefingToolOutputSchema.parse(result.structuredContent)
+    const parsed = briefingToolOutputV2Schema.parse(result.structuredContent)
     expect(parsed.mode).toBe('brief')
     // The tool forwards the selector to core (no-firehose discipline).
     expect(briefing.mock.calls[0]?.[1]).toMatchObject({
       selector: { kind: 'scope', scope: 'work' },
     })
+  })
+
+  it('forwards sections + sectionLimit to core and omits them when absent (bounds V2)', async () => {
+    briefing.mockResolvedValue(fakeBriefing())
+    await call(
+      'briefing',
+      { selector: { kind: 'all' }, sections: ['overdue'], sectionLimit: 50 },
+      ctx(),
+    )
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ sections: ['overdue'], sectionLimit: 50 })
+    briefing.mockClear()
+    briefing.mockResolvedValue(fakeBriefing())
+    await call('briefing', { selector: { kind: 'all' } }, ctx())
+    const arg = briefing.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('sections' in arg).toBe(false)
+    expect('sectionLimit' in arg).toBe(false)
+  })
+
+  it('accepts a subset briefing from core (skipped sections omitted) and keeps hasMore', async () => {
+    briefing.mockResolvedValue({
+      selector: { kind: 'all' },
+      mode: 'full',
+      generatedAt: '2026-06-06T00:00:00.000Z',
+      overdue: { count: 9, items: [], hasMore: true },
+    })
+    const result = await call(
+      'briefing',
+      { selector: { kind: 'all' }, mode: 'full', sections: ['overdue'] },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = briefingToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.overdue?.hasMore).toBe(true)
+    expect(parsed.commitments).toBeUndefined()
+  })
+
+  it('rejects an out-of-ceiling sectionLimit and a duplicate sections list at the boundary', async () => {
+    expect(
+      (await call('briefing', { selector: { kind: 'all' }, sectionLimit: 101 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (await call('briefing', { selector: { kind: 'all' }, sectionLimit: 0 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (
+        await call(
+          'briefing',
+          { selector: { kind: 'all' }, sections: ['overdue', 'overdue'] },
+          ctx(),
+        )
+      ).isError,
+    ).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
   })
 
   it('defaults mode to brief and injects a now Date at the transport edge', async () => {
@@ -1078,6 +1131,8 @@ describe('handoff tool (D2 orientation)', () => {
     commitments: [],
     preferences: [],
     notes: [],
+    counts: { decisions: 0, commitments: 0, preferences: 0 },
+    truncated: { decisions: false, commitments: false, preferences: false },
     ...overrides,
   })
 
@@ -1102,6 +1157,8 @@ describe('handoff tool (D2 orientation)', () => {
             project: null,
           },
         ],
+        counts: { decisions: 40, commitments: 0, preferences: 0 },
+        truncated: { decisions: true, commitments: false, preferences: false },
       }),
     )
     const result = await call(
@@ -1110,9 +1167,12 @@ describe('handoff tool (D2 orientation)', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = handoffToolOutputSchema.parse(result.structuredContent)
+    const parsed = handoffToolOutputV2Schema.parse(result.structuredContent)
     // Content IS included by design (a handoff transports context).
     expect(parsed.decisions[0]?.content).toBe('pin mcp sdk at 1.29.0')
+    // The exact per-section totals + truncation flags ride the envelope (V2).
+    expect(parsed.counts.decisions).toBe(40)
+    expect(parsed.truncated.decisions).toBe(true)
     expect(handoff.mock.calls[0]?.[1]).toMatchObject({
       selector: { kind: 'all' },
       generatedFor: 'agent-b',
@@ -1125,6 +1185,27 @@ describe('handoff tool (D2 orientation)', () => {
     const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
     expect('generatedFor' in arg).toBe(false)
     expect(arg.now).toBeInstanceOf(Date)
+  })
+
+  it('forwards sectionLimit to core and omits it when absent (bounds V2)', async () => {
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' }, sectionLimit: 80 }, ctx())
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ sectionLimit: 80 })
+    handoff.mockClear()
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' } }, ctx())
+    const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('sectionLimit' in arg).toBe(false)
+  })
+
+  it('rejects an out-of-ceiling sectionLimit at the boundary (never reaches core)', async () => {
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 101 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 0 }, ctx())).isError,
+    ).toBe(true)
+    expect(handoff).not.toHaveBeenCalled()
   })
 })
 
@@ -1206,12 +1287,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
       selector: { kind: 'all' },
       mode: 'brief',
       generatedAt: '2026-06-06T00:00:00.000Z',
-      commitments: { count: 0, items: [] },
-      overdue: { count: 0, items: [] },
-      blockers: { count: 0, items: [] },
-      staleCandidates: { count: 0, items: [] },
-      recentDecisions: { count: 0, items: [] },
-      preferences: { count: 0, items: [] },
+      commitments: { count: 0, items: [], hasMore: false },
+      overdue: { count: 0, items: [], hasMore: false },
+      blockers: { count: 0, items: [], hasMore: false },
+      staleCandidates: { count: 0, items: [], hasMore: false },
+      recentDecisions: { count: 0, items: [], hasMore: false },
+      preferences: { count: 0, items: [], hasMore: false },
     })
     const result = await call('briefing', { selector: { kind: 'all' } }, readOnly)
     expect(result.isError).toBeFalsy()

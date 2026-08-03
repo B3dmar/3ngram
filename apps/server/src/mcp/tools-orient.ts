@@ -26,10 +26,10 @@
 import { briefing, handoff } from '@3ngram/core'
 import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
 import {
-  briefingToolInputSchema,
-  briefingToolOutputSchema,
-  handoffToolInputSchema,
-  handoffToolOutputSchema,
+  briefingToolInputV2Schema,
+  briefingToolOutputV2Schema,
+  handoffToolInputV2Schema,
+  handoffToolOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -45,10 +45,14 @@ function ok(structured: Record<string, unknown>): CallToolResult {
 
 /**
  * briefing — structured session orientation (docs/concepts/mcp-design.mdx JTBD "start my session
- * oriented"). Validates the REQUIRED selector + optional mode, calls core
+ * oriented"). Validates the REQUIRED selector + optional mode/sections/
+ * sectionLimit (the bounds V2 successor input, issue #45), calls core
  * briefing() with the injected `now` (overdue split + stale window derive from
  * it), returns the size-disciplined sections. brief mode (default) = counts + a
- * small top slice per section; full = bounded lists. No section carries content.
+ * small top slice per section; full = bounded lists. `sections` restricts the
+ * read to a subset (skipped sections are omitted); `sectionLimit` tunes the
+ * per-section bound up to the server-side ceiling. Every section carries
+ * `hasMore` (count > items.length). No section carries content.
  */
 const briefingTool: ToolDefinition = {
   name: 'briefing',
@@ -56,32 +60,38 @@ const briefingTool: ToolDefinition = {
   config: {
     title: 'Briefing',
     description:
-      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists.',
-    inputSchema: briefingToolInputSchema,
-    outputSchema: briefingToolOutputSchema,
+      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.',
+    inputSchema: briefingToolInputV2Schema,
+    outputSchema: briefingToolOutputV2Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
-    const input = briefingToolInputSchema.parse(args)
+    const input = briefingToolInputV2Schema.parse(args)
     // ACCESS GUARD: the briefing is memory-derived, so read access is asserted
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
     // `now` is read at the transport edge (composition root), not in core/db.
+    // Optional knobs ride only when present (exactOptionalPropertyTypes).
     const result = await briefing(ctx.userId, {
       selector: input.selector,
       mode: input.mode,
       now: new Date(),
+      ...(input.sections !== undefined ? { sections: input.sections } : {}),
+      ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
     })
-    return ok(parseOutput('briefing', briefingToolOutputSchema, result))
+    return ok(parseOutput('briefing', briefingToolOutputV2Schema, result))
   },
 }
 
 /**
  * handoff — export structured context for another agent/provider (docs/concepts/mcp-design.mdx
  * JTBD "carry context to another tool/agent"). Same REQUIRED-selector discipline
- * as briefing. Reuses the briefing aggregation in core (no duplicated SQL); the
- * OUTPUT carries memory CONTENT by design (decisions/preferences) because a
- * handoff transports context — bounded, and never logged (module header).
+ * as briefing; optional `sectionLimit` (bounds V2, issue #45) tunes the
+ * per-section bound up to the server-side ceiling. Reuses the briefing
+ * aggregation in core (no duplicated SQL); the OUTPUT carries memory CONTENT by
+ * design (decisions/preferences) because a handoff transports context — bounded,
+ * and never logged (module header). The envelope reports exact per-section
+ * `counts` + `truncated` flags so a receiver knows when an export is incomplete.
  */
 const handoffTool: ToolDefinition = {
   name: 'handoff',
@@ -89,27 +99,28 @@ const handoffTool: ToolDefinition = {
   config: {
     title: 'Handoff',
     description:
-      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
-    inputSchema: handoffToolInputSchema,
-    outputSchema: handoffToolOutputSchema,
+      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
+    inputSchema: handoffToolInputV2Schema,
+    outputSchema: handoffToolOutputV2Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
-    const input = handoffToolInputSchema.parse(args)
+    const input = handoffToolInputV2Schema.parse(args)
     // ACCESS GUARD: handoff EXPORTS memory content, so read access is asserted
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    // `generatedFor` is optional under exactOptionalPropertyTypes: only include
-    // the key when present so it is `string`, never `string | undefined`.
+    // Optional fields ride only when present (exactOptionalPropertyTypes): only
+    // include the key when present so it is `string`, never `string | undefined`.
     const result = await handoff(ctx.userId, {
       selector: input.selector,
       now: new Date(),
       ...(input.generatedFor !== undefined ? { generatedFor: input.generatedFor } : {}),
+      ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
     })
     // Decision/preference lines carry core's bounded content EXCERPT —
     // long imported rows can exceed any write-time cap, so core bounds
     // them before this output parse ever sees the payload.
-    return ok(parseOutput('handoff', handoffToolOutputSchema, result))
+    return ok(parseOutput('handoff', handoffToolOutputV2Schema, result))
   },
 }
 

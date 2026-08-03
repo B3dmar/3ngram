@@ -22,6 +22,7 @@ vi.mock('@3ngram/db', () => ({
 
 const { handoff, MAX_HANDOFF_SECTION } = await import('../src/read/handoff.js')
 const { MissingSelectorError } = await import('../src/read/briefing.js')
+const { MAX_HANDOFF_SECTION_CEILING } = await import('@3ngram/schema')
 
 const NOW = new Date('2026-06-06T12:00:00.000Z')
 
@@ -134,5 +135,118 @@ describe('handoff — export shape', () => {
     resetAll()
     await handoff('u1', { selector: { kind: 'all' }, now: NOW })
     expect(withTenant).toHaveBeenCalledOnce()
+  })
+})
+
+describe('handoff — sectionLimit (bounds V2, issue #45)', () => {
+  it('forwards the caller sectionLimit to every section query', async () => {
+    resetAll()
+    await handoff('u1', { selector: { kind: 'all' }, sectionLimit: 60, now: NOW })
+    for (const fn of [openCommitments, recentDecisions, activePreferences]) {
+      expect(fn.mock.calls[0]?.[3]).toBe(60)
+    }
+  })
+
+  it('clamps the limit to the server-side ceiling (boundary: 100 in, 101 clamped, 0 up)', async () => {
+    resetAll()
+    await handoff('u1', {
+      selector: { kind: 'all' },
+      sectionLimit: MAX_HANDOFF_SECTION_CEILING,
+      now: NOW,
+    })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(MAX_HANDOFF_SECTION_CEILING)
+    resetAll()
+    await handoff('u1', {
+      selector: { kind: 'all' },
+      sectionLimit: MAX_HANDOFF_SECTION_CEILING + 1,
+      now: NOW,
+    })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(MAX_HANDOFF_SECTION_CEILING)
+    resetAll()
+    // A direct core caller passing a sub-1 limit is clamped up, never a 0-row read.
+    await handoff('u1', { selector: { kind: 'all' }, sectionLimit: 0, now: NOW })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(1)
+  })
+
+  // sectionLimit is typed only as `number`, so valid TypeScript can hand core a
+  // fractional or non-finite value the transport schema would have rejected —
+  // it must be normalized before it reaches a SQL LIMIT clause (same policy as
+  // briefing.ts effectiveSectionLimit).
+  it.each([
+    { sectionLimit: 1.5, forwarded: 1 }, // truncated toward zero, then clamped up if needed
+    { sectionLimit: Number.NaN, forwarded: MAX_HANDOFF_SECTION }, // non-finite → default
+    { sectionLimit: Number.POSITIVE_INFINITY, forwarded: MAX_HANDOFF_SECTION },
+    { sectionLimit: -5, forwarded: 1 }, // truncated, then clamped up
+  ])('normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded', async ({
+    sectionLimit,
+    forwarded,
+  }) => {
+    resetAll()
+    await handoff('u1', { selector: { kind: 'all' }, sectionLimit, now: NOW })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(forwarded)
+  })
+})
+
+describe('handoff — counts + truncated (totals no longer discarded, issue #45)', () => {
+  it.each([
+    { total: 0, rows: 0, truncated: false },
+    { total: 2, rows: 2, truncated: false },
+    { total: 3, rows: 2, truncated: true },
+    { total: 58, rows: 25, truncated: true },
+  ])('total=$total with $rows exported rows → truncated=$truncated', async ({
+    total,
+    rows,
+    truncated,
+  }) => {
+    resetAll()
+    recentDecisions.mockResolvedValue(
+      page(
+        Array.from({ length: rows }, () => memoryRow()),
+        total,
+      ),
+    )
+    const result = await handoff('u1', { selector: { kind: 'all' }, now: NOW })
+    expect(result.counts.decisions).toBe(total)
+    expect(result.decisions.length).toBe(rows)
+    expect(result.truncated.decisions).toBe(truncated)
+  })
+
+  it('wires the exact window totals per section (the P1 discard repro)', async () => {
+    resetAll()
+    recentDecisions.mockResolvedValue(page([memoryRow()], 40))
+    openCommitments.mockResolvedValue(
+      page(
+        [
+          {
+            id: crypto.randomUUID(),
+            memoryId: crypto.randomUUID(),
+            topic: 'ship it',
+            status: 'open',
+            dueAt: null,
+          },
+        ],
+        58,
+      ),
+    )
+    activePreferences.mockResolvedValue(page([memoryRow({ memoryType: 'preference' })], 1))
+    const result = await handoff('u1', { selector: { kind: 'all' }, now: NOW })
+    expect(result.counts).toEqual({ decisions: 40, commitments: 58, preferences: 1 })
+    expect(result.truncated).toEqual({ decisions: true, commitments: true, preferences: false })
+  })
+
+  it('returns identical legacy fields for an identical legacy input (V1 callers unmoved)', async () => {
+    resetAll()
+    const decisions = [memoryRow({ content: 'release after a 24h soak' })]
+    recentDecisions.mockResolvedValue(page(decisions, 1))
+    const legacy = { selector: { kind: 'all' }, now: NOW } as const
+    const first = await handoff('u1', legacy)
+    resetAll()
+    recentDecisions.mockResolvedValue(page(decisions, 1))
+    const second = await handoff('u1', { ...legacy, sectionLimit: undefined })
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+    // The additions are purely additive: every shipped field is untouched.
+    expect(first.decisions[0]?.content).toBe('release after a 24h soak')
+    expect(first.notes).toEqual([])
+    expect(first.counts.decisions).toBe(1)
   })
 })

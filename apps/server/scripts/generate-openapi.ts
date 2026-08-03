@@ -20,9 +20,11 @@ import { fileURLToPath } from 'node:url'
 import {
   accountDeleteBodySchema,
   asOfSchema,
+  BRIEFING_SECTION_NAMES,
   briefingModeSchema,
   briefingSelectorSchema,
-  briefingToolOutputSchema,
+  briefingToolInputV2Schema,
+  briefingToolOutputV2Schema,
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
@@ -81,6 +83,16 @@ for (const option of briefingSelectorSchema.options) {
   }
 }
 briefingQueryShape.mode = briefingModeSchema.optional()
+// Bounds V2 (issue #45): `sections` rides the querystring comma-separated
+// (router.ts splits before the single V2 parse — a querystring has no natural
+// array); `sectionLimit` reuses the EXACT V2 input field (hard rule 2).
+briefingQueryShape.sections = z
+  .string()
+  .describe(
+    `Comma-separated subset of sections to compute (unique names from: ${BRIEFING_SECTION_NAMES.join(', ')}). Absent = all sections; un-requested sections are skipped and omitted from the result.`,
+  )
+  .optional()
+briefingQueryShape.sectionLimit = briefingToolInputV2Schema.shape.sectionLimit
 
 /** Proposal decision echo ({id,status}) — composed from schema exports. */
 const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }).strict()
@@ -316,7 +328,7 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchToolOutputSchema },
   { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseSchema },
   { method: 'get', path: '/api/v1/facts', operationId: 'getFacts', summary: 'Currently-valid facts, with optional bi-temporal time travel (mirrors the MCP get_facts tool)', query: factsQuery, status: 200, response: factsToolOutputSchema },
-  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputSchema },
+  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV2Schema },
   { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor (mirrors the MCP revise tool)', body: reviseToolInputSchema.omit({ predecessorId: true }), status: 200, response: reviseToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory (REST-only lifecycle operation; no MCP mirror)', status: 200, response: archiveResult },

@@ -10,6 +10,10 @@ export type {
   ResourceLimitKind,
   ResourceLimits,
 } from '@3ngram/schema'
+// The hard briefing/handoff sectionLimit ceilings (bounds V2) — re-exported so
+// core consumers see the ACTUAL max next to the defaults
+// MAX_BRIEFING_SECTION / MAX_HANDOFF_SECTION below.
+export { MAX_BRIEFING_SECTION_CEILING, MAX_HANDOFF_SECTION_CEILING } from '@3ngram/schema'
 export {
   type AccountDeletionResult,
   type AccountErasureResult,
@@ -100,6 +104,7 @@ export {
   DEFAULT_SEARCH_SUPERSESSION_PENALTY,
   DEFAULT_SEARCH_WEIGHTS,
   type EmbeddingSource,
+  EmptySectionsError,
   type ExportAccountRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
@@ -116,6 +121,7 @@ export {
   type FactRow,
   type FactsQuery,
   type FrozenOrdering,
+  type FullBriefing,
   type FusionWeights,
   type GetMemoriesOptions,
   getCurrentUser,

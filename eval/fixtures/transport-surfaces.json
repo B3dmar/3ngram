@@ -11,7 +11,7 @@
       {
         "name": "briefing",
         "title": "Briefing",
-        "description": "Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists.",
+        "description": "Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -67,6 +67,29 @@
               "default": "brief",
               "type": "string",
               "enum": ["brief", "full"]
+            },
+            "sections": {
+              "minItems": 1,
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "commitments",
+                  "overdue",
+                  "blockers",
+                  "staleCandidates",
+                  "recentDecisions",
+                  "preferences"
+                ]
+              },
+              "description": "Subset of sections to compute (unique names). Absent = all sections. Un-requested sections are skipped entirely and omitted from the result."
+            },
+            "sectionLimit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "Per-section item bound (1..100). Absent = the mode default (3 brief / 25 full)."
             }
           },
           "required": ["selector"],
@@ -142,6 +165,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -182,9 +206,12 @@
                     "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             },
             "overdue": {
@@ -196,6 +223,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -236,9 +264,12 @@
                     "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             },
             "blockers": {
@@ -250,6 +281,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -315,9 +347,12 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             },
             "staleCandidates": {
@@ -329,6 +364,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -394,9 +430,12 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             },
             "recentDecisions": {
@@ -408,6 +447,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -473,9 +513,12 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             },
             "preferences": {
@@ -487,6 +530,7 @@
                   "maximum": 9007199254740991
                 },
                 "items": {
+                  "maxItems": 100,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -552,23 +596,16 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "hasMore": {
+                  "type": "boolean"
                 }
               },
-              "required": ["count", "items"],
+              "required": ["count", "items", "hasMore"],
               "additionalProperties": false
             }
           },
-          "required": [
-            "selector",
-            "mode",
-            "generatedAt",
-            "commitments",
-            "overdue",
-            "blockers",
-            "staleCandidates",
-            "recentDecisions",
-            "preferences"
-          ],
+          "required": ["selector", "mode", "generatedAt"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false
         }
@@ -1215,7 +1252,7 @@
       {
         "name": "handoff",
         "title": "Handoff",
-        "description": "Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.",
+        "description": "Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -1271,6 +1308,12 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "sectionLimit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "Per-section item bound (1..100). Absent = the default of 25."
             }
           },
           "required": ["selector"],
@@ -1344,6 +1387,7 @@
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
             },
             "decisions": {
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "type": "object",
@@ -1414,6 +1458,7 @@
               }
             },
             "commitments": {
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "type": "object",
@@ -1453,6 +1498,7 @@
               }
             },
             "preferences": {
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "type": "object",
@@ -1527,6 +1573,44 @@
               "items": {
                 "type": "string"
               }
+            },
+            "counts": {
+              "type": "object",
+              "properties": {
+                "decisions": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "commitments": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "preferences": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["decisions", "commitments", "preferences"],
+              "additionalProperties": false
+            },
+            "truncated": {
+              "type": "object",
+              "properties": {
+                "decisions": {
+                  "type": "boolean"
+                },
+                "commitments": {
+                  "type": "boolean"
+                },
+                "preferences": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["decisions", "commitments", "preferences"],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -1536,7 +1620,9 @@
             "decisions",
             "commitments",
             "preferences",
-            "notes"
+            "notes",
+            "counts",
+            "truncated"
           ],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false

@@ -52,7 +52,7 @@ import type { Gateway } from '@3ngram/llm'
 import {
   type AsOfInput,
   accountDeleteBodySchema,
-  briefingToolInputSchema,
+  briefingToolInputV2Schema,
   dashboardSearchQuerySchema,
   factsQueryInputSchema,
   memoriesListQuerySchema,
@@ -619,10 +619,17 @@ export function restRouter(options: RestRouterOptions): Router {
 
   // GET /api/v1/briefing — mirrors the MCP briefing tool. Flat query params
   // (kind/scope/project/mode) are reshaped into the nested selector BEFORE the
-  // single briefingToolInputSchema parse. `now` is stamped here.
+  // single briefingToolInputV2Schema parse. Bounds V2 (issue #45): `sections`
+  // arrives comma-separated (`?sections=commitments,overdue` — a querystring
+  // has no natural array; repeated `?sections=` params also work via the qs
+  // array) and `sectionLimit` as an integer string — both reshaped BEFORE the
+  // SAME single parse, so the V2 schema still 400s duplicates/unknown names and
+  // out-of-range limits (no second validation layer). A legacy query (neither
+  // knob) parses byte-identically through V2 (pinned in packages/schema).
+  // `now` is stamped here.
   router.get('/api/v1/briefing', (req, res) => {
     void guard('briefing', res, async () => {
-      const input = briefingToolInputSchema.parse(
+      const input = briefingToolInputV2Schema.parse(
         defined({
           selector: defined({
             kind: req.query.kind,
@@ -630,16 +637,26 @@ export function restRouter(options: RestRouterOptions): Router {
             project: req.query.project,
           }),
           mode: req.query.mode,
+          sections:
+            typeof req.query.sections === 'string'
+              ? req.query.sections.split(',')
+              : req.query.sections,
+          sectionLimit:
+            req.query.sectionLimit === undefined ? undefined : Number(req.query.sectionLimit),
         }),
       )
       // ACCESS GUARD: the briefing is memory-derived, so read access is asserted
       // BEFORE the read (self-host allowAllAccess allows all); parity with the MCP
       // briefing tool.
       if (options.access) await options.access.assertRead(tenant(req))
+      // Optional knobs ride only when present (exactOptionalPropertyTypes),
+      // exactly as the MCP briefing handler bridges (mcp/tools-orient.ts).
       const result = await briefing(tenant(req), {
         selector: input.selector,
         mode: input.mode,
         now: new Date(),
+        ...(input.sections !== undefined ? { sections: input.sections } : {}),
+        ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
       })
       res.status(200).json(result)
     })
