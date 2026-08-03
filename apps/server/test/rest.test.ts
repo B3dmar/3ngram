@@ -973,6 +973,77 @@ describe('GET /api/v1/memories (list)', () => {
       expect.objectContaining({ project: ['alpha', 'beta'] }),
     )
   })
+
+  it('passes repeated ?memoryTypes= params to core as an array (filters V2, #48)', async () => {
+    listMemories.mockResolvedValue({ memories: [], total: 0 })
+    const res = await call('/api/v1/memories?memoryTypes=decision&memoryTypes=fact', {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    expect(listMemories).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ memoryTypes: ['decision', 'fact'] }),
+    )
+  })
+
+  it('passes a single ?memoryTypes= param to core as a string (filters V2, #48)', async () => {
+    listMemories.mockResolvedValue({ memories: [], total: 0 })
+    const res = await call('/api/v1/memories?memoryTypes=note', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(listMemories).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ memoryTypes: 'note' }),
+    )
+  })
+
+  it('coerces recordedAfter/recordedBefore ISO params to Dates for core (filters V2, #48)', async () => {
+    listMemories.mockResolvedValue({ memories: [], total: 0 })
+    const res = await call(
+      '/api/v1/memories?recordedAfter=2026-01-01T00:00:00Z&recordedBefore=2026-02-01T00:00:00Z',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    expect(listMemories).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({
+        recordedAfter: new Date('2026-01-01T00:00:00Z'),
+        recordedBefore: new Date('2026-02-01T00:00:00Z'),
+      }),
+    )
+  })
+
+  it('threads the V2 axes COMBINED with the existing filters (filters V2, #48)', async () => {
+    listMemories.mockResolvedValue({ memories: [], total: 0 })
+    const res = await call(
+      '/api/v1/memories?memoryTypes=decision&memoryTypes=fact&recordedAfter=2026-01-01T00:00:00Z&scope=work&project=alpha&status=active',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    expect(listMemories).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({
+        memoryTypes: ['decision', 'fact'],
+        recordedAfter: new Date('2026-01-01T00:00:00Z'),
+        scope: 'work',
+        project: 'alpha',
+        status: 'active',
+      }),
+    )
+  })
+
+  it('400s memoryTypes combined with type (mutually exclusive, #48)', async () => {
+    const res = await call('/api/v1/memories?type=decision&memoryTypes=fact', { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(listMemories).not.toHaveBeenCalled()
+  })
+
+  it('400s an invalid memoryTypes element and a malformed recorded bound (schema boundary)', async () => {
+    const bogusType = await call('/api/v1/memories?memoryTypes=bogus', { key: VALID_KEY })
+    expect(bogusType.status).toBe(400)
+    const bogusDate = await call('/api/v1/memories?recordedAfter=last-tuesday', { key: VALID_KEY })
+    expect(bogusDate.status).toBe(400)
+    expect(listMemories).not.toHaveBeenCalled()
+  })
 })
 
 describe('GET /api/v1/memories/facets (issue #342)', () => {
