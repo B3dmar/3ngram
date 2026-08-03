@@ -1,5 +1,12 @@
 # @3ngram/core
 
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [78c062c]
+  - @3ngram/db@0.6.2
+
 ## 0.6.2
 
 ### Patch Changes
