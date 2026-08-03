@@ -43,7 +43,7 @@
 //
 // Content discipline (hard rule 6): topic/content are content-adjacent and are
 // NEVER logged here; callers log ids/counts/lengths only.
-import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, ne, or, type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { commitments, memories } from './schema/memory.js'
 
@@ -372,19 +372,28 @@ export function activePreferences(
  * STALE_WINDOW_DAYS) — this layer only turns the caller's list into SQL. Leads
  * with the caller-bound `memories.user_id = userId` tenant condition (module
  * header).
+ *
+ * BACK-COMPAT (Codex P1, comment 3702700238): `memoryTypes` is OPTIONAL. When
+ * omitted — a pre-0.6.3 caller — the predicate falls back to the legacy
+ * NOT-commitment exclusion so existing five-argument calls keep their exact
+ * prior behavior. This fallback is the ONE deliberate exception to "no type
+ * policy here" and exists only for compatibility; in-repo callers always pass
+ * the allowlist.
  */
 function staleCandidatePredicate(
   userId: string,
   selector: BriefingSelector,
   staleBefore: Date,
-  memoryTypes: readonly string[],
+  memoryTypes: readonly string[] | undefined,
 ): SQL {
   const conditions: SQL[] = [
     eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
     lt(memories.updatedAt, staleBefore),
-    inArray(memories.memoryType, [...memoryTypes]),
+    memoryTypes === undefined
+      ? ne(memories.memoryType, 'commitment')
+      : inArray(memories.memoryType, [...memoryTypes]),
   ]
   const scoped = memoryScopePredicate(selector)
   if (scoped !== undefined) conditions.push(scoped)
@@ -402,6 +411,12 @@ function staleCandidatePredicate(
  * the allowlist: an open commitment is surfaced by its own list, not by
  * staleness.
  *
+ * BACK-COMPAT CONTRACT: `memoryTypes` trails `limit` and is OPTIONAL so the
+ * 0.6.2 five-argument positional call keeps compiling AND keeps its exact
+ * prior semantics (legacy NOT-commitment filter — see
+ * {@link staleCandidatePredicate}). Do NOT insert parameters before `limit`
+ * (Codex P1, comment 3702700238).
+ *
  * BRIEF-MODE CONTRACT: `items` is CAPPED at `limit`; `totalCount` is the EXACT
  * total from a `count(*) OVER()` window in the SAME statement, so it stays
  * snapshot-consistent with the slice (Codex P2, comment 3372242177).
@@ -417,8 +432,8 @@ export async function staleCandidates(
   userId: string,
   selector: BriefingSelector,
   staleBefore: Date,
-  memoryTypes: readonly string[],
   limit: number,
+  memoryTypes?: readonly string[],
 ): Promise<BriefingPage<BriefingMemoryRow>> {
   const rows = await tx
     .select({

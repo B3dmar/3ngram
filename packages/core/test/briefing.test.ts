@@ -239,7 +239,7 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
   it('derives the stale-before instant as now minus the documented window', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // staleCandidates(tx, userId, selector, staleBefore, memoryTypes, limit).
+    // staleCandidates(tx, userId, selector, staleBefore, limit, memoryTypes).
     const staleBefore = staleCandidates.mock.calls[0]?.[3] as Date
     const expected = NOW.getTime() - STALE_WINDOW_DAYS * 86_400_000
     expect(staleBefore.getTime()).toBe(expected)
@@ -272,9 +272,11 @@ describe('briefing — stale-candidate type allowlist (issue #44)', () => {
   it('forwards STALE_CANDIDATE_TYPES and the ceiling limit to the db read', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // staleCandidates(tx, userId, selector, staleBefore, memoryTypes, limit).
-    expect(staleCandidates.mock.calls[0]?.[4]).toBe(STALE_CANDIDATE_TYPES)
-    expect(staleCandidates.mock.calls[0]?.[5]).toBe(MAX_BRIEFING_SECTION)
+    // staleCandidates(tx, userId, selector, staleBefore, limit, memoryTypes) —
+    // memoryTypes trails limit so the 0.6.2 positional call stays valid
+    // (Codex P1, comment 3702700238); core always passes it explicitly.
+    expect(staleCandidates.mock.calls[0]?.[4]).toBe(MAX_BRIEFING_SECTION)
+    expect(staleCandidates.mock.calls[0]?.[5]).toBe(STALE_CANDIDATE_TYPES)
   })
 
   it.each(MEMORY_TYPES)('classifies %s in/out of the stale allowlist correctly', (memoryType) => {

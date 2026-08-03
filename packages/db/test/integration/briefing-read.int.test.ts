@@ -280,7 +280,7 @@ describe('staleCandidates (runtime role)', () => {
     await seedCommitment(userA, staleCommitment)
 
     const page = await withTenant(userA, (tx) =>
-      staleCandidates(tx, userA, ALL, new Date(cutoff), STALE_TYPES, 25),
+      staleCandidates(tx, userA, ALL, new Date(cutoff), 25, STALE_TYPES),
     )
     const ids = page.items.map((r) => r.id)
     expect(ids).toContain(stale)
@@ -308,7 +308,7 @@ describe('staleCandidates (runtime role)', () => {
     }
 
     const page = await withTenant(userA, (tx) =>
-      staleCandidates(tx, userA, ALL, new Date('2026-01-01T00:00:00.000Z'), STALE_TYPES, 25),
+      staleCandidates(tx, userA, ALL, new Date('2026-01-01T00:00:00.000Z'), 25, STALE_TYPES),
     )
     const ids = new Set(page.items.map((r) => r.id))
     for (const t of STALE_TYPES) {
@@ -320,10 +320,28 @@ describe('staleCandidates (runtime role)', () => {
     expect(page.totalCount).toBe(STALE_TYPES.length)
   })
 
+  it('back-compat: omitting memoryTypes keeps the legacy NOT-commitment filter', async () => {
+    // A 0.6.2 positional caller passes five args (no allowlist). That call must
+    // keep its exact prior semantics: every non-commitment stale row surfaces,
+    // including note/event (Codex P1, comment 3702700238).
+    const staleNote = await seedMemory(userA, 'note', { updatedAt: '2025-06-01T00:00:00.000Z' })
+    const staleCommitment = await seedMemory(userA, 'commitment', {
+      updatedAt: '2025-06-01T00:00:00.000Z',
+    })
+    await seedCommitment(userA, staleCommitment)
+
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, new Date('2026-01-01T00:00:00.000Z'), 25),
+    )
+    const ids = page.items.map((r) => r.id)
+    expect(ids).toContain(staleNote)
+    expect(ids).not.toContain(staleCommitment)
+  })
+
   it('RLS isolates: B does not see A stale memories', async () => {
     await seedMemory(userA, 'fact', { updatedAt: '2025-06-01T00:00:00.000Z' })
     const page = await withTenant(userB, (tx) =>
-      staleCandidates(tx, userB, ALL, new Date('2026-01-01T00:00:00.000Z'), STALE_TYPES, 25),
+      staleCandidates(tx, userB, ALL, new Date('2026-01-01T00:00:00.000Z'), 25, STALE_TYPES),
     )
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
@@ -378,7 +396,7 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
       Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'fact', { updatedAt: STALE_AT })),
     )
     const page = await withTenant(userA, (tx) =>
-      staleCandidates(tx, userA, ALL, STALE_BEFORE, STALE_TYPES, CAP),
+      staleCandidates(tx, userA, ALL, STALE_BEFORE, CAP, STALE_TYPES),
     )
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
