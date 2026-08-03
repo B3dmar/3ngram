@@ -47,6 +47,7 @@ import {
   SuccessorNotLiveError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
+import { CursorQueryMismatchError } from '../cursor.js'
 import { OutputValidationError } from '../output-validation.js'
 
 /** A mapped HTTP failure: the status code and the stable reason_code body. */
@@ -83,7 +84,11 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     err instanceof ZodError ||
     err instanceof InvalidEmbeddingError ||
     err instanceof MissingSelectorError ||
-    err instanceof NotCommitmentMemoryError
+    err instanceof NotCommitmentMemoryError ||
+    // A continuation cursor replayed against a different query/filter set —
+    // the caller's mistake, named honestly (never a silent re-page of the old
+    // search's frozen ordering). No query text is logged, only the class name.
+    err instanceof CursorQueryMismatchError
   ) {
     log().warn({ route, err: err instanceof Error ? err.name : 'unknown' }, 'rest: input rejected')
     return { status: 400, reason: 'invalid_input' }

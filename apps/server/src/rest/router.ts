@@ -65,7 +65,7 @@ import {
 } from '@3ngram/schema'
 import { type Request, type Response, Router } from 'express'
 import { z } from 'zod'
-import { decodeCursor, encodeCursor } from '../cursor.js'
+import { decodeSearchCursor, encodeCursor, searchFingerprint } from '../cursor.js'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 import { mapRestError } from './errors.js'
@@ -516,8 +516,15 @@ export function restRouter(options: RestRouterOptions): Router {
       // continuation pages by position within it, so mid-session corpus drift
       // cannot duplicate or skip a row. A malformed cursor throws a ZodError
       // here -> 400 (mapRestError); a stale v1 cursor decodes to undefined and
-      // restarts at page 1.
-      const decoded = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
+      // restarts at page 1. The cursor is BOUND to the search that issued it:
+      // the fingerprint of the current query+filters is verified against the
+      // one frozen into the cursor, so replaying a cursor under a changed
+      // query/filters is a typed 400 (CursorQueryMismatchError), never a
+      // silent re-page of the old search's frozen ids. Fingerprint-less
+      // cursors minted before the binding stay valid (verify-when-present).
+      const fingerprint = searchFingerprint(input.query, filters)
+      const decoded =
+        input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
       const frozen =
         decoded === undefined
           ? undefined
@@ -536,6 +543,7 @@ export function restRouter(options: RestRouterOptions): Router {
             ids: page.frozen.ids,
             scores: page.frozen.scores,
             off: page.nextOffset,
+            fp: fingerprint,
           })
         : undefined
 

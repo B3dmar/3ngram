@@ -28,6 +28,16 @@ const MAX_FROZEN_ORDERING = 1000
  * Decoded frozen-ordering cursor (v2): the page-1 ranked candidate ordering
  * (`ids` + parallel `scores`) and the position (`off`) of the next page within
  * it. `ids.length === scores.length`; `0 <= off <= ids.length`.
+ *
+ * `fp` binds the cursor to the search that issued it: a short stable hash
+ * (truncated sha256, hex) of the normalized query + filter set, computed by the
+ * shared codec (apps/server/src/cursor.ts searchFingerprint). Issuance
+ * populates it; continuation verifies it and rejects a cursor replayed against
+ * a DIFFERENT query/filters with a typed invalid-input error — never silently
+ * re-paging the frozen ids of the old search. COMPATIBILITY: the field is
+ * OPTIONAL with verify-when-present semantics — a v2 cursor minted before this
+ * field existed carries no `fp` and stays valid (no mid-session invalidation
+ * across the deploy boundary).
  */
 export const cursorPayloadSchema = z
   .object({
@@ -35,6 +45,10 @@ export const cursorPayloadSchema = z
     ids: z.array(z.uuid()).max(MAX_FROZEN_ORDERING),
     scores: z.array(z.number()).max(MAX_FROZEN_ORDERING),
     off: z.number().int().min(0),
+    fp: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/)
+      .optional(),
   })
   .strict()
   .refine((p) => p.ids.length === p.scores.length, {
