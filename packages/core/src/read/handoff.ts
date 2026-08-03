@@ -31,6 +31,7 @@ import {
   recentDecisions,
   withTenant,
 } from '@3ngram/db'
+import { MAX_HANDOFF_SECTION_CEILING } from '@3ngram/schema'
 import { requireSelector, type BriefingSelector as Selector } from './briefing.js'
 import { excerptContent } from './excerpt.js'
 
@@ -43,11 +44,32 @@ export type { BriefingSelector } from '@3ngram/db'
  */
 export const MAX_HANDOFF_SECTION = 25
 
-/** Inputs for {@link handoff}. `now` is injected (no wall-clock read in core). */
+/**
+ * Effective per-section limit (bounds V2, issue #45): the caller-tunable
+ * `sectionLimit` when present, else {@link MAX_HANDOFF_SECTION} — clamped into
+ * [1, {@link MAX_HANDOFF_SECTION_CEILING}] so the server-side no-firehose
+ * ceiling ALWAYS wins. The transport schema already rejects an out-of-range
+ * value; the clamp keeps the invariant for direct core callers (same policy as
+ * briefing.ts effectiveSectionLimit).
+ */
+function effectiveSectionLimit(sectionLimit: number | undefined): number {
+  return Math.min(Math.max(sectionLimit ?? MAX_HANDOFF_SECTION, 1), MAX_HANDOFF_SECTION_CEILING)
+}
+
+/**
+ * Inputs for {@link handoff}. `now` is injected (no wall-clock read in core).
+ *
+ * BOUNDS V2 (issue #45): `sectionLimit` is the caller-tunable per-section item
+ * bound (absent = {@link MAX_HANDOFF_SECTION}); the effective limit is clamped
+ * to {@link MAX_HANDOFF_SECTION_CEILING} so the server-side no-firehose ceiling
+ * always wins. Validated at the transport boundary (handoffToolInputV2Schema);
+ * core re-clamps for direct callers.
+ */
 export interface HandoffQuery {
   selector: BriefingSelector | undefined
   /** Optional free-form label for the receiving agent (echoed back; never logged). */
   generatedFor?: string | undefined
+  sectionLimit?: number | undefined
   now: Date
 }
 
@@ -86,6 +108,12 @@ export interface HandoffCommitment {
  *
  * CONTENT IS INCLUDED here by design (decisions/preferences carry `content`) —
  * the difference from a briefing and from logs (see module header).
+ *
+ * BOUNDS V2 (issue #45): `counts` carries the EXACT per-section totals (the
+ * `count(*) OVER()` window totals the briefing-read queries already return —
+ * previously read and DISCARDED here) and `truncated` flags a section whose
+ * export is incomplete (`counts.X > X.length`). Per-SECTION truncation, distinct
+ * from the per-ITEM `truncated` on a {@link HandoffMemory} (an excerpt cut).
  */
 export interface Handoff {
   selector: BriefingSelector
@@ -95,6 +123,8 @@ export interface Handoff {
   commitments: HandoffCommitment[]
   preferences: HandoffMemory[]
   notes: string[]
+  counts: { decisions: number; commitments: number; preferences: number }
+  truncated: { decisions: boolean; commitments: boolean; preferences: boolean }
 }
 
 function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
@@ -118,7 +148,9 @@ function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
  * briefing()): omit it and the call throws MissingSelectorError. REUSES the
  * briefing-read.ts queries (recentDecisions / openCommitments / activePreferences)
  * — no duplicated SQL — inside ONE withTenant transaction. Every section is
- * bounded by {@link MAX_HANDOFF_SECTION}.
+ * bounded by `sectionLimit` (default {@link MAX_HANDOFF_SECTION}, ceiling
+ * {@link MAX_HANDOFF_SECTION_CEILING}); the exact window totals ride the same
+ * statements and land in `counts`/`truncated` (no longer discarded).
  *
  * The payload carries memory CONTENT by design (a handoff transports context);
  * the caller MUST NOT log it (header).
@@ -127,30 +159,41 @@ function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
  */
 export async function handoff(userId: string, query: HandoffQuery): Promise<Handoff> {
   const selector: Selector = requireSelector(query.selector)
-  const limit = MAX_HANDOFF_SECTION
+  const limit = effectiveSectionLimit(query.sectionLimit)
 
-  // The briefing-read queries return {items, totalCount} (a window count rides each
-  // statement for the briefing's exact-count contract); a handoff only needs the
-  // bounded item slices, so it reads `.items` and ignores the count.
-  const { decisionRows, commitmentRows, preferenceRows } = await withTenant(userId, async (tx) => ({
-    decisionRows: (await recentDecisions(tx, userId, selector, limit)).items,
-    commitmentRows: (await openCommitments(tx, userId, selector, limit)).items,
-    preferenceRows: (await activePreferences(tx, userId, selector, limit)).items,
+  // The briefing-read queries return {items, totalCount} — the exact window
+  // count rides each statement (snapshot-consistent with its slice). The pages
+  // are kept whole so the totals feed counts/truncated below (bounds V2 —
+  // previously the count was read and discarded).
+  const { decisions, commitments, preferences } = await withTenant(userId, async (tx) => ({
+    decisions: await recentDecisions(tx, userId, selector, limit),
+    commitments: await openCommitments(tx, userId, selector, limit),
+    preferences: await activePreferences(tx, userId, selector, limit),
   }))
 
   return {
     selector,
     generatedFor: query.generatedFor ?? null,
     generatedAt: query.now.toISOString(),
-    decisions: decisionRows.map(toHandoffMemory),
-    commitments: commitmentRows.map((row) => ({
+    decisions: decisions.items.map(toHandoffMemory),
+    commitments: commitments.items.map((row) => ({
       id: row.id,
       memoryId: row.memoryId,
       topic: row.topic,
       status: row.status,
       dueAt: row.dueAt?.toISOString() ?? null,
     })),
-    preferences: preferenceRows.map(toHandoffMemory),
+    preferences: preferences.items.map(toHandoffMemory),
     notes: [],
+    counts: {
+      decisions: decisions.totalCount,
+      commitments: commitments.totalCount,
+      preferences: preferences.totalCount,
+    },
+    truncated: {
+      decisions: decisions.totalCount > decisions.items.length,
+      commitments: commitments.totalCount > commitments.items.length,
+      preferences: preferences.totalCount > preferences.items.length,
+    },
   }
 }

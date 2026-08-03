@@ -28,8 +28,8 @@ import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
 import {
   briefingToolInputV2Schema,
   briefingToolOutputV2Schema,
-  handoffToolInputSchema,
-  handoffToolOutputSchema,
+  handoffToolInputV2Schema,
+  handoffToolOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -86,9 +86,12 @@ const briefingTool: ToolDefinition = {
 /**
  * handoff — export structured context for another agent/provider (docs/concepts/mcp-design.mdx
  * JTBD "carry context to another tool/agent"). Same REQUIRED-selector discipline
- * as briefing. Reuses the briefing aggregation in core (no duplicated SQL); the
- * OUTPUT carries memory CONTENT by design (decisions/preferences) because a
- * handoff transports context — bounded, and never logged (module header).
+ * as briefing; optional `sectionLimit` (bounds V2, issue #45) tunes the
+ * per-section bound up to the server-side ceiling. Reuses the briefing
+ * aggregation in core (no duplicated SQL); the OUTPUT carries memory CONTENT by
+ * design (decisions/preferences) because a handoff transports context — bounded,
+ * and never logged (module header). The envelope reports exact per-section
+ * `counts` + `truncated` flags so a receiver knows when an export is incomplete.
  */
 const handoffTool: ToolDefinition = {
   name: 'handoff',
@@ -96,27 +99,28 @@ const handoffTool: ToolDefinition = {
   config: {
     title: 'Handoff',
     description:
-      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
-    inputSchema: handoffToolInputSchema,
-    outputSchema: handoffToolOutputSchema,
+      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
+    inputSchema: handoffToolInputV2Schema,
+    outputSchema: handoffToolOutputV2Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
-    const input = handoffToolInputSchema.parse(args)
+    const input = handoffToolInputV2Schema.parse(args)
     // ACCESS GUARD: handoff EXPORTS memory content, so read access is asserted
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    // `generatedFor` is optional under exactOptionalPropertyTypes: only include
-    // the key when present so it is `string`, never `string | undefined`.
+    // Optional fields ride only when present (exactOptionalPropertyTypes): only
+    // include the key when present so it is `string`, never `string | undefined`.
     const result = await handoff(ctx.userId, {
       selector: input.selector,
       now: new Date(),
       ...(input.generatedFor !== undefined ? { generatedFor: input.generatedFor } : {}),
+      ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
     })
     // Decision/preference lines carry core's bounded content EXCERPT —
     // long imported rows can exceed any write-time cap, so core bounds
     // them before this output parse ever sees the payload.
-    return ok(parseOutput('handoff', handoffToolOutputSchema, result))
+    return ok(parseOutput('handoff', handoffToolOutputV2Schema, result))
   },
 }
 

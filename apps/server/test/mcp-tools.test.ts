@@ -17,7 +17,7 @@ import {
   describeEnvironmentOutputSchema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
-  handoffToolOutputSchema,
+  handoffToolOutputV2Schema,
   rememberToolOutputSchema,
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
@@ -1035,6 +1035,8 @@ describe('handoff tool (D2 orientation)', () => {
     commitments: [],
     preferences: [],
     notes: [],
+    counts: { decisions: 0, commitments: 0, preferences: 0 },
+    truncated: { decisions: false, commitments: false, preferences: false },
     ...overrides,
   })
 
@@ -1059,6 +1061,8 @@ describe('handoff tool (D2 orientation)', () => {
             project: null,
           },
         ],
+        counts: { decisions: 40, commitments: 0, preferences: 0 },
+        truncated: { decisions: true, commitments: false, preferences: false },
       }),
     )
     const result = await call(
@@ -1067,9 +1071,12 @@ describe('handoff tool (D2 orientation)', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = handoffToolOutputSchema.parse(result.structuredContent)
+    const parsed = handoffToolOutputV2Schema.parse(result.structuredContent)
     // Content IS included by design (a handoff transports context).
     expect(parsed.decisions[0]?.content).toBe('pin mcp sdk at 1.29.0')
+    // The exact per-section totals + truncation flags ride the envelope (V2).
+    expect(parsed.counts.decisions).toBe(40)
+    expect(parsed.truncated.decisions).toBe(true)
     expect(handoff.mock.calls[0]?.[1]).toMatchObject({
       selector: { kind: 'all' },
       generatedFor: 'agent-b',
@@ -1082,6 +1089,27 @@ describe('handoff tool (D2 orientation)', () => {
     const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
     expect('generatedFor' in arg).toBe(false)
     expect(arg.now).toBeInstanceOf(Date)
+  })
+
+  it('forwards sectionLimit to core and omits it when absent (bounds V2)', async () => {
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' }, sectionLimit: 80 }, ctx())
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ sectionLimit: 80 })
+    handoff.mockClear()
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' } }, ctx())
+    const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('sectionLimit' in arg).toBe(false)
+  })
+
+  it('rejects an out-of-ceiling sectionLimit at the boundary (never reaches core)', async () => {
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 101 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 0 }, ctx())).isError,
+    ).toBe(true)
+    expect(handoff).not.toHaveBeenCalled()
   })
 })
 
