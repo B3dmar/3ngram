@@ -49,6 +49,7 @@ import { mapToolError } from './errors.js'
 // review_proposals — defined in their own module (500-line discipline), appended
 // to the registry below via the factory (append-only edit to TOOLS).
 import { createAdminTools } from './tools-admin.js'
+import { INSPECT_TOOLS } from './tools-inspect.js'
 // --- orientation tools: briefing + handoff — appended ---
 import { ORIENT_TOOLS } from './tools-orient.js'
 
@@ -227,7 +228,7 @@ const searchTool: ToolDefinition = {
   config: {
     title: 'Search',
     description:
-      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained.',
+      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content.',
     inputSchema: searchQuerySchema,
     outputSchema: searchToolOutputSchema,
   },
@@ -423,8 +424,8 @@ const resolveTool: ToolDefinition = {
 /**
  * THE registered tool surface. Length === registered count; the <=12 cap (hard
  * rule 8) is auditable from this one array. D0: 3; D1 adds revise + resolve -> 5;
- * D3 appends configure_scope + describe_environment + review_proposals -> 8 (the
- * sibling track's orient tools bring the union to the 10-tool v1 surface).
+ * D2 orient (briefing, handoff) -> 7; D3 admin (configure_scope,
+ * describe_environment, review_proposals) -> 10; get_memories (inspect) -> 11.
  *
  * The admin tools are created via a FACTORY given a thunk over {@link TOOLS}, so
  * describe_environment can report the FULL surface (itself included) without a
@@ -440,13 +441,14 @@ export const TOOLS: readonly ToolDefinition[] = [
   // D2 orientation tools (briefing, handoff) — appended from tools-orient.ts so
   // this registry stays the single auditable surface while the file stays thin.
   ...ORIENT_TOOLS,
+  ...INSPECT_TOOLS, // get_memories — appended from tools-inspect.ts (same pattern)
   // D3 admin tools (configure_scope, describe_environment, review_proposals) —
   // appended via the factory thunk so describe_environment can report the FULL
   // surface (itself included) without a circular import.
   ...createAdminTools(() => TOOLS.map((t) => t.name)),
 ]
 
-/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. */
+/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12 registered; the LAST slot is reserved for the future `manage_context` tool. */
 export const MAX_TOOLS = 12
 
 /**

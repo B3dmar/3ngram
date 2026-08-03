@@ -16,6 +16,7 @@ import {
   configureScopeOutputSchema,
   describeEnvironmentOutputSchema,
   factsToolOutputSchema,
+  getMemoriesOutputSchema,
   handoffToolOutputSchema,
   rememberToolOutputSchema,
   resolveToolOutputSchema,
@@ -34,6 +35,8 @@ const revise = vi.fn()
 const resolveByMemoryId = vi.fn()
 const briefing = vi.fn()
 const handoff = vi.fn()
+// Inspect tool core fn (get_memories).
+const getMemoriesByIds = vi.fn()
 // D3 admin-tool core fns (configure_scope / describe_environment / review_proposals).
 const listScopes = vi.fn()
 const createScope = vi.fn()
@@ -208,6 +211,7 @@ vi.mock('@3ngram/core', () => ({
   resolveByMemoryId,
   briefing,
   handoff,
+  getMemoriesByIds,
   BudgetExceededError,
   AccessDeniedError,
   ResourceLimitExceededError,
@@ -276,12 +280,14 @@ async function call(name: string, args: unknown, context: ToolContext) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('MCP tool registry discipline', () => {
-  it('registers exactly 10 tools (D1 5 + D2 orient 2 + D3 admin 3), under the cap', () => {
+  it('registers exactly 11 tools (D1 5 + D2 orient 2 + inspect 1 + D3 admin 3), under the cap', () => {
     // MERGED truth: the 5 existing tools (remember, search, get_facts, revise,
-    // resolve) + D2 orientation (briefing, handoff) + D3 admin (configure_scope,
-    // describe_environment, review_proposals) -> the 10-tool v1 surface. The cap
-    // (<=12, docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling.
-    expect(TOOLS).toHaveLength(10)
+    // resolve) + D2 orientation (briefing, handoff) + the inspect follow-up read
+    // (get_memories) + D3 admin (configure_scope, describe_environment,
+    // review_proposals) -> the 11-tool surface. The cap (<=12,
+    // docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling; the last
+    // slot is reserved for manage_context.
+    expect(TOOLS).toHaveLength(11)
     expect(TOOLS.map((t) => t.name)).toEqual([
       'remember',
       'search',
@@ -290,6 +296,7 @@ describe('MCP tool registry discipline', () => {
       'resolve',
       'briefing',
       'handoff',
+      'get_memories',
       'configure_scope',
       'describe_environment',
       'review_proposals',
@@ -1033,8 +1040,8 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
     }
   })
 
-  it('briefing and handoff are read-scoped: a read-only token can call them', async () => {
-    for (const name of ['briefing', 'handoff']) {
+  it('briefing, handoff, and get_memories are read-scoped: a read-only token can call them', async () => {
+    for (const name of ['briefing', 'handoff', 'get_memories']) {
       expect(toolByName(name).requiredScope).toBe('memory:read')
     }
     const readOnly = ctx({ scopes: ['memory:read'] })
@@ -1262,8 +1269,8 @@ describe('describe_environment tool', () => {
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
     const parsed = describeEnvironmentOutputSchema.parse(result.structuredContent)
-    // Capabilities reflect the FULL registry (merged surface: 10 tools, names included).
-    expect(parsed.capabilities.toolCount).toBe(10)
+    // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
+    expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
     expect(parsed.capabilities.tools.length).toBe(parsed.capabilities.toolCount)
     // Derives from apps/server/package.json (see src/version.ts), so this
@@ -1480,6 +1487,79 @@ describe('D3 admin tools: registry scope declarations', () => {
   })
 })
 
+describe('get_memories tool (batched full-content follow-up read)', () => {
+  const rowId = crypto.randomUUID()
+  const coreRow = (over: Record<string, unknown> = {}) => ({
+    id: rowId,
+    memoryType: 'decision',
+    topic: 'release cadence',
+    content: 'full decision body',
+    contentLength: 18,
+    truncated: false,
+    scope: 'work',
+    project: null,
+    status: 'active',
+    commitmentStatus: null,
+    tags: ['ops'],
+    validFrom: new Date('2026-01-01T00:00:00.000Z'),
+    validTo: null,
+    recordedAt: new Date('2026-01-01T00:00:00.000Z'),
+    createdAt: new Date('2026-01-02T00:00:00.000Z'),
+    ...over,
+  })
+
+  it('passes validated ids + maxContentChars to core and shapes schema-valid output', async () => {
+    getMemoriesByIds.mockResolvedValue({ memories: [coreRow()], notFound: [MEMO_ID] })
+    const result = await call(
+      'get_memories',
+      { ids: [rowId, MEMO_ID], maxContentChars: 4096 },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getMemoriesByIds).toHaveBeenCalledWith(UID, [rowId, MEMO_ID], {
+      maxContentChars: 4096,
+    })
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.count).toBe(1)
+    expect(parsed.memories[0]?.id).toBe(rowId)
+    expect(parsed.memories[0]?.validFrom).toBe('2026-01-01T00:00:00.000Z')
+    // A null LEFT-JOIN commitment status is OMITTED (schema optional), never null.
+    expect(parsed.memories[0]).not.toHaveProperty('commitmentStatus')
+    // notFound is DATA: the miss rides in the envelope, the call still succeeds.
+    expect(parsed.notFound).toEqual([MEMO_ID])
+  })
+
+  it('carries commitmentStatus for a commitment-type row', async () => {
+    getMemoriesByIds.mockResolvedValue({
+      memories: [coreRow({ memoryType: 'commitment', commitmentStatus: 'open' })],
+      notFound: [],
+    })
+    const result = await call('get_memories', { ids: [rowId] }, ctx())
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.memories[0]?.commitmentStatus).toBe('open')
+  })
+
+  it('applies the schema default maxContentChars when omitted', async () => {
+    getMemoriesByIds.mockResolvedValue({ memories: [], notFound: [rowId] })
+    await call('get_memories', { ids: [rowId] }, ctx())
+    expect(getMemoriesByIds).toHaveBeenCalledWith(UID, [rowId], { maxContentChars: 10000 })
+  })
+
+  it('rejects bad batches at the boundary: empty ids, >20 ids, out-of-range cap, unknown key', async () => {
+    for (const args of [
+      { ids: [] },
+      { ids: Array.from({ length: 21 }, () => crypto.randomUUID()) },
+      { ids: [rowId], maxContentChars: 199 },
+      { ids: [rowId], maxContentChars: 65537 },
+      { ids: [rowId], scope: 'work' },
+      { ids: ['not-a-uuid'] },
+    ]) {
+      expect((await call('get_memories', args, ctx())).isError).toBe(true)
+    }
+    expect(getMemoriesByIds).not.toHaveBeenCalled()
+  })
+})
+
 // ACCESS GATE ENFORCEMENT: the orientation + admin tools that read or mutate
 // tenant-memory data now assert ctx.access AFTER the scope check but BEFORE the
 // core op. A denying gate must reject (isError access_denied) AND the core fn must
@@ -1503,6 +1583,7 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
   const GATED: Array<[string, unknown, 'read' | 'write', ReturnType<typeof vi.fn>]> = [
     ['briefing', { selector: { kind: 'all' } }, 'read', briefing],
     ['handoff', { selector: { kind: 'all' } }, 'read', handoff],
+    ['get_memories', { ids: [MEMO_ID] }, 'read', getMemoriesByIds],
     ['describe_environment', {}, 'read', describeEnvironment],
     ['configure_scope', { action: 'list' }, 'read', listScopes],
     ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],

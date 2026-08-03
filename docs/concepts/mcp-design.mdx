@@ -4,7 +4,7 @@ description: "How the MCP tool surface is scoped from jobs to be done, capped at
 icon: "wrench"
 ---
 
-The MCP surface is designed from **jobs to be done** and capped at **10 tools** in v1 — deliberately small, because tool sprawl across tools, prompts, and resources is a leading complexity source. Adding a tool requires: (a) a JTBD no existing tool covers, (b) evidence an agent actually needs it (transcript/eval), (c) removing or absorbing a tool if the count would exceed the hard ceiling of 12 (the v1 surface is 10; 12 is the absolute cap, not the target).
+The MCP surface is designed from **jobs to be done** and capped at **11 tools** — deliberately small, because tool sprawl across tools, prompts, and resources is a leading complexity source. Adding a tool requires: (a) a JTBD no existing tool covers, (b) evidence an agent actually needs it (transcript/eval), (c) removing or absorbing a tool if the count would exceed the hard ceiling of 12 (the current surface is 11; 12 is the absolute cap, not the target — the last slot is reserved for a future `manage_context`).
 
 ## Jobs to be done
 
@@ -12,6 +12,7 @@ The MCP surface is designed from **jobs to be done** and capped at **10 tools** 
 |---|---|
 | "Persist something worth keeping" | `remember` |
 | "Find what I know" (memories + facts, supersession-aware, time-travel) | `search` |
+| "Read what I found" (full content for ids a search/handoff surfaced truncated) | `get_memories` |
 | "Correct the record" (supersede, extend, resolve, archive) | `revise`, `resolve` |
 | "Start my session oriented" | `briefing` |
 | "Carry context to another tool/agent" | `handoff` |
@@ -20,10 +21,10 @@ The MCP surface is designed from **jobs to be done** and capped at **10 tools** 
 | "Review what the consolidator proposes" | `review_proposals` |
 | "Know what this server can do / how I'm set up" | `describe_environment` |
 
-## v1 tools (10)
+## Tools (11)
 
 1. **`remember`** — append a memory (type, scope, project). Never merges. Returns the created memory + any consolidation proposals it triggered (advisory).
-2. **`search`** — unified retrieval: semantic + FTS + recency fusion; filters (type/scope/project/status); `as_of` for bi-temporal time travel; `memory_ids` for direct lookup; returns coverage envelope. One unified retrieval tool in place of several specialist search tools. The web UI exposes a user-selectable result limit (5 / 10 / 25, defaulting to 5); the hard ceiling is `MAX_SEARCH_LIMIT = 25` (packages/schema `mcp.ts`).
+2. **`search`** — unified retrieval: semantic + FTS + recency fusion; filters (type/scope/project/status); `as_of` for bi-temporal time travel; returns coverage envelope. One unified retrieval tool in place of several specialist search tools. Hit content is a bounded excerpt (`MAX_EXCERPT_LENGTH`); a hit with `truncated: true` is read in full via `get_memories`. The web UI exposes a user-selectable result limit (5 / 10 / 25, defaulting to 5); the hard ceiling is `MAX_SEARCH_LIMIT = 25` (packages/schema `mcp.ts`).
 3. **`revise`** — the correction surface: create a `supersedes`/`updates`/`extends` edge with new content, or archive. Unifies update and supersession logic in one tool. Never edits in place destructively.
 4. **`resolve`** / unresolve (flag) — commitment/blocker FSM transitions.
 5. **`briefing`** — structured: commitments, blockers, overdue, stale, recent decisions, preferences. Requires explicit selector (scope/project/all) — carry forward the no-firehose rule. `brief` mode default.
@@ -32,6 +33,7 @@ The MCP surface is designed from **jobs to be done** and capped at **10 tools** 
 8. **`configure_scope`** — scope CRUD + aliases + mappings.
 9. **`review_proposals`** — list/accept/reject consolidation proposals (the human-in-the-loop side of background consolidation).
 10. **`describe_environment`** — capabilities, config, scopes, stats.
+11. **`get_memories`** — batched full-content read by id: up to `MAX_GET_MEMORIES_IDS = 20` ids, per-item content bounded at `maxContentChars` (default 10,000, ceiling `MAX_GET_CONTENT_CHARS = 65,536` — import rows reach 262,144 chars and never ride back verbatim). Unknown and cross-tenant ids land in `notFound` (data, never an error — no existence leak). The follow-up read for a `truncated: true` search/handoff line; the unbounded body stays on REST `GET /api/v1/memories/:id`.
 
 ## Server architecture
 
