@@ -19,7 +19,7 @@ import { EXCERPT_MARKER, MAX_EXCERPT_LENGTH } from '@3ngram/schema'
 
 /** A read-result content excerpt: the bounded text + the full-length metadata. */
 export interface ExcerptedContent {
-  /** At most MAX_EXCERPT_LENGTH chars; ends with EXCERPT_MARKER when truncated. */
+  /** At most the applied cap (MAX_EXCERPT_LENGTH default); ends with EXCERPT_MARKER when truncated. */
   content: string
   /** FULL stored content length (chars), so a caller can decide to fetch by id. */
   contentLength: number
@@ -28,17 +28,23 @@ export interface ExcerptedContent {
 }
 
 /**
- * Bound `content` to {@link MAX_EXCERPT_LENGTH}. Short content passes through
- * verbatim; long content is cut to fit the cap WITH the {@link EXCERPT_MARKER}
- * appended (the marker rides inside the budget, so the result never exceeds the
- * schema bound). A trailing lone high surrogate at the cut point is dropped so
- * the excerpt is always well-formed UTF-16.
+ * Bound `content` to `maxChars` (default {@link MAX_EXCERPT_LENGTH}, the
+ * search/handoff excerpt cap — existing call sites pass no argument and keep
+ * their shipped behavior). Short content passes through verbatim; long content
+ * is cut to fit the cap WITH the {@link EXCERPT_MARKER} appended (the marker
+ * rides inside the budget, so the result never exceeds the schema bound). A
+ * trailing lone high surrogate at the cut point is dropped so the excerpt is
+ * always well-formed UTF-16. `maxChars` is validated upstream at the schema
+ * boundary (hard rule 2); this policy only applies it.
  */
-export function excerptContent(content: string): ExcerptedContent {
-  if (content.length <= MAX_EXCERPT_LENGTH) {
+export function excerptContent(
+  content: string,
+  maxChars: number = MAX_EXCERPT_LENGTH,
+): ExcerptedContent {
+  if (content.length <= maxChars) {
     return { content, contentLength: content.length, truncated: false }
   }
-  let cut = content.slice(0, MAX_EXCERPT_LENGTH - EXCERPT_MARKER.length)
+  let cut = content.slice(0, maxChars - EXCERPT_MARKER.length)
   const lastUnit = cut.charCodeAt(cut.length - 1)
   if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) {
     cut = cut.slice(0, -1)

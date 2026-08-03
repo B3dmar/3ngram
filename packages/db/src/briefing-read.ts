@@ -43,7 +43,7 @@
 //
 // Content discipline (hard rule 6): topic/content are content-adjacent and are
 // NEVER logged here; callers log ids/counts/lengths only.
-import { and, asc, desc, eq, isNull, lt, ne, or, type SQL, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, ne, or, type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { commitments, memories } from './schema/memory.js'
 
@@ -364,22 +364,36 @@ export function activePreferences(
 
 /**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
- * non-commitment memories untouched (updated_at) since `staleBefore`,
- * scope/project-narrowed. Commitment-type rows are excluded — they surface via
- * their own (open/waiting) list, not by staleness. Leads with the caller-bound
- * `memories.user_id = userId` tenant condition (module header).
+ * memories of an ALLOWLISTED type untouched (updated_at) since `staleBefore`,
+ * scope/project-narrowed. The type filter is an ALLOWLIST (`memory_type IN
+ * (...)`) supplied by core, NOT a NOT-IN exclusion: which types are worth a
+ * staleness review is briefing POLICY (hard rule 5), owned by
+ * packages/core/read/briefing.ts (STALE_CANDIDATE_TYPES, beside
+ * STALE_WINDOW_DAYS) — this layer only turns the caller's list into SQL. Leads
+ * with the caller-bound `memories.user_id = userId` tenant condition (module
+ * header).
+ *
+ * BACK-COMPAT (Codex P1, comment 3702700238): `memoryTypes` is OPTIONAL. When
+ * omitted — a pre-0.6.3 caller — the predicate falls back to the legacy
+ * NOT-commitment exclusion so existing five-argument calls keep their exact
+ * prior behavior. This fallback is the ONE deliberate exception to "no type
+ * policy here" and exists only for compatibility; in-repo callers always pass
+ * the allowlist.
  */
 function staleCandidatePredicate(
   userId: string,
   selector: BriefingSelector,
   staleBefore: Date,
+  memoryTypes: readonly string[] | undefined,
 ): SQL {
   const conditions: SQL[] = [
     eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
     lt(memories.updatedAt, staleBefore),
-    ne(memories.memoryType, 'commitment'),
+    memoryTypes === undefined
+      ? ne(memories.memoryType, 'commitment')
+      : inArray(memories.memoryType, [...memoryTypes]),
   ]
   const scoped = memoryScopePredicate(selector)
   if (scoped !== undefined) conditions.push(scoped)
@@ -387,14 +401,21 @@ function staleCandidatePredicate(
 }
 
 /**
- * Stale candidates: LIVE, active memories not touched (updated_at) since
- * `staleBefore`, scope/project-narrowed, ordered OLDEST-first (the most-stale
- * first) and BOUNDED by `limit`.
+ * Stale candidates: LIVE, active memories of an ALLOWLISTED `memoryTypes` type
+ * not touched (updated_at) since `staleBefore`, scope/project-narrowed, ordered
+ * OLDEST-first (the most-stale first) and BOUNDED by `limit`.
  *
  * `staleBefore` is computed by core from the injected `now` minus the stale
- * window (no wall-clock read here). Excludes commitment-type memories: an open
- * commitment is surfaced by its own list, not by staleness — staleness is for
- * notes/facts/etc. that have gone quiet.
+ * window, and `memoryTypes` is core's STALE_CANDIDATE_TYPES allowlist (no
+ * wall-clock read and no type policy here). Commitment-type rows are never in
+ * the allowlist: an open commitment is surfaced by its own list, not by
+ * staleness.
+ *
+ * BACK-COMPAT CONTRACT: `memoryTypes` trails `limit` and is OPTIONAL so the
+ * 0.6.2 five-argument positional call keeps compiling AND keeps its exact
+ * prior semantics (legacy NOT-commitment filter — see
+ * {@link staleCandidatePredicate}). Do NOT insert parameters before `limit`
+ * (Codex P1, comment 3702700238).
  *
  * BRIEF-MODE CONTRACT: `items` is CAPPED at `limit`; `totalCount` is the EXACT
  * total from a `count(*) OVER()` window in the SAME statement, so it stays
@@ -412,6 +433,7 @@ export async function staleCandidates(
   selector: BriefingSelector,
   staleBefore: Date,
   limit: number,
+  memoryTypes?: readonly string[],
 ): Promise<BriefingPage<BriefingMemoryRow>> {
   const rows = await tx
     .select({
@@ -426,7 +448,7 @@ export async function staleCandidates(
       totalCount: TOTAL_COUNT,
     })
     .from(memories)
-    .where(staleCandidatePredicate(userId, selector, staleBefore))
+    .where(staleCandidatePredicate(userId, selector, staleBefore, memoryTypes))
     // Oldest-touched first: the most-stale memory leads.
     .orderBy(asc(memories.updatedAt), asc(memories.id))
     .limit(limit)

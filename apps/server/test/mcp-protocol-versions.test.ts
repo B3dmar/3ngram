@@ -73,7 +73,7 @@ describe('MCP protocol compatibility', () => {
       const client = await connect(contract.options)
       expect(client.getProtocolEra()).toBe(contract.era)
       const toolCatalog = await client.listTools()
-      expect(toolCatalog.tools).toHaveLength(10)
+      expect(toolCatalog.tools).toHaveLength(11)
       expect(toolCatalog.tools.map((tool) => tool.name)).toContain('describe_environment')
       const promptCatalog = await client.listPrompts()
       expect(promptCatalog.prompts).toHaveLength(2)

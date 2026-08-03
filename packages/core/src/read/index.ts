@@ -14,6 +14,7 @@ export {
   MAX_BRIEFING_SECTION,
   MissingSelectorError,
   requireSelector,
+  STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
 } from './briefing.js'
 export {
@@ -56,7 +57,15 @@ export {
   type MemoryListRow,
 } from './list-memories.js'
 export { getCurrentUser, type UserIdentityRow } from './me.js'
-export { getMemoryById, type MemoryDetailRow, MemoryNotFoundError } from './memory.js'
+export {
+  type GetMemoriesOptions,
+  getMemoriesByIds,
+  getMemoryById,
+  type MemoriesBatchRead,
+  type MemoryBatchItem,
+  type MemoryDetailRow,
+  MemoryNotFoundError,
+} from './memory.js'
 export { getMemoryHistory, type MemoryHistoryRead } from './memory-history.js'
 export {
   type DashboardPageOptions,
