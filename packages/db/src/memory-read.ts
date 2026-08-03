@@ -236,3 +236,44 @@ export async function getMemoryById(
     .limit(1)
   return row
 }
+
+/**
+ * Fetch a BATCH of memories by id for the tenant in ONE query (id = ANY —
+ * never a per-id loop). Same contract as {@link getMemoryById} per row: the
+ * WHERE keys on (user_id, id IN …), so RLS AND the caller-bound user_id
+ * predicate collapse not-found and not-owned to plain absence — a missing id
+ * is simply not in the result, NEVER an error (the caller derives its
+ * not-found set by diffing). NO live gate: a caller fetching specific ids may
+ * target superseded rows. Returns full rows including content + tags; ordering
+ * follows recorded_at DESC with the id tiebreak (stable, index-served).
+ */
+export async function getMemoriesByIds(
+  tx: TenantTx,
+  userId: string,
+  memoryIds: string[],
+): Promise<MemoryDetailRow[]> {
+  if (memoryIds.length === 0) return []
+  return tx
+    .select({
+      id: memories.id,
+      memoryType: memories.memoryType,
+      topic: memories.topic,
+      content: memories.content,
+      scope: memories.scope,
+      project: memories.project,
+      status: memories.status,
+      commitmentStatus: commitments.status,
+      tags: memories.tags,
+      validFrom: memories.validFrom,
+      validTo: memories.validTo,
+      recordedAt: memories.recordedAt,
+      createdAt: memories.createdAt,
+    })
+    .from(memories)
+    .leftJoin(
+      commitments,
+      and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
+    )
+    .where(and(eq(memories.userId, userId), inArray(memories.id, memoryIds)))
+    .orderBy(desc(memories.recordedAt), desc(memories.id))
+}

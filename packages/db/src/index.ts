@@ -208,6 +208,7 @@ export {
 // --- dashboard memory reads: bounded list + single-id inspect ---
 export {
   countMemories,
+  getMemoriesByIds,
   getMemoryById,
   listMemories,
   listMemoryFacets,

@@ -52,3 +52,31 @@ describe('excerptContent — read-path bound (issue #238)', () => {
     expect(roundTrip).toBe(result.content)
   })
 })
+
+describe('excerptContent — parameterized cap (get_memories batched read)', () => {
+  it('defaults to MAX_EXCERPT_LENGTH so existing call sites keep shipped behavior', () => {
+    const content = 'f'.repeat(MAX_EXCERPT_LENGTH + 1)
+    expect(excerptContent(content)).toEqual(excerptContent(content, MAX_EXCERPT_LENGTH))
+  })
+
+  it('bounds content at EXACTLY the requested cap, marker inside the budget', () => {
+    const cap = 10_000
+    const result = excerptContent('g'.repeat(cap + 1), cap)
+    expect(result.content.length).toBe(cap)
+    expect(result.content.endsWith(EXCERPT_MARKER)).toBe(true)
+    expect(result.contentLength).toBe(cap + 1)
+    expect(result.truncated).toBe(true)
+  })
+
+  it('passes content at exactly a custom cap through unmarked', () => {
+    const cap = 500
+    const result = excerptContent('h'.repeat(cap), cap)
+    expect(result).toEqual({ content: 'h'.repeat(cap), contentLength: cap, truncated: false })
+  })
+
+  it('admits content ABOVE the default under a raised cap (the get_memories JTBD)', () => {
+    const content = 'i'.repeat(5_000)
+    const result = excerptContent(content, 65_536)
+    expect(result).toEqual({ content, contentLength: 5_000, truncated: false })
+  })
+})
