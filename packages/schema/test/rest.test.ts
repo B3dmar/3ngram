@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
 import {
+  memoriesListQuerySchema,
   memoriesListResponseSchema,
   memoryDetailSchema,
   memoryHistoryResponseSchema,
@@ -113,6 +114,46 @@ const detail = {
   validFrom: iso,
   validTo: null,
 }
+
+describe('memoriesListQuerySchema — recorded-range hardening (issue #58, MCP parity)', () => {
+  it('REJECTS an inverted recorded_at range (recordedAfter later than recordedBefore)', () => {
+    const inverted = memoriesListQuerySchema.safeParse({
+      recordedAfter: '2026-02-01T00:00:00Z',
+      recordedBefore: '2026-01-01T00:00:00Z',
+    })
+    expect(inverted.success).toBe(false)
+    // Equal bounds are a valid single-instant range (both bounds inclusive).
+    expect(
+      memoriesListQuerySchema.safeParse({
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+    // A well-ordered range still parses.
+    expect(
+      memoriesListQuerySchema.safeParse({
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-02-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('REJECTS sub-millisecond recorded bounds; accepts up to 3 fractional digits', () => {
+    // At the bound: millisecond precision (what the transport's ISO→Date
+    // conversion can represent losslessly) parses.
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedAfter: '2026-01-01T00:00:00.123Z' }).success,
+    ).toBe(true)
+    // Past the bound: microsecond-ish precision is rejected per bound rather
+    // than silently truncated (recorded_at stores microseconds in Postgres).
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedAfter: '2026-01-01T00:00:00.1234Z' }).success,
+    ).toBe(false)
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedBefore: '2026-01-01T00:00:00.123456Z' }).success,
+    ).toBe(false)
+  })
+})
 
 describe('REST memory contracts', () => {
   it('allows commitmentStatus on list rows while keeping list rows content-free', () => {

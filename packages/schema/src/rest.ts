@@ -25,6 +25,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+import { recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -154,6 +155,12 @@ export const memoriesListQuerySchema = z
         path: ['memoryTypes'],
         message: 'memoryTypes is mutually exclusive with type — pass one or the other',
       })
+    }
+    // Recorded-range sanity (issue #58): the SAME shared rule set as the MCP
+    // searchQueryV2Schema — an inverted range or a sub-millisecond bound is a
+    // 400 at the boundary, never an empty 200 or a silently truncated bound.
+    for (const issue of recordedRangeIssues(v)) {
+      ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message })
     }
   })
 export type MemoriesListQuery = z.infer<typeof memoriesListQuerySchema>

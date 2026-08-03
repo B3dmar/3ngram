@@ -20,6 +20,7 @@ import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
+import { recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema, rememberInputSchema, reviseInputSchema } from './write.js'
 
@@ -937,10 +938,16 @@ export type SearchFiltersV2Input = z.infer<typeof searchFiltersV2Schema>
  * fields' descriptions (memoryTypes in searchFiltersV2Schema; memoryType via
  * the V2-only override below — the shipped V1 schemas stay untouched).
  *
- * RANGE SANITY: an INVERTED recorded_at range (recordedAfter later than
- * recordedBefore) can never match anything — a caller error, rejected loudly
- * instead of silently returning an empty result. Equal bounds are a valid
- * single-instant range (both bounds inclusive).
+ * RANGE SANITY: the shared recorded-range rules ({@link recordedRangeIssues},
+ * issue #58 — the SAME rule set the REST memoriesListQuerySchema applies, so
+ * the two transports cannot drift): an INVERTED range (recordedAfter later
+ * than recordedBefore) can never match anything — a caller error, rejected
+ * loudly instead of silently returning an empty result (equal bounds are a
+ * valid single-instant range, both bounds inclusive) — and a bound with
+ * sub-millisecond fractional seconds is rejected rather than silently
+ * truncated by the ISO→Date conversion at the transport (recorded_at is
+ * microsecond-precise in Postgres; a truncated bound would leak boundary
+ * rows past an inclusive bound).
  */
 export const searchQueryV2Schema = searchQuerySchema
   .extend({
@@ -958,16 +965,8 @@ export const searchQueryV2Schema = searchQuerySchema
         message: 'memoryTypes is mutually exclusive with memoryType — pass one or the other',
       })
     }
-    if (
-      v.recordedAfter !== undefined &&
-      v.recordedBefore !== undefined &&
-      Date.parse(v.recordedAfter) > Date.parse(v.recordedBefore)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['recordedAfter'],
-        message: 'recordedAfter must not be later than recordedBefore — inverted range',
-      })
+    for (const issue of recordedRangeIssues(v)) {
+      ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message })
     }
   })
 export type SearchQueryV2Input = z.infer<typeof searchQueryV2Schema>

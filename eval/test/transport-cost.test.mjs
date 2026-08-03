@@ -50,8 +50,10 @@ test('the per-turn-vs-once policy is explicit and drives the totals', () => {
 
 test('the deterministic per-task totals match the committed fixtures (both cost models)', () => {
   // The frozen numbers (turns=8, real SDK tools/list surface, cache read=0.1x
-  // write=1.25x). These are the figures the memo cites; a fixture or accounting
-  // change MUST move them in lockstep so the memo can never silently drift.
+  // write=1.25x). Frozen on purpose: a fixture or accounting change MUST move
+  // these totals in lockstep here, so THIS assertion is the only in-repo
+  // citation of the measured totals — any prose stays citation-free and can
+  // never silently drift from a fixture refresh (issue #58 item 3).
   const summary = runSlice()
   const rows = rowsByTransport(summary)
   assert.equal(summary.turnCount, 8)

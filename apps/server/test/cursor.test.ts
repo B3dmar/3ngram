@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { dashboardSearchQuerySchema, searchQueryV3Schema } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
 import { ZodError } from 'zod'
 import {
@@ -64,20 +65,42 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('find me', { scope: 'work' })).toBe(fp)
   })
 
-  it('trims the query and normalizes filter key order, undefined axes, and the memoryTypes OR-set', () => {
+  it('normalizes filter key order, undefined axes, and the memoryTypes OR-set', () => {
     const fp = searchFingerprint('find me', {
       scope: 'work',
       memoryTypes: ['decision', 'note'],
       recordedAfter: new Date('2026-01-01T00:00:00Z'),
     })
     expect(
-      searchFingerprint('  find me ', {
+      searchFingerprint('find me', {
         recordedAfter: new Date('2026-01-01T00:00:00Z'),
         memoryTypes: ['note', 'decision'],
         scope: 'work',
         project: undefined,
       }),
     ).toBe(fp)
+  })
+
+  it('hashes the POST-PARSE query verbatim — the schema boundary owns trimming (issue #58)', () => {
+    // Both transports fingerprint the schema-PARSED query, and both query
+    // schemas .trim() at parse — so an edge-whitespace variant of the same
+    // search reaches searchFingerprint already normalized and binds to the
+    // same cursor. searchFingerprint itself must NOT re-normalize: it hashes
+    // exactly the text core embeds.
+    const fp = searchFingerprint('find me', { scope: 'work' })
+    expect(
+      searchFingerprint(searchQueryV3Schema.parse({ query: '  find me ' }).query, {
+        scope: 'work',
+      }),
+    ).toBe(fp)
+    expect(
+      searchFingerprint(dashboardSearchQuerySchema.parse({ query: '\nfind me\t' }).query, {
+        scope: 'work',
+      }),
+    ).toBe(fp)
+    // Pre-parse (edge-whitespace) text is a DIFFERENT hash input — proof the
+    // function itself does not trim.
+    expect(searchFingerprint('  find me ', { scope: 'work' })).not.toBe(fp)
   })
 
   it('changes when the query or a filter changes (case included — it alters retrieval)', () => {
