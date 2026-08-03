@@ -119,6 +119,41 @@ describe('searchToolOutputV2Schema — continuation envelope consistency', () =>
     ).toBe(false)
   })
 
+  it('accepts homogeneous multi-hit pages in both projections', () => {
+    const secondId = '22222222-2222-4222-8222-222222222222'
+    expect(
+      searchToolOutputV2Schema.safeParse({
+        hits: [FULL_HIT, { ...FULL_HIT, id: secondId }],
+        count: 2,
+        hasMore: false,
+      }).success,
+    ).toBe(true)
+    expect(
+      searchToolOutputV2Schema.safeParse({
+        hits: [COMPACT_HIT, { ...COMPACT_HIT, id: secondId }],
+        count: 2,
+        hasMore: false,
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects a mixed-projection page (each hit alone satisfies the union)', () => {
+    const mixed = searchToolOutputV2Schema.safeParse({
+      hits: [FULL_HIT, COMPACT_HIT],
+      count: 2,
+      hasMore: false,
+    })
+    expect(mixed.success).toBe(false)
+    // Either order: the refinement is about the PAGE, not hit positions.
+    expect(
+      searchToolOutputV2Schema.safeParse({
+        hits: [COMPACT_HIT, FULL_HIT],
+        count: 2,
+        hasMore: false,
+      }).success,
+    ).toBe(false)
+  })
+
   it('rejects hasMore:true without a cursor, and a dangling cursor on a final page', () => {
     expect(
       searchToolOutputV2Schema.safeParse({ hits: [FULL_HIT], count: 1, hasMore: true }).success,

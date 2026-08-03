@@ -14,7 +14,7 @@ import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { decodeCursor, encodeCursor } from '../src/cursor.js'
+import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 
 // --- core memory tools (the thin adapter's target) ---
 const remember = vi.fn()
@@ -531,13 +531,15 @@ describe('POST /api/v1/dashboard/search', () => {
     expect(body.hits[0]?.commitmentStatus).toBe('waiting')
     expect(body.hits[0]).not.toHaveProperty('contentLength')
     expect(body.hits[0]).not.toHaveProperty('truncated')
-    // nextCursor carries the frozen ordering + the next offset.
+    // nextCursor carries the frozen ordering + the next offset + the
+    // fingerprint binding it to this query/filter set.
     expect(body.nextCursor).toBeDefined()
     expect(decodeCursor(body.nextCursor as string)).toEqual({
       v: 2,
       ids: FROZEN_IDS,
       scores: [0.9, 0.8],
       off: 1,
+      fp: searchFingerprint('find me', { memoryType: 'commitment', scope: 'work' }),
     })
     expect(searchDashboardPage).toHaveBeenCalledWith(
       TENANT,
@@ -593,6 +595,45 @@ describe('POST /api/v1/dashboard/search', () => {
     })
     expect(res.status).toBe(200)
     expect(searchDashboardPage.mock.calls.at(-1)?.[3]).not.toHaveProperty('frozen')
+  })
+
+  it('continuation with the SAME query accepts a fingerprint-bound cursor', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      nextOffset: 2,
+      hasMore: false,
+    })
+    const fp = searchFingerprint('find me', {})
+    const cursor = encodeCursor({ v: 2, ids: FROZEN_IDS, scores: [0.9, 0.8], off: 1, fp })
+    const res = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor },
+    })
+    expect(res.status).toBe(200)
+    expect(searchDashboardPage.mock.calls.at(-1)?.[3]).toHaveProperty('frozen')
+  })
+
+  it('400s a cursor replayed against a CHANGED query/filters (typed mismatch, never a silent re-page)', async () => {
+    const fp = searchFingerprint('find me', {})
+    const cursor = encodeCursor({ v: 2, ids: FROZEN_IDS, scores: [0.9, 0.8], off: 1, fp })
+    // Changed query text.
+    const changedQuery = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'something else', limit: 1, cursor },
+    })
+    expect(changedQuery.status).toBe(400)
+    expect(((await changedQuery.json()) as { error: string }).error).toBe('invalid_input')
+    // Same query, changed filter set.
+    const changedFilters = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, scope: 'work', cursor },
+    })
+    expect(changedFilters.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('400s a malformed cursor (garbled token is client input, not a crash)', async () => {

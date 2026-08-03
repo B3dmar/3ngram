@@ -79,9 +79,12 @@ export type SearchHitCompactOutput = z.infer<typeof searchHitCompactSchema>
  * pair. `hits` admits both projections (full hits under `full`, compact hits
  * under `compact` — one projection per response, chosen by the input).
  *
- * CONSISTENCY (enforced, not advisory): `count` must equal `hits.length`, and
+ * CONSISTENCY (enforced, not advisory): `count` must equal `hits.length`,
  * `nextCursor` is present IFF `hasMore` is true — a page that advertises more
- * always carries the token to get it, and a final page never dangles one.
+ * always carries the token to get it, and a final page never dangles one — and
+ * the page is projection-HOMOGENEOUS: one projection per response means every
+ * hit carries the excerpt triple or none does (the per-hit union alone would
+ * admit a mixed page, since each hit satisfies it independently).
  */
 export const searchToolOutputV2Schema = z
   .object({
@@ -99,4 +102,14 @@ export const searchToolOutputV2Schema = z
     message: 'nextCursor must be present exactly when hasMore is true',
     path: ['nextCursor'],
   })
+  .refine(
+    (o) => {
+      const fullHits = o.hits.filter((hit) => 'content' in hit).length
+      return fullHits === 0 || fullHits === o.hits.length
+    },
+    {
+      message: 'hits must use one projection per page: all full or all compact',
+      path: ['hits'],
+    },
+  )
 export type SearchToolOutputV2 = z.infer<typeof searchToolOutputV2Schema>
