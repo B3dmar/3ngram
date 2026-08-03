@@ -8,7 +8,14 @@
 //
 // Observability (hard rule 6): the returned row carries content — it is NEVER
 // logged here; callers log the id only. This module logs nothing.
-import { getMemoryById as getMemoryByIdDb, type MemoryDetailRow, withTenant } from '@3ngram/db'
+import {
+  getMemoriesByIds as getMemoriesByIdsDb,
+  getMemoryById as getMemoryByIdDb,
+  type MemoryDetailRow,
+  withTenant,
+} from '@3ngram/db'
+import { DEFAULT_GET_CONTENT_CHARS } from '@3ngram/schema'
+import { excerptContent } from './excerpt.js'
 
 export type { MemoryDetailRow } from '@3ngram/db'
 
@@ -40,4 +47,55 @@ export async function getMemoryById(userId: string, memoryId: string): Promise<M
   const row = await withTenant(userId, (tx) => getMemoryByIdDb(tx, userId, memoryId))
   if (row === undefined) throw new MemoryNotFoundError(memoryId)
   return row
+}
+
+/** Options for {@link getMemoriesByIds}: the per-item content bound. */
+export interface GetMemoriesOptions {
+  /** Per-item content cap (chars). Validated at the schema boundary; defaults to DEFAULT_GET_CONTENT_CHARS. */
+  maxContentChars?: number
+}
+
+/**
+ * One batch-read result row: the full detail row with `content` replaced by
+ * the BOUNDED excerpt plus the excerpting triple (`contentLength` = full
+ * stored length, `truncated` = the cut flag). Read-side shaping only — the
+ * stored row is never touched (docs/concepts/memory-model.mdx).
+ */
+export interface MemoryBatchItem extends Omit<MemoryDetailRow, 'content'> {
+  content: string
+  contentLength: number
+  truncated: boolean
+}
+
+/** A batch read result: the found rows plus the ids that resolved to nothing. */
+export interface MemoriesBatchRead {
+  memories: MemoryBatchItem[]
+  /** Requested ids (deduped, request order) with no row for THIS tenant — unknown and cross-tenant alike. */
+  notFound: string[]
+}
+
+/**
+ * Fetch a batch of memories by id for the tenant — the follow-up read for a
+ * search/handoff line that came back `truncated: true`. ONE withTenant / ONE
+ * batched query (id = ANY), never a per-id getMemoryById loop. Each row's
+ * content is bounded to `maxContentChars` by the shared excerpting policy
+ * (excerpt.ts) — an import-scale row (up to 262,144 chars) never rides back
+ * verbatim. A missing or cross-tenant id lands in `notFound`, NEVER an error
+ * (unlike the single-id inspect's typed 404): one bad id must not fail the
+ * batch, and RLS + the caller-bound predicate collapse not-found/not-owned so
+ * the result never leaks whether a foreign id exists.
+ */
+export async function getMemoriesByIds(
+  userId: string,
+  memoryIds: string[],
+  options: GetMemoriesOptions = {},
+): Promise<MemoriesBatchRead> {
+  const maxContentChars = options.maxContentChars ?? DEFAULT_GET_CONTENT_CHARS
+  const rows = await withTenant(userId, (tx) => getMemoriesByIdsDb(tx, userId, memoryIds))
+  const found = new Set(rows.map((row) => row.id))
+  const notFound = [...new Set(memoryIds)].filter((id) => !found.has(id))
+  return {
+    memories: rows.map((row) => ({ ...row, ...excerptContent(row.content, maxContentChars) })),
+    notFound,
+  }
 }

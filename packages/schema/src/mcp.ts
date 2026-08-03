@@ -862,3 +862,110 @@ export const handoffToolOutputSchema = z
   })
   .strict()
 export type HandoffToolOutput = z.infer<typeof handoffToolOutputSchema>
+
+// ---------------------------------------------------------------------------
+// get_memories — batched full-content read ("read what I found")
+// ---------------------------------------------------------------------------
+
+/**
+ * Upper bound on a get_memories id batch. A follow-up read fans out over the
+ * ids a search/handoff surfaced — MAX_SEARCH_LIMIT is 25 hits, and a caller
+ * chasing full bodies wants a handful, not a page dump. 20 keeps the worst-case
+ * result (20 × {@link MAX_GET_CONTENT_CHARS}) bounded while covering any
+ * realistic "expand these hits" turn.
+ */
+export const MAX_GET_MEMORIES_IDS = 20
+/**
+ * Floor for the per-item content bound a caller may request. Below ~200 chars a
+ * "full content" read returns LESS than the search excerpt it was meant to
+ * expand ({@link MAX_EXCERPT_LENGTH} = 600), which is never the JTBD.
+ */
+export const MIN_GET_CONTENT_CHARS = 200
+/**
+ * Ceiling for the per-item content bound. Import rows reach
+ * MAX_IMPORT_CONTENT_LENGTH (262,144 chars) — echoing one verbatim into an MCP
+ * result is the firehose the output discipline exists to prevent
+ * (docs/concepts/mcp-design.mdx). 65,536 covers every natively-written row
+ * (write cap 2,000) and all but the extreme import tail; a caller needing the
+ * unbounded body reads GET /api/v1/memories/:id (unbounded by design).
+ */
+export const MAX_GET_CONTENT_CHARS = 65536
+/**
+ * Default per-item content bound: ~10K chars carries a full document-scale
+ * memory without ballooning a multi-id result. `truncated` + `contentLength`
+ * tell the caller when to raise `maxContentChars` (or go to REST) for the rest.
+ */
+export const DEFAULT_GET_CONTENT_CHARS = 10000
+
+/**
+ * `get_memories` input — fetch FULL (bounded) content for ids the caller
+ * already holds, the follow-up read for a search/handoff line that came back
+ * `truncated: true`. `ids` is a non-empty, bounded batch (no-firehose);
+ * `maxContentChars` is the caller-tunable per-item content bound, defaulted at
+ * this ONE validation boundary (hard rule 2) so every surface shares the same
+ * bound. `.strict()` rejects unknown keys.
+ */
+export const getMemoriesInputSchema = z
+  .object({
+    ids: z.array(z.uuid()).min(1).max(MAX_GET_MEMORIES_IDS),
+    maxContentChars: z
+      .number()
+      .int()
+      .min(MIN_GET_CONTENT_CHARS)
+      .max(MAX_GET_CONTENT_CHARS)
+      .default(DEFAULT_GET_CONTENT_CHARS),
+  })
+  .strict()
+export type GetMemoriesInput = z.infer<typeof getMemoriesInputSchema>
+/**
+ * Caller-side (pre-parse) shape: `z.input` where the defaulted `maxContentChars`
+ * is OPTIONAL. See {@link RememberToolArgs}.
+ */
+export type GetMemoriesArgs = z.input<typeof getMemoriesInputSchema>
+
+/**
+ * One fetched memory — the REST memoryDetailSchema field set (rest.ts) with the
+ * SAME excerpting triple every bounded read surface carries: `content` is cut
+ * to the requested `maxContentChars` (schema bound: the ceiling,
+ * {@link MAX_GET_CONTENT_CHARS}), `contentLength` is the FULL stored length,
+ * and `truncated` flags a cut (the text then ends with {@link EXCERPT_MARKER}).
+ * `commitmentStatus` is present only for a commitment-type memory (REST
+ * detail parity).
+ */
+export const getMemoriesItemSchema = z
+  .object({
+    id: z.uuid(),
+    memoryType: memoryTypeSchema,
+    topic: z.string(),
+    content: z.string().max(MAX_GET_CONTENT_CHARS),
+    contentLength: z.number().int().min(0),
+    truncated: z.boolean(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+    status: memoryStatusSchema,
+    commitmentStatus: commitmentStatusSchema.optional(),
+    tags: z.array(z.string()),
+    validFrom: z.iso.datetime(),
+    validTo: z.iso.datetime().nullable(),
+    recordedAt: z.iso.datetime(),
+  })
+  .strict()
+export type GetMemoriesItemOutput = z.infer<typeof getMemoriesItemSchema>
+
+/**
+ * `get_memories` output envelope. `memories` carries the found rows (bounded by
+ * the input batch size); `count` mirrors `memories.length`
+ * (count-consistency); `notFound` lists the requested ids that resolved to no
+ * row for THIS tenant — unknown and cross-tenant ids land here identically
+ * (RLS + the caller-bound predicate collapse them), so the result never leaks
+ * whether a foreign id exists. A miss is DATA, never an error: one bad id must
+ * not fail the batch.
+ */
+export const getMemoriesOutputSchema = z
+  .object({
+    memories: z.array(getMemoriesItemSchema).max(MAX_GET_MEMORIES_IDS),
+    count: z.number().int().min(0),
+    notFound: z.array(z.uuid()).max(MAX_GET_MEMORIES_IDS),
+  })
+  .strict()
+export type GetMemoriesOutput = z.infer<typeof getMemoriesOutputSchema>
