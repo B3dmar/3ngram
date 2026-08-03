@@ -31,8 +31,11 @@ export type SearchProjection = z.infer<typeof searchProjectionSchema>
  * EXTENDED with continuation + projection — the same composition pattern as
  * V2-over-V1, one validation boundary (hard rule 2). V2's superRefine
  * constraints (memoryType/memoryTypes mutual exclusion, recorded_at range
- * sanity) carry through the composition — Zod 4 stores refinements inside the
- * schema, and the tests pin that they still reject through V3.
+ * sanity) carry through the composition. Because V2 CARRIES refinements,
+ * the composition uses `.safeExtend()` — Zod 4's documented API for extending
+ * a refined object schema (plain `.extend()` on a refined schema is
+ * documented-unsupported, even though it happens to work on the pinned Zod
+ * version) — and the tests pin that V2's refinements still reject through V3.
  *
  * `cursor` is the opaque continuation token a previous page returned as
  * `nextCursor` (frozen-ordering v2 cursor, cursor.ts): a continuation pages BY
@@ -42,7 +45,7 @@ export type SearchProjection = z.infer<typeof searchProjectionSchema>
  * error, never a silent page-1 restart); here it is a non-empty string.
  */
 export const searchQueryV3Schema = searchQueryV2Schema
-  .extend({
+  .safeExtend({
     cursor: z
       .string()
       .min(1)

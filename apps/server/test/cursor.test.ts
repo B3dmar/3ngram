@@ -64,14 +64,14 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('find me', { scope: 'work' })).toBe(fp)
   })
 
-  it('normalizes whitespace, filter key order, undefined axes, and the memoryTypes OR-set', () => {
+  it('trims the query and normalizes filter key order, undefined axes, and the memoryTypes OR-set', () => {
     const fp = searchFingerprint('find me', {
       scope: 'work',
       memoryTypes: ['decision', 'note'],
       recordedAfter: new Date('2026-01-01T00:00:00Z'),
     })
     expect(
-      searchFingerprint('  find\n  me ', {
+      searchFingerprint('  find me ', {
         recordedAfter: new Date('2026-01-01T00:00:00Z'),
         memoryTypes: ['note', 'decision'],
         scope: 'work',
@@ -86,6 +86,18 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('find me', { scope: 'personal' })).not.toBe(fp)
     expect(searchFingerprint('find me', {})).not.toBe(fp)
     expect(searchFingerprint('Find me', { scope: 'work' })).not.toBe(fp)
+  })
+
+  it('preserves INNER whitespace: core embeds the exact query, so "find\\nme" is a different search', () => {
+    const fp = searchFingerprint('find me', { scope: 'work' })
+    expect(searchFingerprint('find\nme', { scope: 'work' })).not.toBe(fp)
+    expect(searchFingerprint('find  me', { scope: 'work' })).not.toBe(fp)
+    // And the binding acts on it: a cursor issued for "find me" replayed with
+    // "find\nme" is a typed mismatch, not a silent re-page.
+    const bound = encodeCursor({ v: 2, ids: [ID_A], scores: [0.9], off: 0, fp })
+    expect(() =>
+      decodeSearchCursor(bound, searchFingerprint('find\nme', { scope: 'work' })),
+    ).toThrow(CursorQueryMismatchError)
   })
 })
 
