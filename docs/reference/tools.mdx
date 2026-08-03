@@ -688,7 +688,7 @@ Settle a memory by its id. A commitment transitions to a target status (open, wa
 
 ## briefing
 
-Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists.
+Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.
 
 **Title:** Briefing · **Required scope:** `memory:read`
 
@@ -761,6 +761,29 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "brief",
         "full"
       ]
+    },
+    "sections": {
+      "minItems": 1,
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "commitments",
+          "overdue",
+          "blockers",
+          "staleCandidates",
+          "recentDecisions",
+          "preferences"
+        ]
+      },
+      "description": "Subset of sections to compute (unique names). Absent = all sections. Un-requested sections are skipped entirely and omitted from the result."
+    },
+    "sectionLimit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Per-section item bound (1..100). Absent = the mode default (3 brief / 25 full)."
     }
   },
   "required": [
@@ -853,6 +876,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -905,11 +929,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     },
@@ -922,6 +950,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -974,11 +1003,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     },
@@ -991,6 +1024,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -1056,11 +1090,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     },
@@ -1073,6 +1111,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -1138,11 +1177,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     },
@@ -1155,6 +1198,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -1220,11 +1264,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     },
@@ -1237,6 +1285,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "maximum": 9007199254740991
         },
         "items": {
+          "maxItems": 100,
           "type": "array",
           "items": {
             "type": "object",
@@ -1302,11 +1351,15 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             ],
             "additionalProperties": false
           }
+        },
+        "hasMore": {
+          "type": "boolean"
         }
       },
       "required": [
         "count",
-        "items"
+        "items",
+        "hasMore"
       ],
       "additionalProperties": false
     }
@@ -1314,13 +1367,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
   "required": [
     "selector",
     "mode",
-    "generatedAt",
-    "commitments",
-    "overdue",
-    "blockers",
-    "staleCandidates",
-    "recentDecisions",
-    "preferences"
+    "generatedAt"
   ],
   "additionalProperties": false
 }
