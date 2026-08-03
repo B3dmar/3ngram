@@ -38,22 +38,33 @@ import { excerptContent } from './excerpt.js'
 export type { BriefingSelector } from '@3ngram/db'
 
 /**
- * Per-section ceiling for a handoff export. Bounded (no-firehose) even though a
- * handoff intentionally carries content: it is an EXPORT for a receiving agent,
- * not a full dump. A receiver needing more pages via search/get_facts.
+ * DEFAULT per-section bound for a handoff export — the item count a handoff
+ * returns when the caller does not tune `sectionLimit`. NOT the max (bounds
+ * V2, issue #45): the hard server-side ceiling is
+ * {@link MAX_HANDOFF_SECTION_CEILING} (re-exported from `@3ngram/schema`);
+ * a caller may tune up to it, never past it. Bounded (no-firehose) even
+ * though a handoff intentionally carries content: it is an EXPORT for a
+ * receiving agent, not a full dump.
  */
 export const MAX_HANDOFF_SECTION = 25
 
 /**
  * Effective per-section limit (bounds V2, issue #45): the caller-tunable
- * `sectionLimit` when present, else {@link MAX_HANDOFF_SECTION} — clamped into
- * [1, {@link MAX_HANDOFF_SECTION_CEILING}] so the server-side no-firehose
- * ceiling ALWAYS wins. The transport schema already rejects an out-of-range
- * value; the clamp keeps the invariant for direct core callers (same policy as
- * briefing.ts effectiveSectionLimit).
+ * `sectionLimit` when present, else the {@link MAX_HANDOFF_SECTION} default —
+ * clamped into [1, {@link MAX_HANDOFF_SECTION_CEILING}] so the server-side
+ * no-firehose ceiling ALWAYS wins. The transport schema already rejects an
+ * out-of-range or fractional value; core NORMALIZES for direct callers (same
+ * policy as briefing.ts effectiveSectionLimit): a fractional value is
+ * truncated toward zero and a non-finite one (NaN/±Infinity) falls back to
+ * the default BEFORE the clamp — a raw fractional/NaN limit must never reach
+ * the SQL LIMIT clause.
  */
 function effectiveSectionLimit(sectionLimit: number | undefined): number {
-  return Math.min(Math.max(sectionLimit ?? MAX_HANDOFF_SECTION, 1), MAX_HANDOFF_SECTION_CEILING)
+  const requested =
+    sectionLimit !== undefined && Number.isFinite(sectionLimit)
+      ? Math.trunc(sectionLimit)
+      : MAX_HANDOFF_SECTION
+  return Math.min(Math.max(requested, 1), MAX_HANDOFF_SECTION_CEILING)
 }
 
 /**

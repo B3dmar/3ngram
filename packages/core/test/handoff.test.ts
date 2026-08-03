@@ -167,6 +167,24 @@ describe('handoff — sectionLimit (bounds V2, issue #45)', () => {
     await handoff('u1', { selector: { kind: 'all' }, sectionLimit: 0, now: NOW })
     expect(recentDecisions.mock.calls[0]?.[3]).toBe(1)
   })
+
+  // sectionLimit is typed only as `number`, so valid TypeScript can hand core a
+  // fractional or non-finite value the transport schema would have rejected —
+  // it must be normalized before it reaches a SQL LIMIT clause (same policy as
+  // briefing.ts effectiveSectionLimit).
+  it.each([
+    { sectionLimit: 1.5, forwarded: 1 }, // truncated toward zero, then clamped up if needed
+    { sectionLimit: Number.NaN, forwarded: MAX_HANDOFF_SECTION }, // non-finite → default
+    { sectionLimit: Number.POSITIVE_INFINITY, forwarded: MAX_HANDOFF_SECTION },
+    { sectionLimit: -5, forwarded: 1 }, // truncated, then clamped up
+  ])('normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded', async ({
+    sectionLimit,
+    forwarded,
+  }) => {
+    resetAll()
+    await handoff('u1', { selector: { kind: 'all' }, sectionLimit, now: NOW })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(forwarded)
+  })
 })
 
 describe('handoff — counts + truncated (totals no longer discarded, issue #45)', () => {
