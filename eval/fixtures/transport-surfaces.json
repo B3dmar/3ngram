@@ -2202,7 +2202,7 @@
       {
         "name": "search",
         "title": "Search",
-        "description": "Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content.",
+        "description": "Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -2217,6 +2217,7 @@
               "maximum": 25
             },
             "memoryType": {
+              "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
               "type": "string",
               "enum": [
                 "decision",
@@ -2259,6 +2260,37 @@
                 }
               },
               "additionalProperties": false
+            },
+            "memoryTypes": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "decision",
+                  "commitment",
+                  "blocker",
+                  "fact",
+                  "preference",
+                  "pattern",
+                  "note",
+                  "event"
+                ]
+              },
+              "description": "OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both."
+            },
+            "recordedAfter": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+              "description": "Inclusive lower bound on recorded_at. Must not be later than recordedBefore when both are given."
+            },
+            "recordedBefore": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+              "description": "Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given."
             }
           },
           "required": ["query"],

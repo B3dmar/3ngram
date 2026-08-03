@@ -64,7 +64,7 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [16896, 136984, 34763],
+      mcp: [17440, 141336, 35824],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
@@ -237,11 +237,16 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
   for (const field of widerFields) {
     assert.ok(field in props, `REST search request schema must carry the ${field} field`)
   }
-  // The MCP search tool registers the SAME searchQuerySchema — no divergence left.
+  // The MCP search tool registers searchQueryV2Schema — a strict SUPERSET
+  // composition over the same wider searchQuerySchema (adds memoryTypes[] and
+  // the recordedAfter/recordedBefore range; ONE validation boundary, hard rule
+  // 2). REST stays on searchQuerySchema until the stacked search-filters REST
+  // slice lands, so MCP must carry every wider field plus exactly the V2 axes.
+  const v2Fields = [...widerFields, 'memoryTypes', 'recordedAfter', 'recordedBefore'].sort()
   const searchTool = surfaces.mcp.tools.find((t) => t.name === 'search')
   assert.deepEqual(
     Object.keys(searchTool.inputSchema.properties).sort(),
-    widerFields,
-    'the MCP search tool surface is the same wider searchQuerySchema',
+    v2Fields,
+    'the MCP search tool surface is searchQueryV2Schema (wider set + V2 axes)',
   )
 })

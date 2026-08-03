@@ -166,8 +166,11 @@ export interface SearchOptions {
    */
   supersessionPenalty?: number
   /**
-   * Candidate-narrowing FILTERS: memoryType / scope /
-   * project / status / asOf. Threaded straight to the db query layer
+   * Candidate-narrowing FILTERS: memoryType / memoryTypes / scope /
+   * project / status / asOf / recordedAfter / recordedBefore
+   * (V2 axes: the memoryTypes OR-set and the inclusive recorded_at range,
+   * which narrows the live view WITHOUT lifting the active-only default —
+   * unlike asOf, it is not time travel). Threaded straight to the db query layer
    * ({@link searchFused}), where they narrow the candidate set BEFORE fusion —
    * they do not alter the fusion weights or the supersession ranking. The filter
    * VALUES are validated at the ONE boundary (packages/schema searchQuerySchema,

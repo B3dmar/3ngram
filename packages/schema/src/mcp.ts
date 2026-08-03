@@ -862,3 +862,117 @@ export const handoffToolOutputSchema = z
   })
   .strict()
 export type HandoffToolOutput = z.infer<typeof handoffToolOutputSchema>
+
+// ===========================================================================
+// search filters V2 — memoryTypes[] + recorded_at range (issue #48, epic #42).
+// APPENDED block: the shipped V1 contracts above stay byte-identical; V2 is a
+// NEW composition over them (the composed-schema pattern, ADR-0011), exactly
+// how searchQuerySchema composes searchFiltersSchema onto searchInputSchema.
+// ===========================================================================
+
+/**
+ * Upper bound on the `memoryTypes` OR-set. The memory-type enum is small; 8 is
+ * a generous ceiling that keeps the filter a bounded narrowing, never a
+ * firehose-shaped list parameter.
+ */
+export const MAX_MEMORY_TYPES_FILTER = 8
+
+/**
+ * The V2 search FILTER additions — two new candidate-narrowing axes:
+ *   - `memoryTypes`     → an OR-set over memories.memory_type
+ *     (`memory_type = ANY(...)` in the db layer). Each element reuses
+ *     {@link memoryTypeSchema}, the SAME contract the column is written
+ *     against. Non-empty (an empty set is "match nothing" — a caller error,
+ *     rejected loudly) and bounded by {@link MAX_MEMORY_TYPES_FILTER}.
+ *   - `recordedAfter` / `recordedBefore` → an INCLUSIVE transaction-time range
+ *     on memories.recorded_at (ISO datetimes, matching asOfSchema's bounds).
+ *     UNLIKE `asOf`, the range does NOT lift the active-only default: it is a
+ *     plain narrowing of the live view ("what did I record last week"), not
+ *     bi-temporal time travel. Time travel stays `asOf`'s job.
+ *
+ * `.partial()` like {@link searchFiltersSchema}: an absent filter never narrows
+ * its axis. Tags filtering is deliberately NOT here (deferred to its own epic).
+ */
+export const searchFiltersV2Schema = z
+  .object({
+    // The mutual exclusion with memoryType is RUNTIME-enforced by the
+    // searchQueryV2Schema superRefine below; a custom refinement is invisible
+    // in the JSON Schema tools/list advertises, so the constraint is ALSO
+    // stated in both fields' descriptions (memoryType's V2 override lives in
+    // searchQueryV2Schema) for schema-driven clients and generated docs.
+    memoryTypes: z
+      .array(memoryTypeSchema)
+      .min(1)
+      .max(MAX_MEMORY_TYPES_FILTER)
+      .describe(
+        'OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both.',
+      ),
+    recordedAfter: z.iso
+      .datetime()
+      .describe(
+        'Inclusive lower bound on recorded_at. Must not be later than recordedBefore when both are given.',
+      ),
+    recordedBefore: z.iso
+      .datetime()
+      .describe(
+        'Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given.',
+      ),
+  })
+  .partial()
+  .strict()
+export type SearchFiltersV2Input = z.infer<typeof searchFiltersV2Schema>
+
+/**
+ * The V2 search query contract: the shipped {@link searchQuerySchema} (query +
+ * limit + the five V1 filters) EXTENDED with {@link searchFiltersV2Schema} —
+ * the same composition pattern, one validation boundary (hard rule 2). The MCP
+ * `search` tool registers THIS schema; V1 consumers keep parsing the untouched
+ * `searchQuerySchema`.
+ *
+ * MUTUAL EXCLUSION: `memoryTypes` is the PLURAL form of the V1 `memoryType`
+ * axis. Supplying both is ambiguous (intersect? union?), so it is REJECTED at
+ * the boundary rather than silently resolved — pass one or the other. The
+ * superRefine is the ENFORCEMENT; because a custom refinement does not survive
+ * into the emitted JSON Schema, the constraint is also ADVERTISED in both
+ * fields' descriptions (memoryTypes in searchFiltersV2Schema; memoryType via
+ * the V2-only override below — the shipped V1 schemas stay untouched).
+ *
+ * RANGE SANITY: an INVERTED recorded_at range (recordedAfter later than
+ * recordedBefore) can never match anything — a caller error, rejected loudly
+ * instead of silently returning an empty result. Equal bounds are a valid
+ * single-instant range (both bounds inclusive).
+ */
+export const searchQueryV2Schema = searchQuerySchema
+  .extend({
+    ...searchFiltersV2Schema.shape,
+    memoryType: searchQuerySchema.shape.memoryType.describe(
+      'Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.',
+    ),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.memoryType !== undefined && v.memoryTypes !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['memoryTypes'],
+        message: 'memoryTypes is mutually exclusive with memoryType — pass one or the other',
+      })
+    }
+    if (
+      v.recordedAfter !== undefined &&
+      v.recordedBefore !== undefined &&
+      Date.parse(v.recordedAfter) > Date.parse(v.recordedBefore)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['recordedAfter'],
+        message: 'recordedAfter must not be later than recordedBefore — inverted range',
+      })
+    }
+  })
+export type SearchQueryV2Input = z.infer<typeof searchQueryV2Schema>
+/**
+ * Caller-side (pre-parse) shape: `z.input` where the defaulted `limit` is
+ * OPTIONAL. See {@link RememberToolArgs}.
+ */
+export type SearchQueryV2Args = z.input<typeof searchQueryV2Schema>

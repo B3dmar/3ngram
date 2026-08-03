@@ -100,7 +100,7 @@ export {
   MAX_IMPORT_CONTENT_LENGTH,
   MAX_IMPORT_PAYLOAD_LENGTH,
 } from './import.js'
-// --- MCP tool IO (briefing/handoff orientation) — appended ---
+// --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,
   BriefingCommitmentOutput,
@@ -136,10 +136,13 @@ export type {
   ReviseToolOutput,
   ScopeRecordOutput,
   SearchFiltersInput,
+  SearchFiltersV2Input,
   SearchHitOutput,
   SearchInput,
   SearchQueryArgs,
   SearchQueryInput,
+  SearchQueryV2Args,
+  SearchQueryV2Input,
   SearchToolOutput,
   WrittenMemoryOutput,
 } from './mcp.js'
@@ -170,6 +173,7 @@ export {
   handoffToolInputSchema,
   handoffToolOutputSchema,
   MAX_EXCERPT_LENGTH,
+  MAX_MEMORY_TYPES_FILTER,
   MAX_PROPOSALS_LIMIT,
   MAX_SCOPE_ALIASES,
   MAX_SEARCH_LIMIT,
@@ -189,9 +193,11 @@ export {
   scopeNameSchema,
   scopeRecordSchema,
   searchFiltersSchema,
+  searchFiltersV2Schema,
   searchHitSchema,
   searchInputSchema,
   searchQuerySchema,
+  searchQueryV2Schema,
   searchToolOutputSchema,
   writtenMemorySchema,
 } from './mcp.js'
