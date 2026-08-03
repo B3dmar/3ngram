@@ -22,15 +22,15 @@ import {
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
   reviseToolOutputSchema,
-  searchQuerySchema,
-  searchQueryV2Schema,
-  searchToolOutputSchema,
+  searchQueryV3Schema,
+  searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
-const search = vi.fn()
+const searchDashboardPage = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
 const resolveByMemoryId = vi.fn()
@@ -206,7 +206,7 @@ class SuccessorNotLiveError extends Error {
 }
 vi.mock('@3ngram/core', () => ({
   remember,
-  search,
+  searchDashboardPage,
   getFacts,
   revise,
   resolveByMemoryId,
@@ -469,43 +469,139 @@ describe('remember tool', () => {
 })
 
 describe('search tool', () => {
+  /** Wrap hits as the core DashboardSearchPage shape (frozen ordering + offset). */
+  function pageOf(
+    hits: Array<{ id: string; score: number }>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      hits,
+      frozen: { ids: hits.map((h) => h.id), scores: hits.map((h) => h.score) },
+      nextOffset: hits.length,
+      hasMore: false,
+      ...overrides,
+    }
+  }
+
+  const HIT = {
+    id: MEMO_ID,
+    memoryType: 'decision',
+    topic: 'pin',
+    content: 'pinned',
+    contentLength: 'pinned'.length,
+    truncated: false,
+    score: 0.9,
+  }
+
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
-    search.mockResolvedValue([
-      {
-        id: MEMO_ID,
-        memoryType: 'decision',
-        topic: 'pin',
-        content: 'pinned',
-        contentLength: 'pinned'.length,
-        truncated: false,
-        score: 0.9,
-      },
-    ])
+    searchDashboardPage.mockResolvedValue(pageOf([HIT]))
     const result = await call('search', { query: 'sdk pin' }, ctx())
     expect(result.isError).toBeFalsy()
-    const parsed = searchToolOutputSchema.parse(result.structuredContent)
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
     expect(parsed.count).toBe(1)
     expect(parsed.hits[0]?.id).toBe(MEMO_ID)
-    // The excerpt metadata rides every hit.
-    expect(parsed.hits[0]?.contentLength).toBe('pinned'.length)
-    expect(parsed.hits[0]?.truncated).toBe(false)
+    // The excerpt metadata rides every FULL-projection (default) hit.
+    expect(parsed.hits[0]).toMatchObject({ contentLength: 'pinned'.length, truncated: false })
+    // Final page: hasMore false and NO dangling cursor (schema-enforced pair).
+    expect(parsed.hasMore).toBe(false)
+    expect(parsed.nextCursor).toBeUndefined()
+  })
+
+  it('compact projection omits the excerpt triple per hit (#49)', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+    const result = await call('search', { query: 'sdk pin', projection: 'compact' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hits[0]).toEqual({
+      id: MEMO_ID,
+      memoryType: 'decision',
+      topic: 'pin',
+      score: 0.9,
+    })
+  })
+
+  it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
+    const result = await call('search', { query: 'sdk pin', limit: 1 }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hasMore).toBe(true)
+    // The token is the SAME v2 frozen-ordering cursor the dashboard mints,
+    // fingerprint-BOUND to the issuing query+filters.
+    expect(decodeCursor(parsed.nextCursor as string)).toEqual({
+      v: 2,
+      ids: [MEMO_ID],
+      scores: [0.9],
+      off: 1,
+      fp: searchFingerprint('sdk pin', {}),
+    })
+  })
+
+  it('decodes a fingerprint-less legacy cursor and threads the frozen ordering to core (#49)', async () => {
+    // verify-when-present compatibility: a v2 cursor minted BEFORE the
+    // query-binding carries no fp and must keep paging, not 400 mid-session.
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1 })
+    const result = await call('search', { query: 'sdk pin', cursor }, ctx())
+    expect(result.isError).toBeFalsy()
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { frozen?: { ids: string[]; scores: number[]; off: number } },
+    ]
+    expect(options.frozen).toEqual({ ids: [MEMO_ID], scores: [0.9], off: 1 })
+  })
+
+  it('continues a bound cursor under the SAME query+filters', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    const fp = searchFingerprint('sdk pin', { scope: 'work' })
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    const result = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(searchDashboardPage).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a cursor replayed under a CHANGED query/filters as typed invalid input', async () => {
+    const fp = searchFingerprint('sdk pin', {})
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    // Changed query text.
+    const changedQuery = await call('search', { query: 'something else', cursor }, ctx())
+    expect(changedQuery.isError).toBe(true)
+    expect((changedQuery.content[0] as { text: string }).text).toBe(
+      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
+    )
+    // Same query, changed filter set.
+    const changedFilters = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(changedFilters.isError).toBe(true)
+    // Never a silent re-page of the old frozen ordering.
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects a garbled cursor as CLIENT input without reaching core (#49)', async () => {
+    const result = await call('search', { query: 'sdk pin', cursor: '!!!garbled!!!' }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid input')
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('labels an over-cap hit as invalid_output (a SERVER fault), never invalid_input (#238)', async () => {
     // Force core to break its own contract (an unexcerpted long row). The tool
     // must label the failure as an OUTPUT fault — blaming the caller's input
     // for a server-side shape bug is the dishonest label this fix removes.
-    search.mockResolvedValue([
-      {
-        id: MEMO_ID,
-        memoryType: 'note',
-        topic: 't',
-        content: 'z'.repeat(5000),
-        contentLength: 5000,
-        truncated: false,
-        score: 0.5,
-      },
-    ])
+    searchDashboardPage.mockResolvedValue(
+      pageOf([
+        {
+          id: MEMO_ID,
+          memoryType: 'note',
+          topic: 't',
+          content: 'z'.repeat(5000),
+          contentLength: 5000,
+          truncated: false,
+          score: 0.5,
+        },
+      ]),
+    )
     const result = await call('search', { query: 'epic' }, ctx())
     expect(result.isError).toBe(true)
     const text = (result.content[0] as { text: string }).text
@@ -519,28 +615,28 @@ describe('search tool', () => {
     const result = await call('search', { query: 'sdk pin' }, ctx({ gateway: undefined }))
     expect(result.isError).toBe(true)
     expect(result.content[0]).toMatchObject({ text: 'embedding gateway not configured' })
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('rejects an empty query without calling core', async () => {
     const result = await call('search', { query: '   ' }, ctx())
     expect(result.isError).toBe(true)
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('caps the limit at the no-firehose ceiling', () => {
-    expect(searchQuerySchema.safeParse({ query: 'x', limit: 999 }).success).toBe(false)
+    expect(searchQueryV3Schema.safeParse({ query: 'x', limit: 999 }).success).toBe(false)
   })
 
-  it('accepts a supported filter and threads it into the core SearchOptions (#166)', async () => {
-    // The MCP search tool now EXPOSES the candidate-narrowing filters: a `scope`
-    // filter validates and reaches core as SearchOptions.filters, never dropped.
-    expect(searchQuerySchema.safeParse({ query: 'x', scope: 'work' }).success).toBe(true)
-    search.mockResolvedValue([])
+  it('accepts a supported filter and threads it into the core options (#166)', async () => {
+    // The MCP search tool EXPOSES the candidate-narrowing filters: a `scope`
+    // filter validates and reaches core as DashboardPageOptions.filters, never dropped.
+    expect(searchQueryV3Schema.safeParse({ query: 'x', scope: 'work' }).success).toBe(true)
+    searchDashboardPage.mockResolvedValue(pageOf([]))
     const result = await call('search', { query: 'sdk pin', scope: 'work' }, ctx())
     expect(result.isError).toBeFalsy()
-    expect(search).toHaveBeenCalledOnce()
-    const [, query, , options] = search.mock.calls[0] as [
+    expect(searchDashboardPage).toHaveBeenCalledOnce()
+    const [, query, , options] = searchDashboardPage.mock.calls[0] as [
       string,
       string,
       unknown,
@@ -553,7 +649,7 @@ describe('search tool', () => {
   })
 
   it('threads memoryType, project, status and asOf filters together (#166)', async () => {
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue(pageOf([]))
     await call(
       'search',
       {
@@ -565,7 +661,7 @@ describe('search tool', () => {
       },
       ctx(),
     )
-    const [, , , options] = search.mock.calls[0] as [
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
       string,
       string,
       unknown,
@@ -579,7 +675,7 @@ describe('search tool', () => {
   })
 
   it('threads the V2 axes: memoryTypes[] + recordedAfter/recordedBefore as Dates (#48)', async () => {
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue(pageOf([]))
     await call(
       'search',
       {
@@ -590,7 +686,7 @@ describe('search tool', () => {
       },
       ctx(),
     )
-    const [, , , options] = search.mock.calls[0] as [
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
       string,
       string,
       unknown,
@@ -609,7 +705,7 @@ describe('search tool', () => {
 
   it('REJECTS memoryTypes together with memoryType at the boundary (mutually exclusive, #48)', async () => {
     expect(
-      searchQueryV2Schema.safeParse({ query: 'q', memoryType: 'decision', memoryTypes: ['fact'] })
+      searchQueryV3Schema.safeParse({ query: 'q', memoryType: 'decision', memoryTypes: ['fact'] })
         .success,
     ).toBe(false)
     const result = await call(
@@ -618,7 +714,7 @@ describe('search tool', () => {
       ctx(),
     )
     expect(result.isError).toBe(true)
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('rejects an out-of-contract memoryTypes list (empty / over-cap / bad enum)', async () => {
@@ -630,16 +726,16 @@ describe('search tool', () => {
       const result = await call('search', { query: 'q', memoryTypes }, ctx())
       expect(result.isError).toBe(true)
     }
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('still rejects an UNKNOWN filter key rather than silently dropping it (strict)', async () => {
     // The schema stays `.strict()`: an unrecognised key is a clear validation
     // error, never silently ignored (a silent drop on a filter reads as a leak).
-    expect(searchQuerySchema.safeParse({ query: 'x', bogusFilter: 'oops' }).success).toBe(false)
+    expect(searchQueryV3Schema.safeParse({ query: 'x', bogusFilter: 'oops' }).success).toBe(false)
     const result = await call('search', { query: 'sdk pin', bogusFilter: 'oops' }, ctx())
     expect(result.isError).toBe(true)
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 })
 
@@ -1129,7 +1225,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
 
   it('a read-only token can search but remember returns the scope error', async () => {
     const readOnly = ctx({ scopes: ['memory:read'] })
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+    })
     const searched = await call('search', { query: 'x' }, readOnly)
     expect(searched.isError).toBeFalsy()
 
@@ -1200,7 +1301,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
   it('a write-scoped token can do both', async () => {
     const full = ctx({ scopes: ['memory:read', 'memory:write'] })
     remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+    })
     expect(
       (await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, full)).isError,
     ).toBeFalsy()
@@ -1214,7 +1320,7 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
     expect(searched.content[0]).toMatchObject({
       text: expect.stringContaining('insufficient scope'),
     })
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
 
     const written = await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, none)
     expect(written.isError).toBe(true)

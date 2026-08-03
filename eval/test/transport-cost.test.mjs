@@ -64,7 +64,7 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [17854, 144648, 36631],
+      mcp: [18359, 148688, 37616],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
@@ -237,16 +237,24 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
   for (const field of widerFields) {
     assert.ok(field in props, `REST search request schema must carry the ${field} field`)
   }
-  // The MCP search tool registers searchQueryV2Schema — a strict SUPERSET
-  // composition over the same wider searchQuerySchema (adds memoryTypes[] and
-  // the recordedAfter/recordedBefore range; ONE validation boundary, hard rule
-  // 2). REST stays on searchQuerySchema until the stacked search-filters REST
-  // slice lands, so MCP must carry every wider field plus exactly the V2 axes.
-  const v2Fields = [...widerFields, 'memoryTypes', 'recordedAfter', 'recordedBefore'].sort()
+  // The MCP search tool registers searchQueryV3Schema — a strict SUPERSET
+  // composition over the same wider searchQuerySchema (V2 added memoryTypes[]
+  // and the recordedAfter/recordedBefore range; V3 adds the continuation pair
+  // cursor + projection, issue #49; ONE validation boundary, hard rule 2).
+  // REST stays on searchQuerySchema until its own stacked slices land, so MCP
+  // must carry every wider field plus exactly the V2 axes + the V3 pair.
+  const v3Fields = [
+    ...widerFields,
+    'memoryTypes',
+    'recordedAfter',
+    'recordedBefore',
+    'cursor',
+    'projection',
+  ].sort()
   const searchTool = surfaces.mcp.tools.find((t) => t.name === 'search')
   assert.deepEqual(
     Object.keys(searchTool.inputSchema.properties).sort(),
-    v2Fields,
-    'the MCP search tool surface is searchQueryV2Schema (wider set + V2 axes)',
+    v3Fields,
+    'the MCP search tool surface is searchQueryV3Schema (wider set + V2 axes + cursor/projection)',
   )
 })
