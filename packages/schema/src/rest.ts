@@ -114,7 +114,15 @@ export const memoriesListQuerySchema = z
   .object({
     limit: z.number().int().min(1).max(MAX_MEMORIES_LIMIT).default(DEFAULT_MEMORIES_LIMIT),
     offset: z.number().int().min(0).default(0),
-    type: memoryTypeSchema.optional(),
+    // The type/memoryTypes mutual exclusion is RUNTIME-enforced by the
+    // superRefine below; a custom refinement is invisible in the generated
+    // OpenAPI document, so the constraint is ALSO stated in both params'
+    // descriptions (mirrors the MCP searchQueryV2Schema fields).
+    type: memoryTypeSchema
+      .optional()
+      .describe(
+        'Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.',
+      ),
     scope: scopeSchema.optional(),
     // Express gives string when param appears once, string[] when repeated (?project=a&project=b).
     project: z.union([projectSchema, z.array(projectSchema)]).optional(),
@@ -127,7 +135,10 @@ export const memoriesListQuerySchema = z
     // searchQueryV2Schema boundary.
     memoryTypes: z
       .union([memoryTypeSchema, z.array(memoryTypeSchema).min(1).max(MAX_MEMORY_TYPES_FILTER)])
-      .optional(),
+      .optional()
+      .describe(
+        'OR-set of memory types to match (repeat the param to pass several). Mutually exclusive with type — pass one or the other, never both.',
+      ),
     // recordedAfter/recordedBefore: an INCLUSIVE recorded_at range. The list is
     // ALWAYS live-gated (valid_to IS NULL), so the range narrows within the live
     // view — consistent with search filters V2: a recorded_at range is never

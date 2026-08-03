@@ -1979,6 +1979,7 @@
             "name": "type",
             "required": false,
             "schema": {
+              "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
               "enum": [
                 "decision",
                 "commitment",
@@ -2074,7 +2075,8 @@
                   "minItems": 1,
                   "type": "array"
                 }
-              ]
+              ],
+              "description": "OR-set of memory types to match (repeat the param to pass several). Mutually exclusive with type — pass one or the other, never both."
             }
           },
           {
