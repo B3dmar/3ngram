@@ -89,7 +89,7 @@ const handoffTool: ToolDefinition = {
   config: {
     title: 'Handoff',
     description:
-      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded.',
+      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
     inputSchema: handoffToolInputSchema,
     outputSchema: handoffToolOutputSchema,
   },

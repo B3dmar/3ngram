@@ -152,11 +152,11 @@ describe('/mcp tools end-to-end (real transport, runtime role)', () => {
     })
     expect(client.getProtocolEra()).toBe('modern')
     const { tools } = await client.listTools()
-    expect(tools).toHaveLength(10)
+    expect(tools).toHaveLength(11)
     await client.close()
   })
 
-  it('lists exactly the 10 tools (D1 5 + D2 orient 2 + D3 admin 3)', async () => {
+  it('lists exactly the 11 tools (D1 5 + D2 orient 2 + inspect 1 + D3 admin 3)', async () => {
     const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -164,6 +164,7 @@ describe('/mcp tools end-to-end (real transport, runtime role)', () => {
       'configure_scope',
       'describe_environment',
       'get_facts',
+      'get_memories',
       'handoff',
       'remember',
       'resolve',
@@ -299,7 +300,7 @@ describe('/mcp tools end-to-end (real transport, runtime role)', () => {
     try {
       const client = await connect(fresh.baseUrl, `Bearer ${tokenA}`)
       const { tools } = await client.listTools()
-      expect(tools).toHaveLength(10)
+      expect(tools).toHaveLength(11)
       await client.close()
     } finally {
       await stopApp(fresh)
@@ -588,7 +589,7 @@ describe('/mcp D3 admin tools end-to-end (real transport, runtime role)', () => 
       capabilities: { tools: string[]; toolCount: number; version: string }
       stats: { activeMemories: number }
     }
-    expect(report.capabilities.toolCount).toBe(10)
+    expect(report.capabilities.toolCount).toBe(11)
     expect(report.capabilities.tools).toContain('describe_environment')
     // REDACTION sentinel: the configured DB URL password (a real secret in this
     // running server's env) must NOT appear anywhere in the response.

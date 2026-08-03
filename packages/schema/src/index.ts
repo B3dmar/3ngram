@@ -61,6 +61,23 @@ export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
 export type { CursorPayload } from './cursor.js'
 export { cursorPayloadSchema, legacyCursorPayloadSchema } from './cursor.js'
+// --- get_memories batched bounded-content read (MCP tool IO) ---
+export type {
+  GetMemoriesArgs,
+  GetMemoriesInput,
+  GetMemoriesItemOutput,
+  GetMemoriesOutput,
+} from './get-memories.js'
+export {
+  DEFAULT_GET_CONTENT_CHARS,
+  getMemoriesInputSchema,
+  getMemoriesItemSchema,
+  getMemoriesOutputSchema,
+  MAX_GET_CONTENT_CHARS,
+  MAX_GET_MEMORIES_IDS,
+  MAX_GET_TOTAL_CHARS,
+  MIN_GET_CONTENT_CHARS,
+} from './get-memories.js'
 // --- import write contracts (groundwork for batch importers) ---
 export type {
   ImportCommitmentInput,
@@ -83,7 +100,7 @@ export {
   MAX_IMPORT_CONTENT_LENGTH,
   MAX_IMPORT_PAYLOAD_LENGTH,
 } from './import.js'
-// --- briefing/handoff orientation tool IO + search filters V2 — appended ---
+// --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,
   BriefingCommitmentOutput,

@@ -64,9 +64,9 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [13160, 107096, 27478],
+      mcp: [17440, 141336, 35824],
       cli: [333, 1236, 1236],
-      rest: [1786, 2803, 2803],
+      rest: [1821, 2838, 2838],
     },
   )
 })
@@ -181,11 +181,11 @@ test('round-trips equal the operation count for every transport', () => {
   }
 })
 
-test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (10 tools, 2 prompts)', () => {
+test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (11 tools, 2 prompts)', () => {
   const surfaces = JSON.parse(
     readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
   )
-  assert.equal(surfaces.mcp.tools.length, 10, 'the v1 MCP surface is exactly 10 tools')
+  assert.equal(surfaces.mcp.tools.length, 11, 'the v1 MCP surface is exactly 11 tools')
   const names = surfaces.mcp.tools.map((t) => t.name)
   assert.deepEqual(
     names.sort(),
@@ -194,6 +194,7 @@ test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (10 tool
       'configure_scope',
       'describe_environment',
       'get_facts',
+      'get_memories',
       'handoff',
       'remember',
       'resolve',
@@ -217,27 +218,35 @@ test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (10 tool
   assert.deepEqual(surfaces.mcp.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
 })
 
-test('the REST /api/v1/search surface is the WIDER searchQuerySchema, not the MCP tool schema', () => {
+test('the search surface is the WIDER searchQuerySchema on BOTH transports', () => {
   // Regression guard (Codex P2, gen-transport-surfaces.mjs:134): the REST search
   // route .parse()s searchQuerySchema (query + limit + type/scope/project/status
-  // filters + asOf), which is WIDER than the MCP search tool's searchInputSchema
-  // (query + limit ONLY). The committed REST surface must reflect what the route
+  // filters + asOf). The committed REST surface must reflect what the route
   // actually parses, so the filter fields MUST be present — otherwise the REST
-  // contract undercounts and misdocuments the real wider surface.
+  // contract undercounts and misdocuments the real wider surface. Since the MCP
+  // search tool ALSO registers searchQuerySchema now (the historical narrow
+  // query+limit tool schema is gone — ONE validation boundary, hard rule 2),
+  // both transports must carry the same wider field set.
   const surfaces = JSON.parse(
     readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
   )
+  const widerFields = ['asOf', 'limit', 'memoryType', 'project', 'query', 'scope', 'status']
   const searchRoute = surfaces.rest.routes.find((r) => r.path === '/api/v1/search')
   assert.ok(searchRoute, 'REST surface must expose the /api/v1/search route')
   const props = searchRoute.requestSchema.properties
-  for (const field of ['query', 'limit', 'memoryType', 'scope', 'project', 'status', 'asOf']) {
+  for (const field of widerFields) {
     assert.ok(field in props, `REST search request schema must carry the ${field} field`)
   }
-  // The MCP search TOOL stays narrow (query + limit only) — the divergence is the point.
+  // The MCP search tool registers searchQueryV2Schema — a strict SUPERSET
+  // composition over the same wider searchQuerySchema (adds memoryTypes[] and
+  // the recordedAfter/recordedBefore range; ONE validation boundary, hard rule
+  // 2). REST stays on searchQuerySchema until the stacked search-filters REST
+  // slice lands, so MCP must carry every wider field plus exactly the V2 axes.
+  const v2Fields = [...widerFields, 'memoryTypes', 'recordedAfter', 'recordedBefore'].sort()
   const searchTool = surfaces.mcp.tools.find((t) => t.name === 'search')
   assert.deepEqual(
     Object.keys(searchTool.inputSchema.properties).sort(),
-    ['limit', 'query'],
-    'the MCP search tool surface stays query + limit only',
+    v2Fields,
+    'the MCP search tool surface is searchQueryV2Schema (wider set + V2 axes)',
   )
 })
