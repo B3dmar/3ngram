@@ -22,6 +22,7 @@ import {
   reviewProposalsOutputSchema,
   reviseToolOutputSchema,
   searchQuerySchema,
+  searchQueryV2Schema,
   searchToolOutputSchema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -568,6 +569,61 @@ describe('search tool', () => {
     expect(options.filters.status).toBe('active')
     // ISO strings are coerced to Date at the transport boundary for the core query.
     expect(options.filters.asOf).toEqual({ validAt: new Date('2026-01-01T00:00:00.000Z') })
+  })
+
+  it('threads the V2 axes: memoryTypes[] + recordedAfter/recordedBefore as Dates (#48)', async () => {
+    search.mockResolvedValue([])
+    await call(
+      'search',
+      {
+        query: 'q',
+        memoryTypes: ['decision', 'fact'],
+        recordedAfter: '2026-01-01T00:00:00.000Z',
+        recordedBefore: '2026-02-01T00:00:00.000Z',
+      },
+      ctx(),
+    )
+    const [, , , options] = search.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { filters: { memoryTypes?: string[]; recordedAfter?: Date; recordedBefore?: Date } },
+    ]
+    expect(options.filters.memoryTypes).toEqual(['decision', 'fact'])
+    // The range bounds coerce ISO -> Date at the transport boundary like asOf.
+    expect(options.filters.recordedAfter).toEqual(new Date('2026-01-01T00:00:00.000Z'))
+    expect(options.filters.recordedBefore).toEqual(new Date('2026-02-01T00:00:00.000Z'))
+    expect(Object.keys(options.filters).sort()).toEqual([
+      'memoryTypes',
+      'recordedAfter',
+      'recordedBefore',
+    ])
+  })
+
+  it('REJECTS memoryTypes together with memoryType at the boundary (mutually exclusive, #48)', async () => {
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', memoryType: 'decision', memoryTypes: ['fact'] })
+        .success,
+    ).toBe(false)
+    const result = await call(
+      'search',
+      { query: 'q', memoryType: 'decision', memoryTypes: ['fact'] },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(search).not.toHaveBeenCalled()
+  })
+
+  it('rejects an out-of-contract memoryTypes list (empty / over-cap / bad enum)', async () => {
+    for (const memoryTypes of [
+      [],
+      Array.from({ length: 9 }, () => 'note'),
+      ['not-a-memory-type'],
+    ]) {
+      const result = await call('search', { query: 'q', memoryTypes }, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(search).not.toHaveBeenCalled()
   })
 
   it('still rejects an UNKNOWN filter key rather than silently dropping it (strict)', async () => {

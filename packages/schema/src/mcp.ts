@@ -862,3 +862,73 @@ export const handoffToolOutputSchema = z
   })
   .strict()
 export type HandoffToolOutput = z.infer<typeof handoffToolOutputSchema>
+
+// ===========================================================================
+// search filters V2 — memoryTypes[] + recorded_at range (issue #48, epic #42).
+// APPENDED block: the shipped V1 contracts above stay byte-identical; V2 is a
+// NEW composition over them (the composed-schema pattern, ADR-0011), exactly
+// how searchQuerySchema composes searchFiltersSchema onto searchInputSchema.
+// ===========================================================================
+
+/**
+ * Upper bound on the `memoryTypes` OR-set. The memory-type enum is small; 8 is
+ * a generous ceiling that keeps the filter a bounded narrowing, never a
+ * firehose-shaped list parameter.
+ */
+export const MAX_MEMORY_TYPES_FILTER = 8
+
+/**
+ * The V2 search FILTER additions — two new candidate-narrowing axes:
+ *   - `memoryTypes`     → an OR-set over memories.memory_type
+ *     (`memory_type = ANY(...)` in the db layer). Each element reuses
+ *     {@link memoryTypeSchema}, the SAME contract the column is written
+ *     against. Non-empty (an empty set is "match nothing" — a caller error,
+ *     rejected loudly) and bounded by {@link MAX_MEMORY_TYPES_FILTER}.
+ *   - `recordedAfter` / `recordedBefore` → an INCLUSIVE transaction-time range
+ *     on memories.recorded_at (ISO datetimes, matching asOfSchema's bounds).
+ *     UNLIKE `asOf`, the range does NOT lift the active-only default: it is a
+ *     plain narrowing of the live view ("what did I record last week"), not
+ *     bi-temporal time travel. Time travel stays `asOf`'s job.
+ *
+ * `.partial()` like {@link searchFiltersSchema}: an absent filter never narrows
+ * its axis. Tags filtering is deliberately NOT here (deferred to its own epic).
+ */
+export const searchFiltersV2Schema = z
+  .object({
+    memoryTypes: z.array(memoryTypeSchema).min(1).max(MAX_MEMORY_TYPES_FILTER),
+    recordedAfter: z.iso.datetime(),
+    recordedBefore: z.iso.datetime(),
+  })
+  .partial()
+  .strict()
+export type SearchFiltersV2Input = z.infer<typeof searchFiltersV2Schema>
+
+/**
+ * The V2 search query contract: the shipped {@link searchQuerySchema} (query +
+ * limit + the five V1 filters) EXTENDED with {@link searchFiltersV2Schema} —
+ * the same composition pattern, one validation boundary (hard rule 2). The MCP
+ * `search` tool registers THIS schema; V1 consumers keep parsing the untouched
+ * `searchQuerySchema`.
+ *
+ * MUTUAL EXCLUSION: `memoryTypes` is the PLURAL form of the V1 `memoryType`
+ * axis. Supplying both is ambiguous (intersect? union?), so it is REJECTED at
+ * the boundary rather than silently resolved — pass one or the other.
+ */
+export const searchQueryV2Schema = searchQuerySchema
+  .extend(searchFiltersV2Schema.shape)
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.memoryType !== undefined && v.memoryTypes !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['memoryTypes'],
+        message: 'memoryTypes is mutually exclusive with memoryType — pass one or the other',
+      })
+    }
+  })
+export type SearchQueryV2Input = z.infer<typeof searchQueryV2Schema>
+/**
+ * Caller-side (pre-parse) shape: `z.input` where the defaulted `limit` is
+ * OPTIONAL. See {@link RememberToolArgs}.
+ */
+export type SearchQueryV2Args = z.input<typeof searchQueryV2Schema>

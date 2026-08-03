@@ -38,7 +38,7 @@ import {
   resolveToolOutputSchema,
   reviseToolInputSchema,
   reviseToolOutputSchema,
-  searchQuerySchema,
+  searchQueryV2Schema,
   searchToolOutputSchema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
@@ -210,8 +210,11 @@ const rememberTool: ToolDefinition = {
  * Requires a configured embedding gateway: core search() embeds the query and
  * THROWS without an embedding source, so absent a gateway the tool returns a
  * clear typed error rather than a 500. The input contract is query + limit plus
- * the five OPTIONAL candidate-narrowing filters (memoryType/scope/project/status,
- * asOf) — validated at the ONE boundary ({@link searchQuerySchema}, hard rule 2)
+ * the OPTIONAL candidate-narrowing filters (memoryType/scope/project/status,
+ * asOf, and the V2 axes memoryTypes[]/recordedAfter/recordedBefore) — validated
+ * at the ONE boundary ({@link searchQueryV2Schema}, hard rule 2: the V2
+ * composition over the shipped searchQuerySchema, which enforces the
+ * memoryTypes-vs-memoryType mutual exclusion)
  * and threaded straight to core search()'s SearchOptions. Each filter NARROWS the
  * candidate set BEFORE fusion; none alters the fusion weights or the
  * supersession ranking (docs/concepts/memory-model.mdx live-first stays the default). The tool
@@ -227,15 +230,15 @@ const searchTool: ToolDefinition = {
   config: {
     title: 'Search',
     description:
-      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained.',
-    inputSchema: searchQuerySchema,
+      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained.',
+    inputSchema: searchQueryV2Schema,
     outputSchema: searchToolOutputSchema,
   },
   async handler(args, ctx) {
     if (ctx.gateway === undefined) {
       return fail('embedding gateway not configured')
     }
-    const input = searchQuerySchema.parse(args)
+    const input = searchQueryV2Schema.parse(args)
     const hits = await search(
       ctx.userId,
       input.query,
@@ -245,12 +248,18 @@ const searchTool: ToolDefinition = {
         // Candidate-narrowing filters: validated at the schema
         // boundary, threaded verbatim to core. defined() strips undefined axes so
         // an absent filter never narrows (exactOptional fit for SearchFilters).
+        // V2 axes ride the same object: memoryTypes passes through as-is (the
+        // schema already enforced non-empty + mutual exclusion with memoryType);
+        // the recorded_at range bounds coerce ISO -> Date here like asOf.
         filters: defined({
           memoryType: input.memoryType,
+          memoryTypes: input.memoryTypes,
           scope: input.scope,
           project: input.project,
           status: input.status,
           asOf: toAsOf(input.asOf),
+          recordedAfter: toDate(input.recordedAfter),
+          recordedBefore: toDate(input.recordedBefore),
         }),
         budget: ctx.budget,
         access: ctx.access,
