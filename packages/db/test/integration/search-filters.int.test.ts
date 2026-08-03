@@ -9,159 +9,33 @@
 //   - the count-consistency invariant: a filtered read returns EXACTLY the rows
 //     matching the predicate, no leg leaks an out-of-filter row
 //
+// The V2 axes (memoryTypes OR-set + recorded_at range, issue #48) live in the
+// sibling search-filters-v2.int.test.ts (500-line file cap); both suites seed
+// the SAME matrix via ./search-filters-fixture.js.
+//
 // Self-contained seeding under dedicated tenants (owner connection for speed;
-// scored reads run via withTenant on the runtime role). Embeddings are the same
-// deterministic FakeGateway-style hash vectors the sibling search suite uses —
-// a WIRING fake, so assertions are about candidate membership and filtering, not
-// semantic ranking (that is the golden oracle's job).
+// scored reads run via withTenant on the runtime role).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import { searchFused } from '../../src/search.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
-
-const EMBEDDING_DIMENSIONS = 1536
-
-function fnv1a(str: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return h >>> 0
-}
-function mulberry32(seed: number): () => number {
-  let a = seed
-  return () => {
-    a |= 0
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-function fakeEmbedding(text: string, dims = EMBEDDING_DIMENSIONS): number[] {
-  const rand = mulberry32(fnv1a(text))
-  const v = Array.from({ length: dims }, () => rand() * 2 - 1)
-  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0))
-  return v.map((x) => x / norm)
-}
-
-// All rows share the lexical term 'alpha' so the FTS leg recalls the whole set;
-// filters are the only thing that should narrow the result. Distinct attributes
-// across rows let each filter axis be asserted in isolation.
-interface SeedRow {
-  key: string
-  memoryType: string
-  scope: string
-  project: string | null
-  status: string
-  validFrom: string
-  validTo: string | null
-  recordedAt: string
-}
-
-const SEED: SeedRow[] = [
-  // dimensional matrix — all active, current
-  {
-    key: 'd_dec_work_p1',
-    memoryType: 'decision',
-    scope: 'work',
-    project: 'p1',
-    status: 'active',
-    validFrom: '2026-01-01',
-    validTo: null,
-    recordedAt: '2026-01-01',
-  },
-  {
-    key: 'd_note_work_p1',
-    memoryType: 'note',
-    scope: 'work',
-    project: 'p1',
-    status: 'active',
-    validFrom: '2026-01-02',
-    validTo: null,
-    recordedAt: '2026-01-02',
-  },
-  {
-    key: 'd_dec_personal_p1',
-    memoryType: 'decision',
-    scope: 'personal',
-    project: 'p1',
-    status: 'active',
-    validFrom: '2026-01-03',
-    validTo: null,
-    recordedAt: '2026-01-03',
-  },
-  {
-    key: 'd_dec_work_p2',
-    memoryType: 'decision',
-    scope: 'work',
-    project: 'p2',
-    status: 'active',
-    validFrom: '2026-01-04',
-    validTo: null,
-    recordedAt: '2026-01-04',
-  },
-  {
-    key: 'd_dec_work_null',
-    memoryType: 'decision',
-    scope: 'work',
-    project: null,
-    status: 'active',
-    validFrom: '2026-01-05',
-    validTo: null,
-    recordedAt: '2026-01-05',
-  },
-  {
-    key: 'd_archived',
-    memoryType: 'fact',
-    scope: 'work',
-    project: 'p1',
-    status: 'archived',
-    validFrom: '2026-01-06',
-    validTo: null,
-    recordedAt: '2026-01-06',
-  },
-]
+import {
+  BIG,
+  FTS_ONLY,
+  fakeEmbedding,
+  keysOf as keysOfWith,
+  SEED,
+  seedMatrix,
+  seedRow,
+} from './search-filters-fixture.js'
 
 let uid: string
-const idByKey = new Map<string, string>()
-
-async function seedRow(userId: string, r: SeedRow): Promise<string> {
-  const embedding = fakeEmbedding(r.key)
-  const res = await ownerPool.query(
-    `INSERT INTO memories
-       (user_id, memory_type, topic, content, content_hash, scope, project, status,
-        embedding, valid_from, valid_to, recorded_at, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector,$10::timestamptz,$11,$12::timestamptz,$10::timestamptz)
-     RETURNING id`,
-    [
-      userId,
-      r.memoryType,
-      r.key,
-      `alpha ${r.key}`,
-      `filter-${userId}-${r.key}`,
-      r.scope,
-      r.project,
-      r.status,
-      `[${embedding.join(',')}]`,
-      r.validFrom,
-      r.validTo,
-      r.recordedAt,
-    ],
-  )
-  return res.rows[0].id
-}
-
-// FTS-only weights isolate the filter behaviour from vector/recency noise: every
-// row matches 'alpha', so any narrowing is the filter's doing alone.
-const FTS_ONLY = { fts: 1, recency: 0, vector: 0 }
-const BIG = 100
+let idByKey = new Map<string, string>()
 
 beforeAll(async () => {
   await resetDomainTables()
   uid = await seedUser('search-filters@test.local')
-  for (const r of SEED) idByKey.set(r.key, await seedRow(uid, r))
+  idByKey = await seedMatrix(uid)
 }, 120_000)
 
 afterAll(async () => {
@@ -169,10 +43,7 @@ afterAll(async () => {
   await closePools()
 })
 
-const keysOf = (hits: { id: string }[]): string[] => {
-  const byId = new Map([...idByKey.entries()].map(([k, v]) => [v, k] as const))
-  return hits.map((h) => byId.get(h.id)).filter((k): k is string => k !== undefined)
-}
+const keysOf = (hits: { id: string }[]): string[] => keysOfWith(idByKey, hits)
 
 describe('searchFused filters — dimensional narrowing (#134)', () => {
   it('no filter returns all ACTIVE rows (archived excluded by the live default)', async () => {
@@ -418,137 +289,5 @@ describe('searchFused asOf-guard — empty asOf keeps the live default (#134, P2
       }),
     )
     expect(keysOf(hits)).toContain('d_archived')
-  })
-})
-
-describe('searchFused filters V2 — memoryTypes OR-set + recorded_at range (#48)', () => {
-  // Reuses the dimensional SEED matrix: recorded_at runs 2026-01-01..01-06 one
-  // day apart per row, so range bounds can slice it deterministically.
-
-  it('memoryTypes narrows to the OR-set (= ANY), across both matching types', async () => {
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        memoryTypes: ['note', 'decision'],
-      }),
-    )
-    const keys = keysOf(hits).sort()
-    expect(keys).toEqual(
-      SEED.filter((r) => r.status === 'active' && ['note', 'decision'].includes(r.memoryType))
-        .map((r) => r.key)
-        .sort(),
-    )
-  })
-
-  it('a single-element memoryTypes behaves like the scalar memoryType filter', async () => {
-    const viaList = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        memoryTypes: ['note'],
-      }),
-    )
-    const viaScalar = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, { memoryType: 'note' }),
-    )
-    expect(keysOf(viaList)).toEqual(keysOf(viaScalar))
-    expect(keysOf(viaList)).toEqual(['d_note_work_p1'])
-  })
-
-  it('recordedAfter narrows to rows recorded at/after the bound (inclusive)', async () => {
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        recordedAfter: new Date('2026-01-03T00:00:00Z'),
-      }),
-    )
-    const keys = keysOf(hits).sort()
-    // Inclusive bound: the row recorded exactly AT 01-03 is in. Archived row
-    // (recorded 01-06) stays out — the range never lifts the active default.
-    expect(keys).toEqual(['d_dec_personal_p1', 'd_dec_work_null', 'd_dec_work_p2'])
-  })
-
-  it('recordedBefore narrows to rows recorded at/before the bound (inclusive)', async () => {
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        recordedBefore: new Date('2026-01-02T00:00:00Z'),
-      }),
-    )
-    expect(keysOf(hits).sort()).toEqual(['d_dec_work_p1', 'd_note_work_p1'])
-  })
-
-  it('recordedAfter + recordedBefore compose into a closed range', async () => {
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        recordedAfter: new Date('2026-01-02T00:00:00Z'),
-        recordedBefore: new Date('2026-01-04T00:00:00Z'),
-      }),
-    )
-    expect(keysOf(hits).sort()).toEqual(['d_dec_personal_p1', 'd_dec_work_p2', 'd_note_work_p1'])
-  })
-
-  it('the range does NOT lift the active-only default (unlike asOf — not time travel)', async () => {
-    // d_archived was recorded 2026-01-06 and sits INSIDE this range; a range
-    // read must still exclude it because the live default holds (only an asOf
-    // coordinate lifts it — the V1 time-travel tests above prove that side).
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        recordedAfter: new Date('2026-01-05T00:00:00Z'),
-        recordedBefore: new Date('2026-01-07T00:00:00Z'),
-      }),
-    )
-    const keys = keysOf(hits)
-    expect(keys).toEqual(['d_dec_work_null'])
-    expect(keys).not.toContain('d_archived')
-  })
-
-  it('an explicit status filter still composes WITH the range (archived in-range row)', async () => {
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        status: 'archived',
-        recordedAfter: new Date('2026-01-05T00:00:00Z'),
-      }),
-    )
-    expect(keysOf(hits)).toEqual(['d_archived'])
-  })
-
-  it('V2 axes compose (AND) with the existing V1 filters in one read', async () => {
-    // types OR-set + range + scope + project together: only d_dec_work_p1
-    // (decision, work, p1, recorded 01-01) survives every predicate.
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(tx, uid, 'alpha', BIG, FTS_ONLY, undefined, undefined, {
-        memoryTypes: ['decision', 'fact'],
-        recordedAfter: new Date('2026-01-01T00:00:00Z'),
-        recordedBefore: new Date('2026-01-03T00:00:00Z'),
-        scope: 'work',
-        project: 'p1',
-      }),
-    )
-    expect(keysOf(hits)).toEqual(['d_dec_work_p1'])
-  })
-
-  it('V2 axes narrow EVERY leg identically (no leak via recency/vector pools)', async () => {
-    // No-lexical-match query -> FTS recalls nothing; recency+vector legs must
-    // still honour the memoryTypes + range predicates (leg parity over the ONE
-    // rowEligibility rule).
-    const target = fakeEmbedding('d_note_work_p1')
-    const hits = await withTenant(uid, (tx) =>
-      searchFused(
-        tx,
-        uid,
-        'zzzznolexicalmatch qqwx',
-        BIG,
-        { fts: 0, recency: 1, vector: 1 },
-        undefined,
-        target,
-        { memoryTypes: ['decision'], recordedBefore: new Date('2026-01-04T00:00:00Z') },
-      ),
-    )
-    const keys = keysOf(hits)
-    expect(keys.length).toBeGreaterThan(0)
-    expect(keys).not.toContain('d_note_work_p1') // type-filtered out of every leg
-    for (const k of keys) {
-      const row = SEED.find((r) => r.key === k)
-      expect(row?.memoryType).toBe('decision')
-      expect(Date.parse(`${row?.recordedAt}T00:00:00Z`)).toBeLessThanOrEqual(
-        Date.parse('2026-01-04T00:00:00Z'),
-      )
-    }
   })
 })
