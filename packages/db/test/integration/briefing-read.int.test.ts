@@ -7,7 +7,7 @@
 // Proves the query-layer invariants unit tests (mocked db) cannot:
 //   - open/waiting commitments join their LIVE riding memory, ordered by urgency
 //   - blocker/decision/preference sections filter by type AND liveness AND status
-//   - stale candidates filter by updated_at < cutoff and exclude commitment-type
+//   - stale candidates filter by updated_at < cutoff AND the caller's type allowlist
 //   - every list is BOUNDED by its limit (no-firehose)
 //   - RLS scopes every read to the tenant (tenant isolation)
 //
@@ -87,6 +87,11 @@ afterAll(async () => {
 })
 
 const ALL = { kind: 'all' } as const
+
+// Mirrors core's STALE_CANDIDATE_TYPES policy constant (packages/core cannot be
+// imported here — db must not depend on core). The query layer takes the list
+// as a parameter; this suite proves the SQL honours whatever allowlist it gets.
+const STALE_TYPES = ['decision', 'preference', 'blocker', 'fact'] as const
 
 describe('openCommitments (runtime role, real withTenant)', () => {
   it('returns open + waiting commitments joined to their live memory, excludes resolved', async () => {
@@ -264,10 +269,10 @@ describe('typed memory sections (runtime role)', () => {
 })
 
 describe('staleCandidates (runtime role)', () => {
-  it('returns memories untouched before the cutoff, excluding commitments', async () => {
+  it('returns allowlisted memories untouched before the cutoff, excluding commitments', async () => {
     const cutoff = '2026-01-01T00:00:00.000Z'
-    const stale = await seedMemory(userA, 'note', { updatedAt: '2025-06-01T00:00:00.000Z' })
-    const fresh = await seedMemory(userA, 'note', { updatedAt: '2026-06-01T00:00:00.000Z' })
+    const stale = await seedMemory(userA, 'fact', { updatedAt: '2025-06-01T00:00:00.000Z' })
+    const fresh = await seedMemory(userA, 'fact', { updatedAt: '2026-06-01T00:00:00.000Z' })
     // A stale-but-commitment memory must NOT surface here (own list).
     const staleCommitment = await seedMemory(userA, 'commitment', {
       updatedAt: '2025-01-01T00:00:00.000Z',
@@ -275,7 +280,7 @@ describe('staleCandidates (runtime role)', () => {
     await seedCommitment(userA, staleCommitment)
 
     const page = await withTenant(userA, (tx) =>
-      staleCandidates(tx, userA, ALL, new Date(cutoff), 25),
+      staleCandidates(tx, userA, ALL, new Date(cutoff), 25, STALE_TYPES),
     )
     const ids = page.items.map((r) => r.id)
     expect(ids).toContain(stale)
@@ -283,10 +288,60 @@ describe('staleCandidates (runtime role)', () => {
     expect(ids).not.toContain(staleCommitment)
   })
 
+  it('type allowlist: of all 8 types stale, exactly the reviewable 4 surface (issue #44)', async () => {
+    // One stale row per memory type. The predicate is memory_type IN (allowlist):
+    // decision/preference/blocker/fact are IN; commitment/pattern/note/event are
+    // OUT — the imported event/note rows that flooded the prod briefing stay out.
+    const allTypes = [
+      'decision',
+      'commitment',
+      'blocker',
+      'fact',
+      'preference',
+      'pattern',
+      'note',
+      'event',
+    ] as const
+    const seeded = new Map<string, string>()
+    for (const t of allTypes) {
+      seeded.set(t, await seedMemory(userA, t, { updatedAt: '2025-06-01T00:00:00.000Z' }))
+    }
+
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, new Date('2026-01-01T00:00:00.000Z'), 25, STALE_TYPES),
+    )
+    const ids = new Set(page.items.map((r) => r.id))
+    for (const t of STALE_TYPES) {
+      expect(ids.has(seeded.get(t) as string), `${t} should be a stale candidate`).toBe(true)
+    }
+    for (const t of ['commitment', 'pattern', 'note', 'event']) {
+      expect(ids.has(seeded.get(t) as string), `${t} should NOT be a stale candidate`).toBe(false)
+    }
+    expect(page.totalCount).toBe(STALE_TYPES.length)
+  })
+
+  it('back-compat: omitting memoryTypes keeps the legacy NOT-commitment filter', async () => {
+    // A 0.6.2 positional caller passes five args (no allowlist). That call must
+    // keep its exact prior semantics: every non-commitment stale row surfaces,
+    // including note/event (Codex P1, comment 3702700238).
+    const staleNote = await seedMemory(userA, 'note', { updatedAt: '2025-06-01T00:00:00.000Z' })
+    const staleCommitment = await seedMemory(userA, 'commitment', {
+      updatedAt: '2025-06-01T00:00:00.000Z',
+    })
+    await seedCommitment(userA, staleCommitment)
+
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, new Date('2026-01-01T00:00:00.000Z'), 25),
+    )
+    const ids = page.items.map((r) => r.id)
+    expect(ids).toContain(staleNote)
+    expect(ids).not.toContain(staleCommitment)
+  })
+
   it('RLS isolates: B does not see A stale memories', async () => {
-    await seedMemory(userA, 'note', { updatedAt: '2025-06-01T00:00:00.000Z' })
+    await seedMemory(userA, 'fact', { updatedAt: '2025-06-01T00:00:00.000Z' })
     const page = await withTenant(userB, (tx) =>
-      staleCandidates(tx, userB, ALL, new Date('2026-01-01T00:00:00.000Z'), 25),
+      staleCandidates(tx, userB, ALL, new Date('2026-01-01T00:00:00.000Z'), 25, STALE_TYPES),
     )
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
@@ -338,9 +393,11 @@ describe('single-statement exact totalCount beyond the cap (runtime role, Codex 
 
   it('staleCandidates: totalCount is exact while items caps at the limit', async () => {
     await Promise.all(
-      Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'note', { updatedAt: STALE_AT })),
+      Array.from({ length: CAP + 2 }, () => seedMemory(userA, 'fact', { updatedAt: STALE_AT })),
     )
-    const page = await withTenant(userA, (tx) => staleCandidates(tx, userA, ALL, STALE_BEFORE, CAP))
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, STALE_BEFORE, CAP, STALE_TYPES),
+    )
     expect(page.items).toHaveLength(CAP)
     expect(page.totalCount).toBe(CAP + 2)
   })

@@ -32,8 +32,15 @@ vi.mock('@3ngram/db', () => ({
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
 }))
 
-const { briefing, MissingSelectorError, requireSelector, STALE_WINDOW_DAYS, MAX_BRIEFING_SECTION } =
-  await import('../src/read/briefing.js')
+const {
+  briefing,
+  MissingSelectorError,
+  requireSelector,
+  STALE_CANDIDATE_TYPES,
+  STALE_WINDOW_DAYS,
+  MAX_BRIEFING_SECTION,
+} = await import('../src/read/briefing.js')
+const { MEMORY_TYPES } = await import('@3ngram/schema')
 
 const NOW = new Date('2026-06-06T12:00:00.000Z')
 
@@ -232,7 +239,7 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
   it('derives the stale-before instant as now minus the documented window', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // staleCandidates(tx, userId, selector, staleBefore, limit): the 4th arg is the cutoff.
+    // staleCandidates(tx, userId, selector, staleBefore, limit, memoryTypes).
     const staleBefore = staleCandidates.mock.calls[0]?.[3] as Date
     const expected = NOW.getTime() - STALE_WINDOW_DAYS * 86_400_000
     expect(staleBefore.getTime()).toBe(expected)
@@ -252,5 +259,35 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
       expect(fn.mock.calls[0]?.[2]).toEqual(selector)
     }
     expect(staleCandidates.mock.calls[0]?.[2]).toEqual(selector)
+  })
+})
+
+describe('briefing — stale-candidate type allowlist (issue #44)', () => {
+  // The prod regression: a NOT-IN('commitment') predicate made ~74% of live
+  // memories "stale candidates" (dominated by imported event/note rows). The
+  // fix is an ALLOWLIST owned by core policy: reviewable types are IN, every
+  // other type — including any FUTURE type — is OUT by default (fails closed).
+  const EXPECTED_IN = ['decision', 'preference', 'blocker', 'fact'] as const
+
+  it('forwards STALE_CANDIDATE_TYPES and the ceiling limit to the db read', async () => {
+    resetAll()
+    await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+    // staleCandidates(tx, userId, selector, staleBefore, limit, memoryTypes) —
+    // memoryTypes trails limit so the 0.6.2 positional call stays valid
+    // (Codex P1, comment 3702700238); core always passes it explicitly.
+    expect(staleCandidates.mock.calls[0]?.[4]).toBe(MAX_BRIEFING_SECTION)
+    expect(staleCandidates.mock.calls[0]?.[5]).toBe(STALE_CANDIDATE_TYPES)
+  })
+
+  it.each(MEMORY_TYPES)('classifies %s in/out of the stale allowlist correctly', (memoryType) => {
+    const shouldBeIn = (EXPECTED_IN as readonly string[]).includes(memoryType)
+    expect(STALE_CANDIDATE_TYPES.includes(memoryType)).toBe(shouldBeIn)
+  })
+
+  it('covers every schema memory type exactly once (no type left unclassified)', () => {
+    // 8 known types; the allowlist is a strict subset and contains no strays.
+    expect(MEMORY_TYPES).toHaveLength(8)
+    for (const t of STALE_CANDIDATE_TYPES) expect(MEMORY_TYPES).toContain(t)
+    expect(STALE_CANDIDATE_TYPES).toEqual(EXPECTED_IN)
   })
 })

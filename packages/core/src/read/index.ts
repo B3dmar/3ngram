@@ -14,6 +14,7 @@ export {
   MAX_BRIEFING_SECTION,
   MissingSelectorError,
   requireSelector,
+  STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
 } from './briefing.js'
 export {
