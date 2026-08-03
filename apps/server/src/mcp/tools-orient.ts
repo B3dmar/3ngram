@@ -26,8 +26,8 @@
 import { briefing, handoff } from '@3ngram/core'
 import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
 import {
-  briefingToolInputSchema,
-  briefingToolOutputSchema,
+  briefingToolInputV2Schema,
+  briefingToolOutputV2Schema,
   handoffToolInputSchema,
   handoffToolOutputSchema,
 } from '@3ngram/schema'
@@ -45,10 +45,14 @@ function ok(structured: Record<string, unknown>): CallToolResult {
 
 /**
  * briefing — structured session orientation (docs/concepts/mcp-design.mdx JTBD "start my session
- * oriented"). Validates the REQUIRED selector + optional mode, calls core
+ * oriented"). Validates the REQUIRED selector + optional mode/sections/
+ * sectionLimit (the bounds V2 successor input, issue #45), calls core
  * briefing() with the injected `now` (overdue split + stale window derive from
  * it), returns the size-disciplined sections. brief mode (default) = counts + a
- * small top slice per section; full = bounded lists. No section carries content.
+ * small top slice per section; full = bounded lists. `sections` restricts the
+ * read to a subset (skipped sections are omitted); `sectionLimit` tunes the
+ * per-section bound up to the server-side ceiling. Every section carries
+ * `hasMore` (count > items.length). No section carries content.
  */
 const briefingTool: ToolDefinition = {
   name: 'briefing',
@@ -56,23 +60,26 @@ const briefingTool: ToolDefinition = {
   config: {
     title: 'Briefing',
     description:
-      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists.',
-    inputSchema: briefingToolInputSchema,
-    outputSchema: briefingToolOutputSchema,
+      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.',
+    inputSchema: briefingToolInputV2Schema,
+    outputSchema: briefingToolOutputV2Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
-    const input = briefingToolInputSchema.parse(args)
+    const input = briefingToolInputV2Schema.parse(args)
     // ACCESS GUARD: the briefing is memory-derived, so read access is asserted
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
     // `now` is read at the transport edge (composition root), not in core/db.
+    // Optional knobs ride only when present (exactOptionalPropertyTypes).
     const result = await briefing(ctx.userId, {
       selector: input.selector,
       mode: input.mode,
       now: new Date(),
+      ...(input.sections !== undefined ? { sections: input.sections } : {}),
+      ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
     })
-    return ok(parseOutput('briefing', briefingToolOutputSchema, result))
+    return ok(parseOutput('briefing', briefingToolOutputV2Schema, result))
   },
 }
 

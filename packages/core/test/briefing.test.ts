@@ -34,13 +34,14 @@ vi.mock('@3ngram/db', () => ({
 
 const {
   briefing,
+  DEFAULT_BRIEFING_TOP,
   MissingSelectorError,
   requireSelector,
   STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
   MAX_BRIEFING_SECTION,
 } = await import('../src/read/briefing.js')
-const { MEMORY_TYPES } = await import('@3ngram/schema')
+const { MAX_BRIEFING_SECTION_CEILING, MEMORY_TYPES } = await import('@3ngram/schema')
 
 const NOW = new Date('2026-06-06T12:00:00.000Z')
 
@@ -177,12 +178,150 @@ describe('briefing — modes + bounds', () => {
     expect(result.recentDecisions.items.length).toBe(10)
   })
 
-  it('always fetches the ceiling so counts are meaningful regardless of mode', async () => {
+  it('fetches only the mode default per section (counts stay exact via the window)', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // The db limit arg (4th positional) is the MAX ceiling, not the brief slice.
+    // brief fetches only its top slice — the exact total rides count(*) OVER()
+    // in the same statement, so over-fetching buys nothing (bounds V2).
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(DEFAULT_BRIEFING_TOP)
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(DEFAULT_BRIEFING_TOP)
+    resetAll()
+    await briefing('u1', { selector: { kind: 'all' }, mode: 'full', now: NOW })
     expect(openCommitments.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION)
-    expect(recentDecisions.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION)
+  })
+})
+
+describe('briefing — sectionLimit (bounds V2, issue #45)', () => {
+  it('forwards the caller sectionLimit to every section query', async () => {
+    resetAll()
+    await briefing('u1', { selector: { kind: 'all' }, mode: 'full', sectionLimit: 60, now: NOW })
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(60)
+    expect(overdueCommitments.mock.calls[0]?.[4]).toBe(60)
+    expect(activeBlockers.mock.calls[0]?.[3]).toBe(60)
+    expect(staleCandidates.mock.calls[0]?.[4]).toBe(60)
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(60)
+    expect(activePreferences.mock.calls[0]?.[3]).toBe(60)
+  })
+
+  it('overrides the brief top slice when given (sectionLimit beats the mode default)', async () => {
+    resetAll()
+    recentDecisions.mockResolvedValue(
+      page(
+        Array.from({ length: 7 }, () => memoryRow()),
+        7,
+      ),
+    )
+    const result = await briefing('u1', { selector: { kind: 'all' }, sectionLimit: 7, now: NOW })
+    expect(recentDecisions.mock.calls[0]?.[3]).toBe(7)
+    expect(result.recentDecisions?.items.length).toBe(7)
+  })
+
+  it('clamps the fetch limit to the server-side ceiling (boundary: 100 in, 101 clamped)', async () => {
+    resetAll()
+    await briefing('u1', {
+      selector: { kind: 'all' },
+      sectionLimit: MAX_BRIEFING_SECTION_CEILING,
+      now: NOW,
+    })
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION_CEILING)
+    resetAll()
+    await briefing('u1', {
+      selector: { kind: 'all' },
+      sectionLimit: MAX_BRIEFING_SECTION_CEILING + 1,
+      now: NOW,
+    })
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(MAX_BRIEFING_SECTION_CEILING)
+    resetAll()
+    // A direct core caller passing a sub-1 limit is clamped up, never a 0-row read.
+    await briefing('u1', { selector: { kind: 'all' }, sectionLimit: 0, now: NOW })
+    expect(openCommitments.mock.calls[0]?.[3]).toBe(1)
+  })
+})
+
+describe('briefing — sections subset (bounds V2, issue #45)', () => {
+  it('runs ONLY the requested section queries and omits the rest from the result', async () => {
+    resetAll()
+    overdueCommitments.mockResolvedValue(page([commitmentRow()], 1))
+    const result = await briefing('u1', {
+      selector: { kind: 'all' },
+      sections: ['overdue', 'preferences'],
+      now: NOW,
+    })
+    expect(overdueCommitments).toHaveBeenCalledTimes(1)
+    expect(activePreferences).toHaveBeenCalledTimes(1)
+    for (const fn of [openCommitments, activeBlockers, staleCandidates, recentDecisions]) {
+      expect(fn).not.toHaveBeenCalled()
+    }
+    expect(result.overdue?.count).toBe(1)
+    expect(result.preferences?.count).toBe(0)
+    expect(result.commitments).toBeUndefined()
+    expect(result.blockers).toBeUndefined()
+    expect(result.staleCandidates).toBeUndefined()
+    expect(result.recentDecisions).toBeUndefined()
+  })
+
+  it('an absent sections list means all six (legacy behavior)', async () => {
+    resetAll()
+    await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+    for (const fn of [
+      openCommitments,
+      overdueCommitments,
+      activeBlockers,
+      staleCandidates,
+      recentDecisions,
+      activePreferences,
+    ]) {
+      expect(fn).toHaveBeenCalledTimes(1)
+    }
+  })
+})
+
+describe('briefing — hasMore truth table (bounds V2, issue #45)', () => {
+  it.each([
+    { count: 0, rows: 0, hasMore: false },
+    { count: 3, rows: 3, hasMore: false },
+    { count: 4, rows: 3, hasMore: true },
+    { count: 40, rows: 3, hasMore: true },
+  ])('count=$count with $rows returned rows → hasMore=$hasMore', async ({
+    count,
+    rows,
+    hasMore,
+  }) => {
+    resetAll()
+    recentDecisions.mockResolvedValue(
+      page(
+        Array.from({ length: rows }, () => memoryRow()),
+        count,
+      ),
+    )
+    const result = await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+    expect(result.recentDecisions?.count).toBe(count)
+    expect(result.recentDecisions?.items.length).toBe(rows)
+    expect(result.recentDecisions?.hasMore).toBe(hasMore)
+  })
+})
+
+describe('briefing — legacy-input stability (bounds V2 must not move V1 callers)', () => {
+  it('returns identical sections for an identical legacy input (all sections, same slices)', async () => {
+    resetAll()
+    const decisions = Array.from({ length: 10 }, () => memoryRow())
+    const commitments = [commitmentRow()]
+    recentDecisions.mockResolvedValue(page(decisions, 10))
+    openCommitments.mockResolvedValue(page(commitments, 1))
+    const legacy = { selector: { kind: 'all' }, now: NOW } as const
+    const first = await briefing('u1', legacy)
+    resetAll()
+    recentDecisions.mockResolvedValue(page(decisions, 10))
+    openCommitments.mockResolvedValue(page(commitments, 1))
+    const second = await briefing('u1', { ...legacy, sections: undefined, sectionLimit: undefined })
+    // Same rows in → byte-identical briefing out (explicit-undefined knobs are
+    // exactly the legacy path). Commitment ids differ per run, so compare runs
+    // built from the SAME mocked rows.
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+    // And the legacy brief shape: every section present, top slice of 3, exact count.
+    expect(first.recentDecisions?.items.length).toBe(3)
+    expect(first.recentDecisions?.count).toBe(10)
+    expect(first.commitments?.items.length).toBe(1)
   })
 })
 
@@ -228,12 +367,13 @@ describe('briefing — overdue (dedicated query, not a filter over the slice)', 
     expect(result.overdue.count).toBe(MAX_BRIEFING_SECTION + 7)
   })
 
-  it('forwards now + ceiling limit to the overdue query', async () => {
+  it('forwards now + the effective limit to the overdue query', async () => {
     resetAll()
     await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    // overdueCommitments(tx, userId, selector, now, limit)
+    // overdueCommitments(tx, userId, selector, now, limit) — brief fetches its
+    // top slice; the exact total rides the window count (bounds V2).
     expect(overdueCommitments.mock.calls[0]?.[3]).toBe(NOW)
-    expect(overdueCommitments.mock.calls[0]?.[4]).toBe(MAX_BRIEFING_SECTION)
+    expect(overdueCommitments.mock.calls[0]?.[4]).toBe(DEFAULT_BRIEFING_TOP)
   })
 
   it('derives the stale-before instant as now minus the documented window', async () => {
@@ -269,9 +409,9 @@ describe('briefing — stale-candidate type allowlist (issue #44)', () => {
   // other type — including any FUTURE type — is OUT by default (fails closed).
   const EXPECTED_IN = ['decision', 'preference', 'blocker', 'fact'] as const
 
-  it('forwards STALE_CANDIDATE_TYPES and the ceiling limit to the db read', async () => {
+  it('forwards STALE_CANDIDATE_TYPES and the effective limit to the db read', async () => {
     resetAll()
-    await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+    await briefing('u1', { selector: { kind: 'all' }, mode: 'full', now: NOW })
     // staleCandidates(tx, userId, selector, staleBefore, limit, memoryTypes) —
     // memoryTypes trails limit so the 0.6.2 positional call stays valid
     // (Codex P1, comment 3702700238); core always passes it explicitly.
