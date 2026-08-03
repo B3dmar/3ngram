@@ -43,6 +43,7 @@ import {
   staleCandidates,
   withTenant,
 } from '@3ngram/db'
+import type { MemoryType } from '@3ngram/schema'
 
 export type { BriefingSelector } from '@3ngram/db'
 
@@ -72,6 +73,33 @@ export type BriefingMode = 'brief' | 'full'
  * core derives `now - STALE_WINDOW_DAYS` and passes the instant to db.
  */
 export const STALE_WINDOW_DAYS = 30
+
+/**
+ * Stale-candidate memory-type ALLOWLIST: only these types qualify for the
+ * staleness review, alongside the {@link STALE_WINDOW_DAYS} window.
+ *
+ * WHY AN ALLOWLIST (not a NOT-IN exclusion): the original predicate excluded
+ * only 'commitment', so EVERY other live memory older than the window was a
+ * "stale candidate". In production that matched ~74% of active memories —
+ * dominated by bulk-imported event/note rows — which turned the section into
+ * unusable noise. An allowlist also fails CLOSED: a future or imported memory
+ * type is EXCLUDED by default and must argue its way in, instead of silently
+ * flooding the briefing again.
+ *
+ * WHY THESE FOUR: decision/preference/blocker/fact are the curated, reviewable
+ * statements whose going quiet is a meaningful signal — a decision may have
+ * been overtaken, a preference may have drifted, a blocker may have cleared, a
+ * fact may have gone out of date. The rest go stale by NATURE, not by neglect:
+ * 'event' and 'note' are episodic/free-form records (nothing to re-review),
+ * 'pattern' is consolidation-derived, and 'commitment' surfaces via its own
+ * open/waiting/overdue lists, never by staleness.
+ */
+export const STALE_CANDIDATE_TYPES: readonly MemoryType[] = [
+  'decision',
+  'preference',
+  'blocker',
+  'fact',
+]
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
@@ -242,7 +270,14 @@ export async function briefing(userId: string, query: BriefingQuery): Promise<Br
     // must never be dropped.
     overdue: await overdueCommitments(tx, userId, selector, query.now, fetchLimit),
     blockers: await activeBlockers(tx, userId, selector, fetchLimit),
-    stale: await staleCandidates(tx, userId, selector, staleBefore, fetchLimit),
+    stale: await staleCandidates(
+      tx,
+      userId,
+      selector,
+      staleBefore,
+      STALE_CANDIDATE_TYPES,
+      fetchLimit,
+    ),
     decisions: await recentDecisions(tx, userId, selector, fetchLimit),
     preferences: await activePreferences(tx, userId, selector, fetchLimit),
   }))

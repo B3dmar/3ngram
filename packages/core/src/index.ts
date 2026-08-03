@@ -142,6 +142,7 @@ export {
   requireSelector,
   type SearchHit,
   type SearchOptions,
+  STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
   search,
   searchDashboardPage,
