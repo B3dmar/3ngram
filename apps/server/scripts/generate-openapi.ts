@@ -45,8 +45,10 @@ import {
   rememberToolOutputSchema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
+  retrievalScopeModeSchema,
   reviseToolInputSchema,
   reviseToolOutputSchema,
+  scopeNameSchema,
   searchQuerySchema,
   searchToolOutputSchema,
   statsResponseSchema,
@@ -246,6 +248,16 @@ const exportUserProfile = z
     updatedAt: z.string().datetime(),
   })
   .strict()
+// Stored retrieval policy in the portability archive. The row itself carries
+// internal creation metadata, but the REST contract exposes only the effective
+// policy and its last-update time.
+const exportRetrievalPolicy = z
+  .object({
+    mode: retrievalScopeModeSchema,
+    defaultScope: scopeNameSchema.nullable(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
@@ -261,6 +273,7 @@ const accountExport = z
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
+    retrievalPolicy: exportRetrievalPolicy.nullable(),
     counts: z
       .object({
         memories: z.number().int().min(0),

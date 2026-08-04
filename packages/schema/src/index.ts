@@ -318,6 +318,24 @@ export {
   proposalsListQuerySchema,
   statsResponseSchema,
 } from './rest.js'
+// --- retrieval-scope policy (issue #47) — appended block ---
+export type {
+  ConfigureScopeInputV2,
+  ConfigureScopeOutputV2,
+  DescribeEnvironmentOutputV2,
+  RetrievalScopeMode,
+  RetrievalScopePolicy,
+  SetRetrievalDefaultInput,
+} from './retrieval-scope.js'
+export {
+  configureScopeInputV2Schema,
+  configureScopeOutputV2Schema,
+  describeEnvironmentOutputV2Schema,
+  retrievalScopeModeSchema,
+  retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
+  setRetrievalDefaultInputSchema,
+} from './retrieval-scope.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---

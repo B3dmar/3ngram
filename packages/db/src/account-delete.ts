@@ -28,6 +28,7 @@ import {
   oauthTokens,
   passwordResetTokens,
   userProfileAttributes,
+  userRetrievalPolicy,
   userSessions,
   users,
 } from './schema/identity.js'
@@ -171,6 +172,13 @@ export async function eraseAccountData(
   await tx
     .update(userProfileAttributes)
     .set({ role: null, useCase: null, aiTools: null, referralSource: null, updatedAt: now })
+  // The users row is tombstoned rather than deleted, so its FK cascade never
+  // clears the stored retrieval policy. Remove the user-supplied scope and
+  // restore the inert default in this same transaction.
+  await tx
+    .update(userRetrievalPolicy)
+    .set({ mode: 'off', defaultScope: null, updatedAt: now })
+    .where(eq(userRetrievalPolicy.userId, userId))
   const deletedSessions = await tx.delete(userSessions).returning({ id: userSessions.id })
   const revokedKeys = await tx
     .update(apiKeys)

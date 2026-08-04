@@ -17,6 +17,9 @@ import {
   profileReferralSourceSchema,
   profileRoleSchema,
   profileUseCaseSchema,
+  type RetrievalScopeMode,
+  retrievalScopeModeSchema,
+  retrievalScopePolicyScopeRequirements,
   type TokenEndpointAuthMethod,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
@@ -32,7 +35,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { enumCheckSql, tenantPolicy } from './helpers.js'
+import { enumCheckSql, modeNullableValueCheckSql, tenantPolicy } from './helpers.js'
 
 const uuidv7 = () => sql`uuidv7()`
 
@@ -253,6 +256,42 @@ export const userProfileAttributes = pgTable(
     check(
       'user_profile_attributes_referral_source_check',
       enumCheckSql(t.referralSource, profileReferralSourceSchema.options),
+    ),
+    tenantPolicy(),
+  ],
+)
+
+/**
+ * Per-user retrieval-scope policy (issue #47): binds a session's READS to a
+ * scope. One optional row per user (user_id PRIMARY KEY → upsert on conflict);
+ * no row means mode 'off' (today's behavior). `mode` carries the Zod-derived
+ * CHECK (single source: retrievalScopeModeSchema); the consistency CHECK
+ * mirrors the schema refinement — 'default' REQUIRES default_scope, 'require'
+ * and 'off' FORBID it — so a drifting pair can never be stored, whatever path
+ * writes it. `default_scope` is a DENORMALIZED scope name (same model as
+ * memories.scope: no FK to the scopes registry — registry existence is the
+ * write-time handler check, and deleting a registry row must not break the
+ * stored policy). RLS scopes every row to its owner (hard rule 3).
+ */
+export const userRetrievalPolicy = pgTable(
+  'user_retrieval_policy',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mode: text('mode').notNull().default('off').$type<RetrievalScopeMode>(),
+    defaultScope: text('default_scope'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'user_retrieval_policy_mode_check',
+      enumCheckSql(t.mode, retrievalScopeModeSchema.options),
+    ),
+    check(
+      'user_retrieval_policy_scope_consistency_check',
+      modeNullableValueCheckSql(t.mode, t.defaultScope, retrievalScopePolicyScopeRequirements),
     ),
     tenantPolicy(),
   ],

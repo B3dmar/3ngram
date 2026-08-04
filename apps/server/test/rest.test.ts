@@ -10,6 +10,7 @@
 // The router is mounted on a fresh express app with express.json() and the SAME
 // generic error handler shape app.ts uses (so a malformed-JSON body surfaces as
 // the documented 400, not a 500), driven over a listening server with fetch.
+import { readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
@@ -1709,6 +1710,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ],
+    retrievalPolicy: {
+      mode: 'default',
+      defaultScope: 'work',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    },
   })
 
   it('returns the caller dataset, calls core under the key tenant, sets a download header', async () => {
@@ -1731,6 +1738,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       proposals: Array<{ rationale: string | null }>
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
+      retrievalPolicy: {
+        mode: string
+        defaultScope: string | null
+        updatedAt: string
+      } | null
       counts: {
         memories: number
         facts: number
@@ -1761,6 +1773,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     expect(body.userBudgets[0]?.capUsdOverride).toBe('5.000000000000')
     expect(body.llmUsage[0]?.operation).toBe('memory.embed')
     expect(body.llmUsage[0]?.costUsd).toBe('0.000000240000')
+    expect(body.retrievalPolicy).toEqual({
+      mode: 'default',
+      defaultScope: 'work',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    })
     expect(body.counts).toEqual({
       memories: 1,
       facts: 1,
@@ -1772,6 +1789,55 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       userBudgets: 1,
       llmUsage: 1,
     })
+  })
+
+  it('publishes the runtime retrieval-policy shape in generated OpenAPI', () => {
+    const spec = JSON.parse(
+      readFileSync(new URL('../../../docs/api-reference/openapi.json', import.meta.url), 'utf8'),
+    ) as {
+      paths: {
+        '/api/v1/export': {
+          get: {
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      required: string[]
+                      properties: Record<
+                        string,
+                        {
+                          anyOf?: Array<{
+                            type?: string
+                            required?: string[]
+                            additionalProperties?: boolean
+                            properties?: Record<string, unknown>
+                          }>
+                        }
+                      >
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const schema =
+      spec.paths['/api/v1/export'].get.responses['200'].content['application/json'].schema
+    expect(schema.required).toContain('retrievalPolicy')
+    const policy = schema.properties.retrievalPolicy
+    const objectBranch = policy?.anyOf?.find((branch) => branch.type === 'object')
+    expect(objectBranch).toMatchObject({
+      additionalProperties: false,
+      required: ['mode', 'defaultScope', 'updatedAt'],
+    })
+    expect(Object.keys(objectBranch?.properties ?? {}).sort()).toEqual([
+      'defaultScope',
+      'mode',
+      'updatedAt',
+    ])
   })
 
   it('works under a session Bearer too (binds the same tenant)', async () => {

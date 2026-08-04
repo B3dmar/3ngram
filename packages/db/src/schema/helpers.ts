@@ -16,6 +16,24 @@ export function enumCheckSql(column: PgColumn, values: readonly string[]): SQL {
 }
 
 /**
+ * CHECK generated from a schema-owned mode-to-nullability contract. Each mode
+ * is paired with either a required or forbidden nullable value, so the DB does
+ * not restate a Zod refinement with independently maintained literals.
+ */
+export function modeNullableValueCheckSql(
+  modeColumn: PgColumn,
+  valueColumn: PgColumn,
+  requirements: Readonly<Record<string, 'required' | 'forbidden'>>,
+): SQL {
+  const clauses = Object.entries(requirements).map(([mode, requirement]) => {
+    const modeLiteral = sql.raw(`'${mode.replaceAll("'", "''")}'`)
+    const nullability = requirement === 'required' ? sql`IS NOT NULL` : sql`IS NULL`
+    return sql`(${modeColumn} = ${modeLiteral} AND ${valueColumn} ${nullability})`
+  })
+  return sql`(${sql.join(clauses, sql` OR `)})`
+}
+
+/**
  * Canonical tenant-isolation policy (S3 finding 1: the NULLIF guard is
  * mandatory — current_setting(..., true) returns '' on pooled connections
  * after a set-and-reset, and ''::uuid makes the policy THROW).

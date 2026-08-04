@@ -679,6 +679,16 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     )
   }
 
+  async function seedRetrievalPolicy(userId: string, scope: string): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
+       VALUES ($1, 'default', $2)
+       ON CONFLICT (user_id) DO UPDATE
+       SET mode = 'default', default_scope = EXCLUDED.default_scope, updated_at = now()`,
+      [userId, scope],
+    )
+  }
+
   it('exports the key tenant account + memories + edges + events + proposals with a download header', async () => {
     const content = `rest-export-${crypto.randomUUID()}`
     const first = await api('/api/v1/memories', {
@@ -826,6 +836,32 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.profile?.useCase).toBe('dev')
     expect(body.profile?.aiTools).toEqual(['claude', 'codex'])
     expect(body.profile?.referralSource).toBe('reddit')
+  })
+
+  it('exports the key tenant retrieval policy', async () => {
+    const scope = `export-${crypto.randomUUID()}`
+    await seedRetrievalPolicy(await userIdFor(emailA), scope)
+
+    const res = await api('/api/v1/export', { key: keyA })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      retrievalPolicy: { mode: string; defaultScope: string | null } | null
+    }
+    expect(body.retrievalPolicy).toMatchObject({ mode: 'default', defaultScope: scope })
+  })
+
+  it('TENANT ISOLATION: A export never contains B retrieval policy', async () => {
+    const aScope = `a-export-${crypto.randomUUID()}`
+    const bScope = `b-export-${crypto.randomUUID()}`
+    await seedRetrievalPolicy(await userIdFor(emailA), aScope)
+    await seedRetrievalPolicy(await userIdFor(emailB), bScope)
+
+    const res = await api('/api/v1/export', { key: keyA })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      retrievalPolicy: { defaultScope: string | null } | null
+    }
+    expect(body.retrievalPolicy?.defaultScope).toBe(aScope)
   })
 
   it('TENANT ISOLATION: A export carries A profile only, never B (RLS, no explicit filter)', async () => {
