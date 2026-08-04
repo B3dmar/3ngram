@@ -13,11 +13,13 @@ import { runWithContext } from '@3ngram/config'
 import { fakeEmbedding } from '@3ngram/llm'
 import {
   briefingToolOutputV2Schema,
+  briefingToolOutputV3Schema,
   configureScopeOutputSchema,
   describeEnvironmentOutputSchema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
+  handoffToolOutputV3Schema,
   rememberToolOutputSchema,
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
@@ -1120,6 +1122,47 @@ describe('briefing tool (D2 orientation)', () => {
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('invalid input')
   })
+
+  it('accepts a scope_project selector, defaulting includeUnscoped false (issue #46)', async () => {
+    const selector = {
+      kind: 'scope_project',
+      scope: 'work',
+      project: '3ngram',
+      includeUnscoped: false,
+    }
+    briefing.mockResolvedValue(fakeBriefing({ selector }))
+    const result = await call(
+      'briefing',
+      { selector: { kind: 'scope_project', scope: 'work', project: '3ngram' } },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    // The schema default rides into core: past the boundary includeUnscoped is
+    // ALWAYS explicit, and the echoed selector round-trips the V3 output parse.
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ selector })
+    const parsed = briefingToolOutputV3Schema.parse(result.structuredContent)
+    expect(parsed.selector).toEqual(selector)
+  })
+
+  it('rejects a malformed scope_project selector and any bare-variant widening', async () => {
+    // Missing project: the intersection needs both halves.
+    expect(
+      (await call('briefing', { selector: { kind: 'scope_project', scope: 'work' } }, ctx()))
+        .isError,
+    ).toBe(true)
+    // The shipped bare project variant is NOT widened — includeUnscoped only
+    // rides the scope_project kind (strict variants reject the smuggle).
+    expect(
+      (
+        await call(
+          'briefing',
+          { selector: { kind: 'project', project: '3ngram', includeUnscoped: true } },
+          ctx(),
+        )
+      ).isError,
+    ).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
+  })
 })
 
 describe('handoff tool (D2 orientation)', () => {
@@ -1185,6 +1228,21 @@ describe('handoff tool (D2 orientation)', () => {
     const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
     expect('generatedFor' in arg).toBe(false)
     expect(arg.now).toBeInstanceOf(Date)
+  })
+
+  it('accepts a scope_project selector via the shared union (issue #46)', async () => {
+    const selector = {
+      kind: 'scope_project',
+      scope: 'work',
+      project: '3ngram',
+      includeUnscoped: true,
+    }
+    handoff.mockResolvedValue(fakeHandoff({ selector }))
+    const result = await call('handoff', { selector }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ selector })
+    const parsed = handoffToolOutputV3Schema.parse(result.structuredContent)
+    expect(parsed.selector).toEqual(selector)
   })
 
   it('forwards sectionLimit to core and omits it when absent (bounds V2)', async () => {

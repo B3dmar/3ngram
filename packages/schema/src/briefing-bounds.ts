@@ -127,36 +127,43 @@ export type BriefingSectionName = z.infer<typeof briefingSectionNameSchema>
  *
  * Both absent ⇒ V2 parses a legacy input to the byte-identical V1 result.
  */
+// The V2 knobs + the duplicate-sections check, extracted as SHARED pieces so
+// the V3 successors (selector widened to scope_project, issue #46) compose
+// from the EXACT same definitions — V2 and V3 can never drift on these axes.
+const briefingSectionsField = z
+  .array(briefingSectionNameSchema)
+  .min(1)
+  .max(BRIEFING_SECTION_NAMES.length)
+  .describe(
+    'Subset of sections to compute (unique names). Absent = all sections. Un-requested sections are skipped entirely and omitted from the result.',
+  )
+  .optional()
+const briefingSectionLimitField = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_BRIEFING_SECTION_CEILING)
+  .describe(
+    `Per-section item bound (1..${MAX_BRIEFING_SECTION_CEILING}). Absent = the mode default (3 brief / 25 full).`,
+  )
+  .optional()
+const rejectDuplicateSections = (
+  v: { sections?: readonly string[] | undefined },
+  ctx: z.RefinementCtx,
+): void => {
+  if (v.sections !== undefined && new Set(v.sections).size !== v.sections.length) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['sections'],
+      message: 'sections must be unique — a duplicate section name is a caller error',
+    })
+  }
+}
+
 export const briefingToolInputV2Schema = briefingToolInputSchema
-  .extend({
-    sections: z
-      .array(briefingSectionNameSchema)
-      .min(1)
-      .max(BRIEFING_SECTION_NAMES.length)
-      .describe(
-        'Subset of sections to compute (unique names). Absent = all sections. Un-requested sections are skipped entirely and omitted from the result.',
-      )
-      .optional(),
-    sectionLimit: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_BRIEFING_SECTION_CEILING)
-      .describe(
-        `Per-section item bound (1..${MAX_BRIEFING_SECTION_CEILING}). Absent = the mode default (3 brief / 25 full).`,
-      )
-      .optional(),
-  })
+  .extend({ sections: briefingSectionsField, sectionLimit: briefingSectionLimitField })
   .strict()
-  .superRefine((v, ctx) => {
-    if (v.sections !== undefined && new Set(v.sections).size !== v.sections.length) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['sections'],
-        message: 'sections must be unique — a duplicate section name is a caller error',
-      })
-    }
-  })
+  .superRefine(rejectDuplicateSections)
 export type BriefingToolInputV2 = z.infer<typeof briefingToolInputV2Schema>
 /**
  * Caller-side (pre-parse) shape: `z.input` where the defaulted `mode` is
@@ -171,18 +178,18 @@ export type BriefingToolArgsV2 = z.input<typeof briefingToolInputV2Schema>
  * No `sections` axis: a handoff's three lists ARE its purpose — a receiver
  * needing a narrower slice uses search/get_memories.
  */
+const handoffSectionLimitField = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_HANDOFF_SECTION_CEILING)
+  .describe(
+    `Per-section item bound (1..${MAX_HANDOFF_SECTION_CEILING}). Absent = the default of 25.`,
+  )
+  .optional()
+
 export const handoffToolInputV2Schema = handoffToolInputSchema
-  .extend({
-    sectionLimit: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_HANDOFF_SECTION_CEILING)
-      .describe(
-        `Per-section item bound (1..${MAX_HANDOFF_SECTION_CEILING}). Absent = the default of 25.`,
-      )
-      .optional(),
-  })
+  .extend({ sectionLimit: handoffSectionLimitField })
   .strict()
 export type HandoffToolInputV2 = z.infer<typeof handoffToolInputV2Schema>
 export type HandoffToolArgsV2 = z.input<typeof handoffToolInputV2Schema>
@@ -225,24 +232,32 @@ function briefingSectionV2Schema<T extends z.ZodType>(item: T) {
  * section (`sections` is absent = all six, or a non-empty subset), so an
  * all-metadata envelope with zero sections is a producer bug the group
  * refinement rejects rather than relays.
+ *
+ * Built by {@link briefingOutputEnvelope}, parameterized ONLY on the echoed
+ * selector schema, so the V3 successor (widened selector, issue #46) shares
+ * the exact same sections and refinements — the envelopes can never drift.
  */
-export const briefingToolOutputV2Schema = z
-  .object({
-    selector: briefingSelectorSchema,
-    mode: briefingModeSchema,
-    generatedAt: z.iso.datetime(),
-    commitments: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
-    overdue: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
-    blockers: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
-    staleCandidates: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
-    recentDecisions: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
-    preferences: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
-  })
-  .strict()
-  .refine((v) => BRIEFING_SECTION_NAMES.some((name) => v[name] !== undefined), {
-    message:
-      'at least one briefing section must be present — every valid input computes one or more sections',
-  })
+function briefingOutputEnvelope<S extends z.ZodType>(selector: S) {
+  return z
+    .object({
+      selector,
+      mode: briefingModeSchema,
+      generatedAt: z.iso.datetime(),
+      commitments: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
+      overdue: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
+      blockers: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
+      staleCandidates: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
+      recentDecisions: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
+      preferences: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
+    })
+    .strict()
+    .refine((v) => BRIEFING_SECTION_NAMES.some((name) => v[name] !== undefined), {
+      message:
+        'at least one briefing section must be present — every valid input computes one or more sections',
+    })
+}
+
+export const briefingToolOutputV2Schema = briefingOutputEnvelope(briefingSelectorSchema)
 export type BriefingToolOutputV2 = z.infer<typeof briefingToolOutputV2Schema>
 
 /** The three handoff sections (fixed — a handoff has no section selection). */
@@ -284,31 +299,104 @@ export type HandoffTruncatedOutput = z.infer<typeof handoffTruncatedSchema>
  * successor ONLY (V1 untouched): no caller can request past the ceiling, so a
  * longer list is a producer bug the contract rejects rather than relays.
  */
+const handoffEnvelopeV2Fields = {
+  decisions: handoffToolOutputSchema.shape.decisions.max(MAX_HANDOFF_SECTION_CEILING),
+  commitments: handoffToolOutputSchema.shape.commitments.max(MAX_HANDOFF_SECTION_CEILING),
+  preferences: handoffToolOutputSchema.shape.preferences.max(MAX_HANDOFF_SECTION_CEILING),
+  counts: handoffCountsSchema,
+  truncated: handoffTruncatedSchema,
+}
+
+const enforceHandoffSectionIdentities = (
+  v: {
+    counts: HandoffCountsOutput
+    truncated: HandoffTruncatedOutput
+    decisions: readonly unknown[]
+    commitments: readonly unknown[]
+    preferences: readonly unknown[]
+  },
+  ctx: z.RefinementCtx,
+): void => {
+  for (const name of HANDOFF_SECTION_NAMES) {
+    if (v.counts[name] < v[name].length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['counts', name],
+        message: `counts.${name} must cover the exported slice (count >= items length)`,
+      })
+    }
+    if (v.truncated[name] !== v.counts[name] > v[name].length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['truncated', name],
+        message: `truncated.${name} must equal counts.${name} > ${name}.length`,
+      })
+    }
+  }
+}
+
 export const handoffToolOutputV2Schema = handoffToolOutputSchema
+  .extend(handoffEnvelopeV2Fields)
+  .strict()
+  .superRefine(enforceHandoffSectionIdentities)
+export type HandoffToolOutputV2 = z.infer<typeof handoffToolOutputV2Schema>
+
+// ---------------------------------------------------------------------------
+// IO V3 (issue #46): the V2 successors with the SELECTOR widened to the
+// scope_project-capable union. Each V3 schema is composed from the SAME shared
+// pieces its V2 predecessor is built from (the extracted knob fields, the
+// section envelope builder, the identity refinements) with ONLY the selector
+// swapped — so every V2-valid payload parses IDENTICALLY through V3 (pinned by
+// test) and V2/V3 can never drift on any shared axis. NOT `.safeExtend`: its
+// typing (correctly) refuses to overwrite a key with a non-subtype, and the
+// widened union is a supertype of the shipped one.
+// ---------------------------------------------------------------------------
+
+/**
+ * `briefing` input V3 — the shipped base (selector + mode) with the selector
+ * widened to {@link briefingSelectorV2Schema} (adds `scope_project`, issue
+ * #46) and the SAME V2 knobs (sections + sectionLimit) and duplicate-sections
+ * refinement beside it.
+ */
+export const briefingToolInputV3Schema = briefingToolInputSchema
   .extend({
-    decisions: handoffToolOutputSchema.shape.decisions.max(MAX_HANDOFF_SECTION_CEILING),
-    commitments: handoffToolOutputSchema.shape.commitments.max(MAX_HANDOFF_SECTION_CEILING),
-    preferences: handoffToolOutputSchema.shape.preferences.max(MAX_HANDOFF_SECTION_CEILING),
-    counts: handoffCountsSchema,
-    truncated: handoffTruncatedSchema,
+    selector: briefingSelectorV2Schema,
+    sections: briefingSectionsField,
+    sectionLimit: briefingSectionLimitField,
   })
   .strict()
-  .superRefine((v, ctx) => {
-    for (const name of HANDOFF_SECTION_NAMES) {
-      if (v.counts[name] < v[name].length) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['counts', name],
-          message: `counts.${name} must cover the exported slice (count >= items length)`,
-        })
-      }
-      if (v.truncated[name] !== v.counts[name] > v[name].length) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['truncated', name],
-          message: `truncated.${name} must equal counts.${name} > ${name}.length`,
-        })
-      }
-    }
-  })
-export type HandoffToolOutputV2 = z.infer<typeof handoffToolOutputV2Schema>
+  .superRefine(rejectDuplicateSections)
+export type BriefingToolInputV3 = z.infer<typeof briefingToolInputV3Schema>
+export type BriefingToolArgsV3 = z.input<typeof briefingToolInputV3Schema>
+
+/**
+ * `handoff` input V3 — the shipped base (selector + generatedFor) with the
+ * selector widened to {@link briefingSelectorV2Schema} and the SAME V2
+ * `sectionLimit` knob. The shared selector union is exactly why handoff gains
+ * `scope_project` in the same slice as briefing (issue #46).
+ */
+export const handoffToolInputV3Schema = handoffToolInputSchema
+  .extend({ selector: briefingSelectorV2Schema, sectionLimit: handoffSectionLimitField })
+  .strict()
+export type HandoffToolInputV3 = z.infer<typeof handoffToolInputV3Schema>
+export type HandoffToolArgsV3 = z.input<typeof handoffToolInputV3Schema>
+
+/**
+ * `briefing` output V3 — the SAME {@link briefingOutputEnvelope} as V2 (all
+ * sections + refinements shared) with the ECHOED selector widened to match
+ * the V3 input (a `scope_project` briefing echoes its selector,
+ * includeUnscoped included).
+ */
+export const briefingToolOutputV3Schema = briefingOutputEnvelope(briefingSelectorV2Schema)
+export type BriefingToolOutputV3 = z.infer<typeof briefingToolOutputV3Schema>
+
+/**
+ * `handoff` output V3 — the shipped V1 envelope with the SAME V2 additions
+ * ({@link handoffEnvelopeV2Fields} + the counts/truncated identities) and the
+ * ECHOED selector widened to match the V3 input.
+ */
+export const handoffToolOutputV3Schema = handoffToolOutputSchema
+  .extend({ selector: briefingSelectorV2Schema, ...handoffEnvelopeV2Fields })
+  .strict()
+  .superRefine(enforceHandoffSectionIdentities)
+export type HandoffToolOutputV3 = z.infer<typeof handoffToolOutputV3Schema>

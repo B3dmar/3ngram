@@ -1131,6 +1131,78 @@ describe('/mcp briefing + handoff end-to-end (D2, real transport, runtime role)'
     await clientB.close()
   })
 
+  it('scope_project selector: a NULL-project memory appears only when opted in (issue #46)', async () => {
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
+    const tag = crypto.randomUUID()
+    const project = `sp-${tag}`
+    const scoped = await client.callTool({
+      name: 'remember',
+      arguments: {
+        memoryType: 'decision',
+        topic: 'sp scoped',
+        content: `sp-scoped-${tag}`,
+        scope: 'work',
+        project,
+      },
+    })
+    const unscoped = await client.callTool({
+      name: 'remember',
+      arguments: {
+        memoryType: 'decision',
+        topic: 'sp unscoped',
+        content: `sp-unscoped-${tag}`,
+        scope: 'work',
+      },
+    })
+    const scopedId = (scoped.structuredContent as { memory: { id: string } }).memory.id
+    const unscopedId = (unscoped.structuredContent as { memory: { id: string } }).memory.id
+
+    const decisionIds = async (includeUnscoped: boolean): Promise<string[]> => {
+      const briefed = await client.callTool({
+        name: 'briefing',
+        arguments: {
+          selector: { kind: 'scope_project', scope: 'work', project, includeUnscoped },
+          mode: 'full',
+          sections: ['recentDecisions'],
+          sectionLimit: 100,
+        },
+      })
+      expect(briefed.isError).toBeFalsy()
+      const structured = briefed.structuredContent as {
+        selector: { includeUnscoped: boolean }
+        recentDecisions: { items: Array<{ id: string }> }
+      }
+      // The selector is echoed back with the explicit flag (V3 output).
+      expect(structured.selector.includeUnscoped).toBe(includeUnscoped)
+      return structured.recentDecisions.items.map((i) => i.id)
+    }
+
+    // Strict intersection: only the project-tagged memory is visible.
+    const strict = await decisionIds(false)
+    expect(strict).toContain(scopedId)
+    expect(strict).not.toContain(unscopedId)
+    // Opted in: the scope's NULL-project memory joins the project lens.
+    const widened = await decisionIds(true)
+    expect(widened).toContain(scopedId)
+    expect(widened).toContain(unscopedId)
+
+    // handoff shares the selector union: the widened export carries both rows.
+    const handed = await client.callTool({
+      name: 'handoff',
+      arguments: {
+        selector: { kind: 'scope_project', scope: 'work', project, includeUnscoped: true },
+        sectionLimit: 100,
+      },
+    })
+    expect(handed.isError).toBeFalsy()
+    const handoffIds = (
+      handed.structuredContent as { decisions: Array<{ id: string }> }
+    ).decisions.map((d) => d.id)
+    expect(handoffIds).toContain(scopedId)
+    expect(handoffIds).toContain(unscopedId)
+    await client.close()
+  })
+
   it('handoff round-trips the structured shape with content for the tenant', async () => {
     const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
     const tag = crypto.randomUUID()
