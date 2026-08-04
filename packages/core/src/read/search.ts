@@ -25,7 +25,7 @@
 // lengths/ids/counts. The returned hits carry memory content (that is the read
 // payload, not a log), but no log line here echoes it.
 import {
-  type SearchHit as DbSearchHit,
+  type SearchFilters as DbSearchFilters,
   EMBEDDING_DIMENSIONS,
   fetchHitsByIds,
   InvalidEmbeddingError,
@@ -41,7 +41,6 @@ import {
   reserveBudgetSlot,
 } from '../budget/index.js'
 import { DEFAULT_EMBEDDING_MODEL, embeddingCostUsd } from '../write/embed.js'
-import { excerptContent } from './excerpt.js'
 import type { RetrievalPolicy } from './retrieval-policy.js'
 import {
   type DashboardPageOptions,
@@ -49,6 +48,12 @@ import {
   resolveSearchOptions,
   type SearchOptions,
 } from './search-options.js'
+import {
+  type ScopedSearchResult,
+  type SearchHit,
+  shapeSearchHit,
+  shapeSearchResult,
+} from './search-results.js'
 
 /** Gateway operation key for query embeddings — meters search cost distinctly
  * from write-path embeddings. */
@@ -61,6 +66,7 @@ export {
   DEFAULT_SEARCH_WEIGHTS,
   type SearchOptions,
 } from './search-options.js'
+export type { ScopedSearchResult, SearchHit } from './search-results.js'
 
 /**
  * A core search hit: the db fused hit with its `content` bounded to the
@@ -71,13 +77,6 @@ export {
  * Excerpting here is read-path POLICY (docs/concepts/architecture.mdx): REST and MCP both inherit the
  * bounded shape from this one surface.
  */
-export interface SearchHit extends DbSearchHit {
-  /** FULL stored content length (chars) — `content` itself is the excerpt. */
-  contentLength: number
-  /** True when `content` was cut to the excerpt cap. */
-  truncated: boolean
-}
-
 /** Either an injected Gateway (embed the query) or a pre-computed embedding. */
 export type EmbeddingSource =
   | { gateway: Gateway; queryEmbedding?: undefined }
@@ -180,36 +179,15 @@ export async function search(
       cursor,
     ),
   )
-  // Read-path excerpting: bound each hit's content to the schema
-  // excerpt cap BEFORE any transport sees it (docs/concepts/architecture.mdx — policy in core, so
-  // REST/MCP cannot drift). Stored rows are untouched (docs/concepts/memory-model.mdx, read-side only).
-  const shaped = hits.map((hit) => ({ ...hit, ...excerptContent(hit.content) }))
-  // The envelope rides EXACTLY when a policy was injected (the overload
-  // contract): the policy-aware transport always gets the appliedScope echo;
-  // every policy-less caller keeps the shipped plain array, byte-identical.
-  if (opts.retrievalPolicy !== undefined) {
-    return { hits: shaped, appliedScope }
-  }
-  return shaped
-}
-
-/**
- * The policy-aware search result (issue #47): the hits plus the
- * `appliedScope` echo — the scope the injected retrieval policy applied to an
- * unscoped call (`null` when nothing was narrowed: mode `off`, or the caller
- * scoped the call explicitly). Returned by {@link search} EXACTLY when
- * `opts.retrievalPolicy` is present, so a `default`-mode narrowing can never
- * be silent (the transport surfaces the echo verbatim).
- */
-export interface ScopedSearchResult {
-  hits: SearchHit[]
-  appliedScope: string | null
+  return shapeSearchResult(hits, appliedScope, opts.retrievalPolicy !== undefined)
 }
 
 /** The page-1 ranked ordering frozen into the dashboard cursor. */
 export interface FrozenOrdering {
   ids: string[]
   scores: number[]
+  /** Nullable policy-applied scope frozen at page 1. */
+  policyScope: string | null
 }
 
 /** One dashboard search page plus the frozen ordering and the next offset. */
@@ -229,6 +207,123 @@ export interface DashboardSearchPage {
   appliedScope: string | null
 }
 
+type FrozenPageState = NonNullable<DashboardPageOptions['frozen']>
+type ResolvedDashboardPageOptions = ReturnType<typeof resolveDashboardPageOptions>
+
+interface CollectedFrozenHit {
+  hit: SearchHit
+  posAfter: number
+}
+
+/** A legacy state can continue only while no policy scope is being applied. */
+function shouldRestartFrozenWalk(frozen: FrozenPageState, appliedScope: string | null): boolean {
+  if (frozen.policyScope === undefined) return appliedScope !== null
+  return frozen.policyScope !== appliedScope
+}
+
+/** Collect one page plus one eligible probe row from a frozen ordering. */
+async function collectFrozenHits(
+  userId: string,
+  frozen: FrozenPageState,
+  filters: DbSearchFilters,
+  limit: number,
+): Promise<{ collected: CollectedFrozenHit[]; cursor: number }> {
+  const collected: CollectedFrozenHit[] = []
+  let cursor = frozen.off
+  while (collected.length <= limit && cursor < frozen.ids.length) {
+    const sliceIds = frozen.ids.slice(cursor, cursor + limit)
+    const rows = await withTenant(userId, (tx) => fetchHitsByIds(tx, userId, sliceIds, filters))
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    sliceIds.forEach((id, index) => {
+      const row = byId.get(id)
+      if (row === undefined) return
+      const position = cursor + index
+      collected.push({
+        hit: shapeSearchHit({ ...row, score: frozen.scores[position] ?? row.score }),
+        posAfter: position + 1,
+      })
+    })
+    cursor += sliceIds.length
+  }
+  return { collected, cursor }
+}
+
+/** Shape a collected continuation while retaining its verified scope binding. */
+function frozenDashboardPage(
+  frozen: FrozenPageState,
+  collected: CollectedFrozenHit[],
+  cursor: number,
+  limit: number,
+  appliedScope: string | null,
+): DashboardSearchPage {
+  const hasMore = collected.length > limit
+  const page = collected.slice(0, limit)
+  const nextOffset = hasMore ? (page[page.length - 1]?.posAfter ?? cursor) : frozen.ids.length
+  return {
+    hits: page.map((entry) => entry.hit),
+    frozen: { ids: frozen.ids, scores: frozen.scores, policyScope: appliedScope },
+    nextOffset,
+    hasMore,
+    appliedScope,
+  }
+}
+
+/** Read a verified continuation without embedding or reranking. */
+async function continueDashboardPage(
+  userId: string,
+  frozen: FrozenPageState,
+  resolved: ResolvedDashboardPageOptions,
+): Promise<DashboardSearchPage> {
+  const { collected, cursor } = await collectFrozenHits(
+    userId,
+    frozen,
+    resolved.filters,
+    resolved.limit,
+  )
+  return frozenDashboardPage(frozen, collected, cursor, resolved.limit, resolved.appliedScope)
+}
+
+/** Rank page 1 and bind its complete frozen ordering to the applied policy scope. */
+async function rankDashboardPage(
+  userId: string,
+  query: string,
+  source: EmbeddingSource,
+  budget: BudgetEnforcement | undefined,
+  resolved: ResolvedDashboardPageOptions,
+): Promise<DashboardSearchPage> {
+  const { gateway, queryEmbedding: precomputed } = source
+  const queryEmbedding =
+    precomputed ?? (await embedQuery(userId, gateway as Gateway, query, budget))
+  if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new InvalidEmbeddingError(queryEmbedding.length)
+  }
+  const ranked = await withTenant(userId, (tx) =>
+    searchFused(
+      tx,
+      userId,
+      query,
+      resolved.limit,
+      resolved.weights,
+      resolved.supersessionPenalty,
+      queryEmbedding,
+      resolved.filters,
+      undefined,
+      { returnFullPool: true },
+    ),
+  )
+  return {
+    hits: ranked.slice(0, resolved.limit).map(shapeSearchHit),
+    frozen: {
+      ids: ranked.map((hit) => hit.id),
+      scores: ranked.map((hit) => hit.score),
+      policyScope: resolved.appliedScope,
+    },
+    nextOffset: resolved.limit,
+    hasMore: ranked.length > resolved.limit,
+    appliedScope: resolved.appliedScope,
+  }
+}
+
 /**
  * Stable dashboard search pagination. The FIRST page (no `frozen`)
  * ranks the bounded candidate pool ONCE and returns the full ranked ordering;
@@ -237,7 +332,9 @@ export interface DashboardSearchPage {
  * ordering — fetching the slice's rows by id and applying the FROZEN scores and
  * order — so mid-session corpus drift cannot move a row across a page boundary
  * (no duplicates, no skips). Embedding is acquired only on the first page; a
- * continuation does no ranking.
+ * continuation does no ranking. Page 1 also binds the frozen ordering to the
+ * nullable scope applied by the retrieval policy. A changed policy scope, or a
+ * legacy unbound state under an active default, safely restarts at page 1.
  */
 export async function searchDashboardPage(
   userId: string,
@@ -245,100 +342,12 @@ export async function searchDashboardPage(
   source: EmbeddingSource,
   opts: DashboardPageOptions = {},
 ): Promise<DashboardSearchPage> {
-  // ACCESS GUARD: deny reads when the platform policy forbids them, on both the
-  // first page AND continuation pages (self-host allowAllAccess allows all).
   if (opts.access) await opts.access.assertRead(userId)
-
-  // RETRIEVAL-SCOPE POLICY (issue #47): enforced on EVERY page — the effective
-  // filters (and so the frozen ordering AND each continuation's eligibility
-  // re-check) always carry the policy scope, and a `require` rejection fires
-  // before any embed or fetch.
-  const { appliedScope, filters, limit, supersessionPenalty, weights } =
-    resolveDashboardPageOptions(query, opts)
-
-  if (opts.frozen !== undefined) {
-    const { ids, scores, off } = opts.frozen
-    // Advance through the frozen ordering collecting ELIGIBLE rows; rows archived
-    // or removed between clicks drop out. OVERFETCH one extra eligible row beyond
-    // `limit` so `hasMore` reflects whether an eligible row actually REMAINS — not
-    // the raw offset. Without the probe, a page that fills `limit` while every
-    // later frozen id has since become ineligible would still advertise a next
-    // page that can only return an empty no-op before clearing `hasMore`
-    // Skipping ineligible ids also keeps every page full.
-    //
-    // Fetch a full `limit`-sized batch each round (not just the 1 row still
-    // needed): probing an archived tail then costs O(tail / limit) round trips,
-    // not one withTenant() query per remaining id — a bulk corpus shrink could
-    // otherwise degrade a single "Load more" into dozens of serial queries
-    // The loop stops as soon as the probe row is found.
-    const collected: Array<{ hit: SearchHit; posAfter: number }> = []
-    let cursor = off
-    while (collected.length <= limit && cursor < ids.length) {
-      const sliceIds = ids.slice(cursor, cursor + limit)
-      const rows = await withTenant(userId, (tx) => fetchHitsByIds(tx, userId, sliceIds, filters))
-      const byId = new Map(rows.map((row) => [row.id, row]))
-      sliceIds.forEach((id, i) => {
-        const row = byId.get(id)
-        if (row === undefined) return // ineligible between requests — skip its frozen position
-        const pos = cursor + i
-        const score = scores[pos] ?? row.score
-        collected.push({
-          hit: { ...row, score, ...excerptContent(row.content) },
-          posAfter: pos + 1,
-        })
-      })
-      cursor += sliceIds.length
-    }
-    // The (limit+1)th eligible row is the probe: its presence ⇒ a real next page.
-    const hasMore = collected.length > limit
-    const page = collected.slice(0, limit)
-    const hits = page.map((entry) => entry.hit)
-    // Resume strictly after the last SHOWN eligible row when more remain; the
-    // skipped-ineligible tail before the probe is re-scanned harmlessly. When no
-    // eligible row remains, the ordering is exhausted.
-    const nextOffset = hasMore ? (page[page.length - 1]?.posAfter ?? cursor) : ids.length
-    return {
-      hits,
-      frozen: { ids, scores },
-      nextOffset,
-      hasMore,
-      appliedScope,
-    }
+  const resolved = resolveDashboardPageOptions(query, opts)
+  if (opts.frozen !== undefined && !shouldRestartFrozenWalk(opts.frozen, resolved.appliedScope)) {
+    return continueDashboardPage(userId, opts.frozen, resolved)
   }
-
-  const { gateway, queryEmbedding: precomputed } = source
-  const queryEmbedding =
-    precomputed ?? (await embedQuery(userId, gateway as Gateway, query, opts.budget))
-  if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
-    throw new InvalidEmbeddingError(queryEmbedding.length)
-  }
-  // returnFullPool: rank and return the WHOLE bounded candidate pool, not just
-  // the page — the tail is what we freeze. Page-1 ranking/normalization is
-  // identical to a normal call (pool unchanged), so the eval floor is untouched.
-  const ranked = await withTenant(userId, (tx) =>
-    searchFused(
-      tx,
-      userId,
-      query,
-      limit,
-      weights,
-      supersessionPenalty,
-      queryEmbedding,
-      filters,
-      undefined,
-      {
-        returnFullPool: true,
-      },
-    ),
-  )
-  const pageHits = ranked.slice(0, limit).map((hit) => ({ ...hit, ...excerptContent(hit.content) }))
-  return {
-    hits: pageHits,
-    frozen: { ids: ranked.map((h) => h.id), scores: ranked.map((h) => h.score) },
-    nextOffset: limit,
-    hasMore: ranked.length > limit,
-    appliedScope,
-  }
+  return rankDashboardPage(userId, query, source, opts.budget, resolved)
 }
 
 /**

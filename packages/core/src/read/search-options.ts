@@ -59,8 +59,17 @@ export interface SearchOptions {
 export interface DashboardPageOptions {
   limit?: number
   filters?: SearchFilters
-  /** Frozen ordering and current offset decoded from a continuation cursor. */
-  frozen?: { ids: string[]; scores: number[]; off: number }
+  /**
+   * Frozen ordering and current offset decoded from a continuation cursor.
+   * `policyScope` is absent only on legacy state; new walks bind the nullable
+   * scope applied by the retrieval policy so a later policy change restarts.
+   */
+  frozen?: {
+    ids: string[]
+    scores: number[]
+    off: number
+    policyScope?: string | null
+  }
   /** Optional metered-read budget gate for the first-page query embedding. */
   budget?: BudgetEnforcement | undefined
   /** Optional read-access gate, asserted for both first and later pages. */

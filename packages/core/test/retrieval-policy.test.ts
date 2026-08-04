@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit tests — no DB. Retrieval-scope policy (issue #47): the shared
-// enforcement helpers, the per-mode behavior of EVERY enforced read surface
-// (search, searchDashboardPage, briefing, handoff) including the appliedScope
-// echo and the typed error shape, the once-per-request resolver, the setter's
-// registry check, and the describe_environment report mapping. packages/db is
-// mocked (the search/briefing test-file pattern); enforcement composition is
-// what is under test — the real SQL + RLS run in the integration suites.
+// Unit coverage for retrieval-scope policy enforcement across core read surfaces.
 import { EMBEDDING_DIMENSIONS } from '@3ngram/llm'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
-import type { ScopedSearchResult, SearchHit, SearchOptions } from '../src/read/search.js'
+import type {
+  DashboardPageOptions,
+  ScopedSearchResult,
+  SearchHit,
+  SearchOptions,
+} from '../src/read/search.js'
 
 const searchFused = vi.fn()
 const fetchHitsByIds = vi.fn()
@@ -82,7 +81,12 @@ const page = <T>(items: T[] = []) => ({ items, totalCount: items.length })
 
 const OFF = { mode: 'off' } as const
 const DEFAULT_WORK = { mode: 'default', defaultScope: 'work' } as const
+const DEFAULT_PERSONAL = { mode: 'default', defaultScope: 'personal' } as const
 const REQUIRE = { mode: 'require', registeredScopes: ['personal', 'work'] } as const
+
+function dashboard(opts: DashboardPageOptions = {}) {
+  return searchDashboardPage(USER, 'q', { queryEmbedding: dim() }, opts)
+}
 
 function mockBriefingSections() {
   for (const fn of [
@@ -218,7 +222,6 @@ describe('search per mode', () => {
       { retrievalPolicy: DEFAULT_WORK, filters: { project: 'p' } },
     )
     expect(result.appliedScope).toBe('work')
-    // The scope axis is filled; the caller's other axes are preserved.
     expect(searchFused.mock.calls[0]?.[7]).toEqual({ project: 'p', scope: 'work' })
   })
 
@@ -248,47 +251,74 @@ describe('search per mode', () => {
 describe('searchDashboardPage per mode', () => {
   it('default: page 1 freezes the POLICY-scoped pool and echoes appliedScope', async () => {
     searchFused.mockResolvedValue([HIT])
-    const result = await searchDashboardPage(
-      USER,
-      'q',
-      { queryEmbedding: dim() },
-      { retrievalPolicy: DEFAULT_WORK },
-    )
+    const result = await dashboard({ retrievalPolicy: DEFAULT_WORK })
     expect(result.appliedScope).toBe('work')
+    expect(result.frozen.policyScope).toBe('work')
+    expectTypeOf(result.frozen.policyScope).toEqualTypeOf<string | null>()
     expect(searchFused.mock.calls[0]?.[7]).toEqual({ scope: 'work' })
   })
 
-  it('default: a continuation re-applies the scope to the eligibility check', async () => {
+  it('default: an unchanged-policy continuation uses the frozen ordering', async () => {
     fetchHitsByIds.mockResolvedValue([HIT])
-    const result = await searchDashboardPage(
-      USER,
-      'q',
-      { queryEmbedding: dim() },
-      {
-        retrievalPolicy: DEFAULT_WORK,
-        limit: 5,
-        frozen: { ids: ['m1'], scores: [0.9], off: 0 },
-      },
-    )
+    const result = await dashboard({
+      retrievalPolicy: DEFAULT_WORK,
+      limit: 5,
+      frozen: { ids: ['m1'], scores: [0.9], off: 0, policyScope: 'work' },
+    })
     expect(result.appliedScope).toBe('work')
+    expect(result.frozen.policyScope).toBe('work')
     expect(fetchHitsByIds.mock.calls[0]?.[3]).toEqual({ scope: 'work' })
+    expect(searchFused).not.toHaveBeenCalled()
+  })
+
+  it('restarts page 1 when the default policy changes from work to personal', async () => {
+    searchFused.mockResolvedValue([HIT])
+    const result = await dashboard({
+      retrievalPolicy: DEFAULT_PERSONAL,
+      limit: 5,
+      frozen: { ids: ['m1'], scores: [0.9], off: 1, policyScope: 'work' },
+    })
+    expect(fetchHitsByIds).not.toHaveBeenCalled()
+    expect(searchFused.mock.calls[0]?.[7]).toEqual({ scope: 'personal' })
+    expect(result.appliedScope).toBe('personal')
+    expect(result.frozen.policyScope).toBe('personal')
+  })
+
+  it('restarts legacy unbound state when a default policy scope is active', async () => {
+    searchFused.mockResolvedValue([HIT])
+    const result = await dashboard({
+      retrievalPolicy: DEFAULT_WORK,
+      frozen: { ids: ['m1'], scores: [0.9], off: 1 },
+    })
+    expect(fetchHitsByIds).not.toHaveBeenCalled()
+    expect(searchFused.mock.calls[0]?.[7]).toEqual({ scope: 'work' })
+    expect(result.frozen.policyScope).toBe('work')
+  })
+
+  it('keeps legacy frozen state compatible when no policy scope is applied', async () => {
+    fetchHitsByIds.mockResolvedValue([HIT])
+    const result = await dashboard({
+      retrievalPolicy: OFF,
+      frozen: { ids: ['m1'], scores: [0.9], off: 0 },
+    })
+    expect(fetchHitsByIds).toHaveBeenCalledTimes(1)
+    expect(searchFused).not.toHaveBeenCalled()
+    expect(result.frozen.policyScope).toBeNull()
   })
 
   it('require: an unscoped continuation is rejected too (no silent widening)', async () => {
     await expect(
-      searchDashboardPage(
-        USER,
-        'q',
-        { queryEmbedding: dim() },
-        { retrievalPolicy: REQUIRE, frozen: { ids: ['m1'], scores: [0.9], off: 0 } },
-      ),
+      dashboard({
+        retrievalPolicy: REQUIRE,
+        frozen: { ids: ['m1'], scores: [0.9], off: 0 },
+      }),
     ).rejects.toBeInstanceOf(UnscopedRetrievalError)
     expect(fetchHitsByIds).not.toHaveBeenCalled()
   })
 
   it('no policy: appliedScope reports null (nothing narrowed)', async () => {
     searchFused.mockResolvedValue([HIT])
-    const result = await searchDashboardPage(USER, 'q', { queryEmbedding: dim() })
+    const result = await dashboard()
     expect(result.appliedScope).toBeNull()
   })
 })
