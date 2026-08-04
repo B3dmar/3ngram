@@ -83,22 +83,28 @@ function canonicalize(value: unknown): unknown {
  * fingerprint-collide (collapsing would let a changed query silently reuse
  * the old frozen ordering). Case is preserved for the same reason.
  * `effectiveScope` lets policy-aware callers bind a defaulted scope even when
- * it was absent from the caller's filters. Issuance freezes it into the cursor
- * (`fp`); continuation recomputes it from
- * the CURRENT request and verifies via {@link decodeSearchCursor}. The query
- * text itself never leaves this function (hard rule 6: hash only).
+ * it was absent from the caller's filters. `scopeAppliedByPolicy` additionally
+ * distinguishes that default from an explicit caller scope with the same
+ * value. The discriminator is appended only when true so fingerprints minted
+ * for explicit/no-policy searches before this binding remain compatible;
+ * pre-binding policy-default cursors fail closed. Issuance freezes the result
+ * into the cursor (`fp`); continuation recomputes it from the CURRENT request
+ * and verifies via {@link decodeSearchCursor}. The query text itself never
+ * leaves this function (hard rule 6: hash only).
  */
 export function searchFingerprint(
   query: string,
   filters: Record<string, unknown>,
   effectiveScope?: string,
+  scopeAppliedByPolicy = false,
 ): string {
   const normalizedQuery = query.trim()
   const boundFilters =
     effectiveScope === undefined ? filters : { ...filters, scope: effectiveScope }
   const canonicalFilters = JSON.stringify(canonicalize(boundFilters))
+  const policyProvenance = scopeAppliedByPolicy ? '\npolicy-scope:applied' : ''
   return createHash('sha256')
-    .update(`${normalizedQuery}\n${canonicalFilters}`)
+    .update(`${normalizedQuery}\n${canonicalFilters}${policyProvenance}`)
     .digest('hex')
     .slice(0, 16)
 }

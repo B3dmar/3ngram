@@ -132,7 +132,12 @@ async function handleDashboardSearch(
   if (options.access) await options.access.assertRead(userId)
   const retrievalPolicy = await resolveRetrievalPolicy(userId)
   const policyScope = applyPolicyToScopeFilter(retrievalPolicy, filters.scope)
-  const fingerprint = searchFingerprint(input.query, filters, policyScope.scope)
+  const fingerprint = searchFingerprint(
+    input.query,
+    filters,
+    policyScope.scope,
+    policyScope.appliedScope !== null,
+  )
   const page = await searchDashboardPage(
     userId,
     input.query,

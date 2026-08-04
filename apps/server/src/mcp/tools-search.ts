@@ -157,7 +157,12 @@ const searchTool: ToolDefinition = {
     // replayed under a changed query/filters throws the typed mismatch
     // (mapped to invalid_input), never silently paging the old frozen ids.
     // Fingerprint-less cursors stay valid (verify-when-present).
-    const fingerprint = searchFingerprint(input.query, filters, policyScope.scope)
+    const fingerprint = searchFingerprint(
+      input.query,
+      filters,
+      policyScope.scope,
+      policyScope.appliedScope !== null,
+    )
     const decoded =
       input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
     const frozen =

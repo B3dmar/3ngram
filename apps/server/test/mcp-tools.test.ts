@@ -590,7 +590,7 @@ describe('search tool', () => {
     )
     const cursor = (issued.structuredContent as { nextCursor: string }).nextCursor
     expect(decodeCursor(cursor)).toMatchObject({
-      fp: searchFingerprint('sdk pin', {}, 'work'),
+      fp: searchFingerprint('sdk pin', {}, 'work', true),
       policyScope: 'work',
     })
 
@@ -619,6 +619,42 @@ describe('search tool', () => {
       )
       expect(replay.isError).toBe(true)
     }
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects policy-default and explicit-scope cursor provenance changes', async () => {
+    searchDashboardPage.mockResolvedValue(
+      pageOf([HIT], { nextOffset: 1, hasMore: true, appliedScope: 'work' }),
+    )
+    const policyCtx = ctx({
+      retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })),
+    })
+    const issuedByPolicy = await call('search', { query: 'sdk pin', limit: 1 }, policyCtx)
+    const policyCursor = (issuedByPolicy.structuredContent as { nextCursor: string }).nextCursor
+
+    vi.clearAllMocks()
+    const explicitReplay = await call(
+      'search',
+      { query: 'sdk pin', scope: 'work', cursor: policyCursor },
+      policyCtx,
+    )
+    expect(explicitReplay.isError).toBe(true)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+
+    const explicitCursor = encodeCursor({
+      v: 2,
+      ids: [MEMO_ID],
+      scores: [0.9],
+      off: 1,
+      fp: searchFingerprint('sdk pin', { scope: 'work' }, 'work'),
+      policyScope: null,
+    })
+    const policyReplay = await call(
+      'search',
+      { query: 'sdk pin', cursor: explicitCursor },
+      policyCtx,
+    )
+    expect(policyReplay.isError).toBe(true)
     expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 

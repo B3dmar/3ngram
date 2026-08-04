@@ -103,6 +103,15 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('Find me', { scope: 'work' })).not.toBe(fp)
   })
 
+  it('distinguishes a policy-applied scope from the same explicit scope', () => {
+    const explicit = searchFingerprint('find me', { scope: 'work' }, 'work')
+    const policyApplied = searchFingerprint('find me', {}, 'work', true)
+
+    expect(explicit).toBe(searchFingerprint('find me', { scope: 'work' }))
+    expect(policyApplied).not.toBe(explicit)
+    expect(searchFingerprint('find me', {}, 'work', true)).toBe(policyApplied)
+  })
+
   it('preserves INNER whitespace: core embeds the exact query, so "find\\nme" is a different search', () => {
     const fp = searchFingerprint('find me', { scope: 'work' })
     expect(searchFingerprint('find\nme', { scope: 'work' })).not.toBe(fp)

@@ -711,7 +711,7 @@ describe('POST /api/v1/dashboard/search', () => {
     })
     const cursor = ((await first.json()) as { nextCursor: string }).nextCursor
     expect(decodeCursor(cursor)).toMatchObject({
-      fp: searchFingerprint('find me', {}, 'work'),
+      fp: searchFingerprint('find me', {}, 'work', true),
       policyScope: 'work',
     })
 
@@ -741,6 +741,51 @@ describe('POST /api/v1/dashboard/search', () => {
       body: { query: 'find me', limit: 1, cursor },
     })
     expect(replay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects policy-default and explicit-scope cursor provenance changes', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: 'work' },
+      nextOffset: 1,
+      hasMore: true,
+      appliedScope: 'work',
+    })
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const first = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1 },
+    })
+    const policyCursor = ((await first.json()) as { nextCursor: string }).nextCursor
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const explicitReplay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, scope: 'work', cursor: policyCursor },
+    })
+    expect(explicitReplay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+
+    const explicitCursor = encodeCursor({
+      v: 2,
+      ids: FROZEN_IDS,
+      scores: [0.9, 0.8],
+      off: 1,
+      fp: searchFingerprint('find me', { scope: 'work' }, 'work'),
+      policyScope: null,
+    })
+    const policyReplay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor: explicitCursor },
+    })
+    expect(policyReplay.status).toBe(400)
     expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
