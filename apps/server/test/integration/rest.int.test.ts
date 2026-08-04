@@ -353,6 +353,58 @@ describe('REST /api/v1 revise + resolve (runtime role, real DB)', () => {
     expect(body.commitments.count).toBeGreaterThanOrEqual(1)
   })
 
+  it('GET briefing kind=scope_project: includeUnscoped opts NULL-project rows in (issue #46)', async () => {
+    const tag = crypto.randomUUID()
+    const project = `sp-rest-${tag}`
+    const write = async (body: Record<string, unknown>) => {
+      const res = await api('/api/v1/memories', { method: 'POST', key: keyA, body })
+      expect(res.status).toBe(201)
+      return ((await res.json()) as { memory: { id: string } }).memory.id
+    }
+    const scopedId = await write({
+      memoryType: 'decision',
+      topic: 'sp rest scoped',
+      content: `sp-rest-scoped-${tag}`,
+      scope: 'work',
+      project,
+    })
+    const unscopedId = await write({
+      memoryType: 'decision',
+      topic: 'sp rest unscoped',
+      content: `sp-rest-unscoped-${tag}`,
+      scope: 'work',
+    })
+
+    const decisionIds = async (flag: string): Promise<string[]> => {
+      const res = await api(
+        `/api/v1/briefing?kind=scope_project&scope=work&project=${project}${flag}&mode=full&sections=recentDecisions&sectionLimit=100`,
+        { key: keyA },
+      )
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        selector: { kind: string; includeUnscoped: boolean }
+        recentDecisions: { items: Array<{ id: string }> }
+      }
+      expect(body.selector.kind).toBe('scope_project')
+      return body.recentDecisions.items.map((i) => i.id)
+    }
+
+    // Default (flag absent) = strict intersection: NULL-project row invisible.
+    const strict = await decisionIds('')
+    expect(strict).toContain(scopedId)
+    expect(strict).not.toContain(unscopedId)
+    // includeUnscoped=true opts the scope's NULL-project row into the lens.
+    const widened = await decisionIds('&includeUnscoped=true')
+    expect(widened).toContain(scopedId)
+    expect(widened).toContain(unscopedId)
+    // A non-boolean flag is a schema 400, never a silent false.
+    const bogus = await api(
+      `/api/v1/briefing?kind=scope_project&scope=work&project=${project}&includeUnscoped=yes`,
+      { key: keyA },
+    )
+    expect(bogus.status).toBe(400)
+  })
+
   it('400s a briefing with no selector (no-firehose discipline through the transport)', async () => {
     const res = await api('/api/v1/briefing', { key: keyA })
     expect(res.status).toBe(400)

@@ -22,9 +22,9 @@ import {
   asOfSchema,
   BRIEFING_SECTION_NAMES,
   briefingModeSchema,
-  briefingSelectorSchema,
-  briefingToolInputV2Schema,
-  briefingToolOutputV2Schema,
+  briefingSelectorV2Schema,
+  briefingToolInputV3Schema,
+  briefingToolOutputV3Schema,
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
@@ -71,15 +71,18 @@ const factsQuery = z.object({
 
 // GET /api/v1/briefing flattens the selector union into flat keys: `kind` is the
 // union discriminator; the per-kind value fields become optional query params.
+// Selector V2 (issue #46): the union includes `scope_project`, whose
+// `includeUnscoped` boolean arrives as the literal string true/false (router.ts
+// coerces exactly those two before the single parse).
 const briefingQueryShape: Record<string, z.ZodType> = {
   kind: z.enum(
-    briefingSelectorSchema.options.map((option) => option.shape.kind.value) as [
+    briefingSelectorV2Schema.options.map((option) => option.shape.kind.value) as [
       string,
       ...string[],
     ],
   ),
 }
-for (const option of briefingSelectorSchema.options) {
+for (const option of briefingSelectorV2Schema.options) {
   for (const [key, value] of Object.entries(option.shape)) {
     if (key !== 'kind') briefingQueryShape[key] = (value as z.ZodType).optional()
   }
@@ -94,7 +97,7 @@ briefingQueryShape.sections = z
     `Comma-separated subset of sections to compute (unique names from: ${BRIEFING_SECTION_NAMES.join(', ')}). Absent = all sections; un-requested sections are skipped and omitted from the result.`,
   )
   .optional()
-briefingQueryShape.sectionLimit = briefingToolInputV2Schema.shape.sectionLimit
+briefingQueryShape.sectionLimit = briefingToolInputV3Schema.shape.sectionLimit
 
 /** Proposal decision echo ({id,status}) — composed from schema exports. */
 const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }).strict()
@@ -341,7 +344,7 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchToolOutputSchema },
   { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseSchema },
   { method: 'get', path: '/api/v1/facts', operationId: 'getFacts', summary: 'Currently-valid facts, with optional bi-temporal time travel (mirrors the MCP get_facts tool)', query: factsQuery, status: 200, response: factsToolOutputSchema },
-  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV2Schema },
+  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV3Schema },
   { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor (mirrors the MCP revise tool)', body: reviseToolInputSchema.omit({ predecessorId: true }), status: 200, response: reviseToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory (REST-only lifecycle operation; no MCP mirror)', status: 200, response: archiveResult },
