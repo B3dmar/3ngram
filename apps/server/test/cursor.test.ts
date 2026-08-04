@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { dashboardSearchQuerySchema, searchQueryV3Schema } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
 import { ZodError } from 'zod'
 import {
@@ -52,8 +53,23 @@ describe('dashboard search cursor codec (v2 frozen ordering)', () => {
 
   it('round-trips a payload carrying the query fingerprint', () => {
     const fp = searchFingerprint('find me', { scope: 'work' })
-    const payload = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, fp }
+    const payload = {
+      v: 2 as const,
+      ids: [ID_A],
+      scores: [0.9],
+      off: 0,
+      fp,
+      policyScope: 'work',
+    }
     expect(decodeCursor(encodeCursor(payload))).toEqual(payload)
+  })
+
+  it('round-trips the nullable policy binding and accepts legacy v2 omission', () => {
+    const unscoped = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, policyScope: null }
+    expect(decodeCursor(encodeCursor(unscoped))).toEqual(unscoped)
+
+    const legacyV2 = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0 }
+    expect(decodeCursor(encodeCursor(legacyV2))).toEqual(legacyV2)
   })
 })
 
@@ -64,14 +80,14 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('find me', { scope: 'work' })).toBe(fp)
   })
 
-  it('trims the query and normalizes filter key order, undefined axes, and the memoryTypes OR-set', () => {
+  it('normalizes filter key order, undefined axes, and the memoryTypes OR-set', () => {
     const fp = searchFingerprint('find me', {
       scope: 'work',
       memoryTypes: ['decision', 'note'],
       recordedAfter: new Date('2026-01-01T00:00:00Z'),
     })
     expect(
-      searchFingerprint('  find me ', {
+      searchFingerprint('find me', {
         recordedAfter: new Date('2026-01-01T00:00:00Z'),
         memoryTypes: ['note', 'decision'],
         scope: 'work',
@@ -80,12 +96,43 @@ describe('searchFingerprint — stable query+filter binding', () => {
     ).toBe(fp)
   })
 
+  it('hashes the POST-PARSE query verbatim — the schema boundary owns trimming (issue #58)', () => {
+    // Both transports fingerprint the schema-PARSED query, and both query
+    // schemas .trim() at parse — so an edge-whitespace variant of the same
+    // search reaches searchFingerprint already normalized and binds to the
+    // same cursor. searchFingerprint itself must NOT re-normalize: it hashes
+    // exactly the text core embeds.
+    const fp = searchFingerprint('find me', { scope: 'work' })
+    expect(
+      searchFingerprint(searchQueryV3Schema.parse({ query: '  find me ' }).query, {
+        scope: 'work',
+      }),
+    ).toBe(fp)
+    expect(
+      searchFingerprint(dashboardSearchQuerySchema.parse({ query: '\nfind me\t' }).query, {
+        scope: 'work',
+      }),
+    ).toBe(fp)
+    // Pre-parse (edge-whitespace) text is a DIFFERENT hash input — proof the
+    // function itself does not trim.
+    expect(searchFingerprint('  find me ', { scope: 'work' })).not.toBe(fp)
+  })
+
   it('changes when the query or a filter changes (case included — it alters retrieval)', () => {
     const fp = searchFingerprint('find me', { scope: 'work' })
     expect(searchFingerprint('find you', { scope: 'work' })).not.toBe(fp)
     expect(searchFingerprint('find me', { scope: 'personal' })).not.toBe(fp)
     expect(searchFingerprint('find me', {})).not.toBe(fp)
     expect(searchFingerprint('Find me', { scope: 'work' })).not.toBe(fp)
+  })
+
+  it('distinguishes a policy-applied scope from the same explicit scope', () => {
+    const explicit = searchFingerprint('find me', { scope: 'work' }, 'work')
+    const policyApplied = searchFingerprint('find me', {}, 'work', true)
+
+    expect(explicit).toBe(searchFingerprint('find me', { scope: 'work' }))
+    expect(policyApplied).not.toBe(explicit)
+    expect(searchFingerprint('find me', {}, 'work', true)).toBe(policyApplied)
   })
 
   it('preserves INNER whitespace: core embeds the exact query, so "find\\nme" is a different search', () => {

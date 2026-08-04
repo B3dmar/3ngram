@@ -20,7 +20,6 @@
 // PARITY: this ships a SMOKE-level parity guarantee (REST remember -> the
 // same content found via core search); FULL REST≡MCP≡core parity comes later.
 import { log } from '@3ngram/config'
-import { crashSafeError } from '@3ngram/config/otel'
 import {
   type AccessGate,
   applyProposal,
@@ -44,16 +43,13 @@ import {
   rejectProposal,
   remember,
   resolveByMemoryId,
+  resolveRetrievalPolicy,
   revise,
-  search,
-  searchDashboardPage,
 } from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
 import {
-  type AsOfInput,
   accountDeleteBodySchema,
-  briefingToolInputV2Schema,
-  dashboardSearchQuerySchema,
+  briefingToolInputV3Schema,
   factsQueryInputSchema,
   memoriesListQuerySchema,
   proposalRejectBodySchema,
@@ -61,14 +57,13 @@ import {
   rememberToolInputSchema,
   resolveToolInputSchema,
   reviseToolInputSchema,
-  searchQuerySchema,
 } from '@3ngram/schema'
-import { type Request, type Response, Router } from 'express'
+import { Router } from 'express'
 import { z } from 'zod'
-import { decodeSearchCursor, encodeCursor, searchFingerprint } from '../cursor.js'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
-import { mapRestError } from './errors.js'
+import { defined, guard, tenant, toAsOf } from './route-helpers.js'
+import { searchRouter } from './search-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
 // malformed id the same as an unknown id (404) instead of letting Postgres raise
@@ -98,26 +93,6 @@ export interface RestRouterOptions {
   /** GDPR-export enricher. The private repo adds extra user-owned rows to the
    * archive; undefined → self-host omits them. */
   exportEnricher?: ExportEnricher | undefined
-}
-
-/** Coerce an optional ISO-8601 string to a Date for the bi-temporal core query. */
-function toDate(value: string | undefined): Date | undefined {
-  return value === undefined ? undefined : new Date(value)
-}
-
-/** Drop keys whose value is undefined so an exactOptional core param type fits. */
-function defined<T extends Record<string, unknown>>(
-  obj: T,
-): { [K in keyof T]?: Exclude<T[K], undefined> } {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as {
-    [K in keyof T]?: Exclude<T[K], undefined>
-  }
-}
-
-/** Map a schema asOf (ISO strings) to the core/db Date coordinates, or undefined. */
-function toAsOf(asOf: AsOfInput | undefined): { validAt?: Date; asKnownAt?: Date } | undefined {
-  if (asOf === undefined) return undefined
-  return defined({ validAt: toDate(asOf.validAt), asKnownAt: toDate(asOf.asKnownAt) })
 }
 
 function historyIdentity(memory: {
@@ -178,31 +153,6 @@ function historyRelationship(relationship: {
   }
 }
 
-/** The authenticated tenant — apiKeyAuth has bound req.userId before any handler runs. */
-function tenant(req: Request): string {
-  return req.userId as string
-}
-
-/**
- * Run a route handler with uniform typed-error -> HTTP mapping. A KNOWN typed
- * core error becomes its mapped status + reason_code body (rest/errors.ts); an
- * UNKNOWN error is logged crash-safe (no content) and surfaced as a
- * generic 500. Handlers never log content themselves.
- */
-async function guard(route: string, res: Response, handler: () => Promise<void>): Promise<void> {
-  try {
-    await handler()
-  } catch (err) {
-    const mapped = mapRestError(route, err)
-    if (mapped !== undefined) {
-      res.status(mapped.status).json({ error: mapped.reason })
-      return
-    }
-    log().error({ route, ...crashSafeError(err) }, 'rest: handler failed')
-    if (!res.headersSent) res.status(500).json({ error: 'internal_error' })
-  }
-}
-
 /**
  * Build the /api/v1 REST router. Every route is guarded by apiOrSessionAuth
  * (applied at the router level), so the whole mirror is reachable with EITHER a
@@ -222,6 +172,7 @@ export function restRouter(options: RestRouterOptions): Router {
   // Bearer. Mounted here (not in app.ts) so the router is self-contained and
   // mountable independent of the MCP Bearer mount.
   router.use('/api/v1', apiOrSessionAuth)
+  router.use(searchRouter(options))
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
@@ -457,115 +408,6 @@ export function restRouter(options: RestRouterOptions): Router {
     })
   })
 
-  // POST /api/v1/search - public REST mirror of the MCP search tool.
-  router.post('/api/v1/search', (req, res) => {
-    void guard('search', res, async () => {
-      if (options.gateway === undefined) {
-        res.status(503).json({ error: 'embedding_unavailable' })
-        return
-      }
-      const input = searchQuerySchema.parse(req.body)
-      const filters = defined({
-        memoryType: input.memoryType,
-        scope: input.scope,
-        project: input.project,
-        status: input.status,
-        asOf: toAsOf(input.asOf),
-      })
-      const hits = await search(
-        tenant(req),
-        input.query,
-        { gateway: options.gateway },
-        { limit: input.limit, filters, budget: options.budget },
-      )
-
-      res.status(200).json({
-        hits: hits.map((hit) => ({
-          id: hit.id,
-          memoryType: hit.memoryType,
-          topic: hit.topic,
-          content: hit.content,
-          contentLength: hit.contentLength,
-          truncated: hit.truncated,
-          score: hit.score,
-        })),
-        count: hits.length,
-      })
-    })
-  })
-
-  // POST /api/v1/dashboard/search - dashboard continuation contract. This route
-  // intentionally does not replace /api/v1/search, which is the SDK/CLI/MCP
-  // mirror and must keep returning content excerpts.
-  router.post('/api/v1/dashboard/search', (req, res) => {
-    void guard('dashboard.search', res, async () => {
-      if (options.gateway === undefined) {
-        res.status(503).json({ error: 'embedding_unavailable' })
-        return
-      }
-      const input = dashboardSearchQuerySchema.parse(req.body)
-      const filters = defined({
-        memoryType: input.memoryType,
-        scope: input.scope,
-        project: input.project,
-        status: input.status,
-        asOf: toAsOf(input.asOf),
-      })
-      // Frozen-ordering cursor: the first page ranks the bounded
-      // candidate pool once and freezes the ordering into the cursor; a
-      // continuation pages by position within it, so mid-session corpus drift
-      // cannot duplicate or skip a row. A malformed cursor throws a ZodError
-      // here -> 400 (mapRestError); a stale v1 cursor decodes to undefined and
-      // restarts at page 1. The cursor is BOUND to the search that issued it:
-      // the fingerprint of the current query+filters is verified against the
-      // one frozen into the cursor, so replaying a cursor under a changed
-      // query/filters is a typed 400 (CursorQueryMismatchError), never a
-      // silent re-page of the old search's frozen ids. Fingerprint-less
-      // cursors minted before the binding stay valid (verify-when-present).
-      const fingerprint = searchFingerprint(input.query, filters)
-      const decoded =
-        input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
-      const frozen =
-        decoded === undefined
-          ? undefined
-          : { ids: decoded.ids, scores: decoded.scores, off: decoded.off }
-      const page = await searchDashboardPage(
-        tenant(req),
-        input.query,
-        { gateway: options.gateway },
-        defined({ limit: input.limit, filters, frozen, budget: options.budget }),
-      )
-      // Only emit a cursor when there is a further page, so the client stops at
-      // the window edge. The cursor carries the frozen ordering + next offset.
-      const nextCursor = page.hasMore
-        ? encodeCursor({
-            v: 2,
-            ids: page.frozen.ids,
-            scores: page.frozen.scores,
-            off: page.nextOffset,
-            fp: fingerprint,
-          })
-        : undefined
-
-      res.status(200).json(
-        defined({
-          hits: page.hits.map((hit) =>
-            defined({
-              id: hit.id,
-              memoryType: hit.memoryType,
-              topic: hit.topic,
-              score: hit.score,
-              commitmentStatus: hit.commitmentStatus,
-            }),
-          ),
-          count: page.hits.length,
-          hasMore: page.hasMore,
-          nextCursor,
-        }),
-      )
-    })
-  })
-
   // GET /api/v1/facts — get_facts (mirrors the MCP get_facts tool). Filters arrive
   // as query params; factsQueryInputSchema is the boundary. The MCP tool takes the
   // bi-temporal `asOf` coordinate in the body; over a GET querystring we accept it
@@ -618,23 +460,35 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // GET /api/v1/briefing — mirrors the MCP briefing tool. Flat query params
-  // (kind/scope/project/mode) are reshaped into the nested selector BEFORE the
-  // single briefingToolInputV2Schema parse. Bounds V2 (issue #45): `sections`
-  // arrives comma-separated (`?sections=commitments,overdue` — a querystring
-  // has no natural array; repeated `?sections=` params also work via the qs
-  // array) and `sectionLimit` as an integer string — both reshaped BEFORE the
-  // SAME single parse, so the V2 schema still 400s duplicates/unknown names and
-  // out-of-range limits (no second validation layer). A legacy query (neither
-  // knob) parses byte-identically through V2 (pinned in packages/schema).
-  // `now` is stamped here.
+  // (kind/scope/project/includeUnscoped/mode) are reshaped into the nested
+  // selector BEFORE the single briefingToolInputV3Schema parse. Bounds V2
+  // (issue #45): `sections` arrives comma-separated
+  // (`?sections=commitments,overdue` — a querystring has no natural array;
+  // repeated `?sections=` params also work via the qs array) and
+  // `sectionLimit` as an integer string — both reshaped BEFORE the SAME single
+  // parse, so the schema still 400s duplicates/unknown names and out-of-range
+  // limits (no second validation layer). Selector V2 (issue #46):
+  // `kind=scope_project` takes scope AND project together; `includeUnscoped`
+  // arrives as the literal string true/false — only those two coerce to a
+  // boolean, anything else rides through for the schema's 400 (the same
+  // Number(...) idiom the numeric params use). A legacy query parses
+  // byte-identically through V3 (pinned in packages/schema). `now` is stamped
+  // here.
   router.get('/api/v1/briefing', (req, res) => {
     void guard('briefing', res, async () => {
-      const input = briefingToolInputV2Schema.parse(
+      const includeUnscoped =
+        req.query.includeUnscoped === 'true'
+          ? true
+          : req.query.includeUnscoped === 'false'
+            ? false
+            : req.query.includeUnscoped
+      const input = briefingToolInputV3Schema.parse(
         defined({
           selector: defined({
             kind: req.query.kind,
             scope: req.query.scope,
             project: req.query.project,
+            includeUnscoped,
           }),
           mode: req.query.mode,
           sections:
@@ -649,6 +503,11 @@ export function restRouter(options: RestRouterOptions): Router {
       // BEFORE the read (self-host allowAllAccess allows all); parity with the MCP
       // briefing tool.
       if (options.access) await options.access.assertRead(tenant(req))
+      // RETRIEVAL-SCOPE POLICY (issue #47): REST parity — the same injected
+      // policy as the MCP briefing tool; core narrows a kind:'all' selector
+      // under 'default' (result carries appliedScope) or rejects it under
+      // 'require' (typed 400 with the registered scopes in `detail`).
+      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
       // Optional knobs ride only when present (exactOptionalPropertyTypes),
       // exactly as the MCP briefing handler bridges (mcp/tools-orient.ts).
       const result = await briefing(tenant(req), {
@@ -657,6 +516,7 @@ export function restRouter(options: RestRouterOptions): Router {
         now: new Date(),
         ...(input.sections !== undefined ? { sections: input.sections } : {}),
         ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
+        retrievalPolicy,
       })
       res.status(200).json(result)
     })
@@ -1000,6 +860,13 @@ export function restRouter(options: RestRouterOptions): Router {
               referralSource: data.profile.referralSource,
               createdAt: data.profile.createdAt.toISOString(),
               updatedAt: data.profile.updatedAt.toISOString(),
+            }
+          : null,
+        retrievalPolicy: data.retrievalPolicy
+          ? {
+              mode: data.retrievalPolicy.mode,
+              defaultScope: data.retrievalPolicy.defaultScope,
+              updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
             }
           : null,
         counts: {

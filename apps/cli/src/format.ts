@@ -4,7 +4,7 @@
 // Output types come from @3ngram/schema (the one validation boundary) — the CLI
 // invents no shape.
 
-import type { FactsToolOutput, RememberToolOutput, SearchToolOutput } from '@3ngram/schema'
+import type { FactsToolOutput, RememberToolOutput, SearchRestResponseV2 } from '@3ngram/schema'
 
 /** Format a `remember` result: the stored memory id/type/topic + embed status. */
 export function formatRemember(result: RememberToolOutput): string {
@@ -20,14 +20,18 @@ export function formatRemember(result: RememberToolOutput): string {
 }
 
 /** Format `search` hits: a count header then one block per scored hit. */
-export function formatSearch(result: SearchToolOutput): string {
-  if (result.count === 0) return 'no matches'
+export function formatSearch(result: SearchRestResponseV2): string {
+  const scopeLine =
+    result.appliedScope === undefined
+      ? []
+      : [`retrieval scope: ${result.appliedScope} (policy applied)`]
+  if (result.count === 0) return [...scopeLine, 'no matches'].join('\n')
   const header = `${result.count} match${result.count === 1 ? '' : 'es'}`
   const blocks = result.hits.map(
     (hit) =>
       `[${hit.score.toFixed(3)}] ${hit.memoryType} ${hit.id}\n  ${hit.topic}\n  ${hit.content}`,
   )
-  return [header, ...blocks].join('\n')
+  return [...scopeLine, header, ...blocks].join('\n')
 }
 
 /** Format `facts`: a count header then one line per currently-valid fact row. */

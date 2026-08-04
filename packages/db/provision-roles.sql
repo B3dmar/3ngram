@@ -33,6 +33,7 @@ GRANT USAGE ON SCHEMA public TO app_user;
 GRANT SELECT, INSERT, UPDATE ON users, user_sessions, api_keys, oauth_clients, oauth_tokens TO app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON oauth_codes, user_sessions, password_reset_tokens, email_verification_tokens TO app_user; -- short-lived rows get cleaned up
 GRANT SELECT, INSERT, UPDATE ON user_profile_attributes TO app_user; -- onboarding profiling, RLS-enforced; upsert, no DELETE
+GRANT SELECT, INSERT, UPDATE ON user_retrieval_policy TO app_user; -- retrieval-scope policy (issue #47), RLS-enforced; upsert, no DELETE
 GRANT EXECUTE ON FUNCTION auth_resolve_session(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_api_key(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_oauth_token(text) TO app_user;

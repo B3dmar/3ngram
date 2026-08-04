@@ -152,7 +152,8 @@
               "enum": [
                 "all",
                 "scope",
-                "project"
+                "project",
+                "scope_project"
               ],
               "type": "string"
             }
@@ -176,6 +177,16 @@
               "maxLength": 256,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnscoped",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
             }
           },
           {
@@ -218,6 +229,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "blockers": {
                       "additionalProperties": false,
                       "properties": {
@@ -692,6 +710,38 @@
                             "project"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUnscoped": {
+                              "default": false,
+                              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                              "type": "boolean"
+                            },
+                            "kind": {
+                              "const": "scope_project",
+                              "type": "string"
+                            },
+                            "project": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "scope": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "scope",
+                            "project",
+                            "includeUnscoped"
+                          ],
+                          "type": "object"
                         }
                       ]
                     },
@@ -793,6 +843,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid briefing input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Session briefing over an explicit selector (mirrors the MCP briefing tool)"
@@ -949,6 +1023,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 25,
                       "minimum": 0,
@@ -1020,6 +1101,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Dashboard search continuation with identity-only hits"
@@ -1696,6 +1801,50 @@
                       },
                       "type": "array"
                     },
+                    "retrievalPolicy": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "defaultScope": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mode": {
+                              "enum": [
+                                "off",
+                                "default",
+                                "require"
+                              ],
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "defaultScope",
+                            "updatedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "scopes": {
                       "items": {
                         "additionalProperties": false,
@@ -1805,6 +1954,7 @@
                     "userBudgets",
                     "llmUsage",
                     "profile",
+                    "retrievalPolicy",
                     "counts"
                   ],
                   "type": "object"
@@ -2128,6 +2278,7 @@
             "name": "recordedAfter",
             "required": false,
             "schema": {
+              "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given.",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
               "type": "string"
@@ -2138,6 +2289,7 @@
             "name": "recordedBefore",
             "required": false,
             "schema": {
+              "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given.",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
               "type": "string"
@@ -4132,6 +4284,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 9007199254740991,
                       "minimum": 0,
@@ -4192,6 +4351,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Unified semantic + keyword retrieval (mirrors the MCP search tool)"

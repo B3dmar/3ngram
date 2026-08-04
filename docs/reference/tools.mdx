@@ -157,7 +157,7 @@ Append a new memory (decision, fact, preference, blocker, commitment, ...). Neve
 
 ## search
 
-Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query and filters that issued it: passing it with a changed query or filters is rejected as invalid input — omit the cursor to start a new search. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.
+Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query and filters that issued it: passing it with a changed query or filters is rejected as invalid input — omit the cursor to start a new search. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.
 
 **Title:** Search · **Required scope:** `memory:read`
 
@@ -248,13 +248,13 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      "description": "Inclusive lower bound on recorded_at. Must not be later than recordedBefore when both are given."
+      "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given."
     },
     "recordedBefore": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      "description": "Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given."
+      "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given."
     },
     "cursor": {
       "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep query and filters identical across pages of one walk.",
@@ -370,6 +370,13 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
     "nextCursor": {
       "type": "string",
       "minLength": 1
+    },
+    "appliedScope": {
+      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
     }
   },
   "required": [
@@ -740,7 +747,7 @@ Settle a memory by its id. A commitment transitions to a target status (open, wa
 
 ## briefing
 
-Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.
+Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (all, scope, project, or scope_project) — no unfiltered default. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A PROJECT selector only matches memories written WITH that project; a memory written without a project (project IS NULL) never appears through the project lens. The scope_project selector narrows to one scope AND one project together; its includeUnscoped: true additionally opts NULL-project memories of that scope in (default false = strict intersection; the bare project selector is never widened). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.
 
 **Title:** Briefing · **Required scope:** `memory:read`
 
@@ -800,6 +807,37 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           },
           "required": [
             "kind",
+            "project"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "scope_project"
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "includeUnscoped": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
             "project"
           ],
           "additionalProperties": false
@@ -902,6 +940,38 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "required": [
             "kind",
             "project"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "scope_project"
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "includeUnscoped": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "project",
+            "includeUnscoped"
           ],
           "additionalProperties": false
         }
@@ -1414,6 +1484,13 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "hasMore"
       ],
       "additionalProperties": false
+    },
+    "appliedScope": {
+      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
     }
   },
   "required": [
@@ -1427,7 +1504,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
 
 ## handoff
 
-Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.
+Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (all, scope, project, or scope_project); the payload is bounded. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A scope_project selector narrows to one scope AND one project; its includeUnscoped: true additionally exports NULL-project memories of that scope (default false). Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.
 
 **Title:** Handoff · **Required scope:** `memory:read`
 
@@ -1487,6 +1564,37 @@ Export structured context (decisions, open commitments, preferences — with con
           },
           "required": [
             "kind",
+            "project"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "scope_project"
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "includeUnscoped": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
             "project"
           ],
           "additionalProperties": false
@@ -1569,6 +1677,38 @@ Export structured context (decisions, open commitments, preferences — with con
           "required": [
             "kind",
             "project"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "scope_project"
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "includeUnscoped": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "project",
+            "includeUnscoped"
           ],
           "additionalProperties": false
         }
@@ -1833,6 +1973,13 @@ Export structured context (decisions, open commitments, preferences — with con
         "preferences"
       ],
       "additionalProperties": false
+    },
+    "appliedScope": {
+      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
     }
   },
   "required": [
@@ -2038,7 +2185,7 @@ Fetch the full content of memories by id — use this after search or handoff re
 
 ## configure_scope
 
-Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). Mutating actions require the write scope.
+Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). set_retrieval_default binds your READS to a scope: mode "default" narrows unscoped search/briefing/handoff calls to the given scope (results report appliedScope), "require" rejects unscoped reads until a scope is passed, "off" restores unrestricted reads (scope must be null for require/off). Mutating actions require the write scope.
 
 **Title:** Configure Scope · **Required scope:** `memory:read` or `memory:write`
 
@@ -2166,6 +2313,42 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
       "required": [
         "action",
         "name"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "set_retrieval_default"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "default",
+            "require"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "scope",
+        "mode"
       ],
       "additionalProperties": false
     }
@@ -2310,6 +2493,51 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
         "name"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "retrieval_default_set"
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "off",
+                "default",
+                "require"
+              ]
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "scope"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "action",
+        "policy"
+      ],
+      "additionalProperties": false
     }
   ]
 }
@@ -2317,7 +2545,7 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
 
 ## describe_environment
 
-Report server capabilities (tool names, count, version), your registered scopes, and bounded memory/commitment counts. Exposes no secrets or configuration values.
+Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.
 
 **Title:** Describe Environment · **Required scope:** `memory:read`
 
@@ -2452,12 +2680,44 @@ Report server capabilities (tool names, count, version), your registered scopes,
         "commitmentsByStatus"
       ],
       "additionalProperties": false
+    },
+    "retrievalScopePolicy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "default",
+            "require"
+          ]
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "scope"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
     "capabilities",
     "scopes",
-    "stats"
+    "stats",
+    "retrievalScopePolicy"
   ],
   "additionalProperties": false
 }

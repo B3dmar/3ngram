@@ -20,11 +20,13 @@ import type {
   RememberToolArgs,
   RememberToolOutput,
   ResolveToolOutput,
+  RestErrorResponse,
   ReviseToolArgs,
   ReviseToolOutput,
   SearchQueryArgs,
-  SearchToolOutput,
+  SearchRestResponseV2,
 } from '@3ngram/schema'
+import { restErrorResponseSchema } from '@3ngram/schema'
 import { ThreengramApiError, ThreengramNetworkError } from './errors.js'
 
 /** Explicit client configuration. No env/flag fallback — the caller supplies both. */
@@ -80,9 +82,9 @@ export class ThreengramClient {
   }
 
   /** POST /api/v1/search — semantic search over the wider query+filters body. */
-  search(query: string, opts?: SearchOptions): Promise<SearchToolOutput> {
+  search(query: string, opts?: SearchOptions): Promise<SearchRestResponseV2> {
     const body: SearchQueryArgs = { query, ...opts }
-    return this.#send<SearchToolOutput>('POST', '/api/v1/search', body)
+    return this.#send<SearchRestResponseV2>('POST', '/api/v1/search', body)
   }
 
   /** GET /api/v1/facts — currently-valid facts; filters ride as the querystring. */
@@ -119,7 +121,10 @@ export class ThreengramClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }
     const response = await this.#dispatch(`${this.#baseUrl}${path}`, init)
-    if (!response.ok) throw new ThreengramApiError(response.status, await reasonOf(response))
+    if (!response.ok) {
+      const failure = await errorOf(response)
+      throw new ThreengramApiError(response.status, failure.error, failure.detail)
+    }
     return (await response.json()) as T
   }
 
@@ -133,13 +138,13 @@ export class ThreengramClient {
   }
 }
 
-/** Read the `{ error: <reason> }` code from a non-2xx body; 'unknown' if unparseable. */
-async function reasonOf(response: Response): Promise<string> {
+/** Parse the stable error body; fall back safely when a nonconforming peer responds. */
+async function errorOf(response: Response): Promise<RestErrorResponse> {
   try {
-    const body = (await response.json()) as { error?: unknown }
-    return typeof body.error === 'string' ? body.error : 'unknown'
+    const parsed = restErrorResponseSchema.safeParse(await response.json())
+    return parsed.success ? parsed.data : { error: 'unknown' }
   } catch {
-    return 'unknown'
+    return { error: 'unknown' }
   }
 }
 

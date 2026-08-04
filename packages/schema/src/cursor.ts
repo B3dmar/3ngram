@@ -20,6 +20,7 @@
 // dependency-light (zod only — no @types/node). Clients treat the token as
 // opaque and never decode it.
 import { z } from 'zod'
+import { scopeSchema } from './scope.js'
 
 /** Upper bound on the frozen ordering carried in the cursor (candidate-pool sized). */
 const MAX_FROZEN_ORDERING = 1000
@@ -38,6 +39,10 @@ const MAX_FROZEN_ORDERING = 1000
  * OPTIONAL with verify-when-present semantics — a v2 cursor minted before this
  * field existed carries no `fp` and stays valid (no mid-session invalidation
  * across the deploy boundary).
+ *
+ * `policyScope` binds the frozen ordering to the nullable scope applied by the
+ * retrieval policy on page 1. New cursors always carry it; absence denotes a
+ * legacy v2 token minted before the binding was added.
  */
 export const cursorPayloadSchema = z
   .object({
@@ -49,6 +54,7 @@ export const cursorPayloadSchema = z
       .string()
       .regex(/^[0-9a-f]{16}$/)
       .optional(),
+    policyScope: scopeSchema.nullable().optional(),
   })
   .strict()
   .refine((p) => p.ids.length === p.scores.length, {
