@@ -1006,7 +1006,6 @@ export function restRouter(options: RestRouterOptions): Router {
           ? {
               mode: data.retrievalPolicy.mode,
               defaultScope: data.retrievalPolicy.defaultScope,
-              createdAt: data.retrievalPolicy.createdAt.toISOString(),
               updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
             }
           : null,
