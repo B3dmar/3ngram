@@ -99,6 +99,38 @@ describe('fetchClientMetadataDocument', () => {
     expect(get).not.toHaveBeenCalled()
   })
 
+  // Regression: a resolver reports ::ffff:a.b.c.d as family 6. The agreement
+  // check compared that against the UNMAPPED kind ('ipv4' -> 4), so a perfectly
+  // self-consistent answer looked forged and EVERY CIMD fetch failed closed with
+  // unsafe_address before a socket was opened — a silent 400 invalid_client.
+  it('accepts an IPv4-mapped IPv6 answer reported as family 6', async () => {
+    const get = vi.fn<ClientMetadataPinnedGet>(async (_url, target) => {
+      expect(target).toEqual({ address: '::ffff:8.8.8.8', family: 6 })
+      return response(200, document())
+    })
+    const resolveHostname: ClientMetadataHostnameResolver = async () => [
+      { address: '::ffff:8.8.8.8', family: 6 },
+    ]
+    await expect(
+      fetchClientMetadataDocument(clientId, { resolveHostname, get }),
+    ).resolves.toMatchObject({ document: document() })
+    expect(get).toHaveBeenCalledOnce()
+  })
+
+  // The mirror of the above: unmapping stays the SECURITY check, so a mapped
+  // loopback answer must still fail closed even though its family agrees.
+  it('still rejects an IPv4-mapped private answer reported as family 6', async () => {
+    const get = vi.fn<ClientMetadataPinnedGet>()
+    const resolveHostname: ClientMetadataHostnameResolver = async () => [
+      { address: '::ffff:127.0.0.1', family: 6 },
+    ]
+    await expectReason(
+      fetchClientMetadataDocument(clientId, { resolveHostname, get }),
+      'unsafe_address',
+    )
+    expect(get).not.toHaveBeenCalled()
+  })
+
   it('revalidates and re-pins every redirect target', async () => {
     const resolveHostname = vi.fn<ClientMetadataHostnameResolver>(async (hostname) => [
       { address: hostname === 'client.example' ? '8.8.8.8' : '1.1.1.1', family: 4 },

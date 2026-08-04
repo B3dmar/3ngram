@@ -115,6 +115,16 @@ export function isPublicClientMetadataAddress(address: string): boolean {
 /**
  * Require every DNS answer to be public, then pin the first. Rejecting a mixed
  * public/private answer avoids resolver-order dependent policy.
+ *
+ * The two ipaddr calls below are deliberately different and must stay that way:
+ * - isPublicClientMetadataAddress() uses process(), which UNMAPS ::ffff:a.b.c.d
+ *   to a.b.c.d. That is the security boundary — a mapped loopback/private answer
+ *   has to be classified by its effective v4 range, or ::ffff:127.0.0.1 walks
+ *   straight through the public-unicast check.
+ * - the family agreement check uses parse(), which preserves the WIRE form. A
+ *   resolver reports ::ffff:a.b.c.d as family 6, so comparing against the
+ *   unmapped kind ('ipv4' -> 4) made a self-consistent answer look forged and
+ *   failed every CIMD fetch closed with unsafe_address before opening a socket.
  */
 async function resolvePublicTarget(
   url: URL,
@@ -131,7 +141,7 @@ async function resolvePublicTarget(
     addresses.some(
       ({ address, family }) =>
         !isPublicClientMetadataAddress(address) ||
-        (ipaddr.process(address).kind() === 'ipv4' ? 4 : 6) !== family,
+        (ipaddr.parse(address).kind() === 'ipv4' ? 4 : 6) !== family,
     )
   ) {
     throw new ClientMetadataError('unsafe_address')
