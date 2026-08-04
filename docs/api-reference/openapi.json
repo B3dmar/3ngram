@@ -152,7 +152,8 @@
               "enum": [
                 "all",
                 "scope",
-                "project"
+                "project",
+                "scope_project"
               ],
               "type": "string"
             }
@@ -176,6 +177,16 @@
               "maxLength": 256,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnscoped",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
             }
           },
           {
@@ -690,6 +701,38 @@
                           "required": [
                             "kind",
                             "project"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUnscoped": {
+                              "default": false,
+                              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                              "type": "boolean"
+                            },
+                            "kind": {
+                              "const": "scope_project",
+                              "type": "string"
+                            },
+                            "project": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "scope": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "scope",
+                            "project",
+                            "includeUnscoped"
                           ],
                           "type": "object"
                         }
@@ -1696,6 +1739,50 @@
                       },
                       "type": "array"
                     },
+                    "retrievalPolicy": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "defaultScope": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mode": {
+                              "enum": [
+                                "off",
+                                "default",
+                                "require"
+                              ],
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "defaultScope",
+                            "updatedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "scopes": {
                       "items": {
                         "additionalProperties": false,
@@ -1805,6 +1892,7 @@
                     "userBudgets",
                     "llmUsage",
                     "profile",
+                    "retrievalPolicy",
                     "counts"
                   ],
                   "type": "object"

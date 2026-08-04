@@ -37,6 +37,25 @@ export const retrievalScopeModeSchema = z.enum(['off', 'default', 'require'])
 export type RetrievalScopeMode = z.infer<typeof retrievalScopeModeSchema>
 
 /**
+ * Schema-owned mode-to-scope requirements. The DB package consumes this same
+ * declarative record when generating its consistency CHECK, so adding a mode
+ * cannot leave transport validation and storage constraints out of sync.
+ */
+export const retrievalScopePolicyScopeRequirements = {
+  off: 'forbidden',
+  default: 'required',
+  require: 'forbidden',
+} as const satisfies Record<RetrievalScopeMode, 'required' | 'forbidden'>
+
+function hasConsistentPolicyScope(policy: {
+  mode: RetrievalScopeMode
+  scope: string | null
+}): boolean {
+  const hasScope = policy.scope !== null
+  return (retrievalScopePolicyScopeRequirements[policy.mode] === 'required') === hasScope
+}
+
+/**
  * The stored policy as every surface reports it: the mode plus the configured
  * scope. CONSISTENCY IS ENFORCED, not advisory (refinement, same discipline as
  * the get-memories/search-cursor output contracts): `default` REQUIRES a
@@ -50,7 +69,7 @@ export const retrievalScopePolicySchema = z
     scope: scopeNameSchema.nullable(),
   })
   .strict()
-  .refine((p) => (p.mode === 'default') === (p.scope !== null), {
+  .refine(hasConsistentPolicyScope, {
     message: "mode 'default' requires a scope; 'require' and 'off' take scope: null",
     path: ['scope'],
   })
@@ -72,7 +91,7 @@ export const setRetrievalDefaultInputSchema = z
     mode: retrievalScopeModeSchema,
   })
   .strict()
-  .refine((p) => (p.mode === 'default') === (p.scope !== null), {
+  .refine(hasConsistentPolicyScope, {
     message: "mode 'default' requires a scope; 'require' and 'off' take scope: null",
     path: ['scope'],
   })

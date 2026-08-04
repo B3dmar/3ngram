@@ -153,6 +153,7 @@ export {
   type ExportMemoryEventRow,
   type ExportMemoryRow,
   type ExportProposalRow,
+  type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
   readUserDataExport,

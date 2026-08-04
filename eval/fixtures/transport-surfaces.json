@@ -11,7 +11,7 @@
       {
         "name": "briefing",
         "title": "Briefing",
-        "description": "Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (scope, project, or all) — no unfiltered default. A PROJECT selector only matches commitments/blockers written WITH that project; a NULL-project memory never appears in a project briefing (issue #244). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.",
+        "description": "Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (all, scope, project, or scope_project) — no unfiltered default. A PROJECT selector only matches memories written WITH that project; a memory written without a project (project IS NULL) never appears through the project lens. The scope_project selector narrows to one scope AND one project together; its includeUnscoped: true additionally opts NULL-project memories of that scope in (default false = strict intersection; the bare project selector is never widened). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -59,6 +59,33 @@
                     }
                   },
                   "required": ["kind", "project"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "scope_project"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    "project": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "includeUnscoped": {
+                      "default": false,
+                      "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["kind", "scope", "project"],
                   "additionalProperties": false
                 }
               ]
@@ -143,6 +170,33 @@
                     }
                   },
                   "required": ["kind", "project"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "scope_project"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    "project": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "includeUnscoped": {
+                      "default": false,
+                      "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["kind", "scope", "project", "includeUnscoped"],
                   "additionalProperties": false
                 }
               ]
@@ -1252,7 +1306,7 @@
       {
         "name": "handoff",
         "title": "Handoff",
-        "description": "Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (scope, project, or all); the payload is bounded. Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.",
+        "description": "Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (all, scope, project, or scope_project); the payload is bounded. A scope_project selector narrows to one scope AND one project; its includeUnscoped: true additionally exports NULL-project memories of that scope (default false). Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -1300,6 +1354,33 @@
                     }
                   },
                   "required": ["kind", "project"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "scope_project"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    "project": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "includeUnscoped": {
+                      "default": false,
+                      "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["kind", "scope", "project"],
                   "additionalProperties": false
                 }
               ]
@@ -1367,6 +1448,33 @@
                     }
                   },
                   "required": ["kind", "project"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "scope_project"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    "project": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "includeUnscoped": {
+                      "default": false,
+                      "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["kind", "scope", "project", "includeUnscoped"],
                   "additionalProperties": false
                 }
               ]

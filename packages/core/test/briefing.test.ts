@@ -11,7 +11,7 @@
 // (READ COMMITTED would let a separate COUNT(*) see a different snapshot). These
 // mocks model that single-return shape; the count is no longer a second call.
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
-import type { BriefingCommitment, BriefingSection } from '../src/read/briefing.js'
+import type { BriefingCommitment, BriefingSection, BriefingSelector } from '../src/read/briefing.js'
 
 const openCommitments = vi.fn()
 const overdueCommitments = vi.fn()
@@ -120,6 +120,60 @@ describe('briefing — selector discipline (no-firehose)', () => {
 
   it('requireSelector returns a valid selector unchanged', () => {
     expect(requireSelector({ kind: 'all' })).toEqual({ kind: 'all' })
+  })
+})
+
+describe('briefing — scope_project selector (issue #46)', () => {
+  const scopeProject = {
+    kind: 'scope_project',
+    scope: 'work',
+    project: '3ngram',
+    includeUnscoped: false,
+  } as const
+
+  it('the published BriefingSelector type carries the variant (schema-strict passthrough)', () => {
+    expectTypeOf(scopeProject).toExtend<BriefingSelector>()
+    // includeUnscoped is REQUIRED on the core type — a direct caller states the
+    // choice explicitly, exactly as strict as the transport schema's default.
+    expectTypeOf<{
+      kind: 'scope_project'
+      scope: string
+      project: string
+    }>().not.toExtend<BriefingSelector>()
+  })
+
+  it('requireSelector returns a scope_project selector unchanged (both flag values)', () => {
+    expect(requireSelector(scopeProject)).toEqual(scopeProject)
+    const unscoped = { ...scopeProject, includeUnscoped: true }
+    expect(requireSelector(unscoped)).toEqual(unscoped)
+  })
+
+  it('rejects a scope_project selector with an empty scope or project', async () => {
+    resetAll()
+    await expect(
+      briefing('u1', { selector: { ...scopeProject, scope: '   ' }, now: NOW }),
+    ).rejects.toBeInstanceOf(MissingSelectorError)
+    await expect(
+      briefing('u1', { selector: { ...scopeProject, project: '' }, now: NOW }),
+    ).rejects.toBeInstanceOf(MissingSelectorError)
+    expect(withTenant).not.toHaveBeenCalled()
+  })
+
+  it('passes the selector VERBATIM to every section query and echoes it back', async () => {
+    resetAll()
+    const selector = { ...scopeProject, includeUnscoped: true }
+    const result = await briefing('u1', { selector, mode: 'full', now: NOW })
+    for (const fn of [
+      openCommitments,
+      overdueCommitments,
+      activeBlockers,
+      staleCandidates,
+      recentDecisions,
+      activePreferences,
+    ]) {
+      expect(fn.mock.calls[0]?.[2]).toEqual(selector)
+    }
+    expect(result.selector).toEqual(selector)
   })
 })
 

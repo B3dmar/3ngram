@@ -37,10 +37,11 @@
 // value to assemble the OWNER's own export (its JTBD, like getMemoryById) but
 // logs NOTHING; callers log ids/counts only and never the password hash, which is
 // never selected here.
+import type { RetrievalScopeMode } from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { userBudgets } from './schema/budget.js'
-import { userProfileAttributes, users } from './schema/identity.js'
+import { userProfileAttributes, userRetrievalPolicy, users } from './schema/identity.js'
 import {
   commitments,
   consolidationProposals,
@@ -186,6 +187,14 @@ export interface ExportUserProfileRow {
   updatedAt: Date
 }
 
+/** A stored retrieval-scope policy row for a portability export. */
+export interface ExportRetrievalPolicyRow {
+  mode: RetrievalScopeMode
+  defaultScope: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
 /** The complete user-owned dataset for a portability export. */
 export interface UserDataExport {
   account: ExportAccountRow
@@ -200,6 +209,8 @@ export interface UserDataExport {
   llmUsage: ExportLlmUsageRow[]
   /** Onboarding profiling; null if the user never answered. */
   profile: ExportUserProfileRow | null
+  /** Stored retrieval policy; null if the user never configured one. */
+  retrievalPolicy: ExportRetrievalPolicyRow | null
 }
 
 /**
@@ -390,6 +401,17 @@ export async function readUserDataExport(
     .where(eq(userProfileAttributes.userId, userId))
     .limit(1)
 
+  const [retrievalPolicyRow] = await tx
+    .select({
+      mode: userRetrievalPolicy.mode,
+      defaultScope: userRetrievalPolicy.defaultScope,
+      createdAt: userRetrievalPolicy.createdAt,
+      updatedAt: userRetrievalPolicy.updatedAt,
+    })
+    .from(userRetrievalPolicy)
+    .where(eq(userRetrievalPolicy.userId, userId))
+    .limit(1)
+
   const base: UserDataExport = {
     account,
     memories: memoryRows,
@@ -402,6 +424,7 @@ export async function readUserDataExport(
     userBudgets: budgetRows,
     llmUsage: usageRows,
     profile: profileRow ?? null,
+    retrievalPolicy: retrievalPolicyRow ?? null,
   }
   if (enrich === undefined) return base
   // Merge the platform hook's extra user-owned rows over the base archive in the

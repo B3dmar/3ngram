@@ -19,6 +19,7 @@ import {
   profileUseCaseSchema,
   type RetrievalScopeMode,
   retrievalScopeModeSchema,
+  retrievalScopePolicyScopeRequirements,
   type TokenEndpointAuthMethod,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
@@ -34,7 +35,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { enumCheckSql, tenantPolicy } from './helpers.js'
+import { enumCheckSql, modeNullableValueCheckSql, tenantPolicy } from './helpers.js'
 
 const uuidv7 = () => sql`uuidv7()`
 
@@ -289,12 +290,9 @@ export const userRetrievalPolicy = pgTable(
       'user_retrieval_policy_mode_check',
       enumCheckSql(t.mode, retrievalScopeModeSchema.options),
     ),
-    // Mirror of the schema-boundary refinement (retrievalScopePolicySchema):
-    // 'default' requires a scope to apply; the other modes never apply one.
     check(
       'user_retrieval_policy_scope_consistency_check',
-      sql`(${t.mode} = 'default' AND ${t.defaultScope} IS NOT NULL)
-        OR (${t.mode} <> 'default' AND ${t.defaultScope} IS NULL)`,
+      modeNullableValueCheckSql(t.mode, t.defaultScope, retrievalScopePolicyScopeRequirements),
     ),
     tenantPolicy(),
   ],
