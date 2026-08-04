@@ -1,5 +1,19 @@
 # @3ngram/worker
 
+## 1.2.0
+
+### Patch Changes
+
+- Updated dependencies [ba229fa]
+- Updated dependencies [cfb7d50]
+- Updated dependencies [b704728]
+- Updated dependencies [11d1916]
+- Updated dependencies [eb2ea4e]
+- Updated dependencies [a364654]
+- Updated dependencies [1471fcb]
+- Updated dependencies [cf088c1]
+  - @3ngram/core@0.7.0
+
 ## 1.1.3
 
 ### Patch Changes

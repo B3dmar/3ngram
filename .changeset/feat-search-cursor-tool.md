@@ -1,5 +1,0 @@
----
-"@3ngram/server": minor
----
-
-MCP `search` cursor pagination + compact projection (issue #49, layer 2 of 2): the tool registers the composed `searchQueryV3Schema` / `searchToolOutputV2Schema` and routes through the same frozen-ordering machinery the dashboard uses (core `searchDashboardPage` + the shared server cursor codec). Page 1 freezes the ranked candidate pool into an opaque `nextCursor`; a continuation pages by position within it, so a mid-walk write or archive can never duplicate or skip a hit. The tool description documents the cursor's real context cost (~4-6 KB token) and the pool-exhaustion cap (`hasMore: false` means refine the query, not page harder). `projection: "compact"` omits `content`/`contentLength`/`truncated` per hit (~5x fewer tokens) for broad scans, pairing with `get_memories` for follow-up reads. A garbled cursor is a typed client error, never a 500. Fusion weights and ranking are untouched (eval gate holds at floors); `docs/reference/tools.mdx` and the transport-cost fixture are regenerated in lockstep.
