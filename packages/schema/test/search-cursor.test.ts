@@ -69,6 +69,13 @@ describe('searchQueryV3Schema — cursor + projection composition', () => {
         recordedBefore: '2026-08-01T00:00:00Z',
       }).success,
     ).toBe(false)
+    // Sub-millisecond bound precision (issue #58) rejects through V3 too.
+    expect(
+      searchQueryV3Schema.safeParse({
+        query: 'q',
+        recordedAfter: '2026-08-01T00:00:00.1234Z',
+      }).success,
+    ).toBe(false)
   })
 
   it('stays strict: an unknown key is rejected, never silently dropped', () => {

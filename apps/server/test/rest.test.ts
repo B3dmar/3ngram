@@ -1385,6 +1385,32 @@ describe('GET /api/v1/memories (list)', () => {
     expect(bogusDate.status).toBe(400)
     expect(listMemories).not.toHaveBeenCalled()
   })
+
+  it('400s an inverted recorded range — MCP parity, never an empty 200 (issue #58)', async () => {
+    const inverted = await call(
+      '/api/v1/memories?recordedAfter=2026-02-01T00:00:00Z&recordedBefore=2026-01-01T00:00:00Z',
+      { key: VALID_KEY },
+    )
+    expect(inverted.status).toBe(400)
+    expect(listMemories).not.toHaveBeenCalled()
+  })
+
+  it('400s a sub-millisecond recorded bound instead of silently truncating it (issue #58)', async () => {
+    const subMs = await call('/api/v1/memories?recordedAfter=2026-01-01T00:00:00.123456Z', {
+      key: VALID_KEY,
+    })
+    expect(subMs.status).toBe(400)
+    // Millisecond precision stays accepted end-to-end.
+    listMemories.mockResolvedValue({ memories: [], total: 0 })
+    const ms = await call('/api/v1/memories?recordedAfter=2026-01-01T00:00:00.123Z', {
+      key: VALID_KEY,
+    })
+    expect(ms.status).toBe(200)
+    expect(listMemories).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ recordedAfter: new Date('2026-01-01T00:00:00.123Z') }),
+    )
+  })
 })
 
 describe('GET /api/v1/memories/facets (issue #342)', () => {

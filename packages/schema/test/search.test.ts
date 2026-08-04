@@ -328,6 +328,29 @@ describe('searchFiltersV2Schema / searchQueryV2Schema — V2 axes (issue #48)', 
     ).toBe(true)
   })
 
+  it('REJECTS sub-millisecond recorded bounds; accepts up to 3 fractional digits (#58)', () => {
+    // At the bound: exactly 3 fractional digits (JS Date millisecond precision) parses.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedAfter: '2026-01-01T00:00:00.123Z' })
+        .success,
+    ).toBe(true)
+    // Past the bound: a 4th fractional digit would be silently truncated by the
+    // ISO→Date conversion (recorded_at is microsecond-precise in Postgres) —
+    // rejected per bound, on either field.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedAfter: '2026-01-01T00:00:00.1234Z' })
+        .success,
+    ).toBe(false)
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedBefore: '2026-01-01T00:00:00.123456Z' })
+        .success,
+    ).toBe(false)
+    // Fraction-less bounds are unaffected.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedBefore: '2026-01-01T00:00:00Z' }).success,
+    ).toBe(true)
+  })
+
   it('ADVERTISES the mutual exclusion in the emitted JSON Schema descriptions', () => {
     // The superRefine is runtime-only — invisible in tools/list. The constraint
     // must therefore ride the field descriptions the JSON Schema DOES carry.
@@ -335,6 +358,13 @@ describe('searchFiltersV2Schema / searchQueryV2Schema — V2 axes (issue #48)', 
     const props = json.properties as Record<string, { description?: string }>
     expect(props.memoryType?.description).toMatch(/mutually exclusive with memoryTypes/i)
     expect(props.memoryTypes?.description).toMatch(/mutually exclusive with memoryType\b/i)
+  })
+
+  it('ADVERTISES the recorded-bound precision limit in emitted MCP JSON Schema', () => {
+    const json = z.toJSONSchema(searchQueryV2Schema, { target: 'draft-2020-12', io: 'input' })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.recordedAfter?.description).toMatch(/at most 3 fractional-second digits/i)
+    expect(props.recordedBefore?.description).toMatch(/at most 3 fractional-second digits/i)
   })
 
   it('leaves the shipped V1 schemas untouched: searchQuerySchema rejects the V2 keys', () => {

@@ -25,6 +25,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -160,8 +161,11 @@ export const memoriesListQuerySchema = z
     // ALWAYS live-gated (valid_to IS NULL), so the range narrows within the live
     // view — consistent with search filters V2: a recorded_at range is never
     // time travel and never widens what a read surfaces.
-    recordedAfter: z.iso.datetime().optional(),
-    recordedBefore: z.iso.datetime().optional(),
+    recordedAfter: z.iso.datetime().describe(recordedBoundDescription('recordedAfter')).optional(),
+    recordedBefore: z.iso
+      .datetime()
+      .describe(recordedBoundDescription('recordedBefore'))
+      .optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -171,6 +175,12 @@ export const memoriesListQuerySchema = z
         path: ['memoryTypes'],
         message: 'memoryTypes is mutually exclusive with type — pass one or the other',
       })
+    }
+    // Recorded-range sanity (issue #58): the SAME shared rule set as the MCP
+    // searchQueryV2Schema — an inverted range or a sub-millisecond bound is a
+    // 400 at the boundary, never an empty 200 or a silently truncated bound.
+    for (const issue of recordedRangeIssues(v)) {
+      ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message })
     }
   })
 export type MemoriesListQuery = z.infer<typeof memoriesListQuerySchema>

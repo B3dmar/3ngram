@@ -35,7 +35,7 @@
 //
 // TOKENIZER — one tokenizer (gpt-tokenizer, o200k_base, pure JS, no native build)
 // is used CONSISTENTLY across all transports. It is a PROXY for Claude's tokenizer;
-// the comparison is RELATIVE, not an absolute Claude token count (see the memo).
+// the comparison is RELATIVE, not an absolute Claude token count.
 //
 // FIXTURES (committed, offline):
 //   fixtures/transport-surfaces.json    — each transport's agent-facing context

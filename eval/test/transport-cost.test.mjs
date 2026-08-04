@@ -50,8 +50,10 @@ test('the per-turn-vs-once policy is explicit and drives the totals', () => {
 
 test('the deterministic per-task totals match the committed fixtures (both cost models)', () => {
   // The frozen numbers (turns=8, real SDK tools/list surface, cache read=0.1x
-  // write=1.25x). These are the figures the memo cites; a fixture or accounting
-  // change MUST move them in lockstep so the memo can never silently drift.
+  // write=1.25x). Frozen on purpose: a fixture or accounting change MUST move
+  // these totals in lockstep here, so THIS assertion is the only in-repo
+  // citation of the measured totals — any prose stays citation-free and can
+  // never silently drift from a fixture refresh (issue #58 item 3).
   const summary = runSlice()
   const rows = rowsByTransport(summary)
   assert.equal(summary.turnCount, 8)
@@ -66,8 +68,9 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
     {
       // MCP totals moved with the combined selector + retrieval-scope surface
       // (issues #46/#47): scope_project, set_retrieval_default, and the
-      // appliedScope/retrievalScopePolicy output fields all ride tools/list.
-      mcp: [19649, 159008, 40132],
+      // appliedScope/retrievalScopePolicy output fields all ride tools/list;
+      // precise recorded-range descriptions account for the final delta.
+      mcp: [19675, 159216, 40182],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
@@ -260,4 +263,32 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
     v3Fields,
     'the MCP search tool surface is searchQueryV3Schema (wider set + V2 axes + cursor/projection)',
   )
+})
+
+test('generated MCP and REST contracts advertise the recorded-bound precision limit', () => {
+  const precision = /at most 3 fractional-second digits/i
+  const surfaces = JSON.parse(
+    readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
+  )
+  const searchTool = surfaces.mcp.tools.find((tool) => tool.name === 'search')
+  for (const field of ['recordedAfter', 'recordedBefore']) {
+    assert.match(
+      searchTool.inputSchema.properties[field].description,
+      precision,
+      `MCP tools/list must advertise ${field} precision`,
+    )
+  }
+
+  const openapi = JSON.parse(
+    readFileSync(join(here, '../../docs/api-reference/openapi.json'), 'utf8'),
+  )
+  const listParams = openapi.paths['/api/v1/memories'].get.parameters
+  for (const field of ['recordedAfter', 'recordedBefore']) {
+    const parameter = listParams.find((item) => item.name === field)
+    assert.match(
+      parameter.schema.description,
+      precision,
+      `REST OpenAPI must advertise ${field} precision`,
+    )
+  }
 })

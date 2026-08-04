@@ -265,6 +265,13 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+// --- shared recorded_at range rules (issue #58) ---
+export type { RecordedRangeIssue } from './recorded-range.js'
+export {
+  exceedsRecordedBoundPrecision,
+  MAX_RECORDED_BOUND_FRACTION_DIGITS,
+  recordedRangeIssues,
+} from './recorded-range.js'
 export type { ResourceLimitKind, ResourceLimits } from './resource-limits.js'
 export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits.js'
 // --- REST /api/v1 dashboard contract — appended block ---
