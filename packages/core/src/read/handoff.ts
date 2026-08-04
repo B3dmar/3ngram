@@ -34,6 +34,7 @@ import {
 import { MAX_HANDOFF_SECTION_CEILING } from '@3ngram/schema'
 import { requireSelector, type BriefingSelector as Selector } from './briefing.js'
 import { excerptContent } from './excerpt.js'
+import { applyPolicyToSelector, type RetrievalPolicy } from './retrieval-policy.js'
 
 export type { BriefingSelector } from '@3ngram/db'
 
@@ -81,6 +82,13 @@ export interface HandoffQuery {
   /** Optional free-form label for the receiving agent (echoed back; never logged). */
   generatedFor?: string | undefined
   sectionLimit?: number | undefined
+  /**
+   * Injected per-user retrieval-scope policy (issue #47) — the SAME selector
+   * enforcement as briefing (shared applyPolicyToSelector): `default` narrows
+   * a `kind: 'all'` selector and the result echoes `appliedScope`; `require`
+   * rejects it typed. Resolved once per request by the transport (ADR-0011).
+   */
+  retrievalPolicy?: RetrievalPolicy | undefined
   now: Date
 }
 
@@ -130,6 +138,13 @@ export interface Handoff {
   selector: BriefingSelector
   generatedFor: string | null
   generatedAt: string
+  /**
+   * The scope the injected retrieval policy applied to a `kind: 'all'` call
+   * (issue #47) — PRESENT exactly when the policy narrowed this handoff (the
+   * echoed `selector` is then the effective scope selector). Omitted when
+   * nothing was narrowed. Narrowing is never silent.
+   */
+  appliedScope?: string
   decisions: HandoffMemory[]
   commitments: HandoffCommitment[]
   preferences: HandoffMemory[]
@@ -169,7 +184,11 @@ function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
  * @throws MissingSelectorError no selector / empty scope|project value.
  */
 export async function handoff(userId: string, query: HandoffQuery): Promise<Handoff> {
-  const selector: Selector = requireSelector(query.selector)
+  const requested: Selector = requireSelector(query.selector)
+  // RETRIEVAL-SCOPE POLICY (issue #47): same selector enforcement as
+  // briefing() — one shared decision point (applyPolicyToSelector), so the
+  // two orientation surfaces can never drift on what "unscoped" means.
+  const { selector, appliedScope } = applyPolicyToSelector(query.retrievalPolicy, requested)
   const limit = effectiveSectionLimit(query.sectionLimit)
 
   // The briefing-read queries return {items, totalCount} — the exact window
@@ -186,6 +205,9 @@ export async function handoff(userId: string, query: HandoffQuery): Promise<Hand
     selector,
     generatedFor: query.generatedFor ?? null,
     generatedAt: query.now.toISOString(),
+    // Present exactly when the policy narrowed this call (omitted, never a
+    // fabricated null — same conditional-spread discipline as briefing()).
+    ...(appliedScope !== null ? { appliedScope } : {}),
     decisions: decisions.items.map(toHandoffMemory),
     commitments: commitments.items.map((row) => ({
       id: row.id,

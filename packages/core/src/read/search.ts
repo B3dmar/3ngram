@@ -46,6 +46,7 @@ import {
 } from '../budget/index.js'
 import { DEFAULT_EMBEDDING_MODEL, embeddingCostUsd } from '../write/embed.js'
 import { excerptContent } from './excerpt.js'
+import { applyPolicyToScopeFilter, type RetrievalPolicy } from './retrieval-policy.js'
 
 /** Gateway operation key for query embeddings — meters search cost distinctly
  * from write-path embeddings. */
@@ -197,6 +198,17 @@ export interface SearchOptions {
    * Threaded independently of the budget. Absent → no access guard (back-compat).
    */
   access?: AccessGate | undefined
+  /**
+   * Injected per-user retrieval-scope policy (issue #47), resolved ONCE per
+   * request by the transport (ADR-0011: core stays env-free — the policy is a
+   * parameter, like budget/access). When present, {@link search} returns the
+   * {@link ScopedSearchResult} envelope so the `appliedScope` echo is part of
+   * the result — a `default`-mode narrowing is NEVER silent; `require` +
+   * no scope filter throws the typed UnscopedRetrievalError BEFORE the query
+   * embed (no metered work on a doomed call). Absent → the shipped
+   * plain-hits behavior, byte-identical (back-compat).
+   */
+  retrievalPolicy?: RetrievalPolicy | undefined
 }
 
 /**
@@ -252,21 +264,48 @@ function resolveWeights(query: string, weights: FusionWeights): FusionWeights {
  * @param query   Raw query text. REDACTED — never logged (hard rule 6).
  * @param source  Gateway to embed with, or a pre-computed query embedding.
  * @param opts    Optional limit / weights / supersession penalty / filters.
+ * RETRIEVAL-SCOPE POLICY (issue #47): with `opts.retrievalPolicy` injected the
+ * scope FILTER axis is policy-enforced (retrieval-policy.ts: `default` fills a
+ * missing scope filter, `require` rejects the unscoped call typed) and the
+ * return type is the {@link ScopedSearchResult} ENVELOPE so the `appliedScope`
+ * echo rides the result — the overloads keep the shipped plain-hits contract
+ * for every policy-less caller (published-API stability, the briefing()
+ * overload precedent).
+ *
  * @throws {@link InvalidEmbeddingError} if a pre-computed embedding is not
  *   exactly {@link EMBEDDING_DIMENSIONS}-wide (validated at the boundary, never
  *   an opaque pgvector failure).
+ * @throws {@link UnscopedRetrievalError} policy mode `require` and no scope
+ *   filter (thrown before any metered work).
  */
 export async function search(
   userId: string,
   query: string,
   source: EmbeddingSource,
+  opts: SearchOptions & { retrievalPolicy: RetrievalPolicy },
+): Promise<ScopedSearchResult>
+export async function search(
+  userId: string,
+  query: string,
+  source: EmbeddingSource,
+  opts?: SearchOptions,
+): Promise<SearchHit[]>
+export async function search(
+  userId: string,
+  query: string,
+  source: EmbeddingSource,
   opts: SearchOptions = {},
-): Promise<SearchHit[]> {
+): Promise<SearchHit[] | ScopedSearchResult> {
   // ACCESS GUARD: the injected access gate denies reads when the platform policy
   // forbids them (self-host allowAllAccess allows all). Search is a READ — it is
   // NEVER write-guarded, so a read-only user keeps search, bounded only by the
   // budget cap.
   if (opts.access) await opts.access.assertRead(userId)
+
+  // RETRIEVAL-SCOPE POLICY: enforced BEFORE the query embed so a `require`
+  // rejection never burns budget/gateway work, and a `default` narrowing is
+  // decided before any query runs. The caller's explicit scope always wins.
+  const policyScope = applyPolicyToScopeFilter(opts.retrievalPolicy, opts.filters?.scope)
 
   const { gateway, queryEmbedding: precomputed } = source
 
@@ -282,7 +321,12 @@ export async function search(
   const cursor = opts.cursor
   const weights = resolveWeights(query, opts.weights ?? DEFAULT_SEARCH_WEIGHTS)
   const supersessionPenalty = opts.supersessionPenalty ?? DEFAULT_SEARCH_SUPERSESSION_PENALTY
-  const filters = opts.filters ?? {}
+  // exactOptional discipline: only materialize the scope key when the policy
+  // (or the caller) actually set one — an absent filter never narrows its axis.
+  const filters =
+    policyScope.scope !== undefined
+      ? { ...(opts.filters ?? {}), scope: policyScope.scope }
+      : (opts.filters ?? {})
 
   const hits = await withTenant(userId, (tx) =>
     searchFused(
@@ -300,7 +344,27 @@ export async function search(
   // Read-path excerpting: bound each hit's content to the schema
   // excerpt cap BEFORE any transport sees it (docs/concepts/architecture.mdx — policy in core, so
   // REST/MCP cannot drift). Stored rows are untouched (docs/concepts/memory-model.mdx, read-side only).
-  return hits.map((hit) => ({ ...hit, ...excerptContent(hit.content) }))
+  const shaped = hits.map((hit) => ({ ...hit, ...excerptContent(hit.content) }))
+  // The envelope rides EXACTLY when a policy was injected (the overload
+  // contract): the policy-aware transport always gets the appliedScope echo;
+  // every policy-less caller keeps the shipped plain array, byte-identical.
+  if (opts.retrievalPolicy !== undefined) {
+    return { hits: shaped, appliedScope: policyScope.appliedScope }
+  }
+  return shaped
+}
+
+/**
+ * The policy-aware search result (issue #47): the hits plus the
+ * `appliedScope` echo — the scope the injected retrieval policy applied to an
+ * unscoped call (`null` when nothing was narrowed: mode `off`, or the caller
+ * scoped the call explicitly). Returned by {@link search} EXACTLY when
+ * `opts.retrievalPolicy` is present, so a `default`-mode narrowing can never
+ * be silent (the transport surfaces the echo verbatim).
+ */
+export interface ScopedSearchResult {
+  hits: SearchHit[]
+  appliedScope: string | null
 }
 
 /** The page-1 ranked ordering frozen into the dashboard cursor. */
@@ -316,6 +380,14 @@ export interface DashboardSearchPage {
   /** Offset of the NEXT page within `frozen.ids` (the value the cursor carries). */
   nextOffset: number
   hasMore: boolean
+  /**
+   * The scope the injected retrieval policy applied to an unscoped call
+   * (issue #47) — `null` when nothing was narrowed (no policy, mode `off`, or
+   * an explicit caller scope). Recomputed identically on every page of a walk
+   * (the policy applies to the filters BEFORE the frozen-ordering machinery),
+   * so the echo never drifts mid-walk.
+   */
+  appliedScope: string | null
 }
 
 /** Options for {@link searchDashboardPage}. `frozen` present ⇒ a continuation page. */
@@ -330,6 +402,11 @@ export interface DashboardPageOptions {
   /** Injected access gate — asserts read access the same as
    * {@link SearchOptions.access}. */
   access?: AccessGate | undefined
+  /** Injected retrieval-scope policy — enforced on the scope filter axis the
+   * same as {@link SearchOptions.retrievalPolicy}, on EVERY page of a walk
+   * (first page and continuations alike, so a policy flip mid-walk can never
+   * silently widen a continuation). */
+  retrievalPolicy?: RetrievalPolicy | undefined
 }
 
 /**
@@ -352,8 +429,17 @@ export async function searchDashboardPage(
   // first page AND continuation pages (self-host allowAllAccess allows all).
   if (opts.access) await opts.access.assertRead(userId)
 
+  // RETRIEVAL-SCOPE POLICY (issue #47): enforced on EVERY page — the effective
+  // filters (and so the frozen ordering AND each continuation's eligibility
+  // re-check) always carry the policy scope, and a `require` rejection fires
+  // before any embed or fetch.
+  const policyScope = applyPolicyToScopeFilter(opts.retrievalPolicy, opts.filters?.scope)
+
   const limit = opts.limit ?? DEFAULT_LIMIT
-  const filters = opts.filters ?? {}
+  const filters =
+    policyScope.scope !== undefined
+      ? { ...(opts.filters ?? {}), scope: policyScope.scope }
+      : (opts.filters ?? {})
 
   if (opts.frozen !== undefined) {
     const { ids, scores, off } = opts.frozen
@@ -396,7 +482,13 @@ export async function searchDashboardPage(
     // skipped-ineligible tail before the probe is re-scanned harmlessly. When no
     // eligible row remains, the ordering is exhausted.
     const nextOffset = hasMore ? (page[page.length - 1]?.posAfter ?? cursor) : ids.length
-    return { hits, frozen: { ids, scores }, nextOffset, hasMore }
+    return {
+      hits,
+      frozen: { ids, scores },
+      nextOffset,
+      hasMore,
+      appliedScope: policyScope.appliedScope,
+    }
   }
 
   const { gateway, queryEmbedding: precomputed } = source
@@ -432,6 +524,7 @@ export async function searchDashboardPage(
     frozen: { ids: ranked.map((h) => h.id), scores: ranked.map((h) => h.score) },
     nextOffset: limit,
     hasMore: ranked.length > limit,
+    appliedScope: policyScope.appliedScope,
   }
 }
 

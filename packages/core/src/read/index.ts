@@ -69,6 +69,13 @@ export {
   MemoryNotFoundError,
 } from './memory.js'
 export { getMemoryHistory, type MemoryHistoryRead } from './memory-history.js'
+// --- retrieval-scope policy enforcement (issue #47) ---
+export {
+  applyPolicyToScopeFilter,
+  applyPolicyToSelector,
+  type RetrievalPolicy,
+  UnscopedRetrievalError,
+} from './retrieval-policy.js'
 export {
   type DashboardPageOptions,
   type DashboardSearchPage,
@@ -78,6 +85,7 @@ export {
   type FrozenOrdering,
   type FusionWeights,
   InvalidEmbeddingError,
+  type ScopedSearchResult,
   type SearchHit,
   type SearchOptions,
   search,

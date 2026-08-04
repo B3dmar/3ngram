@@ -15,28 +15,44 @@
 import {
   type EnvironmentStats,
   getEnvironmentStats,
+  getRetrievalPolicy,
   listScopes,
   type ScopeRow,
   withTenant,
 } from '@3ngram/db'
+import type { RetrievalPolicySetting } from '../scope/retrieval-settings.js'
 
 export type { EnvironmentStats } from '@3ngram/db'
 
-/** The tenant-scoped half of a describe_environment report (scopes + stats). */
+/** The tenant-scoped half of a describe_environment report (scopes + stats +
+ * the active retrieval-scope policy, issue #47). */
 export interface EnvironmentReport {
   scopes: ScopeRow[]
   stats: EnvironmentStats
+  /** The active retrieval-scope policy (issue #47): no stored row reports the
+   * `off` default, so a session can always rely on the field. A mode enum +
+   * a registered scope name only — the redaction posture is unchanged. */
+  retrievalScopePolicy: RetrievalPolicySetting
 }
 
 /**
- * Assemble the tenant-scoped environment report: the registered scopes and the
- * bounded count stats, in ONE withTenant transaction (a consistent snapshot).
- * Carries no config — capabilities are layered on by the transport.
+ * Assemble the tenant-scoped environment report: the registered scopes, the
+ * bounded count stats, and the active retrieval-scope policy, in ONE
+ * withTenant transaction (a consistent snapshot). Carries no config —
+ * capabilities are layered on by the transport.
  */
 export function describeEnvironment(userId: string): Promise<EnvironmentReport> {
   return withTenant(userId, async (tx) => {
     const scopes = await listScopes(tx, userId)
     const stats = await getEnvironmentStats(tx, userId)
-    return { scopes, stats }
+    const policy = await getRetrievalPolicy(tx, userId)
+    return {
+      scopes,
+      stats,
+      retrievalScopePolicy:
+        policy === null
+          ? { mode: 'off' as const, scope: null }
+          : { mode: policy.mode, scope: policy.defaultScope },
+    }
   })
 }
