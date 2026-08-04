@@ -246,7 +246,9 @@ describe('assertSigningKeysUsable', () => {
       e: 'AQAB',
       d: 'DSENTINEL_PRIVATE_EXPONENT',
     }
-    const error = await assertSigningKeysUsable([sentinel]).catch((e: unknown) => e as Error)
+    const error = (await assertSigningKeysUsable([sentinel]).catch(
+      (e: unknown) => e as Error,
+    )) as Error
     expect(error).toBeInstanceOf(Error)
     expect(error.message).not.toContain(sentinel.d)
     expect(error.message).not.toContain(sentinel.n)

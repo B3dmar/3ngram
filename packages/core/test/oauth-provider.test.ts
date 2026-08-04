@@ -81,8 +81,8 @@ function provider(resolveLimits?: Parameters<typeof createOAuthServerProvider>[1
 }
 
 describe('authorize', () => {
-  function makeRedirectSpy(): { redirect: ReturnType<typeof vi.fn> } {
-    return { redirect: vi.fn() }
+  function makeRedirectSpy() {
+    return { redirect: vi.fn((_status: number, _url: string) => {}) }
   }
 
   it('stores a HASHED single-use code with a 60s TTL and redirects with code+state', async () => {

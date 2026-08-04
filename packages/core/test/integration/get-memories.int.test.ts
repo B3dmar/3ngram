@@ -99,10 +99,10 @@ describe('getMemoriesByIds (runtime role, real withTenant)', () => {
 
     expect(result.memories).toHaveLength(1)
     const item = result.memories[0]
-    expect(item.content.length).toBe(maxContentChars)
-    expect(item.content.endsWith(EXCERPT_MARKER)).toBe(true)
-    expect(item.contentLength).toBe(MAX_IMPORT_CONTENT_LENGTH)
-    expect(item.truncated).toBe(true)
+    expect(item?.content.length).toBe(maxContentChars)
+    expect(item?.content.endsWith(EXCERPT_MARKER)).toBe(true)
+    expect(item?.contentLength).toBe(MAX_IMPORT_CONTENT_LENGTH)
+    expect(item?.truncated).toBe(true)
     expect(result.notFound).toEqual([])
   })
 
@@ -112,8 +112,8 @@ describe('getMemoriesByIds (runtime role, real withTenant)', () => {
 
     const { memories } = await getMemoriesByIds(userA, [id])
 
-    expect(memories[0].content.length).toBe(DEFAULT_GET_CONTENT_CHARS)
-    expect(memories[0].truncated).toBe(true)
-    expect(memories[0].contentLength).toBe(DEFAULT_GET_CONTENT_CHARS + 100)
+    expect(memories[0]?.content.length).toBe(DEFAULT_GET_CONTENT_CHARS)
+    expect(memories[0]?.truncated).toBe(true)
+    expect(memories[0]?.contentLength).toBe(DEFAULT_GET_CONTENT_CHARS + 100)
   })
 })

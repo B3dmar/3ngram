@@ -44,13 +44,14 @@ const insertEmailVerificationToken = vi.fn(
   async (_userId: string, _token: NewEmailVerificationToken): Promise<void> => {},
 )
 const peekEmailVerificationToken = vi.fn(
-  async (_tokenHash: string): Promise<string | undefined> => peekUserId,
+  async (_tokenHash: string, _clientProofHash: string): Promise<string | undefined> => peekUserId,
 )
 const replaceEmailVerificationTokens = vi.fn(
   async (_userId: string, _token: NewEmailVerificationToken): Promise<boolean> => true,
 )
 const verifyEmailTokenAtomic = vi.fn(
-  async (_tokenHash: string): Promise<string | undefined> => verifiedUserId,
+  async (_tokenHash: string, _clientProofHash: string): Promise<string | undefined> =>
+    verifiedUserId,
 )
 const insertSession = vi.fn(
   async (_userId: string, _tokenHash: string, _expiresAt: Date): Promise<void> => {},
@@ -59,7 +60,14 @@ const resolveSession = vi.fn(async () => undefined)
 const rotatePasswordAndRevokeOthers = vi.fn(async () => true)
 const getUserPasswordHashById = vi.fn(async () => undefined)
 const updateUserPassword = vi.fn(async () => false)
-const retryUnverifiedSignupWithEmailVerificationToken = vi.fn(async () => true)
+const retryUnverifiedSignupWithEmailVerificationToken = vi.fn(
+  async (
+    _userId: string,
+    _expectedHash: string,
+    _passwordHash: string,
+    _token: SignupEmailVerificationToken,
+  ) => true,
+)
 
 vi.mock('@3ngram/db', () => ({
   DuplicateEmailError,
@@ -114,13 +122,13 @@ describe('requestSignup', () => {
     expect(typeof token).toBe('string')
     expect(insertUnverifiedUserWithEmailVerificationToken).toHaveBeenCalledTimes(1)
     const [email, passwordHash, stored] =
-      insertUnverifiedUserWithEmailVerificationToken.mock.calls[0]
+      insertUnverifiedUserWithEmailVerificationToken.mock.calls[0] ?? []
     expect(email).toBe(EMAIL)
     expect(passwordHash).not.toBe(PASSWORD)
-    expect(stored.tokenHash).not.toBe(token)
-    expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(stored.clientProofHash).toBe(CLIENT_PROOF_HASH)
-    expect(stored.expiresAt).toBeInstanceOf(Date)
+    expect(stored?.tokenHash).not.toBe(token)
+    expect(stored?.tokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(stored?.clientProofHash).toBe(CLIENT_PROOF_HASH)
+    expect(stored?.expiresAt).toBeInstanceOf(Date)
     expect(insertEmailVerificationToken).not.toHaveBeenCalled()
   })
 
@@ -132,14 +140,14 @@ describe('requestSignup', () => {
     expect(insertUnverifiedUserWithEmailVerificationToken).not.toHaveBeenCalled()
     expect(retryUnverifiedSignupWithEmailVerificationToken).toHaveBeenCalledTimes(1)
     const [userId, expectedHash, passwordHash, stored] =
-      retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0]
+      retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0] ?? []
     expect(userId).toBe(USER_ID)
     expect(expectedHash).toBe('stored-hash')
     expect(passwordHash).not.toBe(PASSWORD)
     expect(passwordHash).not.toBe('stored-hash')
-    expect(stored.tokenHash).not.toBe(token)
-    expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(stored.clientProofHash).toBe(CLIENT_PROOF_HASH)
+    expect(stored?.tokenHash).not.toBe(token)
+    expect(stored?.tokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(stored?.clientProofHash).toBe(CLIENT_PROOF_HASH)
     expect(insertEmailVerificationToken).not.toHaveBeenCalled()
   })
 
@@ -159,9 +167,9 @@ describe('requestSignup', () => {
       const now = new Date('2026-06-24T12:00:00.000Z')
       vi.setSystemTime(now)
       await requestSignup(EMAIL, PASSWORD, CLIENT_PROOF_HASH, 1440)
-      const [, , stored] = insertUnverifiedUserWithEmailVerificationToken.mock.calls[0]
+      const [, , stored] = insertUnverifiedUserWithEmailVerificationToken.mock.calls[0] ?? []
       // 24h verification lifetime (spec clarification, EMAIL_VERIFICATION_TOKEN_TTL_MINUTES=1440).
-      expect(stored.expiresAt.getTime()).toBe(now.getTime() + 1440 * 60 * 1000)
+      expect(stored?.expiresAt.getTime()).toBe(now.getTime() + 1440 * 60 * 1000)
     } finally {
       vi.useRealTimers()
     }
@@ -184,8 +192,8 @@ describe('requestSignup', () => {
 
     expect(typeof token).toBe('string')
     expect(retryUnverifiedSignupWithEmailVerificationToken).toHaveBeenCalledTimes(1)
-    expect(retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0][0]).toBe(RACE_USER_ID)
-    expect(retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0][3]).toEqual(
+    expect(retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0]?.[0]).toBe(RACE_USER_ID)
+    expect(retryUnverifiedSignupWithEmailVerificationToken.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({ tokenHash: expect.stringMatching(/^[0-9a-f]{64}$/) }),
     )
     expect(insertEmailVerificationToken).not.toHaveBeenCalled()
@@ -200,15 +208,15 @@ describe('verifyEmail', () => {
     expect(typeof grant.token).toBe('string')
     expect(peekEmailVerificationToken).toHaveBeenCalledTimes(1)
     expect(verifyEmailTokenAtomic).toHaveBeenCalledTimes(1)
-    const peekHash = peekEmailVerificationToken.mock.calls[0][0]
-    const atomicHash = verifyEmailTokenAtomic.mock.calls[0][0]
+    const peekHash = peekEmailVerificationToken.mock.calls[0]?.[0]
+    const atomicHash = verifyEmailTokenAtomic.mock.calls[0]?.[0]
     expect(peekHash).toBe(atomicHash)
     expect(atomicHash).not.toBe('plaintext-token')
     expect(atomicHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(peekEmailVerificationToken.mock.calls[0][1]).not.toBe(CLIENT_PROOF)
-    expect(peekEmailVerificationToken.mock.calls[0][1]).toMatch(/^[0-9a-f]{64}$/)
-    expect(verifyEmailTokenAtomic.mock.calls[0][1]).toBe(
-      peekEmailVerificationToken.mock.calls[0][1],
+    expect(peekEmailVerificationToken.mock.calls[0]?.[1]).not.toBe(CLIENT_PROOF)
+    expect(peekEmailVerificationToken.mock.calls[0]?.[1]).toMatch(/^[0-9a-f]{64}$/)
+    expect(verifyEmailTokenAtomic.mock.calls[0]?.[1]).toBe(
+      peekEmailVerificationToken.mock.calls[0]?.[1],
     )
     expect(insertSession).toHaveBeenCalledWith(USER_ID, expect.any(String), expect.any(Date))
   })
@@ -274,12 +282,12 @@ describe('resendEmailVerification', () => {
 
     expect(typeof token).toBe('string')
     expect(replaceEmailVerificationTokens).toHaveBeenCalledTimes(1)
-    const [userId, stored] = replaceEmailVerificationTokens.mock.calls[0]
+    const [userId, stored] = replaceEmailVerificationTokens.mock.calls[0] ?? []
     expect(userId).toBe(USER_ID)
-    expect(stored.tokenHash).not.toBe(token) // only the hash is stored
-    expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(stored.clientProofHash).toBe(CLIENT_PROOF_HASH)
-    expect(stored.expiresAt).toBeInstanceOf(Date)
+    expect(stored?.tokenHash).not.toBe(token) // only the hash is stored
+    expect(stored?.tokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(stored?.clientProofHash).toBe(CLIENT_PROOF_HASH)
+    expect(stored?.expiresAt).toBeInstanceOf(Date)
   })
 
   it('returns undefined and supersedes nothing for an unknown email (no enumeration)', async () => {
