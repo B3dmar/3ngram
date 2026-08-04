@@ -28,11 +28,14 @@ import {
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
+/** Maximum recovery detail exposed in a non-2xx REST response. */
+export const MAX_REST_ERROR_DETAIL_LENGTH = 512
+
 /** Stable non-2xx REST response read by SDKs and generated clients. */
 export const restErrorResponseSchema = z
   .object({
     error: z.string(),
-    detail: z.string().optional(),
+    detail: z.string().max(MAX_REST_ERROR_DETAIL_LENGTH).optional(),
   })
   .strict()
 export type RestErrorResponse = z.infer<typeof restErrorResponseSchema>

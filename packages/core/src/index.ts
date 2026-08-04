@@ -142,7 +142,6 @@ export {
   listMemoryFacets,
   MAX_BRIEFING_SECTION,
   MAX_HANDOFF_SECTION,
-  MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH,
   type MemoriesBatchRead,
   type MemoriesListQuery,
   type MemoriesPage,

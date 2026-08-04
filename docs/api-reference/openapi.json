@@ -808,6 +808,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "detail": {
+                      "maxLength": 512,
                       "type": "string"
                     },
                     "error": {
@@ -1065,6 +1066,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "detail": {
+                      "maxLength": 512,
                       "type": "string"
                     },
                     "error": {
@@ -4267,6 +4269,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "detail": {
+                      "maxLength": 512,
                       "type": "string"
                     },
                     "error": {

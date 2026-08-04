@@ -288,6 +288,7 @@ export {
   invalidInputRestErrorResponseSchema,
   MAX_DASHBOARD_SEARCH_LIMIT,
   MAX_MEMORIES_LIMIT,
+  MAX_REST_ERROR_DETAIL_LENGTH,
   MAX_REST_PROPOSALS_LIMIT,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,

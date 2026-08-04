@@ -37,6 +37,7 @@
 // Observability (hard rule 6): scope names are bounded user labels, not
 // memory content; this module logs nothing.
 import type { BriefingSelector } from '@3ngram/db'
+import { MAX_REST_ERROR_DETAIL_LENGTH } from '@3ngram/schema'
 
 /**
  * The per-user retrieval policy as core consumes it — a discriminated union so
@@ -55,7 +56,6 @@ export type RetrievalPolicy =
 const UNSCOPED_RECOVERY_PREFIX =
   "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
 const MAX_UNSCOPED_RECOVERY_SCOPES = 8
-export const MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH = 512
 
 /** Build the bounded recovery detail shared by every transport. */
 export function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
@@ -70,7 +70,7 @@ export function formatUnscopedRetrievalDetail(registeredScopes: readonly string[
     const detail = `${UNSCOPED_RECOVERY_PREFIX}registered scopes: ${registeredScopes
       .slice(0, included)
       .join(', ')}${omission}`
-    if (detail.length <= MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH) return detail
+    if (detail.length <= MAX_REST_ERROR_DETAIL_LENGTH) return detail
   }
 
   return `${UNSCOPED_RECOVERY_PREFIX}registered scopes: +${registeredScopes.length} omitted`
