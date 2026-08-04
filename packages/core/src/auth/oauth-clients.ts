@@ -35,7 +35,11 @@ import {
   clientIdMetadataUrlSchema,
   type TokenEndpointAuthMethod,
 } from '@3ngram/schema'
-import { ClientMetadataError, type ClientMetadataResolver } from './client-metadata.js'
+import {
+  ClientMetadataError,
+  type ClientMetadataFailure,
+  type ClientMetadataResolver,
+} from './client-metadata.js'
 
 const CLIENT_SECRET_BYTES = 32
 
@@ -153,6 +157,28 @@ export const oauthClientsStore: OAuthClientsStore = {
 }
 
 /**
+ * Why a client could not be resolved. Content-free by construction (a closed set
+ * of tokens, never a URL or client_id), so a caller may put it straight into an
+ * audit line under hard rule 6. This is DIAGNOSTIC ONLY: the OAuth boundary
+ * still answers a uniform invalid_client, so it must never reach a response.
+ */
+export type ClientResolutionFailure =
+  | 'not_registered'
+  | `metadata_${ClientMetadataFailure}`
+  | 'metadata_not_materialized'
+
+/** Optional seams for {@link resolveOAuthClient}. */
+export interface ResolveOAuthClientOptions {
+  /**
+   * Receives the content-free reason when resolution fails. Exists because the
+   * return type collapses every failure to undefined (no oracle), which left
+   * operators with a silent 400 and no way to tell a stale registration from a
+   * CIMD fetch that never left the box.
+   */
+  onFailure?: (reason: ClientResolutionFailure) => void
+}
+
+/**
  * Resolve a client in MCP priority order: persisted DCR first, then CIMD.
  * CIMD failures are an unknown/invalid client at the OAuth boundary; unexpected
  * database failures still propagate. The materialized row is FK/display state,
@@ -161,20 +187,31 @@ export const oauthClientsStore: OAuthClientsStore = {
 export async function resolveOAuthClient(
   clientId: string,
   metadataResolver: ClientMetadataResolver,
+  options: ResolveOAuthClientOptions = {},
 ): Promise<OAuthClientInformation | undefined> {
   const row = await getClientByClientId(clientId)
   if (row?.registrationMethod === 'dynamic_registration') return toClientInformation(row)
-  if (!clientIdMetadataUrlSchema.safeParse(clientId).success) return undefined
+  if (!clientIdMetadataUrlSchema.safeParse(clientId).success) {
+    // Not a DCR row and not a CIMD URL: nothing left to resolve against.
+    options.onFailure?.('not_registered')
+    return undefined
+  }
 
   let document: ClientIdMetadataDocument
   try {
     document = await metadataResolver.resolve(clientId)
   } catch (error) {
-    if (error instanceof ClientMetadataError) return undefined
+    if (error instanceof ClientMetadataError) {
+      options.onFailure?.(`metadata_${error.reason}`)
+      return undefined
+    }
     throw error
   }
   const materialized = await materializeClientMetadata(document)
-  if (materialized === undefined) return undefined
+  if (materialized === undefined) {
+    options.onFailure?.('metadata_not_materialized')
+    return undefined
+  }
   return metadataToClientInformation(document)
 }
 

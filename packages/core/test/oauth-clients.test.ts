@@ -47,7 +47,9 @@ vi.mock('@3ngram/db', () => ({
   materializeClientMetadata,
 }))
 
-const { ClientMetadataResolver } = await import('../src/auth/client-metadata.js')
+const { ClientMetadataError, ClientMetadataResolver } = await import(
+  '../src/auth/client-metadata.js'
+)
 const {
   authenticateClientCredentials,
   hashClientSecret,
@@ -213,6 +215,33 @@ describe('resolveOAuthClient — DCR then CIMD', () => {
     expect(resolved?.client_name).toBe('Pre-registered')
     expect(fetchDocument).not.toHaveBeenCalled()
     expect(materializeClientMetadata).not.toHaveBeenCalled()
+  })
+
+  // The return type collapses every failure to undefined so the OAuth boundary
+  // stays a uniform invalid_client. onFailure is the diagnostic channel that
+  // survives that collapse — without it the caller cannot tell these apart.
+  it('reports the CIMD failure reason while still returning undefined', async () => {
+    const onFailure = vi.fn()
+    const resolver = new ClientMetadataResolver({
+      fetchDocument: async () => {
+        throw new ClientMetadataError('dns_failure')
+      },
+    })
+
+    await expect(resolveOAuthClient(clientId, resolver, { onFailure })).resolves.toBeUndefined()
+    expect(onFailure).toHaveBeenCalledWith('metadata_dns_failure')
+  })
+
+  it('reports not_registered for an id that is neither a DCR row nor a metadata URL', async () => {
+    const onFailure = vi.fn()
+    const resolver = new ClientMetadataResolver({
+      fetchDocument: vi.fn(),
+    })
+
+    await expect(
+      resolveOAuthClient('not-a-url-and-not-registered', resolver, { onFailure }),
+    ).resolves.toBeUndefined()
+    expect(onFailure).toHaveBeenCalledWith('not_registered')
   })
 
   it('allows only the public no-secret token path for CIMD clients', async () => {
