@@ -20,7 +20,7 @@ import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
-import { recordedRangeIssues } from './recorded-range.js'
+import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema, rememberInputSchema, reviseInputSchema } from './write.js'
 
@@ -908,16 +908,8 @@ export const searchFiltersV2Schema = z
       .describe(
         'OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both.',
       ),
-    recordedAfter: z.iso
-      .datetime()
-      .describe(
-        'Inclusive lower bound on recorded_at. Must not be later than recordedBefore when both are given.',
-      ),
-    recordedBefore: z.iso
-      .datetime()
-      .describe(
-        'Inclusive upper bound on recorded_at. Must not be earlier than recordedAfter when both are given.',
-      ),
+    recordedAfter: z.iso.datetime().describe(recordedBoundDescription('recordedAfter')),
+    recordedBefore: z.iso.datetime().describe(recordedBoundDescription('recordedBefore')),
   })
   .partial()
   .strict()

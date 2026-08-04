@@ -25,7 +25,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
-import { recordedRangeIssues } from './recorded-range.js'
+import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -144,8 +144,11 @@ export const memoriesListQuerySchema = z
     // ALWAYS live-gated (valid_to IS NULL), so the range narrows within the live
     // view — consistent with search filters V2: a recorded_at range is never
     // time travel and never widens what a read surfaces.
-    recordedAfter: z.iso.datetime().optional(),
-    recordedBefore: z.iso.datetime().optional(),
+    recordedAfter: z.iso.datetime().describe(recordedBoundDescription('recordedAfter')).optional(),
+    recordedBefore: z.iso
+      .datetime()
+      .describe(recordedBoundDescription('recordedBefore'))
+      .optional(),
   })
   .strict()
   .superRefine((v, ctx) => {

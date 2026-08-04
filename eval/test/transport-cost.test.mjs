@@ -66,7 +66,7 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [18359, 148688, 37616],
+      mcp: [18385, 148896, 37667],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
@@ -259,4 +259,32 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
     v3Fields,
     'the MCP search tool surface is searchQueryV3Schema (wider set + V2 axes + cursor/projection)',
   )
+})
+
+test('generated MCP and REST contracts advertise the recorded-bound precision limit', () => {
+  const precision = /at most 3 fractional-second digits/i
+  const surfaces = JSON.parse(
+    readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
+  )
+  const searchTool = surfaces.mcp.tools.find((tool) => tool.name === 'search')
+  for (const field of ['recordedAfter', 'recordedBefore']) {
+    assert.match(
+      searchTool.inputSchema.properties[field].description,
+      precision,
+      `MCP tools/list must advertise ${field} precision`,
+    )
+  }
+
+  const openapi = JSON.parse(
+    readFileSync(join(here, '../../docs/api-reference/openapi.json'), 'utf8'),
+  )
+  const listParams = openapi.paths['/api/v1/memories'].get.parameters
+  for (const field of ['recordedAfter', 'recordedBefore']) {
+    const parameter = listParams.find((item) => item.name === field)
+    assert.match(
+      parameter.schema.description,
+      precision,
+      `REST OpenAPI must advertise ${field} precision`,
+    )
+  }
 })

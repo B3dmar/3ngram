@@ -27,6 +27,20 @@
  */
 export const MAX_RECORDED_BOUND_FRACTION_DIGITS = 3
 
+/**
+ * Schema-visible descriptions for the two bounds. Custom refinements disappear
+ * from emitted JSON Schema, so the public contract must advertise the precision
+ * limit as well as enforce it at runtime.
+ */
+export function recordedBoundDescription(path: 'recordedAfter' | 'recordedBefore'): string {
+  const direction = path === 'recordedAfter' ? 'lower' : 'upper'
+  const ordering =
+    path === 'recordedAfter'
+      ? 'Must not be later than recordedBefore when both are given.'
+      : 'Must not be earlier than recordedAfter when both are given.'
+  return `Inclusive ${direction} bound on recorded_at. Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). ${ordering}`
+}
+
 /** True when an ISO datetime carries more fractional-second digits than a JS Date can represent. */
 export function exceedsRecordedBoundPrecision(iso: string): boolean {
   return (/\.(\d+)/.exec(iso)?.[1]?.length ?? 0) > MAX_RECORDED_BOUND_FRACTION_DIGITS

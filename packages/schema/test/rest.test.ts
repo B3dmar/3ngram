@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -152,6 +153,16 @@ describe('memoriesListQuerySchema — recorded-range hardening (issue #58, MCP p
     expect(
       memoriesListQuerySchema.safeParse({ recordedBefore: '2026-01-01T00:00:00.123456Z' }).success,
     ).toBe(false)
+  })
+
+  it('ADVERTISES the precision limit in emitted REST JSON Schema', () => {
+    const json = z.toJSONSchema(memoriesListQuerySchema, {
+      target: 'draft-2020-12',
+      io: 'input',
+    })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.recordedAfter?.description).toMatch(/at most 3 fractional-second digits/i)
+    expect(props.recordedBefore?.description).toMatch(/at most 3 fractional-second digits/i)
   })
 })
 

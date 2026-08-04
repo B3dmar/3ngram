@@ -360,6 +360,13 @@ describe('searchFiltersV2Schema / searchQueryV2Schema — V2 axes (issue #48)', 
     expect(props.memoryTypes?.description).toMatch(/mutually exclusive with memoryType\b/i)
   })
 
+  it('ADVERTISES the recorded-bound precision limit in emitted MCP JSON Schema', () => {
+    const json = z.toJSONSchema(searchQueryV2Schema, { target: 'draft-2020-12', io: 'input' })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.recordedAfter?.description).toMatch(/at most 3 fractional-second digits/i)
+    expect(props.recordedBefore?.description).toMatch(/at most 3 fractional-second digits/i)
+  })
+
   it('leaves the shipped V1 schemas untouched: searchQuerySchema rejects the V2 keys', () => {
     expect(searchQuerySchema.safeParse({ query: 'q', memoryTypes: ['decision'] }).success).toBe(
       false,
