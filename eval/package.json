@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/eval",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "private": true,
   "description": "Golden-set eval harness. Blocking slice: deterministic, zero deps, no network.",
   "license": "Apache-2.0",

@@ -1,5 +1,12 @@
 # @3ngram/server
 
+## 1.2.3
+
+### Patch Changes
+
+- Updated dependencies [4d0d05d]
+  - @3ngram/core@0.8.1
+
 ## 1.2.2
 
 ### Patch Changes
