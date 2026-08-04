@@ -306,19 +306,29 @@ export {
 } from './rest.js'
 // --- retrieval-scope policy (issue #47) — appended block ---
 export type {
+  BriefingToolOutputV3,
   ConfigureScopeInputV2,
   ConfigureScopeOutputV2,
+  DashboardSearchResponseV2,
   DescribeEnvironmentOutputV2,
+  HandoffToolOutputV3,
   RetrievalScopeMode,
   RetrievalScopePolicy,
+  SearchRestResponseV2,
+  SearchToolOutputV3,
   SetRetrievalDefaultInput,
 } from './retrieval-scope.js'
 export {
+  briefingToolOutputV3Schema,
   configureScopeInputV2Schema,
   configureScopeOutputV2Schema,
+  dashboardSearchResponseV2Schema,
   describeEnvironmentOutputV2Schema,
+  handoffToolOutputV3Schema,
   retrievalScopeModeSchema,
   retrievalScopePolicySchema,
+  searchRestResponseV2Schema,
+  searchToolOutputV3Schema,
   setRetrievalDefaultInputSchema,
 } from './retrieval-scope.js'
 export type { Scope } from './scope.js'

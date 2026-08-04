@@ -15,12 +15,16 @@
 // composed-schema pattern (successor schemas compose over shipped ones;
 // shipped variants stay byte-identical).
 import { z } from 'zod'
+import { briefingToolOutputV2Schema, handoffToolOutputV2Schema } from './briefing-bounds.js'
 import {
   configureScopeInputSchema,
   configureScopeOutputSchema,
   describeEnvironmentOutputSchema,
   scopeNameSchema,
+  searchToolOutputSchema,
 } from './mcp.js'
+import { dashboardSearchResponseSchema } from './rest.js'
+import { searchToolOutputV2Schema } from './search-cursor.js'
 
 /**
  * The retrieval-scope enforcement mode. Single source for the DB CHECK
@@ -120,3 +124,64 @@ export const describeEnvironmentOutputV2Schema = describeEnvironmentOutputSchema
   retrievalScopePolicy: retrievalScopePolicySchema,
 })
 export type DescribeEnvironmentOutputV2 = z.infer<typeof describeEnvironmentOutputV2Schema>
+
+// ---------------------------------------------------------------------------
+// appliedScope read-surface echoes (layer 3 wiring)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `appliedScope` echo field every policy-aware read result composes in:
+ * PRESENT exactly when the policy narrowed an unscoped call to its configured
+ * scope (mode `default`) — narrowing is never silent; OMITTED when nothing was
+ * narrowed (mode `off`, no policy row, or an explicitly scoped call), so an
+ * `off` response stays byte-identical to the shipped output.
+ */
+const appliedScopeField = {
+  appliedScope: scopeNameSchema
+    .optional()
+    .describe(
+      'Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.',
+    ),
+} as const
+
+/**
+ * MCP `search` output V3: the shipped cursor envelope
+ * ({@link searchToolOutputV2Schema} — its count/nextCursor/projection
+ * refinements carry through the `.safeExtend()` composition) plus the
+ * {@link appliedScopeField} echo.
+ */
+export const searchToolOutputV3Schema = searchToolOutputV2Schema.safeExtend(appliedScopeField)
+export type SearchToolOutputV3 = z.infer<typeof searchToolOutputV3Schema>
+
+/**
+ * REST `POST /api/v1/search` response V2: the shipped hits+count mirror
+ * ({@link searchToolOutputSchema}) plus the {@link appliedScopeField} echo —
+ * REST parity rides the SAME injected policy, so it carries the same echo.
+ */
+export const searchRestResponseV2Schema = searchToolOutputSchema.safeExtend(appliedScopeField)
+export type SearchRestResponseV2 = z.infer<typeof searchRestResponseV2Schema>
+
+/**
+ * REST `POST /api/v1/dashboard/search` response V2: the shipped continuation
+ * envelope plus the {@link appliedScopeField} echo (enforced on EVERY page of
+ * a walk, so a continuation echoes identically to its first page).
+ */
+export const dashboardSearchResponseV2Schema =
+  dashboardSearchResponseSchema.safeExtend(appliedScopeField)
+export type DashboardSearchResponseV2 = z.infer<typeof dashboardSearchResponseV2Schema>
+
+/**
+ * `briefing` output V3: the bounds-V2 envelope (its section-consistency
+ * refinements carry through) plus the {@link appliedScopeField} echo. When
+ * present, the echoed `selector` is the EFFECTIVE scope selector the policy
+ * substituted for the caller's `kind: 'all'`.
+ */
+export const briefingToolOutputV3Schema = briefingToolOutputV2Schema.safeExtend(appliedScopeField)
+export type BriefingToolOutputV3 = z.infer<typeof briefingToolOutputV3Schema>
+
+/**
+ * `handoff` output V3: the bounds-V2 envelope (counts/truncated refinements
+ * carry through) plus the {@link appliedScopeField} echo.
+ */
+export const handoffToolOutputV3Schema = handoffToolOutputV2Schema.safeExtend(appliedScopeField)
+export type HandoffToolOutputV3 = z.infer<typeof handoffToolOutputV3Schema>

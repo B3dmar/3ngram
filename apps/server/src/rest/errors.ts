@@ -45,6 +45,7 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnscopedRetrievalError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
 import { CursorQueryMismatchError } from '../cursor.js'
@@ -55,6 +56,12 @@ export interface RestError {
   status: number
   /** The reason_code (MCP taxonomy) — the stable machine-readable error tag. */
   reason: string
+  /**
+   * Optional bounded, human-readable recovery detail — surfaced in the body
+   * alongside the reason_code. Only ever carries bounded enum states or user
+   * labels (e.g. registered scope names), NEVER memory content (hard rule 6).
+   */
+  detail?: string
 }
 
 /**
@@ -76,6 +83,14 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
       'rest: result failed output validation',
     )
     return { status: 500, reason: 'invalid_output' }
+  }
+  // An unscoped read rejected by the caller's own retrieval-scope policy
+  // (mode 'require', issue #47) — the MissingSelectorError sibling: 400,
+  // invalid_input, with the recovery DETAIL naming the registered scopes
+  // (bounded user labels, never content — hard rule 6). Mirrors the MCP branch.
+  if (err instanceof UnscopedRetrievalError) {
+    log().warn({ route, err: err.name }, 'rest: unscoped read rejected by policy')
+    return { status: 400, reason: 'invalid_input', detail: err.message }
   }
   // Malformed CLIENT input — a ZodError from a boundary INPUT .parse() or a
   // typed core validation error — is a 400, not a server fault: only the error

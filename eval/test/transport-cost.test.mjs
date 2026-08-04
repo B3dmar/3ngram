@@ -64,7 +64,10 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       rest: [rows.rest.surfaceTokens, rows.rest.perTaskUncached, rows.rest.perTaskCacheEffective],
     },
     {
-      mcp: [18359, 148688, 37616],
+      // MCP totals moved with the retrieval-scope surface (issue #47):
+      // configure_scope's set_retrieval_default action variant + the
+      // appliedScope/retrievalScopePolicy output fields ride tools/list.
+      mcp: [19063, 154320, 38989],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },

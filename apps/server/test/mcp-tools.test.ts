@@ -13,8 +13,8 @@ import { runWithContext } from '@3ngram/config'
 import { fakeEmbedding } from '@3ngram/llm'
 import {
   briefingToolOutputV2Schema,
-  configureScopeOutputSchema,
-  describeEnvironmentOutputSchema,
+  configureScopeOutputV2Schema,
+  describeEnvironmentOutputV2Schema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -45,6 +45,7 @@ const renameScope = vi.fn()
 const setScopeAliases = vi.fn()
 const deleteScope = vi.fn()
 const describeEnvironment = vi.fn()
+const setRetrievalDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
@@ -157,6 +158,18 @@ class MissingSelectorError extends Error {
     this.name = 'MissingSelectorError'
   }
 }
+// Retrieval-scope policy typed error (issue #47) — mirrors @3ngram/core: the
+// message names the REGISTERED SCOPES (bounded user labels, never content).
+class UnscopedRetrievalError extends Error {
+  readonly registeredScopes: readonly string[]
+  constructor(registeredScopes: readonly string[]) {
+    super(
+      `this account requires an explicit retrieval scope (retrieval-scope mode 'require') — registered scopes: ${registeredScopes.join(', ')}`,
+    )
+    this.name = 'UnscopedRetrievalError'
+    this.registeredScopes = registeredScopes
+  }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -227,8 +240,10 @@ vi.mock('@3ngram/core', () => ({
   InvalidCommitmentTransitionError,
   IllegalCommitmentTransitionError,
   MissingSelectorError,
+  UnscopedRetrievalError,
   // D3 admin tools
   listScopes,
+  setRetrievalDefault,
   createScope,
   renameScope,
   setScopeAliases,
@@ -1362,7 +1377,7 @@ describe('configure_scope tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -1379,7 +1394,7 @@ describe('configure_scope tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('upserted')
     if (parsed.action === 'upserted') expect(parsed.scope.name).toBe('research')
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
@@ -1402,7 +1417,7 @@ describe('configure_scope tool', () => {
 
     const deleted = await call('configure_scope', { action: 'delete', name: 'work' }, ctx())
     expect(deleteScope).toHaveBeenCalledWith(UID, 'work')
-    const parsed = configureScopeOutputSchema.parse(deleted.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(deleted.structuredContent)
     expect(parsed.action).toBe('deleted')
     if (parsed.action === 'deleted') expect(parsed.name).toBe('work')
   })
@@ -1501,6 +1516,7 @@ describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
       scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: { decision: 3, fact: 5 },
         activeMemories: 8,
@@ -1511,7 +1527,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputSchema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -1537,6 +1553,7 @@ describe('describe_environment tool', () => {
     try {
       describeEnvironment.mockResolvedValue({
         scopes: [scopeRecord('work')],
+        retrievalScopePolicy: { mode: 'off', scope: null },
         stats: {
           memoriesByType: {},
           activeMemories: 0,
@@ -1842,5 +1859,177 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     expect((result.content[0] as { text: string }).text).toContain('access_denied')
     // The gate blocked BEFORE the db op — core was never invoked.
     expect(coreSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Retrieval-scope policy wiring (issue #47, layer 3)
+// ---------------------------------------------------------------------------
+
+describe('retrieval-scope policy wiring', () => {
+  const DEFAULT_WORK = { mode: 'default', defaultScope: 'work' } as const
+  /** A request-scoped resolver thunk mirroring routes/mcp.ts lazyRetrievalPolicy. */
+  const policyThunk = (policy: unknown) => vi.fn(() => Promise.resolve(policy))
+  const emptySection = { count: 0, items: [], hasMore: false }
+
+  it('configure_scope set_retrieval_default stores the policy and echoes it', async () => {
+    setRetrievalDefault.mockResolvedValue({ mode: 'default', scope: 'work' })
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: 'work', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    expect(parsed).toEqual({
+      action: 'retrieval_default_set',
+      policy: { mode: 'default', scope: 'work' },
+    })
+    expect(setRetrievalDefault).toHaveBeenCalledWith(UID, { mode: 'default', scope: 'work' })
+  })
+
+  it('set_retrieval_default is a WRITE action: a read-only token is rejected', async () => {
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: null, mode: 'require' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('memory:write')
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('rejects a drifting mode/scope pair at the boundary — core never runs', async () => {
+    for (const args of [
+      { action: 'set_retrieval_default', scope: null, mode: 'default' },
+      { action: 'set_retrieval_default', scope: 'work', mode: 'off' },
+      { action: 'set_retrieval_default', mode: 'require' },
+    ]) {
+      const result = await call('configure_scope', args, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('an UNREGISTERED default scope maps to the typed not_found', async () => {
+    setRetrievalDefault.mockRejectedValue(new ScopeNotFoundError('nope'))
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: 'nope', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('describe_environment reports the active policy', async () => {
+    describeEnvironment.mockResolvedValue({
+      scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBeFalsy()
+    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+  })
+
+  it('search: resolves the policy AT MOST ONCE, injects it, and echoes appliedScope', async () => {
+    const thunk = policyThunk(DEFAULT_WORK)
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+      appliedScope: 'work',
+    })
+    const result = await call('search', { query: 'q' }, ctx({ retrievalPolicy: thunk }))
+    expect(result.isError).toBeFalsy()
+    expect(thunk).toHaveBeenCalledTimes(1)
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((result.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+  })
+
+  it('search: no policy narrowing -> NO appliedScope key (byte-identical legacy)', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+      appliedScope: null,
+    })
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({ retrievalPolicy: policyThunk({ mode: 'off' }) }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect('appliedScope' in (result.structuredContent as object)).toBe(false)
+  })
+
+  it('search: an UnscopedRetrievalError surfaces typed, naming the registered scopes', async () => {
+    searchDashboardPage.mockRejectedValue(new UnscopedRetrievalError(['personal', 'work']))
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({
+        retrievalPolicy: policyThunk({ mode: 'require', registeredScopes: ['personal', 'work'] }),
+      }),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('invalid input')
+    expect(text).toContain('personal, work')
+  })
+
+  it('briefing and handoff: the policy is injected and appliedScope rides the output', async () => {
+    const thunk = policyThunk(DEFAULT_WORK)
+    briefing.mockResolvedValue({
+      selector: { kind: 'scope', scope: 'work' },
+      mode: 'brief',
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      appliedScope: 'work',
+      commitments: emptySection,
+      overdue: emptySection,
+      blockers: emptySection,
+      staleCandidates: emptySection,
+      recentDecisions: emptySection,
+      preferences: emptySection,
+    })
+    const briefed = await call(
+      'briefing',
+      { selector: { kind: 'all' } },
+      ctx({ retrievalPolicy: thunk }),
+    )
+    expect(briefed.isError).toBeFalsy()
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((briefed.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+
+    handoff.mockResolvedValue({
+      selector: { kind: 'scope', scope: 'work' },
+      generatedFor: null,
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      appliedScope: 'work',
+      decisions: [],
+      commitments: [],
+      preferences: [],
+      notes: [],
+      counts: { decisions: 0, commitments: 0, preferences: 0 },
+      truncated: { decisions: false, commitments: false, preferences: false },
+    })
+    const handed = await call(
+      'handoff',
+      { selector: { kind: 'all' } },
+      ctx({ retrievalPolicy: policyThunk(DEFAULT_WORK) }),
+    )
+    expect(handed.isError).toBeFalsy()
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((handed.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
   })
 })

@@ -38,6 +38,7 @@ const describeEnvironment = vi.fn()
 const getCurrentUser = vi.fn()
 const exportUserData = vi.fn()
 const deleteAccount = vi.fn()
+const resolveRetrievalPolicy = vi.fn()
 
 // Real typed error classes so the rest/errors.ts instanceof mapping is exercised
 // end to end (the router catches a core throw and the mapper picks the status).
@@ -78,6 +79,16 @@ class InvalidCommitmentTransitionError extends Error {
 class IllegalCommitmentTransitionError extends InvalidCommitmentTransitionError {}
 class InvalidEmbeddingError extends Error {}
 class MissingSelectorError extends Error {}
+class UnscopedRetrievalError extends Error {
+  readonly registeredScopes: readonly string[]
+  constructor(registeredScopes: readonly string[]) {
+    super(
+      `this account requires an explicit retrieval scope — registered scopes: ${registeredScopes.join(', ')}`,
+    )
+    this.name = 'UnscopedRetrievalError'
+    this.registeredScopes = registeredScopes
+  }
+}
 class NotCommitmentMemoryError extends Error {}
 class PredecessorAlreadySupersededError extends Error {
   readonly predecessorId = 'x'
@@ -152,6 +163,8 @@ vi.mock('@3ngram/core', () => ({
   InvalidEmbeddingError,
   MissingSelectorError,
   NotCommitmentMemoryError,
+  resolveRetrievalPolicy,
+  UnscopedRetrievalError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -237,6 +250,9 @@ beforeEach(() => {
   // A valid session bearer resolves to the SAME fixed tenant, so a route's
   // happy-path assertions hold identically under either auth path.
   authenticateToken.mockResolvedValue(TENANT)
+  // Retrieval-scope policy (issue #47): default to 'off' so every shipped
+  // route assertion holds byte-identically; policy tests override per-case.
+  resolveRetrievalPolicy.mockResolvedValue({ mode: 'off' })
 })
 
 interface CallOptions {
@@ -403,18 +419,21 @@ describe('POST /api/v1/memories (remember)', () => {
 
 describe('POST /api/v1/search', () => {
   it('happy path: mirrors the public MCP search response contract', async () => {
-    search.mockResolvedValue([
-      {
-        id: NEW_ID,
-        memoryType: 'commitment',
-        topic: 't',
-        content: 'hit',
-        contentLength: 'hit'.length,
-        truncated: false,
-        score: 0.9,
-        commitmentStatus: 'waiting',
-      },
-    ])
+    search.mockResolvedValue({
+      hits: [
+        {
+          id: NEW_ID,
+          memoryType: 'commitment',
+          topic: 't',
+          content: 'hit',
+          contentLength: 'hit'.length,
+          truncated: false,
+          score: 0.9,
+          commitmentStatus: 'waiting',
+        },
+      ],
+      appliedScope: null,
+    })
     const res = await call('/api/v1/search', {
       method: 'POST',
       key: VALID_KEY,
@@ -878,10 +897,13 @@ describe('GET /api/v1/briefing', () => {
     expect(res.status).toBe(200)
     // EXACT argument match (not objectContaining): a legacy query must produce
     // exactly the V1 core call — no sections/sectionLimit keys ride along.
+    // The injected retrievalPolicy (issue #47) is the ONE addition every
+    // briefing call now carries — resolved per request, 'off' by default.
     expect(briefing).toHaveBeenCalledWith(TENANT, {
       selector: { kind: 'all' },
       mode: 'brief',
       now: expect.any(Date),
+      retrievalPolicy: { mode: 'off' },
     })
     expect(JSON.stringify(await res.json())).toBe(JSON.stringify(BRIEFING))
   })

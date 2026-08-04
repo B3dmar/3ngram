@@ -218,6 +218,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "blockers": {
                       "additionalProperties": false,
                       "properties": {
@@ -949,6 +956,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 25,
                       "minimum": 0,
@@ -4132,6 +4146,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 9007199254740991,
                       "minimum": 0,

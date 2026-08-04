@@ -44,6 +44,7 @@ import {
   rejectProposal,
   remember,
   resolveByMemoryId,
+  resolveRetrievalPolicy,
   revise,
   search,
   searchDashboardPage,
@@ -195,7 +196,9 @@ async function guard(route: string, res: Response, handler: () => Promise<void>)
   } catch (err) {
     const mapped = mapRestError(route, err)
     if (mapped !== undefined) {
-      res.status(mapped.status).json({ error: mapped.reason })
+      // `detail` rides only when the mapping carries a bounded recovery hint
+      // (e.g. the registered scopes an unscoped-read rejection names).
+      res.status(mapped.status).json(defined({ error: mapped.reason, detail: mapped.detail }))
       return
     }
     log().error({ route, ...crashSafeError(err) }, 'rest: handler failed')
@@ -472,25 +475,36 @@ export function restRouter(options: RestRouterOptions): Router {
         status: input.status,
         asOf: toAsOf(input.asOf),
       })
-      const hits = await search(
+      // RETRIEVAL-SCOPE POLICY (issue #47): REST parity rides the SAME injected
+      // policy as the MCP tool — resolved once per request, enforced in core
+      // (default narrows an unscoped call; require -> typed 400 with the
+      // registered scopes in `detail`). The policy overload returns the
+      // envelope so the appliedScope echo is core-owned, never derived here.
+      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
+      const result = await search(
         tenant(req),
         input.query,
         { gateway: options.gateway },
-        { limit: input.limit, filters, budget: options.budget },
+        { limit: input.limit, filters, budget: options.budget, retrievalPolicy },
       )
 
-      res.status(200).json({
-        hits: hits.map((hit) => ({
-          id: hit.id,
-          memoryType: hit.memoryType,
-          topic: hit.topic,
-          content: hit.content,
-          contentLength: hit.contentLength,
-          truncated: hit.truncated,
-          score: hit.score,
-        })),
-        count: hits.length,
-      })
+      res.status(200).json(
+        defined({
+          hits: result.hits.map((hit) => ({
+            id: hit.id,
+            memoryType: hit.memoryType,
+            topic: hit.topic,
+            content: hit.content,
+            contentLength: hit.contentLength,
+            truncated: hit.truncated,
+            score: hit.score,
+          })),
+          count: result.hits.length,
+          // Present exactly when the policy narrowed this call (never silent);
+          // omitted otherwise so an off/no-policy response is byte-identical.
+          appliedScope: result.appliedScope ?? undefined,
+        }),
+      )
     })
   })
 
@@ -529,11 +543,15 @@ export function restRouter(options: RestRouterOptions): Router {
         decoded === undefined
           ? undefined
           : { ids: decoded.ids, scores: decoded.scores, off: decoded.off }
+      // RETRIEVAL-SCOPE POLICY (issue #47): enforced on EVERY page of a walk,
+      // same as the MCP search tool (core applies it before the frozen-ordering
+      // machinery on page 1 and before each continuation's eligibility check).
+      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
       const page = await searchDashboardPage(
         tenant(req),
         input.query,
         { gateway: options.gateway },
-        defined({ limit: input.limit, filters, frozen, budget: options.budget }),
+        defined({ limit: input.limit, filters, frozen, budget: options.budget, retrievalPolicy }),
       )
       // Only emit a cursor when there is a further page, so the client stops at
       // the window edge. The cursor carries the frozen ordering + next offset.
@@ -561,6 +579,9 @@ export function restRouter(options: RestRouterOptions): Router {
           count: page.hits.length,
           hasMore: page.hasMore,
           nextCursor,
+          // Policy echo (issue #47): present exactly when the policy narrowed
+          // this page; identical on every page of one walk.
+          appliedScope: page.appliedScope ?? undefined,
         }),
       )
     })
@@ -649,6 +670,11 @@ export function restRouter(options: RestRouterOptions): Router {
       // BEFORE the read (self-host allowAllAccess allows all); parity with the MCP
       // briefing tool.
       if (options.access) await options.access.assertRead(tenant(req))
+      // RETRIEVAL-SCOPE POLICY (issue #47): REST parity — the same injected
+      // policy as the MCP briefing tool; core narrows a kind:'all' selector
+      // under 'default' (result carries appliedScope) or rejects it under
+      // 'require' (typed 400 with the registered scopes in `detail`).
+      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
       // Optional knobs ride only when present (exactOptionalPropertyTypes),
       // exactly as the MCP briefing handler bridges (mcp/tools-orient.ts).
       const result = await briefing(tenant(req), {
@@ -657,6 +683,7 @@ export function restRouter(options: RestRouterOptions): Router {
         now: new Date(),
         ...(input.sections !== undefined ? { sections: input.sections } : {}),
         ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
+        retrievalPolicy,
       })
       res.status(200).json(result)
     })

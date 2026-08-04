@@ -20,6 +20,7 @@ import {
   type BudgetEnforcement,
   getFacts,
   type LimitsResolver,
+  type RetrievalPolicy,
   remember,
   resolveByMemoryId,
   revise,
@@ -109,6 +110,15 @@ export interface ToolContext {
   access?: AccessGate | undefined
   /** Billing-neutral resource-limit resolver. Omitted fields are unlimited. */
   limits?: LimitsResolver | undefined
+  /**
+   * Request-scoped retrieval-scope policy resolver (issue #47). The route
+   * builds it as a MEMOIZED thunk over core resolveRetrievalPolicy, so the
+   * policy is resolved AT MOST ONCE per request — and only when a
+   * policy-enforced read tool (search/briefing/handoff) actually runs; write
+   * tools never pay the lookup. Undefined → no enforcement (test/back-compat),
+   * identical to a stored mode of 'off'.
+   */
+  retrievalPolicy?: (() => Promise<RetrievalPolicy>) | undefined
 }
 
 /** Wrap a structured payload as a tool success result (text mirror + structured). */
