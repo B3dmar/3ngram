@@ -211,6 +211,13 @@
       "when": 1785592998112,
       "tag": "0029_audit_log_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1785837521321,
+      "tag": "0030_user_retrieval_policy",
+      "breakpoints": true
     }
   ]
 }

@@ -90,6 +90,8 @@ export {
 } from './import/index.js'
 export {
   type AsOf,
+  applyPolicyToScopeFilter,
+  applyPolicyToSelector,
   type Briefing,
   type BriefingCommitment,
   type BriefingMemoryItem,
@@ -123,6 +125,7 @@ export {
   type FrozenOrdering,
   type FullBriefing,
   type FusionWeights,
+  formatUnscopedRetrievalDetail,
   type GetMemoriesOptions,
   getCurrentUser,
   getFacts,
@@ -149,13 +152,16 @@ export {
   type MemoryListRow,
   MemoryNotFoundError,
   MissingSelectorError,
+  type RetrievalPolicy,
   requireSelector,
+  type ScopedSearchResult,
   type SearchHit,
   type SearchOptions,
   STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
   search,
   searchDashboardPage,
+  UnscopedRetrievalError,
   type UserDataExport,
   type UserIdentityRow,
 } from './read/index.js'
@@ -164,10 +170,13 @@ export {
   createScope,
   deleteScope,
   listScopes,
+  type RetrievalPolicySetting,
   renameScope,
+  resolveRetrievalPolicy,
   ScopeNameConflictError,
   ScopeNotFoundError,
   type ScopeRecord,
+  setRetrievalDefault,
   setScopeAliases,
 } from './scope/index.js'
 export {

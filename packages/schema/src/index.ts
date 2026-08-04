@@ -46,27 +46,41 @@ export {
 // --- briefing/handoff bounds V2 (sectionLimit + sections, issue #45) ---
 export type {
   BriefingSectionName,
+  BriefingSelectorV2Input,
   BriefingToolArgsV2,
+  BriefingToolArgsV3,
   BriefingToolInputV2,
+  BriefingToolInputV3,
   BriefingToolOutputV2,
+  BriefingToolOutputV3,
   HandoffCountsOutput,
   HandoffToolArgsV2,
+  HandoffToolArgsV3,
   HandoffToolInputV2,
+  HandoffToolInputV3,
   HandoffToolOutputV2,
+  HandoffToolOutputV3,
   HandoffTruncatedOutput,
+  ScopeProjectSelectorInput,
 } from './briefing-bounds.js'
 export {
   BRIEFING_SECTION_NAMES,
   briefingSectionNameSchema,
+  briefingSelectorV2Schema,
   briefingToolInputV2Schema,
+  briefingToolInputV3Schema,
   briefingToolOutputV2Schema,
+  briefingToolOutputV3Schema,
   HANDOFF_SECTION_NAMES,
   handoffCountsSchema,
   handoffToolInputV2Schema,
+  handoffToolInputV3Schema,
   handoffToolOutputV2Schema,
+  handoffToolOutputV3Schema,
   handoffTruncatedSchema,
   MAX_BRIEFING_SECTION_CEILING,
   MAX_HANDOFF_SECTION_CEILING,
+  scopeProjectSelectorSchema,
 } from './briefing-bounds.js'
 export type { BudgetStatusResponse, PlanTier } from './budget.js'
 export { budgetStatusResponseSchema, PLAN_TIERS, planTierSchema } from './budget.js'
@@ -281,6 +295,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  RestErrorResponse,
   StatsResponse,
 } from './rest.js'
 export {
@@ -291,8 +306,10 @@ export {
   dashboardSearchHitSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
+  invalidInputRestErrorResponseSchema,
   MAX_DASHBOARD_SEARCH_LIMIT,
   MAX_MEMORIES_LIMIT,
+  MAX_REST_ERROR_DETAIL_LENGTH,
   MAX_REST_PROPOSALS_LIMIT,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
@@ -309,8 +326,37 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  restErrorResponseSchema,
   statsResponseSchema,
 } from './rest.js'
+// --- retrieval-scope policy (issue #47) — appended block ---
+export type {
+  BriefingToolOutputV4,
+  ConfigureScopeInputV2,
+  ConfigureScopeOutputV2,
+  DashboardSearchResponseV2,
+  DescribeEnvironmentOutputV2,
+  HandoffToolOutputV4,
+  RetrievalScopeMode,
+  RetrievalScopePolicy,
+  SearchRestResponseV2,
+  SearchToolOutputV3,
+  SetRetrievalDefaultInput,
+} from './retrieval-scope.js'
+export {
+  briefingToolOutputV4Schema,
+  configureScopeInputV2Schema,
+  configureScopeOutputV2Schema,
+  dashboardSearchResponseV2Schema,
+  describeEnvironmentOutputV2Schema,
+  handoffToolOutputV4Schema,
+  retrievalScopeModeSchema,
+  retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
+  searchRestResponseV2Schema,
+  searchToolOutputV3Schema,
+  setRetrievalDefaultInputSchema,
+} from './retrieval-scope.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---

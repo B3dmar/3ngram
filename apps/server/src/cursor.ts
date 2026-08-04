@@ -76,7 +76,7 @@ function canonicalize(value: unknown): unknown {
 
 /**
  * Short stable fingerprint of a search: sha256 over the POST-PARSE query text
- * EXACTLY as given plus the canonicalized filter set, truncated to 16 hex
+ * EXACTLY as given plus the canonicalized effective filter set, truncated to 16 hex
  * chars (64 bits — collision-safe for a mismatch GUARD, not an identifier).
  *
  * NO normalization of the query happens here — deliberately. Both transports
@@ -91,13 +91,31 @@ function canonicalize(value: unknown): unknown {
  * must not fingerprint-collide (collapsing would let a changed query silently
  * reuse the old frozen ordering).
  *
+ * `effectiveScope` lets policy-aware callers bind a defaulted scope even when
+ * it was absent from the caller's filters. `scopeAppliedByPolicy` additionally
+ * distinguishes that default from an explicit caller scope with the same
+ * value. The discriminator is appended only when true so fingerprints minted
+ * for explicit/no-policy searches before this binding remain compatible;
+ * pre-binding policy-default cursors fail closed.
+ *
  * Issuance freezes it into the cursor (`fp`); continuation recomputes it from
  * the CURRENT request and verifies via {@link decodeSearchCursor}. The query
  * text itself never leaves this function (hard rule 6: hash only).
  */
-export function searchFingerprint(query: string, filters: Record<string, unknown>): string {
-  const canonicalFilters = JSON.stringify(canonicalize(filters))
-  return createHash('sha256').update(`${query}\n${canonicalFilters}`).digest('hex').slice(0, 16)
+export function searchFingerprint(
+  query: string,
+  filters: Record<string, unknown>,
+  effectiveScope?: string,
+  scopeAppliedByPolicy = false,
+): string {
+  const boundFilters =
+    effectiveScope === undefined ? filters : { ...filters, scope: effectiveScope }
+  const canonicalFilters = JSON.stringify(canonicalize(boundFilters))
+  const policyProvenance = scopeAppliedByPolicy ? '\npolicy-scope:applied' : ''
+  return createHash('sha256')
+    .update(`${query}\n${canonicalFilters}${policyProvenance}`)
+    .digest('hex')
+    .slice(0, 16)
 }
 
 /**

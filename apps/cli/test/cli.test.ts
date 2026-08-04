@@ -9,6 +9,7 @@ import type {
   FactsToolOutput,
   RememberToolArgs,
   RememberToolOutput,
+  SearchRestResponseV2,
   SearchToolOutput,
 } from '@3ngram/schema'
 import {
@@ -34,7 +35,7 @@ interface Recorded {
 /** A stub client capturing the method + payload and returning a canned output. */
 function stubClient(outputs: {
   remember?: RememberToolOutput
-  search?: SearchToolOutput
+  search?: SearchRestResponseV2
   facts?: FactsToolOutput
   throws?: unknown
 }): { client: ThreengramClient; calls: Recorded[] } {
@@ -51,7 +52,7 @@ function stubClient(outputs: {
     search: async (query: string, opts?: SearchOptions) => {
       calls.push({ method: 'search', payload: { query, opts } })
       if (outputs.throws !== undefined) return reject()
-      return outputs.search as SearchToolOutput
+      return outputs.search as SearchRestResponseV2
     },
     getFacts: async (filters?: unknown) => {
       calls.push({ method: 'getFacts', payload: filters })
@@ -240,6 +241,21 @@ describe('search command', () => {
     expect(JSON.parse(out.join('\n'))).toEqual(SEARCH_OUT)
   })
 
+  it('surfaces the retrieval-policy scope in human output, including empty results', async () => {
+    const scoped = { ...SEARCH_OUT, appliedScope: 'work' }
+    const { client } = stubClient({ search: scoped })
+    const { io, out } = captureIo(client)
+
+    await run(['search', 'x'], io)
+    expect(out.join('\n')).toContain('retrieval scope: work (policy applied)')
+
+    const empty = stubClient({ search: { hits: [], count: 0, appliedScope: 'personal' } })
+    const captured = captureIo(empty.client)
+    await run(['search', 'x'], captured.io)
+    expect(captured.out.join('\n')).toContain('retrieval scope: personal (policy applied)')
+    expect(captured.out.join('\n')).toContain('no matches')
+  })
+
   it('exits non-zero when no query is supplied', async () => {
     const { client, calls } = stubClient({ search: SEARCH_OUT })
     const { io, err } = captureIo(client)
@@ -365,6 +381,19 @@ describe('error mapping', () => {
     expect(code).not.toBe(0)
     expect(err.join('\n')).toContain('404 not_found')
     expect(out).toHaveLength(0)
+  })
+
+  it('prints retrieval-policy recovery detail from the SDK error', async () => {
+    const detail = 'registered scopes: personal, work'
+    const { client } = stubClient({
+      throws: new ThreengramApiError(400, 'invalid_input', detail),
+    })
+    const { io, err } = captureIo(client)
+
+    const code = await run(['search', 'x'], io)
+
+    expect(code).toBe(1)
+    expect(err).toContain(`detail: ${detail}`)
   })
 
   it('maps ThreengramNetworkError to a "could not reach" line, exit non-zero', async () => {
