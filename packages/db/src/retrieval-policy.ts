@@ -20,7 +20,7 @@
 // bounded user label, not memory content; this module logs nothing and
 // callers log ids/enum states only.
 import type { RetrievalScopeMode } from '@3ngram/schema'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { userRetrievalPolicy } from './schema/identity.js'
 
@@ -36,6 +36,18 @@ const POLICY_COLUMNS = {
   defaultScope: userRetrievalPolicy.defaultScope,
   updatedAt: userRetrievalPolicy.updatedAt,
 } as const
+
+/**
+ * Serialize retrieval-policy changes with scope renames/deletes for one user.
+ * All callers take this transaction lock before touching either side of the
+ * denormalized scope-name relationship, so a concurrent setter cannot restore
+ * an obsolete default after a registry mutation commits.
+ */
+export async function lockRetrievalScopePolicy(tx: TenantTx, userId: string): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('retrieval_scope_policy'), hashtext(${userId}::uuid::text))`,
+  )
+}
 
 /**
  * Read the caller's retrieval policy, or null when none was ever set (the
@@ -77,4 +89,31 @@ export async function upsertRetrievalPolicy(
   // .returning always yields exactly the upserted row on success.
   if (row === undefined) throw new Error('upsertRetrievalPolicy returned no row')
   return row
+}
+
+/**
+ * Replace a matching active default without disturbing any other policy.
+ * The caller owns the replacement semantics; this DB layer only performs the
+ * caller- and current-scope-bound SQL update inside its existing transaction.
+ */
+export async function replaceRetrievalPolicyDefault(
+  tx: TenantTx,
+  userId: string,
+  currentScope: string,
+  replacement: { mode: RetrievalScopeMode; defaultScope: string | null },
+): Promise<void> {
+  await tx
+    .update(userRetrievalPolicy)
+    .set({
+      mode: replacement.mode,
+      defaultScope: replacement.defaultScope,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(userRetrievalPolicy.userId, userId),
+        eq(userRetrievalPolicy.mode, 'default'),
+        eq(userRetrievalPolicy.defaultScope, currentScope),
+      ),
+    )
 }

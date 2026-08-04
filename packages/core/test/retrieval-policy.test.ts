@@ -21,6 +21,7 @@ const activePreferences = vi.fn()
 const getRetrievalPolicy = vi.fn()
 const upsertRetrievalPolicy = vi.fn()
 const listScopes = vi.fn()
+const lockRetrievalScopePolicy = vi.fn(async () => undefined)
 const getEnvironmentStats = vi.fn()
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
@@ -54,6 +55,7 @@ vi.mock('@3ngram/db', () => ({
   getRetrievalPolicy: (...a: unknown[]) => getRetrievalPolicy(...a),
   upsertRetrievalPolicy: (...a: unknown[]) => upsertRetrievalPolicy(...a),
   listScopes: (...a: unknown[]) => listScopes(...a),
+  lockRetrievalScopePolicy: (...a: unknown[]) => lockRetrievalScopePolicy(...a),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
@@ -456,6 +458,7 @@ describe('setRetrievalDefault (registry-checked setter)', () => {
       mode: 'default',
       scope: 'work',
     })
+    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(expect.anything(), USER)
     expect(upsertRetrievalPolicy.mock.calls[0]?.[2]).toEqual({
       mode: 'default',
       defaultScope: 'work',
