@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/sdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Typed TypeScript client for the 3ngram REST API.",
   "license": "Apache-2.0",
   "homepage": "https://3ngram.ai",
