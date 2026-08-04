@@ -52,8 +52,23 @@ describe('dashboard search cursor codec (v2 frozen ordering)', () => {
 
   it('round-trips a payload carrying the query fingerprint', () => {
     const fp = searchFingerprint('find me', { scope: 'work' })
-    const payload = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, fp }
+    const payload = {
+      v: 2 as const,
+      ids: [ID_A],
+      scores: [0.9],
+      off: 0,
+      fp,
+      policyScope: 'work',
+    }
     expect(decodeCursor(encodeCursor(payload))).toEqual(payload)
+  })
+
+  it('round-trips the nullable policy binding and accepts legacy v2 omission', () => {
+    const unscoped = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, policyScope: null }
+    expect(decodeCursor(encodeCursor(unscoped))).toEqual(unscoped)
+
+    const legacyV2 = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0 }
+    expect(decodeCursor(encodeCursor(legacyV2))).toEqual(legacyV2)
   })
 })
 

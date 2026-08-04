@@ -163,7 +163,12 @@ const searchTool: ToolDefinition = {
     const frozen =
       decoded === undefined
         ? undefined
-        : { ids: decoded.ids, scores: decoded.scores, off: decoded.off }
+        : {
+            ids: decoded.ids,
+            scores: decoded.scores,
+            off: decoded.off,
+            ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
+          }
     const page = await searchDashboardPage(
       ctx.userId,
       input.query,
@@ -185,6 +190,7 @@ const searchTool: ToolDefinition = {
           scores: page.frozen.scores,
           off: page.nextOffset,
           fp: fingerprint,
+          policyScope: page.frozen.policyScope,
         })
       : undefined
     const output = parseOutput(

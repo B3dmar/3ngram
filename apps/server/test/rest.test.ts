@@ -588,7 +588,7 @@ describe('POST /api/v1/dashboard/search', () => {
           commitmentStatus: 'waiting',
         },
       ],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 1,
       hasMore: true,
     })
@@ -619,6 +619,7 @@ describe('POST /api/v1/dashboard/search', () => {
       scores: [0.9, 0.8],
       off: 1,
       fp: searchFingerprint('find me', { memoryType: 'commitment', scope: 'work' }),
+      policyScope: null,
     })
     expect(searchDashboardPage).toHaveBeenCalledWith(
       TENANT,
@@ -636,7 +637,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('continuation: decodes the v2 cursor and pages by position within the frozen ordering', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [{ id: FROZEN_IDS[1], memoryType: 'note', topic: 'next', content: 'n', score: 0.8 }],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 2,
       hasMore: false,
     })
@@ -662,7 +663,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('stale v1 cursor restarts at page 1 (no frozen ordering, not a 400)', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [],
-      frozen: { ids: [], scores: [] },
+      frozen: { ids: [], scores: [], policyScope: null },
       nextOffset: 1,
       hasMore: false,
     })
@@ -679,7 +680,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('continuation with the SAME query accepts a fingerprint-bound cursor', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 2,
       hasMore: false,
     })
@@ -697,7 +698,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('binds a cursor to the effective policy scope and rejects policy changes', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: 'work' },
       nextOffset: 1,
       hasMore: true,
       appliedScope: 'work',
@@ -709,7 +710,26 @@ describe('POST /api/v1/dashboard/search', () => {
       body: { query: 'find me', limit: 1 },
     })
     const cursor = ((await first.json()) as { nextCursor: string }).nextCursor
-    expect(decodeCursor(cursor)?.fp).toBe(searchFingerprint('find me', {}, 'work'))
+    expect(decodeCursor(cursor)).toMatchObject({
+      fp: searchFingerprint('find me', {}, 'work'),
+      policyScope: 'work',
+    })
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const samePolicy = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor },
+    })
+    expect(samePolicy.status).toBe(200)
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        frozen: expect.objectContaining({ off: 1, policyScope: 'work' }),
+      }),
+    )
 
     vi.clearAllMocks()
     authenticateApiKey.mockResolvedValue(TENANT)

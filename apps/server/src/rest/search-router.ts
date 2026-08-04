@@ -81,7 +81,12 @@ function frozenPage(input: DashboardSearchQuery, fingerprint: string) {
   const decoded = decodeSearchCursor(input.cursor, fingerprint)
   return decoded === undefined
     ? undefined
-    : { ids: decoded.ids, scores: decoded.scores, off: decoded.off }
+    : {
+        ids: decoded.ids,
+        scores: decoded.scores,
+        off: decoded.off,
+        ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
+      }
 }
 
 function nextCursor(page: DashboardSearchPage, fingerprint: string): string | undefined {
@@ -92,6 +97,7 @@ function nextCursor(page: DashboardSearchPage, fingerprint: string): string | un
     scores: page.frozen.scores,
     off: page.nextOffset,
     fp: fingerprint,
+    policyScope: page.frozen.policyScope,
   })
 }
 

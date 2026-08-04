@@ -510,9 +510,14 @@ describe('search tool', () => {
     hits: Array<{ id: string; score: number }>,
     overrides: Record<string, unknown> = {},
   ) {
+    const policyScope = typeof overrides.appliedScope === 'string' ? overrides.appliedScope : null
     return {
       hits,
-      frozen: { ids: hits.map((h) => h.id), scores: hits.map((h) => h.score) },
+      frozen: {
+        ids: hits.map((h) => h.id),
+        scores: hits.map((h) => h.score),
+        policyScope,
+      },
       nextOffset: hits.length,
       hasMore: false,
       ...overrides,
@@ -570,6 +575,7 @@ describe('search tool', () => {
       scores: [0.9],
       off: 1,
       fp: searchFingerprint('sdk pin', {}),
+      policyScope: null,
     })
   })
 
@@ -583,7 +589,23 @@ describe('search tool', () => {
       ctx({ retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })) }),
     )
     const cursor = (issued.structuredContent as { nextCursor: string }).nextCursor
-    expect(decodeCursor(cursor)?.fp).toBe(searchFingerprint('sdk pin', {}, 'work'))
+    expect(decodeCursor(cursor)).toMatchObject({
+      fp: searchFingerprint('sdk pin', {}, 'work'),
+      policyScope: 'work',
+    })
+
+    vi.clearAllMocks()
+    const samePolicy = await call(
+      'search',
+      { query: 'sdk pin', cursor },
+      ctx({ retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })) }),
+    )
+    expect(samePolicy.isError).toBeFalsy()
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        frozen: expect.objectContaining({ off: 1, policyScope: 'work' }),
+      }),
+    )
 
     vi.clearAllMocks()
     for (const policy of [
