@@ -60,11 +60,13 @@ export {
 export {
   type AuthorizedClientView,
   authenticateClientCredentials,
+  type ClientResolutionFailure,
   hashClientSecret,
   listAuthorizedClients,
   type OAuthClientInformation,
   type OAuthClientsStore,
   oauthClientsStore,
+  type ResolveOAuthClientOptions,
   registerOAuthClient,
   resolveOAuthClient,
   revokeAuthorizedClient,

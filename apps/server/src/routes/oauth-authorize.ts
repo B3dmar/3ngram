@@ -21,9 +21,10 @@
 //
 // Never log credentials, codes, or CSRF tokens.
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { loadOAuthConfig } from '@3ngram/config'
+import { contentDigest, loadOAuthConfig, log } from '@3ngram/config'
 import {
   type ClientMetadataResolver,
+  type ClientResolutionFailure,
   createOAuthServerProvider,
   EmailNotVerifiedError,
   MEMORY_READ_SCOPE,
@@ -175,28 +176,77 @@ button{margin-top:1rem;padding:.6rem 1.2rem;cursor:pointer}.host{color:#555}.err
 </body></html>`
 }
 
+interface ConsentTarget {
+  client: OAuthClientInformation
+  redirectUri: string
+  redirectUriSupplied: boolean
+}
+
 /**
- * Resolve client + redirect URI for a validated request, or undefined when the
- * client is unknown / the redirect_uri is not registered. The 400 is emitted by
- * the caller — NEVER a redirect (the URI is unvetted by definition here).
+ * Why an /authorize request could not reach the consent form. DIAGNOSTIC ONLY —
+ * the response stays a uniform invalid_client (no enumeration oracle); this
+ * token exists solely for the audit line. Closed set, so it is content-free
+ * under hard rule 6.
+ */
+type AuthorizeFailure = ClientResolutionFailure | 'unsupported_grant_type' | 'redirect_uri_mismatch'
+
+type ConsentTargetResult =
+  | { ok: true; target: ConsentTarget }
+  | { ok: false; reason: AuthorizeFailure }
+
+/**
+ * Resolve client + redirect URI for a validated request, or the reason it could
+ * not be resolved when the client is unknown / the redirect_uri is not
+ * registered. The 400 is emitted by the caller — NEVER a redirect (the URI is
+ * unvetted by definition here).
  */
 async function resolveConsentTarget(
   params: AuthorizeRequest,
   redirectUriSupplied: boolean,
   clientMetadataResolver: ClientMetadataResolver,
-): Promise<
-  { client: OAuthClientInformation; redirectUri: string; redirectUriSupplied: boolean } | undefined
-> {
-  const client = await resolveOAuthClient(params.client_id, clientMetadataResolver)
-  if (client === undefined || !client.grant_types.includes('authorization_code')) return undefined
+): Promise<ConsentTargetResult> {
+  let resolutionFailure: ClientResolutionFailure | undefined
+  const client = await resolveOAuthClient(params.client_id, clientMetadataResolver, {
+    onFailure: (reason) => {
+      resolutionFailure = reason
+    },
+  })
+  if (client === undefined) return { ok: false, reason: resolutionFailure ?? 'not_registered' }
+  if (!client.grant_types.includes('authorization_code')) {
+    return { ok: false, reason: 'unsupported_grant_type' }
+  }
   const redirectUri = resolveRegisteredRedirectUri(client, params.redirect_uri)
-  if (redirectUri === undefined) return undefined
+  if (redirectUri === undefined) return { ok: false, reason: 'redirect_uri_mismatch' }
   // RFC 6749 §4.1.3: supplied-ness is captured at the INITIAL GET
   // /authorize (whether the CLIENT's request carried redirect_uri) and threaded
   // through the consent form — NOT derived from the POST's redirect_uri, which
   // always carries the RESOLVED URI as a hidden field. Pure pass-through of the
   // caller-supplied flag; the RFC decision stays in core.
-  return { client, redirectUri, redirectUriSupplied }
+  return { ok: true, target: { client, redirectUri, redirectUriSupplied } }
+}
+
+/**
+ * A non-throwing, content-free fingerprint of the presented client_id — mirrors
+ * the /oauth/token audit line. CIMD client_ids are URLs that may carry a query
+ * component, so no raw prefix is safe to log (hard rule 6).
+ */
+function clientIdPrefix(clientId: unknown): string {
+  if (typeof clientId !== 'string' || clientId.length === 0) return '(none)'
+  return `sha8:${contentDigest(clientId)}`
+}
+
+/**
+ * ONE structured, content-free line per REJECTED /authorize request. Without it
+ * a CIMD failure is indistinguishable from a stale registration: both surface as
+ * a bare 400 invalid_client with nothing written anywhere. Successes are already
+ * observable (the consent form renders, then /oauth/token logs the exchange), so
+ * only the rejection path needs this.
+ */
+function logAuthorizeRejection(clientId: unknown, reason: AuthorizeFailure): void {
+  log().info(
+    { client_id_prefix: clientIdPrefix(clientId), outcome: 'invalid_client', reason },
+    'oauth: authorize endpoint',
+  )
 }
 
 /** GET: validate, then serve the consent form with a fresh CSRF pair. */
@@ -212,12 +262,13 @@ async function handleAuthorizeGet(
   }
   // Capture supplied-ness from the CLIENT's authorize request here, GET-time —
   // this is the only point that sees whether redirect_uri was actually sent.
-  const target = await resolveConsentTarget(
+  const result = await resolveConsentTarget(
     parsed.data,
     parsed.data.redirect_uri !== undefined,
     clientMetadataResolver,
   )
-  if (target === undefined) {
+  if (!result.ok) {
+    logAuthorizeRejection(parsed.data.client_id, result.reason)
     res.status(400).json({ error: 'invalid_client' })
     return
   }
@@ -225,7 +276,7 @@ async function handleAuthorizeGet(
   res
     .status(200)
     .type('html')
-    .send(renderConsentPage({ ...target, params: parsed.data, csrfToken }))
+    .send(renderConsentPage({ ...result.target, params: parsed.data, csrfToken }))
 }
 
 /** POST: CSRF + credentials, then issue the code and 302 back with state. */
@@ -241,15 +292,17 @@ async function handleConsentPost(
   }
   // Read supplied-ness from the GET-time hidden field — NOT from the POST's
   // redirect_uri, which always carries the resolved URI.
-  const target = await resolveConsentTarget(
+  const result = await resolveConsentTarget(
     parsed.data,
     parsed.data.redirect_uri_was_supplied === '1',
     clientMetadataResolver,
   )
-  if (target === undefined) {
+  if (!result.ok) {
+    logAuthorizeRejection(parsed.data.client_id, result.reason)
     res.status(400).json({ error: 'invalid_client' })
     return
   }
+  const target = result.target
   if (!csrfMatches(readCsrfCookie(req.header('cookie')), parsed.data.csrf_token)) {
     res.status(403).json({ error: 'invalid_request' })
     return
