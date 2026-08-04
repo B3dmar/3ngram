@@ -89,7 +89,7 @@ describe('assertPasswordNotBreached', () => {
     }
     await assertPasswordNotBreached(password, { enabled: true, fetchRange, logger: { warn } })
     expect(warn).toHaveBeenCalledTimes(1)
-    const [obj, msg] = warn.mock.calls[0]
+    const [obj, msg] = warn.mock.calls[0] ?? [{}, '']
     expect(obj).toMatchObject({ reason: 'unreachable' })
     // No password material in the counter (hard rule 6): neither the password nor
     // any SHA-1 prefix of it may appear in the logged object or message.
@@ -111,7 +111,7 @@ describe('assertPasswordNotBreached', () => {
       logger: { warn },
     })
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(warn.mock.calls[0][0]).toMatchObject({ reason: 'timeout' })
+    expect(warn.mock.calls[0]?.[0]).toMatchObject({ reason: 'timeout' })
   })
 
   it('aborts the range query after the timeout budget and fails open', async () => {

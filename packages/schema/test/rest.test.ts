@@ -1,12 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
+  invalidInputRestErrorResponseSchema,
+  MAX_REST_ERROR_DETAIL_LENGTH,
+  memoriesListQuerySchema,
   memoriesListResponseSchema,
   memoryDetailSchema,
   memoryHistoryResponseSchema,
 } from '../src/index.js'
 
 const iso = '2026-06-01T00:00:00.000Z'
+
+describe('REST error response contract', () => {
+  it('accepts detail at the boundary and rejects one character more', () => {
+    expect(
+      invalidInputRestErrorResponseSchema.safeParse({
+        error: 'invalid_input',
+        detail: 'x'.repeat(MAX_REST_ERROR_DETAIL_LENGTH),
+      }).success,
+    ).toBe(true)
+    expect(
+      invalidInputRestErrorResponseSchema.safeParse({
+        error: 'invalid_input',
+        detail: 'x'.repeat(MAX_REST_ERROR_DETAIL_LENGTH + 1),
+      }).success,
+    ).toBe(false)
+  })
+})
 
 function identity(id = crypto.randomUUID()) {
   return {
@@ -113,6 +134,56 @@ const detail = {
   validFrom: iso,
   validTo: null,
 }
+
+describe('memoriesListQuerySchema — recorded-range hardening (issue #58, MCP parity)', () => {
+  it('REJECTS an inverted recorded_at range (recordedAfter later than recordedBefore)', () => {
+    const inverted = memoriesListQuerySchema.safeParse({
+      recordedAfter: '2026-02-01T00:00:00Z',
+      recordedBefore: '2026-01-01T00:00:00Z',
+    })
+    expect(inverted.success).toBe(false)
+    // Equal bounds are a valid single-instant range (both bounds inclusive).
+    expect(
+      memoriesListQuerySchema.safeParse({
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+    // A well-ordered range still parses.
+    expect(
+      memoriesListQuerySchema.safeParse({
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-02-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('REJECTS sub-millisecond recorded bounds; accepts up to 3 fractional digits', () => {
+    // At the bound: millisecond precision (what the transport's ISO→Date
+    // conversion can represent losslessly) parses.
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedAfter: '2026-01-01T00:00:00.123Z' }).success,
+    ).toBe(true)
+    // Past the bound: microsecond-ish precision is rejected per bound rather
+    // than silently truncated (recorded_at stores microseconds in Postgres).
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedAfter: '2026-01-01T00:00:00.1234Z' }).success,
+    ).toBe(false)
+    expect(
+      memoriesListQuerySchema.safeParse({ recordedBefore: '2026-01-01T00:00:00.123456Z' }).success,
+    ).toBe(false)
+  })
+
+  it('ADVERTISES the precision limit in emitted REST JSON Schema', () => {
+    const json = z.toJSONSchema(memoriesListQuerySchema, {
+      target: 'draft-2020-12',
+      io: 'input',
+    })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.recordedAfter?.description).toMatch(/at most 3 fractional-second digits/i)
+    expect(props.recordedBefore?.description).toMatch(/at most 3 fractional-second digits/i)
+  })
+})
 
 describe('REST memory contracts', () => {
   it('allows commitmentStatus on list rows while keeping list rows content-free', () => {

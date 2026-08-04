@@ -9,8 +9,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const eraseAccountData = vi.fn()
-const insertAuditLog = vi.fn(async () => {})
-const auditLogEntryExists = vi.fn(async () => false)
+const insertAuditLog = vi.fn(async (..._args: unknown[]) => {})
+const auditLogEntryExists = vi.fn(async (..._args: unknown[]) => false)
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
 )
@@ -26,9 +26,9 @@ const { deleteAccount } = await import('../src/account/delete-account.js')
 
 const NOW = new Date('2026-06-27T00:00:00.000Z')
 
-/** A fake platform cleanup hook. */
-function fakeHook(): ReturnType<typeof vi.fn> {
-  return vi.fn(async () => {})
+/** A fake platform cleanup hook, typed to the onAccountDeletion contract. */
+function fakeHook() {
+  return vi.fn(async (_userId: string) => {})
 }
 
 const fullErasure = {

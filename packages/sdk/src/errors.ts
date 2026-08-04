@@ -15,12 +15,15 @@ export class ThreengramApiError extends Error {
   readonly status: number
   /** The REST `{ error: <reason> }` body code (e.g. 'not_found'); 'unknown' when absent. */
   readonly reason: string
+  /** Optional bounded recovery guidance supplied by the REST error contract. */
+  readonly detail: string | undefined
 
-  constructor(status: number, reason: string) {
+  constructor(status: number, reason: string, detail?: string) {
     super(`3ngram REST request failed: ${status} ${reason}`)
     this.name = 'ThreengramApiError'
     this.status = status
     this.reason = reason
+    this.detail = detail
   }
 }
 

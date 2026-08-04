@@ -43,6 +43,45 @@ export {
   userCredentialsSchema,
   verifyEmailInputSchema,
 } from './auth.js'
+// --- briefing/handoff bounds V2 (sectionLimit + sections, issue #45) ---
+export type {
+  BriefingSectionName,
+  BriefingSelectorV2Input,
+  BriefingToolArgsV2,
+  BriefingToolArgsV3,
+  BriefingToolInputV2,
+  BriefingToolInputV3,
+  BriefingToolOutputV2,
+  BriefingToolOutputV3,
+  HandoffCountsOutput,
+  HandoffToolArgsV2,
+  HandoffToolArgsV3,
+  HandoffToolInputV2,
+  HandoffToolInputV3,
+  HandoffToolOutputV2,
+  HandoffToolOutputV3,
+  HandoffTruncatedOutput,
+  ScopeProjectSelectorInput,
+} from './briefing-bounds.js'
+export {
+  BRIEFING_SECTION_NAMES,
+  briefingSectionNameSchema,
+  briefingSelectorV2Schema,
+  briefingToolInputV2Schema,
+  briefingToolInputV3Schema,
+  briefingToolOutputV2Schema,
+  briefingToolOutputV3Schema,
+  HANDOFF_SECTION_NAMES,
+  handoffCountsSchema,
+  handoffToolInputV2Schema,
+  handoffToolInputV3Schema,
+  handoffToolOutputV2Schema,
+  handoffToolOutputV3Schema,
+  handoffTruncatedSchema,
+  MAX_BRIEFING_SECTION_CEILING,
+  MAX_HANDOFF_SECTION_CEILING,
+  scopeProjectSelectorSchema,
+} from './briefing-bounds.js'
 export type { BudgetStatusResponse, PlanTier } from './budget.js'
 export { budgetStatusResponseSchema, PLAN_TIERS, planTierSchema } from './budget.js'
 export type {
@@ -61,6 +100,23 @@ export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
 export type { CursorPayload } from './cursor.js'
 export { cursorPayloadSchema, legacyCursorPayloadSchema } from './cursor.js'
+// --- get_memories batched bounded-content read (MCP tool IO) ---
+export type {
+  GetMemoriesArgs,
+  GetMemoriesInput,
+  GetMemoriesItemOutput,
+  GetMemoriesOutput,
+} from './get-memories.js'
+export {
+  DEFAULT_GET_CONTENT_CHARS,
+  getMemoriesInputSchema,
+  getMemoriesItemSchema,
+  getMemoriesOutputSchema,
+  MAX_GET_CONTENT_CHARS,
+  MAX_GET_MEMORIES_IDS,
+  MAX_GET_TOTAL_CHARS,
+  MIN_GET_CONTENT_CHARS,
+} from './get-memories.js'
 // --- import write contracts (groundwork for batch importers) ---
 export type {
   ImportCommitmentInput,
@@ -83,7 +139,7 @@ export {
   MAX_IMPORT_CONTENT_LENGTH,
   MAX_IMPORT_PAYLOAD_LENGTH,
 } from './import.js'
-// --- briefing/handoff orientation tool IO — appended ---
+// --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,
   BriefingCommitmentOutput,
@@ -119,10 +175,13 @@ export type {
   ReviseToolOutput,
   ScopeRecordOutput,
   SearchFiltersInput,
+  SearchFiltersV2Input,
   SearchHitOutput,
   SearchInput,
   SearchQueryArgs,
   SearchQueryInput,
+  SearchQueryV2Args,
+  SearchQueryV2Input,
   SearchToolOutput,
   WrittenMemoryOutput,
 } from './mcp.js'
@@ -153,6 +212,7 @@ export {
   handoffToolInputSchema,
   handoffToolOutputSchema,
   MAX_EXCERPT_LENGTH,
+  MAX_MEMORY_TYPES_FILTER,
   MAX_PROPOSALS_LIMIT,
   MAX_SCOPE_ALIASES,
   MAX_SEARCH_LIMIT,
@@ -172,9 +232,11 @@ export {
   scopeNameSchema,
   scopeRecordSchema,
   searchFiltersSchema,
+  searchFiltersV2Schema,
   searchHitSchema,
   searchInputSchema,
   searchQuerySchema,
+  searchQueryV2Schema,
   searchToolOutputSchema,
   writtenMemorySchema,
 } from './mcp.js'
@@ -203,6 +265,13 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+// --- shared recorded_at range rules (issue #58) ---
+export type { RecordedRangeIssue } from './recorded-range.js'
+export {
+  exceedsRecordedBoundPrecision,
+  MAX_RECORDED_BOUND_FRACTION_DIGITS,
+  recordedRangeIssues,
+} from './recorded-range.js'
 export type { ResourceLimitKind, ResourceLimits } from './resource-limits.js'
 export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits.js'
 // --- REST /api/v1 dashboard contract — appended block ---
@@ -226,6 +295,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  RestErrorResponse,
   StatsResponse,
 } from './rest.js'
 export {
@@ -236,8 +306,10 @@ export {
   dashboardSearchHitSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
+  invalidInputRestErrorResponseSchema,
   MAX_DASHBOARD_SEARCH_LIMIT,
   MAX_MEMORIES_LIMIT,
+  MAX_REST_ERROR_DETAIL_LENGTH,
   MAX_REST_PROPOSALS_LIMIT,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
@@ -254,10 +326,53 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  restErrorResponseSchema,
   statsResponseSchema,
 } from './rest.js'
+// --- retrieval-scope policy (issue #47) — appended block ---
+export type {
+  BriefingToolOutputV4,
+  ConfigureScopeInputV2,
+  ConfigureScopeOutputV2,
+  DashboardSearchResponseV2,
+  DescribeEnvironmentOutputV2,
+  HandoffToolOutputV4,
+  RetrievalScopeMode,
+  RetrievalScopePolicy,
+  SearchRestResponseV2,
+  SearchToolOutputV3,
+  SetRetrievalDefaultInput,
+} from './retrieval-scope.js'
+export {
+  briefingToolOutputV4Schema,
+  configureScopeInputV2Schema,
+  configureScopeOutputV2Schema,
+  dashboardSearchResponseV2Schema,
+  describeEnvironmentOutputV2Schema,
+  handoffToolOutputV4Schema,
+  retrievalScopeModeSchema,
+  retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
+  searchRestResponseV2Schema,
+  searchToolOutputV3Schema,
+  setRetrievalDefaultInputSchema,
+} from './retrieval-scope.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
+// --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---
+export type {
+  SearchHitCompactOutput,
+  SearchProjection,
+  SearchQueryV3Args,
+  SearchQueryV3Input,
+  SearchToolOutputV2,
+} from './search-cursor.js'
+export {
+  searchHitCompactSchema,
+  searchProjectionSchema,
+  searchQueryV3Schema,
+  searchToolOutputV2Schema,
+} from './search-cursor.js'
 export type {
   EdgeInput,
   Project,

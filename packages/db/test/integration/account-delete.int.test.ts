@@ -92,6 +92,11 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     const m1 = await seedMemory(userA, 'secret topic', 'secret body one')
     await seedMemory(userA, 'second', 'secret body two')
     await seedFact(userA, m1, 'secret value')
+    await ownerPool.query(
+      `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
+       VALUES ($1, 'default', 'private')`,
+      [userA],
+    )
     // Credentials: a session (deletable) + an api key + an oauth client/token.
     // Unique hashes per run — an erased user orphans (its email is rewritten), so
     // a fixed hash would collide on the unique constraint across runs.
@@ -194,6 +199,11 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     // the tombstoned account (auth-bypass closed).
     expect(await countRows('password_reset_tokens', userA)).toBe(0)
     expect(await countRows('email_verification_tokens', userA)).toBe(0)
+    const policy = await ownerPool.query(
+      'SELECT mode, default_scope FROM user_retrieval_policy WHERE user_id = $1',
+      [userA],
+    )
+    expect(policy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
 
     await ownerPool.query('DELETE FROM oauth_codes WHERE client_id = $1', [clientId])
     await ownerPool.query('DELETE FROM oauth_tokens WHERE client_id = $1', [clientId])

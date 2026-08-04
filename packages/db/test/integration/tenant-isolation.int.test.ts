@@ -224,8 +224,9 @@ describe('assertRlsInForce runtime guard', () => {
     for (const t of SEEDED_FORCED_TABLES) {
       expect(forced, `${t} missing from migration-derived forced set`).toContain(t)
     }
-    // 0028 forces twelve tenant-data tables.
-    expect(forced.length).toBe(12)
+    // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy.
+    expect(forced.length).toBe(13)
+    expect(forced).toContain('user_retrieval_policy')
   })
 
   it('FAILS CLOSED against a bypass-capable / owner connection', async () => {

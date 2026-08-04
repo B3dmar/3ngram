@@ -8,9 +8,9 @@
 //
 // The ROUTES table below is hand-maintained (router.ts registers plain Express
 // handlers — there is no declarative route registry to introspect), so
-// assertRouteCoverage() parses router.ts and FAILS the run when a registered
-// route is missing from the table (or vice versa) — a new route cannot silently
-// drop from the published reference.
+// assertRouteCoverage() parses the REST route modules and FAILS when a
+// registered route is missing from the table (or vice versa) — a new route
+// cannot silently drop from the published reference.
 //
 // Platform-only values (the servers base URL) are injected HERE at export time —
 // runtime schemas stay free of platform URLs.
@@ -20,14 +20,17 @@ import { fileURLToPath } from 'node:url'
 import {
   accountDeleteBodySchema,
   asOfSchema,
+  BRIEFING_SECTION_NAMES,
   briefingModeSchema,
-  briefingSelectorSchema,
-  briefingToolOutputSchema,
+  briefingSelectorV2Schema,
+  briefingToolInputV3Schema,
+  briefingToolOutputV4Schema,
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
-  dashboardSearchResponseSchema,
+  dashboardSearchResponseV2Schema,
   factsQueryInputSchema,
   factsToolOutputSchema,
+  invalidInputRestErrorResponseSchema,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -43,16 +46,21 @@ import {
   rememberToolOutputSchema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
+  retrievalScopeModeSchema,
   reviseToolInputSchema,
   reviseToolOutputSchema,
+  scopeNameSchema,
   searchQuerySchema,
-  searchToolOutputSchema,
+  searchRestResponseV2Schema,
   statsResponseSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROUTER_SOURCE = resolve(HERE, '../src/rest/router.ts')
+const ROUTER_SOURCES = [
+  resolve(HERE, '../src/rest/router.ts'),
+  resolve(HERE, '../src/rest/search-router.ts'),
+] as const
 const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
 const SERVERS = [{ url: 'https://api.3ngram.ai', description: '3ngram platform' }]
@@ -67,20 +75,33 @@ const factsQuery = z.object({
 
 // GET /api/v1/briefing flattens the selector union into flat keys: `kind` is the
 // union discriminator; the per-kind value fields become optional query params.
+// Selector V2 (issue #46): the union includes `scope_project`, whose
+// `includeUnscoped` boolean arrives as the literal string true/false (router.ts
+// coerces exactly those two before the single parse).
 const briefingQueryShape: Record<string, z.ZodType> = {
   kind: z.enum(
-    briefingSelectorSchema.options.map((option) => option.shape.kind.value) as [
+    briefingSelectorV2Schema.options.map((option) => option.shape.kind.value) as [
       string,
       ...string[],
     ],
   ),
 }
-for (const option of briefingSelectorSchema.options) {
+for (const option of briefingSelectorV2Schema.options) {
   for (const [key, value] of Object.entries(option.shape)) {
     if (key !== 'kind') briefingQueryShape[key] = (value as z.ZodType).optional()
   }
 }
 briefingQueryShape.mode = briefingModeSchema.optional()
+// Bounds V2 (issue #45): `sections` rides the querystring comma-separated
+// (router.ts splits before the single V2 parse — a querystring has no natural
+// array); `sectionLimit` reuses the EXACT V2 input field (hard rule 2).
+briefingQueryShape.sections = z
+  .string()
+  .describe(
+    `Comma-separated subset of sections to compute (unique names from: ${BRIEFING_SECTION_NAMES.join(', ')}). Absent = all sections; un-requested sections are skipped and omitted from the result.`,
+  )
+  .optional()
+briefingQueryShape.sectionLimit = briefingToolInputV3Schema.shape.sectionLimit
 
 /** Proposal decision echo ({id,status}) — composed from schema exports. */
 const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }).strict()
@@ -231,6 +252,16 @@ const exportUserProfile = z
     updatedAt: z.string().datetime(),
   })
   .strict()
+// Stored retrieval policy in the portability archive. The row itself carries
+// internal creation metadata, but the REST contract exposes only the effective
+// policy and its last-update time.
+const exportRetrievalPolicy = z
+  .object({
+    mode: retrievalScopeModeSchema,
+    defaultScope: scopeNameSchema.nullable(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
@@ -246,6 +277,7 @@ const accountExport = z
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
+    retrievalPolicy: exportRetrievalPolicy.nullable(),
     counts: z
       .object({
         memories: z.number().int().min(0),
@@ -301,7 +333,8 @@ interface RouteDoc {
   errors?: readonly {
     status: number
     description: string
-    reasons: readonly string[]
+    reasons?: readonly string[]
+    response?: z.ZodType
   }[]
 }
 
@@ -313,10 +346,10 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/memories/facets', operationId: 'getMemoryFacets', summary: 'Distinct scope and project values for the tenant (filter population)', status: 200, response: memoriesFacetsResponseSchema },
   { method: 'get', path: '/api/v1/memories/:id', operationId: 'getMemory', summary: 'Inspect a single memory, including content', status: 200, response: memoryDetailSchema },
   { method: 'get', path: '/api/v1/memories/:id/history', operationId: 'getMemoryHistory', summary: 'Inspect memory lineage, direct relationships, and audit metadata', status: 200, response: memoryHistoryResponseSchema },
-  { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchToolOutputSchema },
-  { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseSchema },
+  { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchRestResponseV2Schema, errors: [{ status: 400, description: 'Invalid search input; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
+  { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseV2Schema, errors: [{ status: 400, description: 'Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/facts', operationId: 'getFacts', summary: 'Currently-valid facts, with optional bi-temporal time travel (mirrors the MCP get_facts tool)', query: factsQuery, status: 200, response: factsToolOutputSchema },
-  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputSchema },
+  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV4Schema, errors: [{ status: 400, description: 'Invalid briefing input; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
   { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor (mirrors the MCP revise tool)', body: reviseToolInputSchema.omit({ predecessorId: true }), status: 200, response: reviseToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory (REST-only lifecycle operation; no MCP mirror)', status: 200, response: archiveResult },
@@ -332,22 +365,23 @@ const ROUTES: readonly RouteDoc[] = [
 ]
 
 /**
- * COVERAGE ASSERTION: parse router.ts for every `router.<method>('<path>'`
- * registration and fail when the set differs from ROUTES — a newly added route
- * cannot silently drop out of the published spec.
+ * COVERAGE ASSERTION: parse every REST route module for registrations and fail
+ * when their set differs from ROUTES.
  */
 function assertRouteCoverage(): void {
-  const source = readFileSync(ROUTER_SOURCE, 'utf8')
   const registered = new Set<string>()
-  for (const match of source.matchAll(/router\.(get|post|put|patch|delete)\(\s*'([^']+)'/g)) {
-    registered.add(`${match[1]} ${match[2]}`)
+  for (const sourcePath of ROUTER_SOURCES) {
+    const source = readFileSync(sourcePath, 'utf8')
+    for (const match of source.matchAll(/router\.(get|post|put|patch|delete)\(\s*'([^']+)'/g)) {
+      registered.add(`${match[1]} ${match[2]}`)
+    }
   }
   const documented = new Set(ROUTES.map((route) => `${route.method} ${route.path}`))
   const missing = [...registered].filter((entry) => !documented.has(entry))
   const stale = [...documented].filter((entry) => !registered.has(entry))
   if (missing.length > 0 || stale.length > 0) {
     throw new Error(
-      `openapi route table out of sync with router.ts — missing: [${missing.join(', ')}] stale: [${stale.join(', ')}]`,
+      `openapi route table out of sync with REST modules — missing: [${missing.join(', ')}] stale: [${stale.join(', ')}]`,
     )
   }
 }
@@ -417,12 +451,15 @@ function buildOperation(route: RouteDoc): Record<string, unknown> {
             description: error.description,
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { error: { type: 'string', enum: error.reasons } },
-                  required: ['error'],
-                  additionalProperties: false,
-                },
+                schema:
+                  error.response === undefined
+                    ? {
+                        type: 'object',
+                        properties: { error: { type: 'string', enum: error.reasons } },
+                        required: ['error'],
+                        additionalProperties: false,
+                      }
+                    : toJson(error.response, 'output'),
               },
             },
           },

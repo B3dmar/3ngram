@@ -197,7 +197,7 @@ await client.remember({
 
 Run semantic and keyword retrieval with optional pre-fusion filters.
 
-**Signature:** `search(query: string, opts?: SearchOptions): Promise<SearchToolOutput>`  
+**Signature:** `search(query: string, opts?: SearchOptions): Promise<SearchRestResponseV2>`  
 **REST route:** `POST /api/v1/search`
 
 ### Example
@@ -336,6 +336,13 @@ await client.search('oauth refresh token', {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "appliedScope": {
+      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
     }
   },
   "required": [
@@ -725,5 +732,5 @@ await client.resolve(memoryId, 'resolved')
 
 | Error | Description |
 | --- | --- |
-| `ThreengramApiError` | Thrown for non-2xx REST responses. Carries status and reason from the response body. |
+| `ThreengramApiError` | Thrown for non-2xx REST responses. Carries status, reason, and optional recovery detail from the response body. |
 | `ThreengramNetworkError` | Thrown when fetch rejects before a server response is available. |

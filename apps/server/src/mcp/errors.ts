@@ -14,6 +14,7 @@ import {
   DuplicateMemoryError,
   EdgeConflictError,
   EpisodicSupersessionError,
+  formatUnscopedRetrievalDetail,
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
   InvalidEmbeddingError,
@@ -29,9 +30,11 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnscopedRetrievalError,
 } from '@3ngram/core'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { ZodError } from 'zod'
+import { CursorQueryMismatchError } from '../cursor.js'
 import { OutputValidationError } from '../output-validation.js'
 
 /** The SDK result a tool returns: a text content mirror plus structured output. */
@@ -82,6 +85,27 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: tool input rejected')
     return fail(`invalid input: ${err.name}`)
+  }
+  // An unscoped read rejected by the caller's own retrieval-scope policy
+  // (mode 'require', issue #47) — a MissingSelectorError sibling: a 400-class
+  // caller mistake, counted as invalid_input. The bounded recovery names a
+  // prefix of the REGISTERED SCOPES (user labels, never memory content — hard
+  // rule 6) and reports how many additional names were omitted.
+  if (err instanceof UnscopedRetrievalError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: unscoped read rejected by policy')
+    return fail(`invalid input: ${formatUnscopedRetrievalDetail(err.registeredScopes)}`)
+  }
+  // A continuation cursor replayed against a DIFFERENT query/filter set than
+  // the one that issued it — the caller's mistake, named honestly with the
+  // recovery (never a silent re-page of the old search's frozen ordering, and
+  // no query text in the log or the result — hard rule 6).
+  if (err instanceof CursorQueryMismatchError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: cursor query mismatch')
+    return fail(
+      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
+    )
   }
   // Over the per-user budget cap. A documented domain denial,
   // not a server fault: a class-named isError result counted under budget_exceeded.

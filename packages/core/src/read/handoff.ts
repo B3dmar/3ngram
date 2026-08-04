@@ -31,23 +31,64 @@ import {
   recentDecisions,
   withTenant,
 } from '@3ngram/db'
+import { MAX_HANDOFF_SECTION_CEILING } from '@3ngram/schema'
 import { requireSelector, type BriefingSelector as Selector } from './briefing.js'
 import { excerptContent } from './excerpt.js'
+import { applyPolicyToSelector, type RetrievalPolicy } from './retrieval-policy.js'
 
 export type { BriefingSelector } from '@3ngram/db'
 
 /**
- * Per-section ceiling for a handoff export. Bounded (no-firehose) even though a
- * handoff intentionally carries content: it is an EXPORT for a receiving agent,
- * not a full dump. A receiver needing more pages via search/get_facts.
+ * DEFAULT per-section bound for a handoff export — the item count a handoff
+ * returns when the caller does not tune `sectionLimit`. NOT the max (bounds
+ * V2, issue #45): the hard server-side ceiling is
+ * {@link MAX_HANDOFF_SECTION_CEILING} (re-exported from `@3ngram/schema`);
+ * a caller may tune up to it, never past it. Bounded (no-firehose) even
+ * though a handoff intentionally carries content: it is an EXPORT for a
+ * receiving agent, not a full dump.
  */
 export const MAX_HANDOFF_SECTION = 25
 
-/** Inputs for {@link handoff}. `now` is injected (no wall-clock read in core). */
+/**
+ * Effective per-section limit (bounds V2, issue #45): the caller-tunable
+ * `sectionLimit` when present, else the {@link MAX_HANDOFF_SECTION} default —
+ * clamped into [1, {@link MAX_HANDOFF_SECTION_CEILING}] so the server-side
+ * no-firehose ceiling ALWAYS wins. The transport schema already rejects an
+ * out-of-range or fractional value; core NORMALIZES for direct callers (same
+ * policy as briefing.ts effectiveSectionLimit): a fractional value is
+ * truncated toward zero and a non-finite one (NaN/±Infinity) falls back to
+ * the default BEFORE the clamp — a raw fractional/NaN limit must never reach
+ * the SQL LIMIT clause.
+ */
+function effectiveSectionLimit(sectionLimit: number | undefined): number {
+  const requested =
+    sectionLimit !== undefined && Number.isFinite(sectionLimit)
+      ? Math.trunc(sectionLimit)
+      : MAX_HANDOFF_SECTION
+  return Math.min(Math.max(requested, 1), MAX_HANDOFF_SECTION_CEILING)
+}
+
+/**
+ * Inputs for {@link handoff}. `now` is injected (no wall-clock read in core).
+ *
+ * BOUNDS V2 (issue #45): `sectionLimit` is the caller-tunable per-section item
+ * bound (absent = {@link MAX_HANDOFF_SECTION}); the effective limit is clamped
+ * to {@link MAX_HANDOFF_SECTION_CEILING} so the server-side no-firehose ceiling
+ * always wins. Validated at the transport boundary (handoffToolInputV2Schema);
+ * core re-clamps for direct callers.
+ */
 export interface HandoffQuery {
   selector: BriefingSelector | undefined
   /** Optional free-form label for the receiving agent (echoed back; never logged). */
   generatedFor?: string | undefined
+  sectionLimit?: number | undefined
+  /**
+   * Injected per-user retrieval-scope policy (issue #47) — the SAME selector
+   * enforcement as briefing (shared applyPolicyToSelector): `default` narrows
+   * a `kind: 'all'` selector and the result echoes `appliedScope`; `require`
+   * rejects it typed. Resolved once per request by the transport (ADR-0011).
+   */
+  retrievalPolicy?: RetrievalPolicy | undefined
   now: Date
 }
 
@@ -86,15 +127,30 @@ export interface HandoffCommitment {
  *
  * CONTENT IS INCLUDED here by design (decisions/preferences carry `content`) —
  * the difference from a briefing and from logs (see module header).
+ *
+ * BOUNDS V2 (issue #45): `counts` carries the EXACT per-section totals (the
+ * `count(*) OVER()` window totals the briefing-read queries already return —
+ * previously read and DISCARDED here) and `truncated` flags a section whose
+ * export is incomplete (`counts.X > X.length`). Per-SECTION truncation, distinct
+ * from the per-ITEM `truncated` on a {@link HandoffMemory} (an excerpt cut).
  */
 export interface Handoff {
   selector: BriefingSelector
   generatedFor: string | null
   generatedAt: string
+  /**
+   * The scope the injected retrieval policy applied to a `kind: 'all'` call
+   * (issue #47) — PRESENT exactly when the policy narrowed this handoff (the
+   * echoed `selector` is then the effective scope selector). Omitted when
+   * nothing was narrowed. Narrowing is never silent.
+   */
+  appliedScope?: string
   decisions: HandoffMemory[]
   commitments: HandoffCommitment[]
   preferences: HandoffMemory[]
   notes: string[]
+  counts: { decisions: number; commitments: number; preferences: number }
+  truncated: { decisions: boolean; commitments: boolean; preferences: boolean }
 }
 
 function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
@@ -118,7 +174,9 @@ function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
  * briefing()): omit it and the call throws MissingSelectorError. REUSES the
  * briefing-read.ts queries (recentDecisions / openCommitments / activePreferences)
  * — no duplicated SQL — inside ONE withTenant transaction. Every section is
- * bounded by {@link MAX_HANDOFF_SECTION}.
+ * bounded by `sectionLimit` (default {@link MAX_HANDOFF_SECTION}, ceiling
+ * {@link MAX_HANDOFF_SECTION_CEILING}); the exact window totals ride the same
+ * statements and land in `counts`/`truncated` (no longer discarded).
  *
  * The payload carries memory CONTENT by design (a handoff transports context);
  * the caller MUST NOT log it (header).
@@ -126,31 +184,49 @@ function toHandoffMemory(row: BriefingMemoryRow): HandoffMemory {
  * @throws MissingSelectorError no selector / empty scope|project value.
  */
 export async function handoff(userId: string, query: HandoffQuery): Promise<Handoff> {
-  const selector: Selector = requireSelector(query.selector)
-  const limit = MAX_HANDOFF_SECTION
+  const requested: Selector = requireSelector(query.selector)
+  // RETRIEVAL-SCOPE POLICY (issue #47): same selector enforcement as
+  // briefing() — one shared decision point (applyPolicyToSelector), so the
+  // two orientation surfaces can never drift on what "unscoped" means.
+  const { selector, appliedScope } = applyPolicyToSelector(query.retrievalPolicy, requested)
+  const limit = effectiveSectionLimit(query.sectionLimit)
 
-  // The briefing-read queries return {items, totalCount} (a window count rides each
-  // statement for the briefing's exact-count contract); a handoff only needs the
-  // bounded item slices, so it reads `.items` and ignores the count.
-  const { decisionRows, commitmentRows, preferenceRows } = await withTenant(userId, async (tx) => ({
-    decisionRows: (await recentDecisions(tx, userId, selector, limit)).items,
-    commitmentRows: (await openCommitments(tx, userId, selector, limit)).items,
-    preferenceRows: (await activePreferences(tx, userId, selector, limit)).items,
+  // The briefing-read queries return {items, totalCount} — the exact window
+  // count rides each statement (snapshot-consistent with its slice). The pages
+  // are kept whole so the totals feed counts/truncated below (bounds V2 —
+  // previously the count was read and discarded).
+  const { decisions, commitments, preferences } = await withTenant(userId, async (tx) => ({
+    decisions: await recentDecisions(tx, userId, selector, limit),
+    commitments: await openCommitments(tx, userId, selector, limit),
+    preferences: await activePreferences(tx, userId, selector, limit),
   }))
 
   return {
     selector,
     generatedFor: query.generatedFor ?? null,
     generatedAt: query.now.toISOString(),
-    decisions: decisionRows.map(toHandoffMemory),
-    commitments: commitmentRows.map((row) => ({
+    // Present exactly when the policy narrowed this call (omitted, never a
+    // fabricated null — same conditional-spread discipline as briefing()).
+    ...(appliedScope !== null ? { appliedScope } : {}),
+    decisions: decisions.items.map(toHandoffMemory),
+    commitments: commitments.items.map((row) => ({
       id: row.id,
       memoryId: row.memoryId,
       topic: row.topic,
       status: row.status,
       dueAt: row.dueAt?.toISOString() ?? null,
     })),
-    preferences: preferenceRows.map(toHandoffMemory),
+    preferences: preferences.items.map(toHandoffMemory),
     notes: [],
+    counts: {
+      decisions: decisions.totalCount,
+      commitments: commitments.totalCount,
+      preferences: preferences.totalCount,
+    },
+    truncated: {
+      decisions: decisions.totalCount > decisions.items.length,
+      commitments: commitments.totalCount > commitments.items.length,
+      preferences: preferences.totalCount > preferences.items.length,
+    },
   }
 }

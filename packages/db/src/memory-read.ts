@@ -19,7 +19,19 @@
 // Content discipline (hard rule 6): topic/content/tags are content-adjacent and
 // are NEVER logged here; callers log ids/lengths only. The list select omits
 // content entirely; the detail select returns it because inspect is its JTBD.
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, type SQL } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  type SQL,
+} from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { commitments, memories } from './schema/memory.js'
 
@@ -64,10 +76,23 @@ export interface MemoriesListQuery {
   limit: number
   offset: number
   memoryType?: string
+  /**
+   * V2 (issue #48): a single memory type OR an array for multi-type IN
+   * filtering (the `project` repeated-param pattern). Mutually exclusive with
+   * `memoryType` at the schema boundary (memoriesListQuerySchema).
+   */
+  memoryTypes?: string | string[]
   scope?: string
   /** A single project name OR an array for multi-project IN filtering. */
   project?: string | string[]
   status?: string
+  /**
+   * V2 (issue #48): INCLUSIVE recorded_at range bounds. They narrow WITHIN the
+   * ever-present live gate (valid_to IS NULL) — a plain transaction-time
+   * narrowing, never time travel.
+   */
+  recordedAfter?: Date
+  recordedBefore?: Date
 }
 
 /** The LIVE-memory predicate shared with scopes.ts: status='active' AND valid_to IS NULL. */
@@ -97,6 +122,15 @@ function listConditions(userId: string, query: MemoriesListQuery): SQL {
 
   const conditions: SQL[] = [eq(memories.userId, userId), baseCondition]
   if (query.memoryType !== undefined) conditions.push(eq(memories.memoryType, query.memoryType))
+  // V2 OR-set (issue #48): eq/inArray by shape, the same repeated-param
+  // handling as `project` below.
+  if (query.memoryTypes !== undefined) {
+    conditions.push(
+      Array.isArray(query.memoryTypes)
+        ? inArray(memories.memoryType, query.memoryTypes)
+        : eq(memories.memoryType, query.memoryTypes),
+    )
+  }
   if (query.scope !== undefined) conditions.push(eq(memories.scope, query.scope))
   if (query.project !== undefined) {
     conditions.push(
@@ -104,6 +138,14 @@ function listConditions(userId: string, query: MemoriesListQuery): SQL {
         ? inArray(memories.project, query.project)
         : eq(memories.project, query.project),
     )
+  }
+  // V2 recorded_at range (issue #48): inclusive bounds, applied on top of the
+  // live gate — narrowing only, never widening the surfaced set.
+  if (query.recordedAfter !== undefined) {
+    conditions.push(gte(memories.recordedAt, query.recordedAfter))
+  }
+  if (query.recordedBefore !== undefined) {
+    conditions.push(lte(memories.recordedAt, query.recordedBefore))
   }
   return and(...conditions) as SQL
 }
@@ -235,4 +277,45 @@ export async function getMemoryById(
     .where(and(eq(memories.userId, userId), eq(memories.id, memoryId)))
     .limit(1)
   return row
+}
+
+/**
+ * Fetch a BATCH of memories by id for the tenant in ONE query (id = ANY —
+ * never a per-id loop). Same contract as {@link getMemoryById} per row: the
+ * WHERE keys on (user_id, id IN …), so RLS AND the caller-bound user_id
+ * predicate collapse not-found and not-owned to plain absence — a missing id
+ * is simply not in the result, NEVER an error (the caller derives its
+ * not-found set by diffing). NO live gate: a caller fetching specific ids may
+ * target superseded rows. Returns full rows including content + tags; ordering
+ * follows recorded_at DESC with the id tiebreak (stable, index-served).
+ */
+export async function getMemoriesByIds(
+  tx: TenantTx,
+  userId: string,
+  memoryIds: string[],
+): Promise<MemoryDetailRow[]> {
+  if (memoryIds.length === 0) return []
+  return tx
+    .select({
+      id: memories.id,
+      memoryType: memories.memoryType,
+      topic: memories.topic,
+      content: memories.content,
+      scope: memories.scope,
+      project: memories.project,
+      status: memories.status,
+      commitmentStatus: commitments.status,
+      tags: memories.tags,
+      validFrom: memories.validFrom,
+      validTo: memories.validTo,
+      recordedAt: memories.recordedAt,
+      createdAt: memories.createdAt,
+    })
+    .from(memories)
+    .leftJoin(
+      commitments,
+      and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
+    )
+    .where(and(eq(memories.userId, userId), inArray(memories.id, memoryIds)))
+    .orderBy(desc(memories.recordedAt), desc(memories.id))
 }

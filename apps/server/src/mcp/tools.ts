@@ -20,10 +20,10 @@ import {
   type BudgetEnforcement,
   getFacts,
   type LimitsResolver,
+  type RetrievalPolicy,
   remember,
   resolveByMemoryId,
   revise,
-  search,
 } from '@3ngram/core'
 import { MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE, type MemoryScope } from '@3ngram/core/auth'
 import type { Gateway } from '@3ngram/llm'
@@ -38,8 +38,6 @@ import {
   resolveToolOutputSchema,
   reviseToolInputSchema,
   reviseToolOutputSchema,
-  searchQuerySchema,
-  searchToolOutputSchema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import type { ZodType } from 'zod'
@@ -49,8 +47,11 @@ import { mapToolError } from './errors.js'
 // review_proposals — defined in their own module (500-line discipline), appended
 // to the registry below via the factory (append-only edit to TOOLS).
 import { createAdminTools } from './tools-admin.js'
+import { INSPECT_TOOLS } from './tools-inspect.js'
 // --- orientation tools: briefing + handoff — appended ---
 import { ORIENT_TOOLS } from './tools-orient.js'
+// --- search tool: fused retrieval — spliced in at its original position ---
+import { SEARCH_TOOLS } from './tools-search.js'
 
 /** The SDK result a tool returns: a text content mirror plus structured output. */
 type ToolResult = CallToolResult
@@ -109,6 +110,15 @@ export interface ToolContext {
   access?: AccessGate | undefined
   /** Billing-neutral resource-limit resolver. Omitted fields are unlimited. */
   limits?: LimitsResolver | undefined
+  /**
+   * Request-scoped retrieval-scope policy resolver (issue #47). The route
+   * builds it as a MEMOIZED thunk over core resolveRetrievalPolicy, so the
+   * policy is resolved AT MOST ONCE per request — and only when a
+   * policy-enforced read tool (search/briefing/handoff) actually runs; write
+   * tools never pay the lookup. Undefined → no enforcement (test/back-compat),
+   * identical to a stored mode of 'off'.
+   */
+  retrievalPolicy?: (() => Promise<RetrievalPolicy>) | undefined
 }
 
 /** Wrap a structured payload as a tool success result (text mirror + structured). */
@@ -201,76 +211,6 @@ const rememberTool: ToolDefinition = {
         commitmentId: written.commitmentId,
       }),
     )
-    return ok(output)
-  },
-}
-
-/**
- * search — unified fused retrieval (docs/concepts/mcp-design.mdx JTBD "find what I know").
- * Requires a configured embedding gateway: core search() embeds the query and
- * THROWS without an embedding source, so absent a gateway the tool returns a
- * clear typed error rather than a 500. The input contract is query + limit plus
- * the five OPTIONAL candidate-narrowing filters (memoryType/scope/project/status,
- * asOf) — validated at the ONE boundary ({@link searchQuerySchema}, hard rule 2)
- * and threaded straight to core search()'s SearchOptions. Each filter NARROWS the
- * candidate set BEFORE fusion; none alters the fusion weights or the
- * supersession ranking (docs/concepts/memory-model.mdx live-first stays the default). The tool
- * registers the FULL `.strict()` object (not its raw shape), so the SDK parses
- * inbound args strictly at the transport boundary and an UNKNOWN key is REJECTED
- * there — a passed filter the tool exposes is applied, anything else is a clear
- * validation error, never silently dropped (registering `.shape`
- * would wrap it non-strict and strip unknown keys before the handler ran).
- */
-const searchTool: ToolDefinition = {
-  name: 'search',
-  requiredScope: MEMORY_READ_SCOPE,
-  config: {
-    title: 'Search',
-    description:
-      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus five optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType, scope, project, status, and asOf (bi-temporal time travel with validAt/asKnownAt). Omit a filter to leave that axis unconstrained.',
-    inputSchema: searchQuerySchema,
-    outputSchema: searchToolOutputSchema,
-  },
-  async handler(args, ctx) {
-    if (ctx.gateway === undefined) {
-      return fail('embedding gateway not configured')
-    }
-    const input = searchQuerySchema.parse(args)
-    const hits = await search(
-      ctx.userId,
-      input.query,
-      { gateway: ctx.gateway },
-      {
-        limit: input.limit,
-        // Candidate-narrowing filters: validated at the schema
-        // boundary, threaded verbatim to core. defined() strips undefined axes so
-        // an absent filter never narrows (exactOptional fit for SearchFilters).
-        filters: defined({
-          memoryType: input.memoryType,
-          scope: input.scope,
-          project: input.project,
-          status: input.status,
-          asOf: toAsOf(input.asOf),
-        }),
-        budget: ctx.budget,
-        access: ctx.access,
-      },
-    )
-    // `content` is core's bounded excerpt (read-path policy in
-    // packages/core/src/read/excerpt.ts); contentLength/truncated let the
-    // caller fetch the full memory by id when the excerpt was cut.
-    const output = parseOutput('search', searchToolOutputSchema, {
-      hits: hits.map((hit) => ({
-        id: hit.id,
-        memoryType: hit.memoryType,
-        topic: hit.topic,
-        content: hit.content,
-        contentLength: hit.contentLength,
-        truncated: hit.truncated,
-        score: hit.score,
-      })),
-      count: hits.length,
-    })
     return ok(output)
   },
 }
@@ -423,8 +363,8 @@ const resolveTool: ToolDefinition = {
 /**
  * THE registered tool surface. Length === registered count; the <=12 cap (hard
  * rule 8) is auditable from this one array. D0: 3; D1 adds revise + resolve -> 5;
- * D3 appends configure_scope + describe_environment + review_proposals -> 8 (the
- * sibling track's orient tools bring the union to the 10-tool v1 surface).
+ * D2 orient (briefing, handoff) -> 7; D3 admin (configure_scope,
+ * describe_environment, review_proposals) -> 10; get_memories (inspect) -> 11.
  *
  * The admin tools are created via a FACTORY given a thunk over {@link TOOLS}, so
  * describe_environment can report the FULL surface (itself included) without a
@@ -433,20 +373,23 @@ const resolveTool: ToolDefinition = {
  */
 export const TOOLS: readonly ToolDefinition[] = [
   rememberTool,
-  searchTool,
+  // search — defined in tools-search.ts (500-line discipline) and spliced in at
+  // its original position so the advertised tool order is unchanged.
+  ...SEARCH_TOOLS,
   getFactsTool,
   reviseTool,
   resolveTool,
   // D2 orientation tools (briefing, handoff) — appended from tools-orient.ts so
   // this registry stays the single auditable surface while the file stays thin.
   ...ORIENT_TOOLS,
+  ...INSPECT_TOOLS, // get_memories — appended from tools-inspect.ts (same pattern)
   // D3 admin tools (configure_scope, describe_environment, review_proposals) —
   // appended via the factory thunk so describe_environment can report the FULL
   // surface (itself included) without a circular import.
   ...createAdminTools(() => TOOLS.map((t) => t.name)),
 ]
 
-/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. */
+/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12 registered; the LAST slot is reserved for the future `manage_context` tool. */
 export const MAX_TOOLS = 12
 
 /**

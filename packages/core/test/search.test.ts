@@ -17,7 +17,7 @@ import { EXCERPT_MARKER, MAX_EXCERPT_LENGTH, searchHitSchema } from '@3ngram/sch
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const searchFused = vi.fn()
-const insertLlmUsage = vi.fn(async () => undefined)
+const insertLlmUsage = vi.fn(async (..._args: unknown[]) => undefined)
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
 )
@@ -261,7 +261,8 @@ describe('search — embedding acquisition', () => {
     expect(hits).toEqual([{ ...HIT, contentLength: HIT.content.length, truncated: false }])
     // Cost tracking: one usage row under the 'search' operation key.
     expect(insertLlmUsage).toHaveBeenCalledTimes(1)
-    expect(insertLlmUsage.mock.calls[0]?.[1]?.operation).toBe('search')
+    const usageRow = insertLlmUsage.mock.calls[0]?.[1] as { operation?: string } | undefined
+    expect(usageRow?.operation).toBe('search')
   })
 
   it('uses a pre-computed embedding without calling any gateway (cached path)', async () => {

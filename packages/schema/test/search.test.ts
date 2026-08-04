@@ -7,16 +7,20 @@
 // invariant — the MCP `search` tool surface (searchInputSchema) stays byte-
 // identical, i.e. it does NOT admit the filter keys (docs/concepts/architecture.mdx).
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   DEFAULT_DASHBOARD_SEARCH_LIMIT,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
   handoffMemorySchema,
   MAX_EXCERPT_LENGTH,
+  MAX_MEMORY_TYPES_FILTER,
   searchFiltersSchema,
+  searchFiltersV2Schema,
   searchHitSchema,
   searchInputSchema,
   searchQuerySchema,
+  searchQueryV2Schema,
 } from '../src/index.js'
 
 describe('searchFiltersSchema — canonical filter contract', () => {
@@ -235,5 +239,141 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     )
     const { contentLength: _cl, ...noLength } = line('b')
     expect(handoffMemorySchema.safeParse(noLength).success).toBe(false)
+  })
+})
+
+describe('searchFiltersV2Schema / searchQueryV2Schema — V2 axes (issue #48)', () => {
+  it('accepts a memoryTypes OR-set of valid memory types', () => {
+    const parsed = searchFiltersV2Schema.parse({ memoryTypes: ['decision', 'fact'] })
+    expect(parsed.memoryTypes).toEqual(['decision', 'fact'])
+  })
+
+  it('bounds memoryTypes: non-empty, at most MAX_MEMORY_TYPES_FILTER, enum-valid elements', () => {
+    expect(searchFiltersV2Schema.safeParse({ memoryTypes: [] }).success).toBe(false)
+    expect(
+      searchFiltersV2Schema.safeParse({
+        memoryTypes: Array.from({ length: MAX_MEMORY_TYPES_FILTER + 1 }, () => 'note'),
+      }).success,
+    ).toBe(false)
+    expect(searchFiltersV2Schema.safeParse({ memoryTypes: ['bogus-type'] }).success).toBe(false)
+  })
+
+  it('accepts ISO datetimes for the recorded_at range and rejects non-datetimes', () => {
+    const parsed = searchFiltersV2Schema.parse({
+      recordedAfter: '2026-01-01T00:00:00Z',
+      recordedBefore: '2026-02-01T00:00:00Z',
+    })
+    expect(parsed.recordedAfter).toBe('2026-01-01T00:00:00Z')
+    expect(searchFiltersV2Schema.safeParse({ recordedAfter: 'last tuesday' }).success).toBe(false)
+    expect(searchFiltersV2Schema.safeParse({ recordedBefore: '2026-01-01' }).success).toBe(false)
+  })
+
+  it('is fully optional and strict — empty object valid, unknown keys rejected', () => {
+    expect(searchFiltersV2Schema.parse({})).toEqual({})
+    expect(searchFiltersV2Schema.safeParse({ tags: ['deferred'] }).success).toBe(false)
+  })
+
+  it('searchQueryV2Schema composes the V1 query contract with the V2 axes (ADR-0011)', () => {
+    const parsed = searchQueryV2Schema.parse({
+      query: 'find it',
+      memoryTypes: ['decision', 'preference'],
+      scope: 'work',
+      recordedAfter: '2026-01-01T00:00:00Z',
+    })
+    expect(parsed.limit).toBe(5) // base default still applies
+    expect(parsed.memoryTypes).toEqual(['decision', 'preference'])
+    expect(parsed.scope).toBe('work') // V1 filters still ride
+    // Base constraints still enforced through the composition.
+    expect(searchQueryV2Schema.safeParse({ query: '' }).success).toBe(false)
+    expect(searchQueryV2Schema.safeParse({ query: 'q', limit: 999 }).success).toBe(false)
+    expect(searchQueryV2Schema.safeParse({ query: 'q', bogus: 1 }).success).toBe(false)
+  })
+
+  it('REJECTS memoryTypes together with memoryType (mutually exclusive)', () => {
+    const both = searchQueryV2Schema.safeParse({
+      query: 'q',
+      memoryType: 'decision',
+      memoryTypes: ['fact'],
+    })
+    expect(both.success).toBe(false)
+    // Each alone stays valid.
+    expect(searchQueryV2Schema.safeParse({ query: 'q', memoryType: 'decision' }).success).toBe(true)
+    expect(searchQueryV2Schema.safeParse({ query: 'q', memoryTypes: ['decision'] }).success).toBe(
+      true,
+    )
+  })
+
+  it('REJECTS an inverted recorded_at range (recordedAfter later than recordedBefore)', () => {
+    const inverted = searchQueryV2Schema.safeParse({
+      query: 'q',
+      recordedAfter: '2026-02-01T00:00:00Z',
+      recordedBefore: '2026-01-01T00:00:00Z',
+    })
+    expect(inverted.success).toBe(false)
+    // Equal bounds are a valid single-instant range (both bounds inclusive).
+    expect(
+      searchQueryV2Schema.safeParse({
+        query: 'q',
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+    // A well-ordered range still parses.
+    expect(
+      searchQueryV2Schema.safeParse({
+        query: 'q',
+        recordedAfter: '2026-01-01T00:00:00Z',
+        recordedBefore: '2026-02-01T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('REJECTS sub-millisecond recorded bounds; accepts up to 3 fractional digits (#58)', () => {
+    // At the bound: exactly 3 fractional digits (JS Date millisecond precision) parses.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedAfter: '2026-01-01T00:00:00.123Z' })
+        .success,
+    ).toBe(true)
+    // Past the bound: a 4th fractional digit would be silently truncated by the
+    // ISO→Date conversion (recorded_at is microsecond-precise in Postgres) —
+    // rejected per bound, on either field.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedAfter: '2026-01-01T00:00:00.1234Z' })
+        .success,
+    ).toBe(false)
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedBefore: '2026-01-01T00:00:00.123456Z' })
+        .success,
+    ).toBe(false)
+    // Fraction-less bounds are unaffected.
+    expect(
+      searchQueryV2Schema.safeParse({ query: 'q', recordedBefore: '2026-01-01T00:00:00Z' }).success,
+    ).toBe(true)
+  })
+
+  it('ADVERTISES the mutual exclusion in the emitted JSON Schema descriptions', () => {
+    // The superRefine is runtime-only — invisible in tools/list. The constraint
+    // must therefore ride the field descriptions the JSON Schema DOES carry.
+    const json = z.toJSONSchema(searchQueryV2Schema, { target: 'draft-2020-12', io: 'input' })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.memoryType?.description).toMatch(/mutually exclusive with memoryTypes/i)
+    expect(props.memoryTypes?.description).toMatch(/mutually exclusive with memoryType\b/i)
+  })
+
+  it('ADVERTISES the recorded-bound precision limit in emitted MCP JSON Schema', () => {
+    const json = z.toJSONSchema(searchQueryV2Schema, { target: 'draft-2020-12', io: 'input' })
+    const props = json.properties as Record<string, { description?: string }>
+    expect(props.recordedAfter?.description).toMatch(/at most 3 fractional-second digits/i)
+    expect(props.recordedBefore?.description).toMatch(/at most 3 fractional-second digits/i)
+  })
+
+  it('leaves the shipped V1 schemas untouched: searchQuerySchema rejects the V2 keys', () => {
+    expect(searchQuerySchema.safeParse({ query: 'q', memoryTypes: ['decision'] }).success).toBe(
+      false,
+    )
+    expect(
+      searchQuerySchema.safeParse({ query: 'q', recordedAfter: '2026-01-01T00:00:00Z' }).success,
+    ).toBe(false)
+    expect(Object.keys(searchFiltersSchema.shape)).not.toContain('memoryTypes')
   })
 })

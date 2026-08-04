@@ -152,7 +152,8 @@
               "enum": [
                 "all",
                 "scope",
-                "project"
+                "project",
+                "scope_project"
               ],
               "type": "string"
             }
@@ -180,6 +181,16 @@
           },
           {
             "in": "query",
+            "name": "includeUnscoped",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "mode",
             "required": false,
             "schema": {
@@ -188,6 +199,26 @@
                 "full"
               ],
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sections",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated subset of sections to compute (unique names from: commitments, overdue, blockers, staleCandidates, recentDecisions, preferences). Absent = all sections; un-requested sections are skipped and omitted from the result.",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sectionLimit",
+            "required": false,
+            "schema": {
+              "description": "Per-section item bound (1..100). Absent = the mode default (3 brief / 25 full).",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
             }
           }
         ],
@@ -198,6 +229,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "blockers": {
                       "additionalProperties": false,
                       "properties": {
@@ -205,6 +243,9 @@
                           "maximum": 9007199254740991,
                           "minimum": 0,
                           "type": "integer"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
                         },
                         "items": {
                           "items": {
@@ -271,12 +312,14 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
                       "required": [
                         "count",
-                        "items"
+                        "items",
+                        "hasMore"
                       ],
                       "type": "object"
                     },
@@ -287,6 +330,9 @@
                           "maximum": 9007199254740991,
                           "minimum": 0,
                           "type": "integer"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
                         },
                         "items": {
                           "items": {
@@ -340,12 +386,14 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
                       "required": [
                         "count",
-                        "items"
+                        "items",
+                        "hasMore"
                       ],
                       "type": "object"
                     },
@@ -369,6 +417,9 @@
                           "minimum": 0,
                           "type": "integer"
                         },
+                        "hasMore": {
+                          "type": "boolean"
+                        },
                         "items": {
                           "items": {
                             "additionalProperties": false,
@@ -421,12 +472,14 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
                       "required": [
                         "count",
-                        "items"
+                        "items",
+                        "hasMore"
                       ],
                       "type": "object"
                     },
@@ -438,87 +491,8 @@
                           "minimum": 0,
                           "type": "integer"
                         },
-                        "items": {
-                          "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "id": {
-                                "format": "uuid",
-                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                                "type": "string"
-                              },
-                              "memoryType": {
-                                "enum": [
-                                  "decision",
-                                  "commitment",
-                                  "blocker",
-                                  "fact",
-                                  "preference",
-                                  "pattern",
-                                  "note",
-                                  "event"
-                                ],
-                                "type": "string"
-                              },
-                              "project": {
-                                "anyOf": [
-                                  {
-                                    "maxLength": 256,
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "recordedAt": {
-                                "format": "date-time",
-                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-                                "type": "string"
-                              },
-                              "scope": {
-                                "maxLength": 64,
-                                "minLength": 1,
-                                "pattern": "^[a-z0-9][a-z0-9-]*$",
-                                "type": "string"
-                              },
-                              "topic": {
-                                "type": "string"
-                              },
-                              "updatedAt": {
-                                "format": "date-time",
-                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "id",
-                              "memoryType",
-                              "topic",
-                              "scope",
-                              "project",
-                              "recordedAt",
-                              "updatedAt"
-                            ],
-                            "type": "object"
-                          },
-                          "type": "array"
-                        }
-                      },
-                      "required": [
-                        "count",
-                        "items"
-                      ],
-                      "type": "object"
-                    },
-                    "recentDecisions": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "count": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
+                        "hasMore": {
+                          "type": "boolean"
                         },
                         "items": {
                           "items": {
@@ -585,12 +559,101 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
                       "required": [
                         "count",
-                        "items"
+                        "items",
+                        "hasMore"
+                      ],
+                      "type": "object"
+                    },
+                    "recentDecisions": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "count": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "memoryType": {
+                                "enum": [
+                                  "decision",
+                                  "commitment",
+                                  "blocker",
+                                  "fact",
+                                  "preference",
+                                  "pattern",
+                                  "note",
+                                  "event"
+                                ],
+                                "type": "string"
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "recordedAt": {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                                "type": "string"
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
+                              "topic": {
+                                "type": "string"
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "memoryType",
+                              "topic",
+                              "scope",
+                              "project",
+                              "recordedAt",
+                              "updatedAt"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 100,
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "items",
+                        "hasMore"
                       ],
                       "type": "object"
                     },
@@ -647,6 +710,38 @@
                             "project"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUnscoped": {
+                              "default": false,
+                              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                              "type": "boolean"
+                            },
+                            "kind": {
+                              "const": "scope_project",
+                              "type": "string"
+                            },
+                            "project": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "scope": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "scope",
+                            "project",
+                            "includeUnscoped"
+                          ],
+                          "type": "object"
                         }
                       ]
                     },
@@ -657,6 +752,9 @@
                           "maximum": 9007199254740991,
                           "minimum": 0,
                           "type": "integer"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
                         },
                         "items": {
                           "items": {
@@ -723,12 +821,14 @@
                             ],
                             "type": "object"
                           },
+                          "maxItems": 100,
                           "type": "array"
                         }
                       },
                       "required": [
                         "count",
-                        "items"
+                        "items",
+                        "hasMore"
                       ],
                       "type": "object"
                     }
@@ -736,19 +836,37 @@
                   "required": [
                     "selector",
                     "mode",
-                    "generatedAt",
-                    "commitments",
-                    "overdue",
-                    "blockers",
-                    "staleCandidates",
-                    "recentDecisions",
-                    "preferences"
+                    "generatedAt"
                   ],
                   "type": "object"
                 }
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid briefing input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Session briefing over an explicit selector (mirrors the MCP briefing tool)"
@@ -905,6 +1023,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 25,
                       "minimum": 0,
@@ -976,6 +1101,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Dashboard search continuation with identity-only hits"
@@ -1652,6 +1801,50 @@
                       },
                       "type": "array"
                     },
+                    "retrievalPolicy": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "defaultScope": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mode": {
+                              "enum": [
+                                "off",
+                                "default",
+                                "require"
+                              ],
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "defaultScope",
+                            "updatedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "scopes": {
                       "items": {
                         "additionalProperties": false,
@@ -1761,6 +1954,7 @@
                     "userBudgets",
                     "llmUsage",
                     "profile",
+                    "retrievalPolicy",
                     "counts"
                   ],
                   "type": "object"
@@ -1979,6 +2173,7 @@
             "name": "type",
             "required": false,
             "schema": {
+              "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
               "enum": [
                 "decision",
                 "commitment",
@@ -2034,6 +2229,69 @@
                 "active",
                 "archived"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "memoryTypes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "decision",
+                    "commitment",
+                    "blocker",
+                    "fact",
+                    "preference",
+                    "pattern",
+                    "note",
+                    "event"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "enum": [
+                      "decision",
+                      "commitment",
+                      "blocker",
+                      "fact",
+                      "preference",
+                      "pattern",
+                      "note",
+                      "event"
+                    ],
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              ],
+              "description": "OR-set of memory types to match (repeat the param to pass several). Mutually exclusive with type — pass one or the other, never both."
+            }
+          },
+          {
+            "in": "query",
+            "name": "recordedAfter",
+            "required": false,
+            "schema": {
+              "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given.",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recordedBefore",
+            "required": false,
+            "schema": {
+              "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given.",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
               "type": "string"
             }
           }
@@ -4026,6 +4284,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 9007199254740991,
                       "minimum": 0,
@@ -4086,6 +4351,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Unified semantic + keyword retrieval (mirrors the MCP search tool)"

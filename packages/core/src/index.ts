@@ -10,6 +10,10 @@ export type {
   ResourceLimitKind,
   ResourceLimits,
 } from '@3ngram/schema'
+// The hard briefing/handoff sectionLimit ceilings (bounds V2) — re-exported so
+// core consumers see the ACTUAL max next to the defaults
+// MAX_BRIEFING_SECTION / MAX_HANDOFF_SECTION below.
+export { MAX_BRIEFING_SECTION_CEILING, MAX_HANDOFF_SECTION_CEILING } from '@3ngram/schema'
 export {
   type AccountDeletionResult,
   type AccountErasureResult,
@@ -86,6 +90,8 @@ export {
 } from './import/index.js'
 export {
   type AsOf,
+  applyPolicyToScopeFilter,
+  applyPolicyToSelector,
   type Briefing,
   type BriefingCommitment,
   type BriefingMemoryItem,
@@ -100,6 +106,7 @@ export {
   DEFAULT_SEARCH_SUPERSESSION_PENALTY,
   DEFAULT_SEARCH_WEIGHTS,
   type EmbeddingSource,
+  EmptySectionsError,
   type ExportAccountRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
@@ -116,9 +123,13 @@ export {
   type FactRow,
   type FactsQuery,
   type FrozenOrdering,
+  type FullBriefing,
   type FusionWeights,
+  formatUnscopedRetrievalDetail,
+  type GetMemoriesOptions,
   getCurrentUser,
   getFacts,
+  getMemoriesByIds,
   getMemoryById,
   getMemoryHistory,
   type Handoff,
@@ -131,20 +142,26 @@ export {
   listMemoryFacets,
   MAX_BRIEFING_SECTION,
   MAX_HANDOFF_SECTION,
+  type MemoriesBatchRead,
   type MemoriesListQuery,
   type MemoriesPage,
+  type MemoryBatchItem,
   type MemoryDetailRow,
   type MemoryFacets,
   type MemoryHistoryRead,
   type MemoryListRow,
   MemoryNotFoundError,
   MissingSelectorError,
+  type RetrievalPolicy,
   requireSelector,
+  type ScopedSearchResult,
   type SearchHit,
   type SearchOptions,
+  STALE_CANDIDATE_TYPES,
   STALE_WINDOW_DAYS,
   search,
   searchDashboardPage,
+  UnscopedRetrievalError,
   type UserDataExport,
   type UserIdentityRow,
 } from './read/index.js'
@@ -153,10 +170,13 @@ export {
   createScope,
   deleteScope,
   listScopes,
+  type RetrievalPolicySetting,
   renameScope,
+  resolveRetrievalPolicy,
   ScopeNameConflictError,
   ScopeNotFoundError,
   type ScopeRecord,
+  setRetrievalDefault,
   setScopeAliases,
 } from './scope/index.js'
 export {

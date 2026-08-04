@@ -43,7 +43,7 @@
 //
 // Content discipline (hard rule 6): topic/content are content-adjacent and are
 // NEVER logged here; callers log ids/counts/lengths only.
-import { and, asc, desc, eq, isNull, lt, ne, or, type SQL, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, ne, or, type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { commitments, memories } from './schema/memory.js'
 
@@ -56,11 +56,19 @@ import { commitments, memories } from './schema/memory.js'
  *      by each list's LIMIT; "all" widens the row space, not the row count).
  *   - `{ kind: 'scope', scope }`     — one scope.
  *   - `{ kind: 'project', project }` — one project.
+ *   - `{ kind: 'scope_project', scope, project, includeUnscoped }` — the
+ *      scope AND project INTERSECTION (issue #46). `includeUnscoped: true`
+ *      additionally admits the scope's NULL-project rows (a memory written
+ *      without a project is otherwise invisible through the project lens —
+ *      internal tracker item 244); false is the strict intersection. REQUIRED
+ *      (not optional) so a direct caller states the choice explicitly — the
+ *      transport schema defaults it to false.
  */
 export type BriefingSelector =
   | { kind: 'all' }
   | { kind: 'scope'; scope: string }
   | { kind: 'project'; project: string }
+  | { kind: 'scope_project'; scope: string; project: string; includeUnscoped: boolean }
 
 /** A commitment row for the briefing (ids/status/timestamps only — no content). */
 export interface BriefingCommitmentRow {
@@ -119,10 +127,26 @@ function totalFrom(rows: ReadonlyArray<{ totalCount: number }>): number {
 /**
  * Build the scope/project narrowing predicate for the `memories` table from a
  * {@link BriefingSelector}. Returns `undefined` for `kind: 'all'` (no narrowing).
+ *
+ * THE single predicate function: all six briefing sections AND handoff inherit
+ * it, so a selector kind behaves identically on every orientation read.
+ * `scope_project` (issue #46) compiles to
+ * `scope = $s AND (project = $p OR ($includeUnscoped AND project IS NULL))` —
+ * with `includeUnscoped: false` the OR branch is omitted entirely (strict
+ * intersection, no dead clause in the plan).
+ *
+ * EXPORTED for the unit-level SQL matrix (briefing-read.test.ts, the
+ * facts-read predicate-testing precedent); production callers stay in-module.
  */
-function memoryScopePredicate(selector: BriefingSelector): SQL | undefined {
+export function memoryScopePredicate(selector: BriefingSelector): SQL | undefined {
   if (selector.kind === 'scope') return eq(memories.scope, selector.scope)
   if (selector.kind === 'project') return eq(memories.project, selector.project)
+  if (selector.kind === 'scope_project') {
+    const projectMatch = selector.includeUnscoped
+      ? (or(eq(memories.project, selector.project), isNull(memories.project)) as SQL)
+      : eq(memories.project, selector.project)
+    return and(eq(memories.scope, selector.scope), projectMatch) as SQL
+  }
   return undefined
 }
 
@@ -364,22 +388,36 @@ export function activePreferences(
 
 /**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
- * non-commitment memories untouched (updated_at) since `staleBefore`,
- * scope/project-narrowed. Commitment-type rows are excluded — they surface via
- * their own (open/waiting) list, not by staleness. Leads with the caller-bound
- * `memories.user_id = userId` tenant condition (module header).
+ * memories of an ALLOWLISTED type untouched (updated_at) since `staleBefore`,
+ * scope/project-narrowed. The type filter is an ALLOWLIST (`memory_type IN
+ * (...)`) supplied by core, NOT a NOT-IN exclusion: which types are worth a
+ * staleness review is briefing POLICY (hard rule 5), owned by
+ * packages/core/read/briefing.ts (STALE_CANDIDATE_TYPES, beside
+ * STALE_WINDOW_DAYS) — this layer only turns the caller's list into SQL. Leads
+ * with the caller-bound `memories.user_id = userId` tenant condition (module
+ * header).
+ *
+ * BACK-COMPAT (Codex P1, comment 3702700238): `memoryTypes` is OPTIONAL. When
+ * omitted — a pre-0.6.3 caller — the predicate falls back to the legacy
+ * NOT-commitment exclusion so existing five-argument calls keep their exact
+ * prior behavior. This fallback is the ONE deliberate exception to "no type
+ * policy here" and exists only for compatibility; in-repo callers always pass
+ * the allowlist.
  */
 function staleCandidatePredicate(
   userId: string,
   selector: BriefingSelector,
   staleBefore: Date,
+  memoryTypes: readonly string[] | undefined,
 ): SQL {
   const conditions: SQL[] = [
     eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
     lt(memories.updatedAt, staleBefore),
-    ne(memories.memoryType, 'commitment'),
+    memoryTypes === undefined
+      ? ne(memories.memoryType, 'commitment')
+      : inArray(memories.memoryType, [...memoryTypes]),
   ]
   const scoped = memoryScopePredicate(selector)
   if (scoped !== undefined) conditions.push(scoped)
@@ -387,14 +425,21 @@ function staleCandidatePredicate(
 }
 
 /**
- * Stale candidates: LIVE, active memories not touched (updated_at) since
- * `staleBefore`, scope/project-narrowed, ordered OLDEST-first (the most-stale
- * first) and BOUNDED by `limit`.
+ * Stale candidates: LIVE, active memories of an ALLOWLISTED `memoryTypes` type
+ * not touched (updated_at) since `staleBefore`, scope/project-narrowed, ordered
+ * OLDEST-first (the most-stale first) and BOUNDED by `limit`.
  *
  * `staleBefore` is computed by core from the injected `now` minus the stale
- * window (no wall-clock read here). Excludes commitment-type memories: an open
- * commitment is surfaced by its own list, not by staleness — staleness is for
- * notes/facts/etc. that have gone quiet.
+ * window, and `memoryTypes` is core's STALE_CANDIDATE_TYPES allowlist (no
+ * wall-clock read and no type policy here). Commitment-type rows are never in
+ * the allowlist: an open commitment is surfaced by its own list, not by
+ * staleness.
+ *
+ * BACK-COMPAT CONTRACT: `memoryTypes` trails `limit` and is OPTIONAL so the
+ * 0.6.2 five-argument positional call keeps compiling AND keeps its exact
+ * prior semantics (legacy NOT-commitment filter — see
+ * {@link staleCandidatePredicate}). Do NOT insert parameters before `limit`
+ * (Codex P1, comment 3702700238).
  *
  * BRIEF-MODE CONTRACT: `items` is CAPPED at `limit`; `totalCount` is the EXACT
  * total from a `count(*) OVER()` window in the SAME statement, so it stays
@@ -412,6 +457,7 @@ export async function staleCandidates(
   selector: BriefingSelector,
   staleBefore: Date,
   limit: number,
+  memoryTypes?: readonly string[],
 ): Promise<BriefingPage<BriefingMemoryRow>> {
   const rows = await tx
     .select({
@@ -426,7 +472,7 @@ export async function staleCandidates(
       totalCount: TOTAL_COUNT,
     })
     .from(memories)
-    .where(staleCandidatePredicate(userId, selector, staleBefore))
+    .where(staleCandidatePredicate(userId, selector, staleBefore, memoryTypes))
     // Oldest-touched first: the most-stale memory leads.
     .orderBy(asc(memories.updatedAt), asc(memories.id))
     .limit(limit)

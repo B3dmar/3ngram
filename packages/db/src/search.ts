@@ -134,11 +134,14 @@ export interface SearchAsOf {
  * the weight-gated legs draw from without disturbing the fusion math or the
  * supersession ranking. Every field is optional — an absent filter does not
  * narrow that axis:
- *   - `memoryType` → memories.memory_type
- *   - `scope`      → memories.scope
- *   - `project`    → memories.project
- *   - `status`     → memories.status (OVERRIDES the active-only default)
- *   - `asOf`       → bi-temporal time-travel (see {@link SearchAsOf})
+ *   - `memoryType`  → memories.memory_type
+ *   - `memoryTypes` → memories.memory_type OR-set (V2, `= ANY`)
+ *   - `scope`       → memories.scope
+ *   - `project`     → memories.project
+ *   - `status`      → memories.status (OVERRIDES the active-only default)
+ *   - `asOf`        → bi-temporal time-travel (see {@link SearchAsOf})
+ *   - `recordedAfter` / `recordedBefore` → inclusive recorded_at range (V2;
+ *     narrows the live view, never lifts the active default — not time travel)
  *
  * docs/concepts/memory-model.mdx STATUS/TIME-TRAVEL semantics. WITHOUT a time-travel coordinate the
  * read is the supersession-AWARE live view: rows are restricted to
@@ -158,10 +161,26 @@ export interface SearchAsOf {
  */
 export interface SearchFilters {
   memoryType?: string
+  /**
+   * V2 (issue #48): OR-set over memory_type (`memory_type = ANY($types)`).
+   * Mutually exclusive with `memoryType` at the schema boundary
+   * (searchQueryV2Schema); the db layer ANDs whatever it is handed, so passing
+   * both would intersect — the boundary rejects that shape before it gets here.
+   */
+  memoryTypes?: string[]
   scope?: string
   project?: string
   status?: string
   asOf?: SearchAsOf
+  /**
+   * V2 (issue #48): INCLUSIVE transaction-time range on recorded_at
+   * (`recorded_at >= recordedAfter` / `<= recordedBefore`). UNLIKE `asOf`, the
+   * range does NOT lift the active-only default — it narrows the LIVE view
+   * ("recorded last week"), it is not time travel. Only an `asOf` coordinate
+   * lifts the default (see rowEligibility).
+   */
+  recordedAfter?: Date
+  recordedBefore?: Date
 }
 
 export const DEFAULT_FUSION_WEIGHTS: FusionWeights = { fts: 1, recency: 0.3, vector: 0 }
@@ -486,6 +505,45 @@ export async function findSimilarPairs(
 }
 
 /**
+ * V2 OR-set predicate (issue #48): `memory_type = ANY(ARRAY[...])` over
+ * individually-bound text params (the fetchHitsByIds idList pattern — drizzle's
+ * sql template expands a raw JS-array param into a parenthesized list, which a
+ * single `::text[]` cast cannot consume). The schema boundary guarantees a
+ * non-empty list and its mutual exclusion with the scalar memoryType axis
+ * (rowEligibility handles that one). Helper of {@link rowEligibility} ONLY —
+ * every predicate still splices through that single point.
+ */
+function memoryTypesPredicate(col: (name: string) => SQL, memoryTypes: readonly string[]): SQL {
+  const typeList = sql.join(
+    memoryTypes.map((t) => sql`${t}`),
+    sql`, `,
+  )
+  return sql`${col('memory_type')} = ANY(ARRAY[${typeList}]::text[])`
+}
+
+/**
+ * V2 transaction-time RANGE predicates (issue #48): inclusive bounds on
+ * recorded_at, bound as timestamptz like the asOf coordinates. DELIBERATELY a
+ * dimensional filter, NOT time-travel: a recorded_at range narrows the live
+ * view and must never lift the active-only default (only an asOf coordinate
+ * does — see hasTimeTravel in {@link rowEligibility}, this helper's ONLY
+ * caller).
+ */
+function recordedRangePredicates(
+  col: (name: string) => SQL,
+  filters: Pick<SearchFilters, 'recordedAfter' | 'recordedBefore'>,
+): SQL[] {
+  const conditions: SQL[] = []
+  if (filters.recordedAfter !== undefined) {
+    conditions.push(sql`${col('recorded_at')} >= ${filters.recordedAfter}::timestamptz`)
+  }
+  if (filters.recordedBefore !== undefined) {
+    conditions.push(sql`${col('recorded_at')} <= ${filters.recordedBefore}::timestamptz`)
+  }
+  return conditions
+}
+
+/**
  * Build the per-row ELIGIBILITY predicate every leg/pool and the candidates CTE
  * share. It REPLACES the bare `status = 'active'` literal:
  * the SAME composed fragment is spliced into the FTS leg, the recency pool, the
@@ -551,8 +609,12 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
   if (filters.memoryType !== undefined) {
     conditions.push(sql`${col('memory_type')} = ${filters.memoryType}`)
   }
+  if (filters.memoryTypes !== undefined) {
+    conditions.push(memoryTypesPredicate(col, filters.memoryTypes))
+  }
   if (filters.scope !== undefined) conditions.push(sql`${col('scope')} = ${filters.scope}`)
   if (filters.project !== undefined) conditions.push(sql`${col('project')} = ${filters.project}`)
+  conditions.push(...recordedRangePredicates(col, filters))
 
   return sql.join(conditions, sql` AND `)
 }

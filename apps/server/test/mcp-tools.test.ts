@@ -12,28 +12,34 @@
 import { runWithContext } from '@3ngram/config'
 import { fakeEmbedding } from '@3ngram/llm'
 import {
-  briefingToolOutputSchema,
-  configureScopeOutputSchema,
-  describeEnvironmentOutputSchema,
+  briefingToolOutputV2Schema,
+  briefingToolOutputV3Schema,
+  configureScopeOutputV2Schema,
+  describeEnvironmentOutputV2Schema,
   factsToolOutputSchema,
-  handoffToolOutputSchema,
+  getMemoriesOutputSchema,
+  handoffToolOutputV2Schema,
+  handoffToolOutputV3Schema,
   rememberToolOutputSchema,
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
   reviseToolOutputSchema,
-  searchQuerySchema,
-  searchToolOutputSchema,
+  searchQueryV3Schema,
+  searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
-const search = vi.fn()
+const searchDashboardPage = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
 const resolveByMemoryId = vi.fn()
 const briefing = vi.fn()
 const handoff = vi.fn()
+// Inspect tool core fn (get_memories).
+const getMemoriesByIds = vi.fn()
 // D3 admin-tool core fns (configure_scope / describe_environment / review_proposals).
 const listScopes = vi.fn()
 const createScope = vi.fn()
@@ -41,6 +47,7 @@ const renameScope = vi.fn()
 const setScopeAliases = vi.fn()
 const deleteScope = vi.fn()
 const describeEnvironment = vi.fn()
+const setRetrievalDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
@@ -153,6 +160,37 @@ class MissingSelectorError extends Error {
     this.name = 'MissingSelectorError'
   }
 }
+function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  const prefix =
+    "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
+  if (registeredScopes.length === 0) {
+    return `${prefix}no scopes are registered yet — register one with configure_scope`
+  }
+  const shown = registeredScopes.slice(0, 8)
+  const omitted = registeredScopes.length - shown.length
+  return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
+}
+// Retrieval-scope policy typed error (issue #47) — mirrors @3ngram/core: the
+// message names the REGISTERED SCOPES (bounded user labels, never content).
+class UnscopedRetrievalError extends Error {
+  readonly registeredScopes: readonly string[]
+  constructor(registeredScopes: readonly string[]) {
+    super(formatUnscopedRetrievalDetail(registeredScopes))
+    this.name = 'UnscopedRetrievalError'
+    this.registeredScopes = registeredScopes
+  }
+}
+function applyPolicyToScopeFilter(
+  policy: { mode: string; defaultScope?: string; registeredScopes?: readonly string[] } | undefined,
+  requestedScope: string | undefined,
+) {
+  if (requestedScope !== undefined) return { scope: requestedScope, appliedScope: null }
+  if (policy?.mode === 'default') {
+    return { scope: policy.defaultScope, appliedScope: policy.defaultScope ?? null }
+  }
+  if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
+  return { scope: undefined, appliedScope: null }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -201,13 +239,15 @@ class SuccessorNotLiveError extends Error {
   }
 }
 vi.mock('@3ngram/core', () => ({
+  applyPolicyToScopeFilter,
   remember,
-  search,
+  searchDashboardPage,
   getFacts,
   revise,
   resolveByMemoryId,
   briefing,
   handoff,
+  getMemoriesByIds,
   BudgetExceededError,
   AccessDeniedError,
   ResourceLimitExceededError,
@@ -222,8 +262,11 @@ vi.mock('@3ngram/core', () => ({
   InvalidCommitmentTransitionError,
   IllegalCommitmentTransitionError,
   MissingSelectorError,
+  formatUnscopedRetrievalDetail,
+  UnscopedRetrievalError,
   // D3 admin tools
   listScopes,
+  setRetrievalDefault,
   createScope,
   renameScope,
   setScopeAliases,
@@ -276,12 +319,14 @@ async function call(name: string, args: unknown, context: ToolContext) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('MCP tool registry discipline', () => {
-  it('registers exactly 10 tools (D1 5 + D2 orient 2 + D3 admin 3), under the cap', () => {
+  it('registers exactly 11 tools (D1 5 + D2 orient 2 + inspect 1 + D3 admin 3), under the cap', () => {
     // MERGED truth: the 5 existing tools (remember, search, get_facts, revise,
-    // resolve) + D2 orientation (briefing, handoff) + D3 admin (configure_scope,
-    // describe_environment, review_proposals) -> the 10-tool v1 surface. The cap
-    // (<=12, docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling.
-    expect(TOOLS).toHaveLength(10)
+    // resolve) + D2 orientation (briefing, handoff) + the inspect follow-up read
+    // (get_memories) + D3 admin (configure_scope, describe_environment,
+    // review_proposals) -> the 11-tool surface. The cap (<=12,
+    // docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling; the last
+    // slot is reserved for manage_context.
+    expect(TOOLS).toHaveLength(11)
     expect(TOOLS.map((t) => t.name)).toEqual([
       'remember',
       'search',
@@ -290,6 +335,7 @@ describe('MCP tool registry discipline', () => {
       'resolve',
       'briefing',
       'handoff',
+      'get_memories',
       'configure_scope',
       'describe_environment',
       'review_proposals',
@@ -461,43 +507,224 @@ describe('remember tool', () => {
 })
 
 describe('search tool', () => {
-  it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
-    search.mockResolvedValue([
-      {
-        id: MEMO_ID,
-        memoryType: 'decision',
-        topic: 'pin',
-        content: 'pinned',
-        contentLength: 'pinned'.length,
-        truncated: false,
-        score: 0.9,
+  /** Wrap hits as the core DashboardSearchPage shape (frozen ordering + offset). */
+  function pageOf(
+    hits: Array<{ id: string; score: number }>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    const policyScope = typeof overrides.appliedScope === 'string' ? overrides.appliedScope : null
+    return {
+      hits,
+      frozen: {
+        ids: hits.map((h) => h.id),
+        scores: hits.map((h) => h.score),
+        policyScope,
       },
-    ])
+      nextOffset: hits.length,
+      hasMore: false,
+      ...overrides,
+    }
+  }
+
+  const HIT = {
+    id: MEMO_ID,
+    memoryType: 'decision',
+    topic: 'pin',
+    content: 'pinned',
+    contentLength: 'pinned'.length,
+    truncated: false,
+    score: 0.9,
+  }
+
+  it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([HIT]))
     const result = await call('search', { query: 'sdk pin' }, ctx())
     expect(result.isError).toBeFalsy()
-    const parsed = searchToolOutputSchema.parse(result.structuredContent)
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
     expect(parsed.count).toBe(1)
     expect(parsed.hits[0]?.id).toBe(MEMO_ID)
-    // The excerpt metadata rides every hit.
-    expect(parsed.hits[0]?.contentLength).toBe('pinned'.length)
-    expect(parsed.hits[0]?.truncated).toBe(false)
+    // The excerpt metadata rides every FULL-projection (default) hit.
+    expect(parsed.hits[0]).toMatchObject({ contentLength: 'pinned'.length, truncated: false })
+    // Final page: hasMore false and NO dangling cursor (schema-enforced pair).
+    expect(parsed.hasMore).toBe(false)
+    expect(parsed.nextCursor).toBeUndefined()
+  })
+
+  it('compact projection omits the excerpt triple per hit (#49)', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+    const result = await call('search', { query: 'sdk pin', projection: 'compact' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hits[0]).toEqual({
+      id: MEMO_ID,
+      memoryType: 'decision',
+      topic: 'pin',
+      score: 0.9,
+    })
+  })
+
+  it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
+    const result = await call('search', { query: 'sdk pin', limit: 1 }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hasMore).toBe(true)
+    // The token is the SAME v2 frozen-ordering cursor the dashboard mints,
+    // fingerprint-BOUND to the issuing query+filters.
+    expect(decodeCursor(parsed.nextCursor as string)).toEqual({
+      v: 2,
+      ids: [MEMO_ID],
+      scores: [0.9],
+      off: 1,
+      fp: searchFingerprint('sdk pin', {}),
+      policyScope: null,
+    })
+  })
+
+  it('binds continuation cursors to the effective policy scope', async () => {
+    searchDashboardPage.mockResolvedValue(
+      pageOf([HIT], { nextOffset: 1, hasMore: true, appliedScope: 'work' }),
+    )
+    const issued = await call(
+      'search',
+      { query: 'sdk pin', limit: 1 },
+      ctx({ retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })) }),
+    )
+    const cursor = (issued.structuredContent as { nextCursor: string }).nextCursor
+    expect(decodeCursor(cursor)).toMatchObject({
+      fp: searchFingerprint('sdk pin', {}, 'work', true),
+      policyScope: 'work',
+    })
+
+    vi.clearAllMocks()
+    const samePolicy = await call(
+      'search',
+      { query: 'sdk pin', cursor },
+      ctx({ retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })) }),
+    )
+    expect(samePolicy.isError).toBeFalsy()
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        frozen: expect.objectContaining({ off: 1, policyScope: 'work' }),
+      }),
+    )
+
+    vi.clearAllMocks()
+    for (const policy of [
+      { mode: 'default', defaultScope: 'personal' },
+      { mode: 'off' },
+    ] as const) {
+      const replay = await call(
+        'search',
+        { query: 'sdk pin', cursor },
+        ctx({ retrievalPolicy: vi.fn(async () => policy) }),
+      )
+      expect(replay.isError).toBe(true)
+    }
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects policy-default and explicit-scope cursor provenance changes', async () => {
+    searchDashboardPage.mockResolvedValue(
+      pageOf([HIT], { nextOffset: 1, hasMore: true, appliedScope: 'work' }),
+    )
+    const policyCtx = ctx({
+      retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })),
+    })
+    const issuedByPolicy = await call('search', { query: 'sdk pin', limit: 1 }, policyCtx)
+    const policyCursor = (issuedByPolicy.structuredContent as { nextCursor: string }).nextCursor
+
+    vi.clearAllMocks()
+    const explicitReplay = await call(
+      'search',
+      { query: 'sdk pin', scope: 'work', cursor: policyCursor },
+      policyCtx,
+    )
+    expect(explicitReplay.isError).toBe(true)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+
+    const explicitCursor = encodeCursor({
+      v: 2,
+      ids: [MEMO_ID],
+      scores: [0.9],
+      off: 1,
+      fp: searchFingerprint('sdk pin', { scope: 'work' }, 'work'),
+      policyScope: null,
+    })
+    const policyReplay = await call(
+      'search',
+      { query: 'sdk pin', cursor: explicitCursor },
+      policyCtx,
+    )
+    expect(policyReplay.isError).toBe(true)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('decodes a fingerprint-less legacy cursor and threads the frozen ordering to core (#49)', async () => {
+    // verify-when-present compatibility: a v2 cursor minted BEFORE the
+    // query-binding carries no fp and must keep paging, not 400 mid-session.
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1 })
+    const result = await call('search', { query: 'sdk pin', cursor }, ctx())
+    expect(result.isError).toBeFalsy()
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { frozen?: { ids: string[]; scores: number[]; off: number } },
+    ]
+    expect(options.frozen).toEqual({ ids: [MEMO_ID], scores: [0.9], off: 1 })
+  })
+
+  it('continues a bound cursor under the SAME query+filters', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    const fp = searchFingerprint('sdk pin', { scope: 'work' })
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    const result = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(searchDashboardPage).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a cursor replayed under a CHANGED query/filters as typed invalid input', async () => {
+    const fp = searchFingerprint('sdk pin', {})
+    const cursor = encodeCursor({ v: 2, ids: [MEMO_ID], scores: [0.9], off: 1, fp })
+    // Changed query text.
+    const changedQuery = await call('search', { query: 'something else', cursor }, ctx())
+    expect(changedQuery.isError).toBe(true)
+    expect((changedQuery.content[0] as { text: string }).text).toBe(
+      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
+    )
+    // Same query, changed filter set.
+    const changedFilters = await call('search', { query: 'sdk pin', scope: 'work', cursor }, ctx())
+    expect(changedFilters.isError).toBe(true)
+    // Never a silent re-page of the old frozen ordering.
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects a garbled cursor as CLIENT input without reaching core (#49)', async () => {
+    const result = await call('search', { query: 'sdk pin', cursor: '!!!garbled!!!' }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid input')
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('labels an over-cap hit as invalid_output (a SERVER fault), never invalid_input (#238)', async () => {
     // Force core to break its own contract (an unexcerpted long row). The tool
     // must label the failure as an OUTPUT fault — blaming the caller's input
     // for a server-side shape bug is the dishonest label this fix removes.
-    search.mockResolvedValue([
-      {
-        id: MEMO_ID,
-        memoryType: 'note',
-        topic: 't',
-        content: 'z'.repeat(5000),
-        contentLength: 5000,
-        truncated: false,
-        score: 0.5,
-      },
-    ])
+    searchDashboardPage.mockResolvedValue(
+      pageOf([
+        {
+          id: MEMO_ID,
+          memoryType: 'note',
+          topic: 't',
+          content: 'z'.repeat(5000),
+          contentLength: 5000,
+          truncated: false,
+          score: 0.5,
+        },
+      ]),
+    )
     const result = await call('search', { query: 'epic' }, ctx())
     expect(result.isError).toBe(true)
     const text = (result.content[0] as { text: string }).text
@@ -511,28 +738,28 @@ describe('search tool', () => {
     const result = await call('search', { query: 'sdk pin' }, ctx({ gateway: undefined }))
     expect(result.isError).toBe(true)
     expect(result.content[0]).toMatchObject({ text: 'embedding gateway not configured' })
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('rejects an empty query without calling core', async () => {
     const result = await call('search', { query: '   ' }, ctx())
     expect(result.isError).toBe(true)
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('caps the limit at the no-firehose ceiling', () => {
-    expect(searchQuerySchema.safeParse({ query: 'x', limit: 999 }).success).toBe(false)
+    expect(searchQueryV3Schema.safeParse({ query: 'x', limit: 999 }).success).toBe(false)
   })
 
-  it('accepts a supported filter and threads it into the core SearchOptions (#166)', async () => {
-    // The MCP search tool now EXPOSES the candidate-narrowing filters: a `scope`
-    // filter validates and reaches core as SearchOptions.filters, never dropped.
-    expect(searchQuerySchema.safeParse({ query: 'x', scope: 'work' }).success).toBe(true)
-    search.mockResolvedValue([])
+  it('accepts a supported filter and threads it into the core options (#166)', async () => {
+    // The MCP search tool EXPOSES the candidate-narrowing filters: a `scope`
+    // filter validates and reaches core as DashboardPageOptions.filters, never dropped.
+    expect(searchQueryV3Schema.safeParse({ query: 'x', scope: 'work' }).success).toBe(true)
+    searchDashboardPage.mockResolvedValue(pageOf([]))
     const result = await call('search', { query: 'sdk pin', scope: 'work' }, ctx())
     expect(result.isError).toBeFalsy()
-    expect(search).toHaveBeenCalledOnce()
-    const [, query, , options] = search.mock.calls[0] as [
+    expect(searchDashboardPage).toHaveBeenCalledOnce()
+    const [, query, , options] = searchDashboardPage.mock.calls[0] as [
       string,
       string,
       unknown,
@@ -545,7 +772,7 @@ describe('search tool', () => {
   })
 
   it('threads memoryType, project, status and asOf filters together (#166)', async () => {
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue(pageOf([]))
     await call(
       'search',
       {
@@ -557,7 +784,7 @@ describe('search tool', () => {
       },
       ctx(),
     )
-    const [, , , options] = search.mock.calls[0] as [
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
       string,
       string,
       unknown,
@@ -570,13 +797,68 @@ describe('search tool', () => {
     expect(options.filters.asOf).toEqual({ validAt: new Date('2026-01-01T00:00:00.000Z') })
   })
 
+  it('threads the V2 axes: memoryTypes[] + recordedAfter/recordedBefore as Dates (#48)', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([]))
+    await call(
+      'search',
+      {
+        query: 'q',
+        memoryTypes: ['decision', 'fact'],
+        recordedAfter: '2026-01-01T00:00:00.000Z',
+        recordedBefore: '2026-02-01T00:00:00.000Z',
+      },
+      ctx(),
+    )
+    const [, , , options] = searchDashboardPage.mock.calls[0] as [
+      string,
+      string,
+      unknown,
+      { filters: { memoryTypes?: string[]; recordedAfter?: Date; recordedBefore?: Date } },
+    ]
+    expect(options.filters.memoryTypes).toEqual(['decision', 'fact'])
+    // The range bounds coerce ISO -> Date at the transport boundary like asOf.
+    expect(options.filters.recordedAfter).toEqual(new Date('2026-01-01T00:00:00.000Z'))
+    expect(options.filters.recordedBefore).toEqual(new Date('2026-02-01T00:00:00.000Z'))
+    expect(Object.keys(options.filters).sort()).toEqual([
+      'memoryTypes',
+      'recordedAfter',
+      'recordedBefore',
+    ])
+  })
+
+  it('REJECTS memoryTypes together with memoryType at the boundary (mutually exclusive, #48)', async () => {
+    expect(
+      searchQueryV3Schema.safeParse({ query: 'q', memoryType: 'decision', memoryTypes: ['fact'] })
+        .success,
+    ).toBe(false)
+    const result = await call(
+      'search',
+      { query: 'q', memoryType: 'decision', memoryTypes: ['fact'] },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects an out-of-contract memoryTypes list (empty / over-cap / bad enum)', async () => {
+    for (const memoryTypes of [
+      [],
+      Array.from({ length: 9 }, () => 'note'),
+      ['not-a-memory-type'],
+    ]) {
+      const result = await call('search', { query: 'q', memoryTypes }, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
   it('still rejects an UNKNOWN filter key rather than silently dropping it (strict)', async () => {
     // The schema stays `.strict()`: an unrecognised key is a clear validation
     // error, never silently ignored (a silent drop on a filter reads as a leak).
-    expect(searchQuerySchema.safeParse({ query: 'x', bogusFilter: 'oops' }).success).toBe(false)
+    expect(searchQueryV3Schema.safeParse({ query: 'x', bogusFilter: 'oops' }).success).toBe(false)
     const result = await call('search', { query: 'sdk pin', bogusFilter: 'oops' }, ctx())
     expect(result.isError).toBe(true)
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 })
 
@@ -849,7 +1131,7 @@ describe('resolve tool', () => {
 })
 
 describe('briefing tool (D2 orientation)', () => {
-  const briefSection = () => ({ count: 0, items: [] })
+  const briefSection = () => ({ count: 0, items: [], hasMore: false })
   const fakeBriefing = (overrides: Record<string, unknown> = {}) => ({
     selector: { kind: 'all' },
     mode: 'brief',
@@ -877,12 +1159,65 @@ describe('briefing tool (D2 orientation)', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = briefingToolOutputSchema.parse(result.structuredContent)
+    const parsed = briefingToolOutputV2Schema.parse(result.structuredContent)
     expect(parsed.mode).toBe('brief')
     // The tool forwards the selector to core (no-firehose discipline).
     expect(briefing.mock.calls[0]?.[1]).toMatchObject({
       selector: { kind: 'scope', scope: 'work' },
     })
+  })
+
+  it('forwards sections + sectionLimit to core and omits them when absent (bounds V2)', async () => {
+    briefing.mockResolvedValue(fakeBriefing())
+    await call(
+      'briefing',
+      { selector: { kind: 'all' }, sections: ['overdue'], sectionLimit: 50 },
+      ctx(),
+    )
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ sections: ['overdue'], sectionLimit: 50 })
+    briefing.mockClear()
+    briefing.mockResolvedValue(fakeBriefing())
+    await call('briefing', { selector: { kind: 'all' } }, ctx())
+    const arg = briefing.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('sections' in arg).toBe(false)
+    expect('sectionLimit' in arg).toBe(false)
+  })
+
+  it('accepts a subset briefing from core (skipped sections omitted) and keeps hasMore', async () => {
+    briefing.mockResolvedValue({
+      selector: { kind: 'all' },
+      mode: 'full',
+      generatedAt: '2026-06-06T00:00:00.000Z',
+      overdue: { count: 9, items: [], hasMore: true },
+    })
+    const result = await call(
+      'briefing',
+      { selector: { kind: 'all' }, mode: 'full', sections: ['overdue'] },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = briefingToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.overdue?.hasMore).toBe(true)
+    expect(parsed.commitments).toBeUndefined()
+  })
+
+  it('rejects an out-of-ceiling sectionLimit and a duplicate sections list at the boundary', async () => {
+    expect(
+      (await call('briefing', { selector: { kind: 'all' }, sectionLimit: 101 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (await call('briefing', { selector: { kind: 'all' }, sectionLimit: 0 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (
+        await call(
+          'briefing',
+          { selector: { kind: 'all' }, sections: ['overdue', 'overdue'] },
+          ctx(),
+        )
+      ).isError,
+    ).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
   })
 
   it('defaults mode to brief and injects a now Date at the transport edge', async () => {
@@ -908,6 +1243,47 @@ describe('briefing tool (D2 orientation)', () => {
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('invalid input')
   })
+
+  it('accepts a scope_project selector, defaulting includeUnscoped false (issue #46)', async () => {
+    const selector = {
+      kind: 'scope_project',
+      scope: 'work',
+      project: '3ngram',
+      includeUnscoped: false,
+    }
+    briefing.mockResolvedValue(fakeBriefing({ selector }))
+    const result = await call(
+      'briefing',
+      { selector: { kind: 'scope_project', scope: 'work', project: '3ngram' } },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    // The schema default rides into core: past the boundary includeUnscoped is
+    // ALWAYS explicit, and the echoed selector round-trips the V3 output parse.
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ selector })
+    const parsed = briefingToolOutputV3Schema.parse(result.structuredContent)
+    expect(parsed.selector).toEqual(selector)
+  })
+
+  it('rejects a malformed scope_project selector and any bare-variant widening', async () => {
+    // Missing project: the intersection needs both halves.
+    expect(
+      (await call('briefing', { selector: { kind: 'scope_project', scope: 'work' } }, ctx()))
+        .isError,
+    ).toBe(true)
+    // The shipped bare project variant is NOT widened — includeUnscoped only
+    // rides the scope_project kind (strict variants reject the smuggle).
+    expect(
+      (
+        await call(
+          'briefing',
+          { selector: { kind: 'project', project: '3ngram', includeUnscoped: true } },
+          ctx(),
+        )
+      ).isError,
+    ).toBe(true)
+    expect(briefing).not.toHaveBeenCalled()
+  })
 })
 
 describe('handoff tool (D2 orientation)', () => {
@@ -919,6 +1295,8 @@ describe('handoff tool (D2 orientation)', () => {
     commitments: [],
     preferences: [],
     notes: [],
+    counts: { decisions: 0, commitments: 0, preferences: 0 },
+    truncated: { decisions: false, commitments: false, preferences: false },
     ...overrides,
   })
 
@@ -943,6 +1321,8 @@ describe('handoff tool (D2 orientation)', () => {
             project: null,
           },
         ],
+        counts: { decisions: 40, commitments: 0, preferences: 0 },
+        truncated: { decisions: true, commitments: false, preferences: false },
       }),
     )
     const result = await call(
@@ -951,9 +1331,12 @@ describe('handoff tool (D2 orientation)', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = handoffToolOutputSchema.parse(result.structuredContent)
+    const parsed = handoffToolOutputV2Schema.parse(result.structuredContent)
     // Content IS included by design (a handoff transports context).
     expect(parsed.decisions[0]?.content).toBe('pin mcp sdk at 1.29.0')
+    // The exact per-section totals + truncation flags ride the envelope (V2).
+    expect(parsed.counts.decisions).toBe(40)
+    expect(parsed.truncated.decisions).toBe(true)
     expect(handoff.mock.calls[0]?.[1]).toMatchObject({
       selector: { kind: 'all' },
       generatedFor: 'agent-b',
@@ -966,6 +1349,42 @@ describe('handoff tool (D2 orientation)', () => {
     const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
     expect('generatedFor' in arg).toBe(false)
     expect(arg.now).toBeInstanceOf(Date)
+  })
+
+  it('accepts a scope_project selector via the shared union (issue #46)', async () => {
+    const selector = {
+      kind: 'scope_project',
+      scope: 'work',
+      project: '3ngram',
+      includeUnscoped: true,
+    }
+    handoff.mockResolvedValue(fakeHandoff({ selector }))
+    const result = await call('handoff', { selector }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ selector })
+    const parsed = handoffToolOutputV3Schema.parse(result.structuredContent)
+    expect(parsed.selector).toEqual(selector)
+  })
+
+  it('forwards sectionLimit to core and omits it when absent (bounds V2)', async () => {
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' }, sectionLimit: 80 }, ctx())
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ sectionLimit: 80 })
+    handoff.mockClear()
+    handoff.mockResolvedValue(fakeHandoff())
+    await call('handoff', { selector: { kind: 'all' } }, ctx())
+    const arg = handoff.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('sectionLimit' in arg).toBe(false)
+  })
+
+  it('rejects an out-of-ceiling sectionLimit at the boundary (never reaches core)', async () => {
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 101 }, ctx())).isError,
+    ).toBe(true)
+    expect(
+      (await call('handoff', { selector: { kind: 'all' }, sectionLimit: 0 }, ctx())).isError,
+    ).toBe(true)
+    expect(handoff).not.toHaveBeenCalled()
   })
 })
 
@@ -985,7 +1404,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
 
   it('a read-only token can search but remember returns the scope error', async () => {
     const readOnly = ctx({ scopes: ['memory:read'] })
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+    })
     const searched = await call('search', { query: 'x' }, readOnly)
     expect(searched.isError).toBeFalsy()
 
@@ -1033,8 +1457,8 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
     }
   })
 
-  it('briefing and handoff are read-scoped: a read-only token can call them', async () => {
-    for (const name of ['briefing', 'handoff']) {
+  it('briefing, handoff, and get_memories are read-scoped: a read-only token can call them', async () => {
+    for (const name of ['briefing', 'handoff', 'get_memories']) {
       expect(toolByName(name).requiredScope).toBe('memory:read')
     }
     const readOnly = ctx({ scopes: ['memory:read'] })
@@ -1042,12 +1466,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
       selector: { kind: 'all' },
       mode: 'brief',
       generatedAt: '2026-06-06T00:00:00.000Z',
-      commitments: { count: 0, items: [] },
-      overdue: { count: 0, items: [] },
-      blockers: { count: 0, items: [] },
-      staleCandidates: { count: 0, items: [] },
-      recentDecisions: { count: 0, items: [] },
-      preferences: { count: 0, items: [] },
+      commitments: { count: 0, items: [], hasMore: false },
+      overdue: { count: 0, items: [], hasMore: false },
+      blockers: { count: 0, items: [], hasMore: false },
+      staleCandidates: { count: 0, items: [], hasMore: false },
+      recentDecisions: { count: 0, items: [], hasMore: false },
+      preferences: { count: 0, items: [], hasMore: false },
     })
     const result = await call('briefing', { selector: { kind: 'all' } }, readOnly)
     expect(result.isError).toBeFalsy()
@@ -1056,7 +1480,12 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
   it('a write-scoped token can do both', async () => {
     const full = ctx({ scopes: ['memory:read', 'memory:write'] })
     remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
-    search.mockResolvedValue([])
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+    })
     expect(
       (await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, full)).isError,
     ).toBeFalsy()
@@ -1070,7 +1499,7 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
     expect(searched.content[0]).toMatchObject({
       text: expect.stringContaining('insufficient scope'),
     })
-    expect(search).not.toHaveBeenCalled()
+    expect(searchDashboardPage).not.toHaveBeenCalled()
 
     const written = await call('remember', { memoryType: 'note', topic: 'x', content: 'y' }, none)
     expect(written.isError).toBe(true)
@@ -1112,7 +1541,7 @@ describe('configure_scope tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -1129,7 +1558,7 @@ describe('configure_scope tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputSchema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('upserted')
     if (parsed.action === 'upserted') expect(parsed.scope.name).toBe('research')
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
@@ -1152,7 +1581,7 @@ describe('configure_scope tool', () => {
 
     const deleted = await call('configure_scope', { action: 'delete', name: 'work' }, ctx())
     expect(deleteScope).toHaveBeenCalledWith(UID, 'work')
-    const parsed = configureScopeOutputSchema.parse(deleted.structuredContent)
+    const parsed = configureScopeOutputV2Schema.parse(deleted.structuredContent)
     expect(parsed.action).toBe('deleted')
     if (parsed.action === 'deleted') expect(parsed.name).toBe('work')
   })
@@ -1251,6 +1680,7 @@ describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
       scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: { decision: 3, fact: 5 },
         activeMemories: 8,
@@ -1261,9 +1691,9 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputSchema.parse(result.structuredContent)
-    // Capabilities reflect the FULL registry (merged surface: 10 tools, names included).
-    expect(parsed.capabilities.toolCount).toBe(10)
+    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
+    expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
     expect(parsed.capabilities.tools.length).toBe(parsed.capabilities.toolCount)
     // Derives from apps/server/package.json (see src/version.ts), so this
@@ -1287,6 +1717,7 @@ describe('describe_environment tool', () => {
     try {
       describeEnvironment.mockResolvedValue({
         scopes: [scopeRecord('work')],
+        retrievalScopePolicy: { mode: 'off', scope: null },
         stats: {
           memoriesByType: {},
           activeMemories: 0,
@@ -1480,6 +1911,79 @@ describe('D3 admin tools: registry scope declarations', () => {
   })
 })
 
+describe('get_memories tool (batched full-content follow-up read)', () => {
+  const rowId = crypto.randomUUID()
+  const coreRow = (over: Record<string, unknown> = {}) => ({
+    id: rowId,
+    memoryType: 'decision',
+    topic: 'release cadence',
+    content: 'full decision body',
+    contentLength: 18,
+    truncated: false,
+    scope: 'work',
+    project: null,
+    status: 'active',
+    commitmentStatus: null,
+    tags: ['ops'],
+    validFrom: new Date('2026-01-01T00:00:00.000Z'),
+    validTo: null,
+    recordedAt: new Date('2026-01-01T00:00:00.000Z'),
+    createdAt: new Date('2026-01-02T00:00:00.000Z'),
+    ...over,
+  })
+
+  it('passes validated ids + maxContentChars to core and shapes schema-valid output', async () => {
+    getMemoriesByIds.mockResolvedValue({ memories: [coreRow()], notFound: [MEMO_ID] })
+    const result = await call(
+      'get_memories',
+      { ids: [rowId, MEMO_ID], maxContentChars: 4096 },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getMemoriesByIds).toHaveBeenCalledWith(UID, [rowId, MEMO_ID], {
+      maxContentChars: 4096,
+    })
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.count).toBe(1)
+    expect(parsed.memories[0]?.id).toBe(rowId)
+    expect(parsed.memories[0]?.validFrom).toBe('2026-01-01T00:00:00.000Z')
+    // A null LEFT-JOIN commitment status is OMITTED (schema optional), never null.
+    expect(parsed.memories[0]).not.toHaveProperty('commitmentStatus')
+    // notFound is DATA: the miss rides in the envelope, the call still succeeds.
+    expect(parsed.notFound).toEqual([MEMO_ID])
+  })
+
+  it('carries commitmentStatus for a commitment-type row', async () => {
+    getMemoriesByIds.mockResolvedValue({
+      memories: [coreRow({ memoryType: 'commitment', commitmentStatus: 'open' })],
+      notFound: [],
+    })
+    const result = await call('get_memories', { ids: [rowId] }, ctx())
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.memories[0]?.commitmentStatus).toBe('open')
+  })
+
+  it('applies the schema default maxContentChars when omitted', async () => {
+    getMemoriesByIds.mockResolvedValue({ memories: [], notFound: [rowId] })
+    await call('get_memories', { ids: [rowId] }, ctx())
+    expect(getMemoriesByIds).toHaveBeenCalledWith(UID, [rowId], { maxContentChars: 10000 })
+  })
+
+  it('rejects bad batches at the boundary: empty ids, >20 ids, out-of-range cap, unknown key', async () => {
+    for (const args of [
+      { ids: [] },
+      { ids: Array.from({ length: 21 }, () => crypto.randomUUID()) },
+      { ids: [rowId], maxContentChars: 199 },
+      { ids: [rowId], maxContentChars: 65537 },
+      { ids: [rowId], scope: 'work' },
+      { ids: ['not-a-uuid'] },
+    ]) {
+      expect((await call('get_memories', args, ctx())).isError).toBe(true)
+    }
+    expect(getMemoriesByIds).not.toHaveBeenCalled()
+  })
+})
+
 // ACCESS GATE ENFORCEMENT: the orientation + admin tools that read or mutate
 // tenant-memory data now assert ctx.access AFTER the scope check but BEFORE the
 // core op. A denying gate must reject (isError access_denied) AND the core fn must
@@ -1503,6 +2007,7 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
   const GATED: Array<[string, unknown, 'read' | 'write', ReturnType<typeof vi.fn>]> = [
     ['briefing', { selector: { kind: 'all' } }, 'read', briefing],
     ['handoff', { selector: { kind: 'all' } }, 'read', handoff],
+    ['get_memories', { ids: [MEMO_ID] }, 'read', getMemoriesByIds],
     ['describe_environment', {}, 'read', describeEnvironment],
     ['configure_scope', { action: 'list' }, 'read', listScopes],
     ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],
@@ -1518,5 +2023,225 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     expect((result.content[0] as { text: string }).text).toContain('access_denied')
     // The gate blocked BEFORE the db op — core was never invoked.
     expect(coreSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Retrieval-scope policy wiring (issue #47, layer 3)
+// ---------------------------------------------------------------------------
+
+describe('retrieval-scope policy wiring', () => {
+  const DEFAULT_WORK = { mode: 'default', defaultScope: 'work' } as const
+  /** A request-scoped resolver thunk mirroring routes/mcp.ts lazyRetrievalPolicy. */
+  const policyThunk = (policy: unknown) => vi.fn(() => Promise.resolve(policy))
+  const emptySection = { count: 0, items: [], hasMore: false }
+
+  it('configure_scope set_retrieval_default stores the policy and echoes it', async () => {
+    setRetrievalDefault.mockResolvedValue({ mode: 'default', scope: 'work' })
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: 'work', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    expect(parsed).toEqual({
+      action: 'retrieval_default_set',
+      policy: { mode: 'default', scope: 'work' },
+    })
+    expect(setRetrievalDefault).toHaveBeenCalledWith(UID, { mode: 'default', scope: 'work' })
+  })
+
+  it('set_retrieval_default is a WRITE action: a read-only token is rejected', async () => {
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: null, mode: 'require' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('memory:write')
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('rejects a drifting mode/scope pair at the boundary — core never runs', async () => {
+    for (const args of [
+      { action: 'set_retrieval_default', scope: null, mode: 'default' },
+      { action: 'set_retrieval_default', scope: 'work', mode: 'off' },
+      { action: 'set_retrieval_default', mode: 'require' },
+    ]) {
+      const result = await call('configure_scope', args, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('an UNREGISTERED default scope maps to the typed not_found', async () => {
+    setRetrievalDefault.mockRejectedValue(new ScopeNotFoundError('nope'))
+    const result = await call(
+      'configure_scope',
+      { action: 'set_retrieval_default', scope: 'nope', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('describe_environment reports the active policy', async () => {
+    describeEnvironment.mockResolvedValue({
+      scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBeFalsy()
+    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+  })
+
+  it('search: resolves the policy AT MOST ONCE, injects it, and echoes appliedScope', async () => {
+    const thunk = policyThunk(DEFAULT_WORK)
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+      appliedScope: 'work',
+    })
+    const result = await call('search', { query: 'q' }, ctx({ retrievalPolicy: thunk }))
+    expect(result.isError).toBeFalsy()
+    expect(thunk).toHaveBeenCalledTimes(1)
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((result.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+  })
+
+  it('search: asserts read access before resolving policy', async () => {
+    const order: string[] = []
+    const access = {
+      assertRead: vi.fn(async () => {
+        order.push('access')
+      }),
+      assertWrite: vi.fn(),
+    }
+    const thunk = vi.fn(async () => {
+      order.push('policy')
+      return DEFAULT_WORK
+    })
+    searchDashboardPage.mockImplementation(async () => {
+      order.push('search')
+      return {
+        hits: [],
+        frozen: { ids: [], scores: [] },
+        nextOffset: 0,
+        hasMore: false,
+        appliedScope: 'work',
+      }
+    })
+
+    await call(
+      'search',
+      { query: 'q' },
+      ctx({ access: access as unknown as ToolContext['access'], retrievalPolicy: thunk }),
+    )
+
+    expect(order).toEqual(['access', 'policy', 'search'])
+    expect(searchDashboardPage.mock.calls[0]?.[3]).not.toHaveProperty('access')
+  })
+
+  it('search: no policy narrowing -> NO appliedScope key (byte-identical legacy)', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: [], scores: [] },
+      nextOffset: 0,
+      hasMore: false,
+      appliedScope: null,
+    })
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({ retrievalPolicy: policyThunk({ mode: 'off' }) }),
+    )
+    expect(result.isError).toBeFalsy()
+    expect('appliedScope' in (result.structuredContent as object)).toBe(false)
+  })
+
+  it('search: an UnscopedRetrievalError surfaces typed, naming the registered scopes', async () => {
+    searchDashboardPage.mockRejectedValue(new UnscopedRetrievalError(['personal', 'work']))
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({
+        retrievalPolicy: policyThunk({ mode: 'require', registeredScopes: ['personal', 'work'] }),
+      }),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('invalid input')
+    expect(text).toContain('personal, work')
+  })
+
+  it('search: bounds the registered-scope recovery payload', async () => {
+    const registeredScopes = Array.from({ length: 100 }, (_, index) => `scope-${index}`)
+    searchDashboardPage.mockRejectedValue(new UnscopedRetrievalError(registeredScopes))
+
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({ retrievalPolicy: policyThunk({ mode: 'require', registeredScopes }) }),
+    )
+
+    const text = (result.content[0] as { text: string }).text
+    expect(text.length).toBeLessThanOrEqual(527)
+    expect(text).toContain('+92 more omitted')
+  })
+
+  it('briefing and handoff: the policy is injected and appliedScope rides the output', async () => {
+    const thunk = policyThunk(DEFAULT_WORK)
+    briefing.mockResolvedValue({
+      selector: { kind: 'scope', scope: 'work' },
+      mode: 'brief',
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      appliedScope: 'work',
+      commitments: emptySection,
+      overdue: emptySection,
+      blockers: emptySection,
+      staleCandidates: emptySection,
+      recentDecisions: emptySection,
+      preferences: emptySection,
+    })
+    const briefed = await call(
+      'briefing',
+      { selector: { kind: 'all' } },
+      ctx({ retrievalPolicy: thunk }),
+    )
+    expect(briefed.isError).toBeFalsy()
+    expect(briefing.mock.calls[0]?.[1]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((briefed.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+
+    handoff.mockResolvedValue({
+      selector: { kind: 'scope', scope: 'work' },
+      generatedFor: null,
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      appliedScope: 'work',
+      decisions: [],
+      commitments: [],
+      preferences: [],
+      notes: [],
+      counts: { decisions: 0, commitments: 0, preferences: 0 },
+      truncated: { decisions: false, commitments: false, preferences: false },
+    })
+    const handed = await call(
+      'handoff',
+      { selector: { kind: 'all' } },
+      ctx({ retrievalPolicy: policyThunk(DEFAULT_WORK) }),
+    )
+    expect(handed.isError).toBeFalsy()
+    expect(handoff.mock.calls[0]?.[1]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
+    expect((handed.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
   })
 })

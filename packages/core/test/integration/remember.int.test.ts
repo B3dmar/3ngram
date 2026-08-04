@@ -76,8 +76,8 @@ describe('remember (runtime role, real withTenant)', () => {
     const r = await ownerPool.query<{ tags: string[] }>('SELECT tags FROM memories WHERE id = $1', [
       id,
     ])
-    expect(r.rows[0].tags).toEqual(['alpha', 'beta'])
-    expect(Array.isArray(r.rows[0].tags)).toBe(true)
+    expect(r.rows[0]?.tags).toEqual(['alpha', 'beta'])
+    expect(Array.isArray(r.rows[0]?.tags)).toBe(true)
   })
 
   it('defaults tags to [] (not null) when none supplied', async () => {
@@ -87,7 +87,7 @@ describe('remember (runtime role, real withTenant)', () => {
     const r = await ownerPool.query<{ tags: string[] }>('SELECT tags FROM memories WHERE id = $1', [
       id,
     ])
-    expect(r.rows[0].tags).toEqual([])
+    expect(r.rows[0]?.tags).toEqual([])
   })
 
   it('rolls back the memory row when the audit event INSERT fails (atomic write)', async () => {

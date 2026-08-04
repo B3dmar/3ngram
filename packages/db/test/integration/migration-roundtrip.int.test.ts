@@ -22,27 +22,28 @@ describe('migration round-trip structure', () => {
     expect(r.rows[0].ok).toBe(true)
   })
 
-  it('all 24 tables exist', async () => {
+  it('all 25 tables exist', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
        WHERE table_schema = 'public' AND table_name NOT LIKE '\\_\\_%'`,
     )
     // 16 + password_reset_tokens (0015) + email_verification_tokens (0017)
     // + the four 0022 cost/plan tables + budget_reservations (0023)
-    // + user_profile_attributes (0026) = 24
-    expect(Number(r.rows[0].n)).toBe(24)
+    // + user_profile_attributes (0026) = 24, + user_retrieval_policy (0030) = 25
+    expect(Number(r.rows[0].n)).toBe(25)
   })
 
-  it('19 tenant_isolation policies, all with the NULLIF guard', async () => {
+  it('20 tenant_isolation policies, all with the NULLIF guard', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM pg_policies WHERE policyname = 'tenant_isolation'
        AND qual LIKE '%NULLIF%'`,
     )
     // 12 + password_reset_tokens (0015) + email_verification_tokens (0017)
     // + the two 0022 tenant-scoped cost tables + budget_reservations (0023)
-    // + user_profile_attributes (0026) = 18, + audit_log (0029) = 19
+    // + user_profile_attributes (0026) = 18, + audit_log (0029) = 19,
+    // + user_retrieval_policy (0030) = 20
     // (the two 0022 service/global tables have no RLS)
-    expect(Number(r.rows[0].n)).toBe(19)
+    expect(Number(r.rows[0].n)).toBe(20)
   })
 
   it('FSM trigger is armed on commitments', async () => {
