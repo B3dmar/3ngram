@@ -152,7 +152,8 @@
               "enum": [
                 "all",
                 "scope",
-                "project"
+                "project",
+                "scope_project"
               ],
               "type": "string"
             }
@@ -176,6 +177,16 @@
               "maxLength": 256,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnscoped",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+              "type": "boolean"
             }
           },
           {
@@ -690,6 +701,38 @@
                           "required": [
                             "kind",
                             "project"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUnscoped": {
+                              "default": false,
+                              "description": "Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.",
+                              "type": "boolean"
+                            },
+                            "kind": {
+                              "const": "scope_project",
+                              "type": "string"
+                            },
+                            "project": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "scope": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "scope",
+                            "project",
+                            "includeUnscoped"
                           ],
                           "type": "object"
                         }

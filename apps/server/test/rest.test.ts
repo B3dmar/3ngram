@@ -792,6 +792,60 @@ describe('GET /api/v1/briefing', () => {
     )
   })
 
+  // --- selector V2 (issue #46): kind=scope_project + includeUnscoped ---
+
+  it('honors a scope_project selector, defaulting includeUnscoped to false', async () => {
+    const selector = {
+      kind: 'scope_project' as const,
+      scope: 'work',
+      project: 'acme',
+      includeUnscoped: false,
+    }
+    briefing.mockResolvedValue({ ...BRIEFING, selector })
+    const res = await call('/api/v1/briefing?kind=scope_project&scope=work&project=acme', {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    // The schema default rides into core: includeUnscoped is ALWAYS explicit
+    // past the boundary (strict passthrough, never an implicit widen).
+    expect(briefing).toHaveBeenCalledWith(TENANT, expect.objectContaining({ selector }))
+  })
+
+  it('coerces includeUnscoped=true|false from the querystring, 400s anything else', async () => {
+    const selector = {
+      kind: 'scope_project' as const,
+      scope: 'work',
+      project: 'acme',
+      includeUnscoped: true,
+    }
+    briefing.mockResolvedValue({ ...BRIEFING, selector })
+    const on = await call(
+      '/api/v1/briefing?kind=scope_project&scope=work&project=acme&includeUnscoped=true',
+      { key: VALID_KEY },
+    )
+    expect(on.status).toBe(200)
+    expect(briefing).toHaveBeenCalledWith(TENANT, expect.objectContaining({ selector }))
+    // Only the literal strings true/false coerce; anything else must be a 400
+    // at the schema boundary, never a silent false.
+    const bogus = await call(
+      '/api/v1/briefing?kind=scope_project&scope=work&project=acme&includeUnscoped=yes',
+      { key: VALID_KEY },
+    )
+    expect(bogus.status).toBe(400)
+  })
+
+  it('400s scope_project missing its project and includeUnscoped on a bare variant', async () => {
+    // The intersection needs both halves.
+    const half = await call('/api/v1/briefing?kind=scope_project&scope=work', { key: VALID_KEY })
+    expect(half.status).toBe(400)
+    // The shipped bare project variant is NOT widened (strict union member).
+    const smuggle = await call('/api/v1/briefing?kind=project&project=acme&includeUnscoped=true', {
+      key: VALID_KEY,
+    })
+    expect(smuggle.status).toBe(400)
+    expect(briefing).not.toHaveBeenCalled()
+  })
+
   it('400s a missing selector kind (no-firehose schema boundary)', async () => {
     const res = await call('/api/v1/briefing', { key: VALID_KEY })
     expect(res.status).toBe(400)
