@@ -74,12 +74,12 @@ describe('requestPasswordReset (no account enumeration)', () => {
     expect(typeof token).toBe('string')
     expect(token?.length).toBeGreaterThan(0)
     expect(insertPasswordResetToken).toHaveBeenCalledTimes(1)
-    const [userId, stored] = insertPasswordResetToken.mock.calls[0]
+    const [userId, stored] = insertPasswordResetToken.mock.calls[0] ?? []
     expect(userId).toBe(USER_ID)
     // The DB never sees the plaintext — only its hash, which differs from it.
-    expect(stored.tokenHash).not.toBe(token)
-    expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(stored.expiresAt).toBeInstanceOf(Date)
+    expect(stored?.tokenHash).not.toBe(token)
+    expect(stored?.tokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(stored?.expiresAt).toBeInstanceOf(Date)
   })
 
   it('stamps the reset token to expire at the supplied TTL — 60 min for the 1h reset link (FR-018, T027)', async () => {
@@ -88,9 +88,9 @@ describe('requestPasswordReset (no account enumeration)', () => {
       const now = new Date('2026-06-24T12:00:00.000Z')
       vi.setSystemTime(now)
       await requestPasswordReset('user@test.local', 60)
-      const [, stored] = insertPasswordResetToken.mock.calls[0]
+      const [, stored] = insertPasswordResetToken.mock.calls[0] ?? []
       // 1h reset lifetime (spec clarification, RESET_TOKEN_TTL_MINUTES=60).
-      expect(stored.expiresAt.getTime()).toBe(now.getTime() + 60 * 60 * 1000)
+      expect(stored?.expiresAt.getTime()).toBe(now.getTime() + 60 * 60 * 1000)
     } finally {
       vi.useRealTimers()
     }
@@ -109,8 +109,8 @@ describe('resetPassword', () => {
     expect(peekResetToken).toHaveBeenCalledTimes(1)
     expect(resetPasswordAtomic).toHaveBeenCalledTimes(1)
     // Both the peek and the atomic call see the same sha256 hash, never plaintext.
-    const peekHash = peekResetToken.mock.calls[0][0]
-    const [tokenHash, newHash] = resetPasswordAtomic.mock.calls[0]
+    const peekHash = peekResetToken.mock.calls[0]?.[0]
+    const [tokenHash, newHash] = resetPasswordAtomic.mock.calls[0] ?? []
     expect(peekHash).toBe(tokenHash)
     expect(tokenHash).not.toBe('plaintext-token')
     expect(tokenHash).toMatch(/^[0-9a-f]{64}$/)

@@ -103,8 +103,8 @@ describe('registerOAuthClient — confidential clients', () => {
   it('mints distinct ids and secrets per registration (CSPRNG, never reused)', async () => {
     const input = {
       redirect_uris: ['https://app.example.com/cb'],
-      token_endpoint_auth_method: 'client_secret_post',
-    } as const
+      token_endpoint_auth_method: 'client_secret_post' as const,
+    }
     const first = await registerOAuthClient({ ...input })
     const second = await registerOAuthClient({ ...input })
     expect(first.client_id).not.toBe(second.client_id)

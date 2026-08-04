@@ -6,17 +6,33 @@ const tx = { kind: 'tenant-tx' }
 const withTenant = vi.fn(async (_userId: string, fn: (value: unknown) => Promise<unknown>) =>
   fn(tx),
 )
-const lockRetrievalScopePolicy = vi.fn(async () => undefined)
-const renameScopeDb = vi.fn()
-const deleteScopeDb = vi.fn(async () => undefined)
-const replaceRetrievalPolicyDefault = vi.fn(async () => undefined)
+const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
+const renameScopeDb = vi.fn(
+  async (_tx: unknown, _userId: string, _oldName: string, _newName: string): Promise<unknown> =>
+    undefined,
+)
+const deleteScopeDb = vi.fn(async (_tx: unknown, _userId: string, _name: string) => undefined)
+const replaceRetrievalPolicyDefault = vi.fn(
+  async (
+    _tx: unknown,
+    _userId: string,
+    _oldDefault: string,
+    _policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => undefined,
+)
 
 vi.mock('@3ngram/db', () => ({
   withTenant: (userId: string, fn: (value: unknown) => Promise<unknown>) => withTenant(userId, fn),
-  lockRetrievalScopePolicy: (...args: unknown[]) => lockRetrievalScopePolicy(...args),
-  renameScope: (...args: unknown[]) => renameScopeDb(...args),
-  deleteScope: (...args: unknown[]) => deleteScopeDb(...args),
-  replaceRetrievalPolicyDefault: (...args: unknown[]) => replaceRetrievalPolicyDefault(...args),
+  lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
+  renameScope: (tx: unknown, userId: string, oldName: string, newName: string) =>
+    renameScopeDb(tx, userId, oldName, newName),
+  deleteScope: (tx: unknown, userId: string, name: string) => deleteScopeDb(tx, userId, name),
+  replaceRetrievalPolicyDefault: (
+    tx: unknown,
+    userId: string,
+    oldDefault: string,
+    policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => replaceRetrievalPolicyDefault(tx, userId, oldDefault, policy),
 }))
 
 const { deleteScope, renameScope } = await import('../src/scope/scopes.js')

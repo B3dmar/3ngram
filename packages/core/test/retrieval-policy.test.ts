@@ -11,7 +11,7 @@ import type {
 
 const searchFused = vi.fn()
 const fetchHitsByIds = vi.fn()
-const insertLlmUsage = vi.fn(async () => undefined)
+const insertLlmUsage = vi.fn(async (_userId: string, _usage: unknown) => undefined)
 const openCommitments = vi.fn()
 const overdueCommitments = vi.fn()
 const activeBlockers = vi.fn()
@@ -21,7 +21,7 @@ const activePreferences = vi.fn()
 const getRetrievalPolicy = vi.fn()
 const upsertRetrievalPolicy = vi.fn()
 const listScopes = vi.fn()
-const lockRetrievalScopePolicy = vi.fn(async () => undefined)
+const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const getEnvironmentStats = vi.fn()
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
@@ -45,7 +45,7 @@ class ScopeNotFoundError extends Error {
 vi.mock('@3ngram/db', () => ({
   searchFused: (...a: unknown[]) => searchFused(...a),
   fetchHitsByIds: (...a: unknown[]) => fetchHitsByIds(...a),
-  insertLlmUsage: (...a: unknown[]) => insertLlmUsage(...a),
+  insertLlmUsage: (userId: string, usage: unknown) => insertLlmUsage(userId, usage),
   openCommitments: (...a: unknown[]) => openCommitments(...a),
   overdueCommitments: (...a: unknown[]) => overdueCommitments(...a),
   activeBlockers: (...a: unknown[]) => activeBlockers(...a),
@@ -55,7 +55,7 @@ vi.mock('@3ngram/db', () => ({
   getRetrievalPolicy: (...a: unknown[]) => getRetrievalPolicy(...a),
   upsertRetrievalPolicy: (...a: unknown[]) => upsertRetrievalPolicy(...a),
   listScopes: (...a: unknown[]) => listScopes(...a),
-  lockRetrievalScopePolicy: (...a: unknown[]) => lockRetrievalScopePolicy(...a),
+  lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
