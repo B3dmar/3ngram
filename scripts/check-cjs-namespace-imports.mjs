@@ -24,8 +24,8 @@
 // Usage:
 //   node scripts/check-cjs-namespace-imports.mjs
 //   node scripts/check-cjs-namespace-imports.mjs --self-test
-import { readdir, readFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
+import { randomUUID } from 'node:crypto'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -83,19 +83,53 @@ function stripCommentsAndStrings(text) {
     .replace(/`(?:[^`\\]|\\.)*`/g, '``')
 }
 
-/** Members read off the namespace alias, e.g. `ipaddr.isValid` -> 'isValid'. */
+/**
+ * Members read off the namespace alias. Covers BOTH shapes, because either one
+ * yields `undefined` in production:
+ *   - `ipaddr.isValid(x)`            -> 'isValid'
+ *   - `const { isValid } = ipaddr`   -> 'isValid'
+ * A destructure records no property access, so matching only `alias.member`
+ * would let the exact failure mode this guard exists for slip through.
+ */
 function usedMembers(text, local) {
-  const uses = new RegExp(`\\b${local}\\.([A-Za-z_$][\\w$]*)`, 'g')
-  return new Set(Array.from(stripCommentsAndStrings(text).matchAll(uses), (m) => m[1]))
+  const source = stripCommentsAndStrings(text)
+  const members = new Set()
+
+  const access = new RegExp(`\\b${local}\\.([A-Za-z_$][\\w$]*)`, 'g')
+  for (const match of source.matchAll(access)) members.add(match[1])
+
+  const destructure = new RegExp(`(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*${local}\\b`, 'g')
+  for (const match of source.matchAll(destructure)) {
+    for (const part of match[1].split(',')) {
+      // `a`, `a: b`, `a = fallback`, `...rest` (a rest element consumes no
+      // single named member, so it is skipped).
+      const name = part.split(/[:=]/)[0].trim()
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) members.add(name)
+    }
+  }
+  return members
 }
 
 /**
- * Import the specifier the way the DEPLOYED runtime would, resolved from the
- * importing file's own directory so pnpm's per-package layout applies.
+ * Import the specifier through REAL ESM resolution, from the importing file's
+ * own directory so pnpm's per-package layout applies.
+ *
+ * Deliberately NOT createRequire().resolve(): that selects the package's
+ * `require` export condition, which for a dual-published package (e.g.
+ * @sentry/node) is a DIFFERENT file than the `import` condition Node actually
+ * loads for `import * as`. Resolving the wrong branch would both miss real
+ * breakage and fail valid imports. A throwaway sibling module gets the exact
+ * resolution the deployment performs.
  */
 async function namespaceOf(specifier, fromFile) {
-  const require = createRequire(fromFile)
-  return await import(pathToFileURL(require.resolve(specifier)).href)
+  const probe = join(dirname(fromFile), `.esm-interop-probe-${randomUUID()}.mjs`)
+  await writeFile(probe, `export * as namespace from ${JSON.stringify(specifier)}\n`)
+  try {
+    const probed = await import(pathToFileURL(probe).href)
+    return probed.namespace
+  } finally {
+    await rm(probe, { force: true })
+  }
 }
 
 async function run(selfTest) {
