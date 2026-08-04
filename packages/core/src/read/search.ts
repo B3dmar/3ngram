@@ -26,19 +26,15 @@
 // payload, not a log), but no log line here echoes it.
 import {
   type SearchHit as DbSearchHit,
-  DEFAULT_SUPERSESSION_PENALTY,
   EMBEDDING_DIMENSIONS,
-  type FusionWeights,
   fetchHitsByIds,
   InvalidEmbeddingError,
   insertLlmUsage,
-  type SearchFilters,
   searchFused,
   withTenant,
 } from '@3ngram/db'
 import type { Gateway } from '@3ngram/llm'
 import {
-  type AccessGate,
   type BudgetEnforcement,
   type BudgetReservationHandle,
   releaseBudgetReservation,
@@ -46,13 +42,25 @@ import {
 } from '../budget/index.js'
 import { DEFAULT_EMBEDDING_MODEL, embeddingCostUsd } from '../write/embed.js'
 import { excerptContent } from './excerpt.js'
-import { applyPolicyToScopeFilter, type RetrievalPolicy } from './retrieval-policy.js'
+import type { RetrievalPolicy } from './retrieval-policy.js'
+import {
+  type DashboardPageOptions,
+  resolveDashboardPageOptions,
+  resolveSearchOptions,
+  type SearchOptions,
+} from './search-options.js'
 
 /** Gateway operation key for query embeddings — meters search cost distinctly
  * from write-path embeddings. */
 const SEARCH_EMBED_OPERATION = 'search'
 
 export type { FusionWeights, SearchAsOf, SearchFilters } from '@3ngram/db'
+export {
+  type DashboardPageOptions,
+  DEFAULT_SEARCH_SUPERSESSION_PENALTY,
+  DEFAULT_SEARCH_WEIGHTS,
+  type SearchOptions,
+} from './search-options.js'
 
 /**
  * A core search hit: the db fused hit with its `content` bounded to the
@@ -70,175 +78,10 @@ export interface SearchHit extends DbSearchHit {
   truncated: boolean
 }
 
-/**
- * CORE-OWNED product default fusion weights. UNLIKE the db
- * `DEFAULT_FUSION_WEIGHTS` ({fts:1, recency:0.3, vector:0}, which keeps the
- * vector leg INERT for back-compat at the query layer), the product policy
- * ENABLES the vector leg: semantic similarity is the PRIMARY retrieval signal
- * (weight 1), with a modest FTS contribution (0.2) for exact-term pool recall.
- *
- * TUNING (the engineering of this slice). The
- * frozen eval floors (eval/fixtures/floors.json) are recall@5 >= 0.9773,
- * mrr@5 >= 0.9697, supersession_correct >= 0.9474, abstention == 1.0, scored
- * by the blocking exact-cosine gate (eval/src/run.mjs). The vector
- * leg over the cached real-model embeddings reproduces that exact-cosine
- * ranking, so a vector-led fusion clears recall/mrr; the golden-set-through-
- * real-path integration test (search-golden.int.test.ts) is the oracle that
- * proves it through the REAL Postgres fused path (not just the in-memory
- * harness).
- *
- * WHY recency:0 and fts:0.2 (diagnosed against the real fused path).
- * The 88-answerable-query golden set is natural-language; the gold rows score
- * fts=0 (no lexical overlap) and are decided purely by cosine. A non-zero
- * recency leg DISPLACES gold rows: query 16 ("staging after the migration goes
- * live", gold g033) ranks g033 #3 by cosine, but recency 0.3 lifts five
- * recency-heavy non-gold rows (e.g. g148 vec 0.41 / recency 0.93) above it,
- * knocking g033 out of the top-5 (recall 0.9659 < floor). Lowering recency
- * fixes recall, but the leg still demotes a gold row by one rank, so mrr caps
- * at 0.9688 < floor for ANY recency > 0; only recency=0 clears mrr (0.9697,
- * exactly the pure-cosine baseline — g033 at rank 3 is the irreducible cost,
- * present in the baseline too). Symmetrically, fts > 0.3 lifts a lexical
- * competitor (g134) over gold g145 on query 83, dropping mrr to 0.9640; fts is
- * pinned at 0.2 (safe margin below the 0.31 mrr cliff) to keep exact-term pool
- * recall for production queries without disturbing the golden ranking.
- *
- * Local fused-path sweep (vector pinned 1, supersession penalty pinned 2):
- *   fts   rec   recall   mrr      sup    abst
- *   1     0.3   0.9659   0.9384   1.0    1.0   <- shipped start, recall FAILS
- *   1     0.1   0.9773   0.9631   1.0    1.0   <- recall ok, mrr FAILS
- *   1     0     0.9773   0.9640   1.0    1.0   <- mrr FAILS (fts too high)
- *   0.31  0     0.9773   0.9640   1.0    1.0   <- mrr FAILS (fts cliff)
- *   0.2   0     0.9773   0.9697   1.0    1.0   <- CHOSEN: all four clear
- *   floors      0.9773   0.9697   0.9474 1.0
- */
-export const DEFAULT_SEARCH_WEIGHTS: FusionWeights = { fts: 0.2, recency: 0, vector: 1 }
-
-/**
- * CORE-OWNED supersession penalty for the product search default.
- *
- * The product default IS the db tier penalty ({@link
- * DEFAULT_SUPERSESSION_PENALTY} = 2), imported — never redefined — so the policy
- * and query layers share one source of truth. The tier penalty exceeds the max
- * positive base score any row can earn from the other legs, so a superseded
- * predecessor sinks BELOW EVERY live row: user-facing retrieval surfaces the
- * currently-valid memory first, with the superseded predecessor still
- * retrievable but ranked beneath it. That is exactly the memory model's default (docs/concepts/memory-model.mdx)
- * (currently-valid first; superseded retrievable but RANKED BELOW).
- *
- * WHY NOT A SOFTER PENALTY.
- * An earlier draft used a SOFT penalty (0.1) so the golden supersession metric
- * could keep penalized predecessors inside the K=5 window. But a soft penalty is
- * a user-facing regression: a superseded predecessor that happens to be a
- * STRONGER FTS/vector match can still outrank its live successor (0.1 only
- * breaks exact ties), surfacing a STALE memory above the current one — a direct
- * violation of the memory model's "currently-valid first" default (docs/concepts/memory-model.mdx). The fix is to keep
- * the strict tier penalty as the product default and instead make the golden
- * supersession metric check successor/predecessor RELATIVE order over the full
- * fused output (search-golden.int.test.ts), so the metric never requires
- * softening the shipped default. Superseded rows remain RETRIEVABLE (docs/concepts/memory-model.mdx
- * "never filter"), just ranked below every live row.
- */
-export const DEFAULT_SEARCH_SUPERSESSION_PENALTY = DEFAULT_SUPERSESSION_PENALTY
-
-/** Default result window. Matches the eval harness K. */
-const DEFAULT_LIMIT = 5
-
 /** Either an injected Gateway (embed the query) or a pre-computed embedding. */
 export type EmbeddingSource =
   | { gateway: Gateway; queryEmbedding?: undefined }
   | { gateway?: undefined; queryEmbedding: number[] }
-
-/** Tunable search options. All have product-default policy values. */
-export interface SearchOptions {
-  /** Max hits to return. Defaults to {@link DEFAULT_LIMIT}. */
-  limit?: number
-  /**
-   * Keyset cursor for dashboard continuation: the `(score, id)` of the previous
-   * page's last row. Absent on the first page. Row-anchored (not a numeric
-   * offset), so continuation is stable against per-request score recomputation
-   * (packages/db buildCursorPredicate). Threaded straight to {@link searchFused}.
-   */
-  cursor?: { score: number; id: string }
-  /** Fusion weights. Defaults to {@link DEFAULT_SEARCH_WEIGHTS}. */
-  weights?: FusionWeights
-  /**
-   * Supersession penalty. Defaults to
-   * {@link DEFAULT_SEARCH_SUPERSESSION_PENALTY}.
-   */
-  supersessionPenalty?: number
-  /**
-   * Candidate-narrowing FILTERS: memoryType / memoryTypes / scope /
-   * project / status / asOf / recordedAfter / recordedBefore
-   * (V2 axes: the memoryTypes OR-set and the inclusive recorded_at range,
-   * which narrows the live view WITHOUT lifting the active-only default —
-   * unlike asOf, it is not time travel). Threaded straight to the db query layer
-   * ({@link searchFused}), where they narrow the candidate set BEFORE fusion —
-   * they do not alter the fusion weights or the supersession ranking. The filter
-   * VALUES are validated at the ONE boundary (packages/schema searchQuerySchema,
-   * which REST/SDK parse); core trusts the typed shape here (hard rule 2).
-   *
-   * docs/concepts/memory-model.mdx defaults (see {@link SearchFilters}): with NO `asOf` the read is
-   * the supersession-aware live view (active-only, predecessors ranked below
-   * successors). With `asOf` set the read SURFACES superseded history (the
-   * valid-time predicate selects the row live at the instant) — never silently
-   * dropped. An absent filter never narrows its axis.
-   */
-  filters?: SearchFilters
-  /**
-   * Injected budget enforcement. When present AND the query is
-   * embedded via the gateway (not pre-computed), the cap is asserted BEFORE the
-   * query embed — search is a metered read, so it is gated by the budget (and by
-   * the read guard), never by the WRITE guard, so a suspended user can
-   * still search within budget. Absent → no budget gate (back-compat).
-   */
-  budget?: BudgetEnforcement | undefined
-  /**
-   * Injected access gate. When present, read access is asserted BEFORE the query
-   * embed — a platform policy may deny reads (self-host allowAllAccess allows all).
-   * Threaded independently of the budget. Absent → no access guard (back-compat).
-   */
-  access?: AccessGate | undefined
-  /**
-   * Injected per-user retrieval-scope policy (issue #47), resolved ONCE per
-   * request by the transport (ADR-0011: core stays env-free — the policy is a
-   * parameter, like budget/access). When present, {@link search} returns the
-   * {@link ScopedSearchResult} envelope so the `appliedScope` echo is part of
-   * the result — a `default`-mode narrowing is NEVER silent; `require` +
-   * no scope filter throws the typed UnscopedRetrievalError BEFORE the query
-   * embed (no metered work on a doomed call). Absent → the shipped
-   * plain-hits behavior, byte-identical (back-compat).
-   */
-  retrievalPolicy?: RetrievalPolicy | undefined
-}
-
-/**
- * Count whitespace-delimited tokens in a query string.
- * Used by resolveWeights to detect short (≤2 token) queries.
- */
-function queryTokenCount(q: string): number {
-  return q.trim().split(/\s+/).filter(Boolean).length
-}
-
-/**
- * Resolve effective fusion weights, injecting the topic-match entity bonus for
- * short queries.
- *
- * WHY NOT RAISE THE FTS WEIGHT DIRECTLY: the golden-set calibration
- * pins fts at 0.2 — the MRR cliff at fts > 0.31 means raising fts drops mrr
- * below the eval floor (0.9697) for all 88 golden queries. The topicMatch leg
- * is additive and token-count gated: it fires only for ≤2-token queries (all
- * golden-set queries are 6+ tokens, so it cannot disturb the eval floors) and
- * activates a LIKE-based topic bonus that surfaces person-identity facts for
- * bare first-name lookups without affecting long-query MRR.
- *
- * If the caller already set topicMatch explicitly, it is forwarded as-is.
- */
-function resolveWeights(query: string, weights: FusionWeights): FusionWeights {
-  if (queryTokenCount(query) <= 2 && weights.topicMatch === undefined) {
-    return { ...weights, topicMatch: 0.5 }
-  }
-  return weights
-}
 
 /**
  * Unified search for `userId`.
@@ -311,7 +154,8 @@ export async function search(
   // RETRIEVAL-SCOPE POLICY: enforced BEFORE the query embed so a `require`
   // rejection never burns budget/gateway work, and a `default` narrowing is
   // decided before any query runs. The caller's explicit scope always wins.
-  const policyScope = applyPolicyToScopeFilter(opts.retrievalPolicy, opts.filters?.scope)
+  const { appliedScope, cursor, filters, limit, supersessionPenalty, weights } =
+    resolveSearchOptions(query, opts)
 
   const { gateway, queryEmbedding: precomputed } = source
 
@@ -322,17 +166,6 @@ export async function search(
     // typed error (the gateway path is bounded by the provider contract).
     throw new InvalidEmbeddingError(queryEmbedding.length)
   }
-
-  const limit = opts.limit ?? DEFAULT_LIMIT
-  const cursor = opts.cursor
-  const weights = resolveWeights(query, opts.weights ?? DEFAULT_SEARCH_WEIGHTS)
-  const supersessionPenalty = opts.supersessionPenalty ?? DEFAULT_SEARCH_SUPERSESSION_PENALTY
-  // exactOptional discipline: only materialize the scope key when the policy
-  // (or the caller) actually set one — an absent filter never narrows its axis.
-  const filters =
-    policyScope.scope !== undefined
-      ? { ...(opts.filters ?? {}), scope: policyScope.scope }
-      : (opts.filters ?? {})
 
   const hits = await withTenant(userId, (tx) =>
     searchFused(
@@ -355,7 +188,7 @@ export async function search(
   // contract): the policy-aware transport always gets the appliedScope echo;
   // every policy-less caller keeps the shipped plain array, byte-identical.
   if (opts.retrievalPolicy !== undefined) {
-    return { hits: shaped, appliedScope: policyScope.appliedScope }
+    return { hits: shaped, appliedScope }
   }
   return shaped
 }
@@ -396,25 +229,6 @@ export interface DashboardSearchPage {
   appliedScope: string | null
 }
 
-/** Options for {@link searchDashboardPage}. `frozen` present ⇒ a continuation page. */
-export interface DashboardPageOptions {
-  limit?: number
-  filters?: SearchFilters
-  /** Continuation only: the frozen ordering + current offset decoded from the cursor. */
-  frozen?: { ids: string[]; scores: number[]; off: number }
-  /** Injected budget enforcement — gates the dashboard query embed
-   * the same as {@link SearchOptions.budget} (no ungated metered embed path). */
-  budget?: BudgetEnforcement | undefined
-  /** Injected access gate — asserts read access the same as
-   * {@link SearchOptions.access}. */
-  access?: AccessGate | undefined
-  /** Injected retrieval-scope policy — enforced on the scope filter axis the
-   * same as {@link SearchOptions.retrievalPolicy}, on EVERY page of a walk
-   * (first page and continuations alike, so a policy flip mid-walk can never
-   * silently widen a continuation). */
-  retrievalPolicy?: RetrievalPolicy | undefined
-}
-
 /**
  * Stable dashboard search pagination. The FIRST page (no `frozen`)
  * ranks the bounded candidate pool ONCE and returns the full ranked ordering;
@@ -439,13 +253,8 @@ export async function searchDashboardPage(
   // filters (and so the frozen ordering AND each continuation's eligibility
   // re-check) always carry the policy scope, and a `require` rejection fires
   // before any embed or fetch.
-  const policyScope = applyPolicyToScopeFilter(opts.retrievalPolicy, opts.filters?.scope)
-
-  const limit = opts.limit ?? DEFAULT_LIMIT
-  const filters =
-    policyScope.scope !== undefined
-      ? { ...(opts.filters ?? {}), scope: policyScope.scope }
-      : (opts.filters ?? {})
+  const { appliedScope, filters, limit, supersessionPenalty, weights } =
+    resolveDashboardPageOptions(query, opts)
 
   if (opts.frozen !== undefined) {
     const { ids, scores, off } = opts.frozen
@@ -493,7 +302,7 @@ export async function searchDashboardPage(
       frozen: { ids, scores },
       nextOffset,
       hasMore,
-      appliedScope: policyScope.appliedScope,
+      appliedScope,
     }
   }
 
@@ -503,8 +312,6 @@ export async function searchDashboardPage(
   if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
     throw new InvalidEmbeddingError(queryEmbedding.length)
   }
-  const weights = resolveWeights(query, DEFAULT_SEARCH_WEIGHTS)
-  const supersessionPenalty = DEFAULT_SEARCH_SUPERSESSION_PENALTY
   // returnFullPool: rank and return the WHOLE bounded candidate pool, not just
   // the page — the tail is what we freeze. Page-1 ranking/normalization is
   // identical to a normal call (pool unchanged), so the eval floor is untouched.
@@ -530,7 +337,7 @@ export async function searchDashboardPage(
     frozen: { ids: ranked.map((h) => h.id), scores: ranked.map((h) => h.score) },
     nextOffset: limit,
     hasMore: ranked.length > limit,
-    appliedScope: policyScope.appliedScope,
+    appliedScope,
   }
 }
 
