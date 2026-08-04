@@ -158,14 +158,22 @@ class MissingSelectorError extends Error {
     this.name = 'MissingSelectorError'
   }
 }
+function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  const prefix =
+    "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
+  if (registeredScopes.length === 0) {
+    return `${prefix}no scopes are registered yet — register one with configure_scope`
+  }
+  const shown = registeredScopes.slice(0, 8)
+  const omitted = registeredScopes.length - shown.length
+  return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
+}
 // Retrieval-scope policy typed error (issue #47) — mirrors @3ngram/core: the
 // message names the REGISTERED SCOPES (bounded user labels, never content).
 class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
   constructor(registeredScopes: readonly string[]) {
-    super(
-      `this account requires an explicit retrieval scope (retrieval-scope mode 'require') — registered scopes: ${registeredScopes.join(', ')}`,
-    )
+    super(formatUnscopedRetrievalDetail(registeredScopes))
     this.name = 'UnscopedRetrievalError'
     this.registeredScopes = registeredScopes
   }
@@ -252,6 +260,7 @@ vi.mock('@3ngram/core', () => ({
   InvalidCommitmentTransitionError,
   IllegalCommitmentTransitionError,
   MissingSelectorError,
+  formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
   // D3 admin tools
   listScopes,
@@ -2058,6 +2067,21 @@ describe('retrieval-scope policy wiring', () => {
     const text = (result.content[0] as { text: string }).text
     expect(text).toContain('invalid input')
     expect(text).toContain('personal, work')
+  })
+
+  it('search: bounds the registered-scope recovery payload', async () => {
+    const registeredScopes = Array.from({ length: 100 }, (_, index) => `scope-${index}`)
+    searchDashboardPage.mockRejectedValue(new UnscopedRetrievalError(registeredScopes))
+
+    const result = await call(
+      'search',
+      { query: 'q' },
+      ctx({ retrievalPolicy: policyThunk({ mode: 'require', registeredScopes }) }),
+    )
+
+    const text = (result.content[0] as { text: string }).text
+    expect(text.length).toBeLessThanOrEqual(527)
+    expect(text).toContain('+92 more omitted')
   })
 
   it('briefing and handoff: the policy is injected and appliedScope rides the output', async () => {

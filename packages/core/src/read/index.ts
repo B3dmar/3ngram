@@ -73,6 +73,8 @@ export { getMemoryHistory, type MemoryHistoryRead } from './memory-history.js'
 export {
   applyPolicyToScopeFilter,
   applyPolicyToSelector,
+  formatUnscopedRetrievalDetail,
+  MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH,
   type RetrievalPolicy,
   UnscopedRetrievalError,
 } from './retrieval-policy.js'

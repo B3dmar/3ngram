@@ -79,12 +79,20 @@ class InvalidCommitmentTransitionError extends Error {
 class IllegalCommitmentTransitionError extends InvalidCommitmentTransitionError {}
 class InvalidEmbeddingError extends Error {}
 class MissingSelectorError extends Error {}
+function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  const prefix =
+    "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
+  if (registeredScopes.length === 0) {
+    return `${prefix}no scopes are registered yet — register one with configure_scope`
+  }
+  const shown = registeredScopes.slice(0, 8)
+  const omitted = registeredScopes.length - shown.length
+  return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
+}
 class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
   constructor(registeredScopes: readonly string[]) {
-    super(
-      `this account requires an explicit retrieval scope — registered scopes: ${registeredScopes.join(', ')}`,
-    )
+    super(formatUnscopedRetrievalDetail(registeredScopes))
     this.name = 'UnscopedRetrievalError'
     this.registeredScopes = registeredScopes
   }
@@ -176,6 +184,7 @@ vi.mock('@3ngram/core', () => ({
   MissingSelectorError,
   NotCommitmentMemoryError,
   resolveRetrievalPolicy,
+  formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
   ScopeNameConflictError,
   ScopeNotFoundError,
@@ -540,8 +549,25 @@ describe('POST /api/v1/search', () => {
     expect(await res.json()).toEqual({
       error: 'invalid_input',
       detail:
-        'this account requires an explicit retrieval scope — registered scopes: personal, work',
+        "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — registered scopes: personal, work",
     })
+  })
+
+  it('bounds retrieval-policy recovery detail in a 400 response', async () => {
+    const registeredScopes = Array.from({ length: 100 }, (_, index) => `scope-${index}`)
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'require', registeredScopes })
+    search.mockRejectedValue(new UnscopedRetrievalError(registeredScopes))
+
+    const res = await call('/api/v1/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me' },
+    })
+
+    const body = (await res.json()) as { error: string; detail: string }
+    expect(res.status).toBe(400)
+    expect(body.detail.length).toBeLessThanOrEqual(512)
+    expect(body.detail).toContain('+92 more omitted')
   })
 })
 

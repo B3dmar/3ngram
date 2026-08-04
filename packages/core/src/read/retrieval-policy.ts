@@ -52,23 +52,42 @@ export type RetrievalPolicy =
   | { readonly mode: 'default'; readonly defaultScope: string }
   | { readonly mode: 'require'; readonly registeredScopes: readonly string[] }
 
+const UNSCOPED_RECOVERY_PREFIX =
+  "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
+const MAX_UNSCOPED_RECOVERY_SCOPES = 8
+export const MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH = 512
+
+/** Build the bounded recovery detail shared by every transport. */
+export function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  if (registeredScopes.length === 0) {
+    return `${UNSCOPED_RECOVERY_PREFIX}no scopes are registered yet — register one with configure_scope`
+  }
+
+  const candidateCount = Math.min(registeredScopes.length, MAX_UNSCOPED_RECOVERY_SCOPES)
+  for (let included = candidateCount; included > 0; included -= 1) {
+    const omitted = registeredScopes.length - included
+    const omission = omitted > 0 ? `; +${omitted} more omitted` : ''
+    const detail = `${UNSCOPED_RECOVERY_PREFIX}registered scopes: ${registeredScopes
+      .slice(0, included)
+      .join(', ')}${omission}`
+    if (detail.length <= MAX_UNSCOPED_RECOVERY_DETAIL_LENGTH) return detail
+  }
+
+  return `${UNSCOPED_RECOVERY_PREFIX}registered scopes: +${registeredScopes.length} omitted`
+}
+
 /**
  * Thrown when the caller's policy is `require` and a retrieval call omitted
  * the scope axis. A {@link MissingSelectorError} sibling (same 400-class
- * caller-mistake family, same transport mapping): the message NAMES the
- * registered scopes so the caller can immediately re-issue a compliant call —
- * scope names are bounded user labels, never memory content (hard rule 6).
+ * caller-mistake family, same transport mapping): the message NAMES a bounded
+ * prefix of the registered scopes so the caller can re-issue a compliant call,
+ * then reports how many names were omitted. Scope names are user labels, never
+ * memory content (hard rule 6).
  */
 export class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
   constructor(registeredScopes: readonly string[]) {
-    const named =
-      registeredScopes.length > 0
-        ? `registered scopes: ${registeredScopes.join(', ')}`
-        : 'no scopes are registered yet — register one with configure_scope'
-    super(
-      `this account requires an explicit retrieval scope (retrieval-scope mode 'require') — ${named}`,
-    )
+    super(formatUnscopedRetrievalDetail(registeredScopes))
     this.name = 'UnscopedRetrievalError'
     this.registeredScopes = registeredScopes
   }
