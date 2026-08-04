@@ -19,7 +19,17 @@ import {
   clientIdMetadataDocumentSchema,
   clientIdMetadataUrlSchema,
 } from '@3ngram/schema'
-import * as ipaddr from 'ipaddr.js'
+// DEFAULT import, not `import * as`. ipaddr.js is CJS (`module.exports = ipaddr`)
+// with no `exports` map, so Node's ESM interop cannot detect named exports:
+// cjs-module-lexer only recognizes assignments it can scan statically, and a
+// whole-object assignment yields none. Under a real ESM runtime the namespace
+// members are therefore all `undefined`, and the FIRST call
+// (`ipaddr.isValid(...)` in resolveHostnameDefault) throws TypeError — which
+// resolvePublicTarget's catch relabels `dns_failure`, so every CIMD resolution
+// failed with a misleading reason and no network I/O. Vitest pre-bundles CJS
+// deps through Vite's interop and synthesizes the named exports, so this was
+// invisible to the test suite and only ever surfaced in a deployment.
+import ipaddr from 'ipaddr.js'
 
 const MAX_DOCUMENT_BYTES = 5 * 1024
 const MAX_REDIRECTS = 3
