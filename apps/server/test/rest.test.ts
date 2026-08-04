@@ -39,6 +39,7 @@ const describeEnvironment = vi.fn()
 const getCurrentUser = vi.fn()
 const exportUserData = vi.fn()
 const deleteAccount = vi.fn()
+const resolveRetrievalPolicy = vi.fn()
 
 // Real typed error classes so the rest/errors.ts instanceof mapping is exercised
 // end to end (the router catches a core throw and the mapper picks the status).
@@ -79,6 +80,35 @@ class InvalidCommitmentTransitionError extends Error {
 class IllegalCommitmentTransitionError extends InvalidCommitmentTransitionError {}
 class InvalidEmbeddingError extends Error {}
 class MissingSelectorError extends Error {}
+function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  const prefix =
+    "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
+  if (registeredScopes.length === 0) {
+    return `${prefix}no scopes are registered yet — register one with configure_scope`
+  }
+  const shown = registeredScopes.slice(0, 8)
+  const omitted = registeredScopes.length - shown.length
+  return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
+}
+class UnscopedRetrievalError extends Error {
+  readonly registeredScopes: readonly string[]
+  constructor(registeredScopes: readonly string[]) {
+    super(formatUnscopedRetrievalDetail(registeredScopes))
+    this.name = 'UnscopedRetrievalError'
+    this.registeredScopes = registeredScopes
+  }
+}
+function applyPolicyToScopeFilter(
+  policy: { mode: string; defaultScope?: string; registeredScopes?: readonly string[] } | undefined,
+  requestedScope: string | undefined,
+) {
+  if (requestedScope !== undefined) return { scope: requestedScope, appliedScope: null }
+  if (policy?.mode === 'default') {
+    return { scope: policy.defaultScope, appliedScope: policy.defaultScope ?? null }
+  }
+  if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
+  return { scope: undefined, appliedScope: null }
+}
 class NotCommitmentMemoryError extends Error {}
 class PredecessorAlreadySupersededError extends Error {
   readonly predecessorId = 'x'
@@ -118,6 +148,7 @@ class ResourceLimitExceededError extends Error {
 const getBudgetStatus = vi.fn()
 
 vi.mock('@3ngram/core', () => ({
+  applyPolicyToScopeFilter,
   remember,
   search,
   searchDashboardPage,
@@ -153,6 +184,9 @@ vi.mock('@3ngram/core', () => ({
   InvalidEmbeddingError,
   MissingSelectorError,
   NotCommitmentMemoryError,
+  resolveRetrievalPolicy,
+  formatUnscopedRetrievalDetail,
+  UnscopedRetrievalError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -238,6 +272,9 @@ beforeEach(() => {
   // A valid session bearer resolves to the SAME fixed tenant, so a route's
   // happy-path assertions hold identically under either auth path.
   authenticateToken.mockResolvedValue(TENANT)
+  // Retrieval-scope policy (issue #47): default to 'off' so every shipped
+  // route assertion holds byte-identically; policy tests override per-case.
+  resolveRetrievalPolicy.mockResolvedValue({ mode: 'off' })
 })
 
 interface CallOptions {
@@ -289,6 +326,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
       expect(await res.json()).toEqual({ error: 'unauthorized' })
     }
     expect(remember).not.toHaveBeenCalled()
+    expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
   })
 
   it('401s an unknown/revoked key (api-key resolver returns undefined)', async () => {
@@ -404,18 +442,21 @@ describe('POST /api/v1/memories (remember)', () => {
 
 describe('POST /api/v1/search', () => {
   it('happy path: mirrors the public MCP search response contract', async () => {
-    search.mockResolvedValue([
-      {
-        id: NEW_ID,
-        memoryType: 'commitment',
-        topic: 't',
-        content: 'hit',
-        contentLength: 'hit'.length,
-        truncated: false,
-        score: 0.9,
-        commitmentStatus: 'waiting',
-      },
-    ])
+    search.mockResolvedValue({
+      hits: [
+        {
+          id: NEW_ID,
+          memoryType: 'commitment',
+          topic: 't',
+          content: 'hit',
+          contentLength: 'hit'.length,
+          truncated: false,
+          score: 0.9,
+          commitmentStatus: 'waiting',
+        },
+      ],
+      appliedScope: null,
+    })
     const res = await call('/api/v1/search', {
       method: 'POST',
       key: VALID_KEY,
@@ -491,6 +532,44 @@ describe('POST /api/v1/search', () => {
     expect(res.status).toBe(503)
     await new Promise<void>((resolve) => noGwApp.close(() => resolve()))
   })
+
+  it('preserves retrieval-policy recovery detail in a 400 response', async () => {
+    resolveRetrievalPolicy.mockResolvedValue({
+      mode: 'require',
+      registeredScopes: ['personal', 'work'],
+    })
+    search.mockRejectedValue(new UnscopedRetrievalError(['personal', 'work']))
+
+    const res = await call('/api/v1/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me' },
+    })
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
+      error: 'invalid_input',
+      detail:
+        "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — registered scopes: personal, work",
+    })
+  })
+
+  it('bounds retrieval-policy recovery detail in a 400 response', async () => {
+    const registeredScopes = Array.from({ length: 100 }, (_, index) => `scope-${index}`)
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'require', registeredScopes })
+    search.mockRejectedValue(new UnscopedRetrievalError(registeredScopes))
+
+    const res = await call('/api/v1/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me' },
+    })
+
+    const body = (await res.json()) as { error: string; detail: string }
+    expect(res.status).toBe(400)
+    expect(body.detail.length).toBeLessThanOrEqual(512)
+    expect(body.detail).toContain('+92 more omitted')
+  })
 })
 
 describe('POST /api/v1/dashboard/search', () => {
@@ -510,7 +589,7 @@ describe('POST /api/v1/dashboard/search', () => {
           commitmentStatus: 'waiting',
         },
       ],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 1,
       hasMore: true,
     })
@@ -541,6 +620,7 @@ describe('POST /api/v1/dashboard/search', () => {
       scores: [0.9, 0.8],
       off: 1,
       fp: searchFingerprint('find me', { memoryType: 'commitment', scope: 'work' }),
+      policyScope: null,
     })
     expect(searchDashboardPage).toHaveBeenCalledWith(
       TENANT,
@@ -558,7 +638,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('continuation: decodes the v2 cursor and pages by position within the frozen ordering', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [{ id: FROZEN_IDS[1], memoryType: 'note', topic: 'next', content: 'n', score: 0.8 }],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 2,
       hasMore: false,
     })
@@ -584,7 +664,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('stale v1 cursor restarts at page 1 (no frozen ordering, not a 400)', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [],
-      frozen: { ids: [], scores: [] },
+      frozen: { ids: [], scores: [], policyScope: null },
       nextOffset: 1,
       hasMore: false,
     })
@@ -601,7 +681,7 @@ describe('POST /api/v1/dashboard/search', () => {
   it('continuation with the SAME query accepts a fingerprint-bound cursor', async () => {
     searchDashboardPage.mockResolvedValue({
       hits: [],
-      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: null },
       nextOffset: 2,
       hasMore: false,
     })
@@ -614,6 +694,100 @@ describe('POST /api/v1/dashboard/search', () => {
     })
     expect(res.status).toBe(200)
     expect(searchDashboardPage.mock.calls.at(-1)?.[3]).toHaveProperty('frozen')
+  })
+
+  it('binds a cursor to the effective policy scope and rejects policy changes', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: 'work' },
+      nextOffset: 1,
+      hasMore: true,
+      appliedScope: 'work',
+    })
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const first = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1 },
+    })
+    const cursor = ((await first.json()) as { nextCursor: string }).nextCursor
+    expect(decodeCursor(cursor)).toMatchObject({
+      fp: searchFingerprint('find me', {}, 'work', true),
+      policyScope: 'work',
+    })
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const samePolicy = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor },
+    })
+    expect(samePolicy.status).toBe(200)
+    expect(searchDashboardPage.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        frozen: expect.objectContaining({ off: 1, policyScope: 'work' }),
+      }),
+    )
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'personal' })
+    const replay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor },
+    })
+    expect(replay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects policy-default and explicit-scope cursor provenance changes', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8], policyScope: 'work' },
+      nextOffset: 1,
+      hasMore: true,
+      appliedScope: 'work',
+    })
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const first = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1 },
+    })
+    const policyCursor = ((await first.json()) as { nextCursor: string }).nextCursor
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const explicitReplay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, scope: 'work', cursor: policyCursor },
+    })
+    expect(explicitReplay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
+
+    const explicitCursor = encodeCursor({
+      v: 2,
+      ids: FROZEN_IDS,
+      scores: [0.9, 0.8],
+      off: 1,
+      fp: searchFingerprint('find me', { scope: 'work' }, 'work'),
+      policyScope: null,
+    })
+    const policyReplay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor: explicitCursor },
+    })
+    expect(policyReplay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('400s a cursor replayed against a CHANGED query/filters (typed mismatch, never a silent re-page)', async () => {
@@ -933,10 +1107,13 @@ describe('GET /api/v1/briefing', () => {
     expect(res.status).toBe(200)
     // EXACT argument match (not objectContaining): a legacy query must produce
     // exactly the V1 core call — no sections/sectionLimit keys ride along.
+    // The injected retrievalPolicy (issue #47) is the ONE addition every
+    // briefing call now carries — resolved per request, 'off' by default.
     expect(briefing).toHaveBeenCalledWith(TENANT, {
       selector: { kind: 'all' },
       mode: 'brief',
       now: expect.any(Date),
+      retrievalPolicy: { mode: 'off' },
     })
     expect(JSON.stringify(await res.json())).toBe(JSON.stringify(BRIEFING))
   })
@@ -2081,6 +2258,14 @@ describe('access gate enforcement (#429)', () => {
     ],
     ['memories.facets (read)', 'GET', '/api/v1/memories/facets', undefined, listMemoryFacets],
     ['scopes.list (read)', 'GET', '/api/v1/scopes', undefined, listScopes],
+    ['search (read)', 'POST', '/api/v1/search', { query: 'find me' }, search],
+    [
+      'dashboard.search (read)',
+      'POST',
+      '/api/v1/dashboard/search',
+      { query: 'find me' },
+      searchDashboardPage,
+    ],
     ['facts (read)', 'GET', '/api/v1/facts', undefined, getFacts],
     ['briefing (read)', 'GET', '/api/v1/briefing?kind=all', undefined, briefing],
     ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listProposals],
@@ -2106,6 +2291,7 @@ describe('access gate enforcement (#429)', () => {
     expect(await res.json()).toEqual({ error: 'access_denied' })
     // The gate blocked BEFORE the db op — the core fn was never invoked.
     expect(coreSpy).not.toHaveBeenCalled()
+    expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
   })
 
   it('still serves GET /api/v1/budget under a denying gate — deliberately ungated', async () => {

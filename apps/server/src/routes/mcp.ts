@@ -19,7 +19,13 @@
 // here echoes request content.
 import { log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
-import type { AccessGate, BudgetEnforcement, LimitsResolver } from '@3ngram/core'
+import {
+  type AccessGate,
+  type BudgetEnforcement,
+  type LimitsResolver,
+  type RetrievalPolicy,
+  resolveRetrievalPolicy,
+} from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 import {
@@ -62,21 +68,40 @@ function requireUserId(ctx: McpRequestContext): string {
 }
 
 /**
+ * Request-scoped retrieval-scope policy resolver (issue #47): a MEMOIZED
+ * thunk over core resolveRetrievalPolicy, built once per request so the
+ * policy is resolved AT MOST ONCE — and lazily, only when a policy-enforced
+ * read tool actually runs (write tools never pay the lookup). Pure wiring:
+ * the resolution semantics live in core (hard rule 5).
+ */
+function lazyRetrievalPolicy(userId: string): () => Promise<RetrievalPolicy> {
+  let cached: Promise<RetrievalPolicy> | undefined
+  return () => {
+    cached ??= resolveRetrievalPolicy(userId)
+    return cached
+  }
+}
+
+/**
  * Build the web-standard dual-era handler. The default legacy mode is
  * deliberately explicit here: 2025-era stateless requests and modern
  * 2026-07-28 requests share this one factory and therefore cannot drift.
  */
 export function createMcpProtocolHandler(options: McpProtocolOptions): McpHttpHandler {
   return createMcpHandler(
-    (ctx) =>
-      createMcpServer({
-        userId: requireUserId(ctx),
+    (ctx) => {
+      const userId = requireUserId(ctx)
+      return createMcpServer({
+        userId,
         scopes: ctx.authInfo?.scopes ?? [],
         gateway: options.gateway,
         budget: options.budget,
         access: options.access,
         limits: options.limits,
-      }),
+        // Once-per-request policy resolution (issue #47), lazily memoized.
+        retrievalPolicy: lazyRetrievalPolicy(userId),
+      })
+    },
     {
       legacy: 'stateless',
       onerror: (err) => log().error(crashSafeError(err), 'mcp: protocol handler error'),

@@ -15,7 +15,7 @@ import {
   reviseToolInputSchema,
   reviseToolOutputSchema,
   searchQuerySchema,
-  searchToolOutputSchema,
+  searchRestResponseV2Schema,
 } from '@3ngram/schema'
 import { z } from 'zod'
 import { SDK_ERRORS, SDK_METHODS } from '../src/reference.js'
@@ -26,7 +26,7 @@ const OUT_FILE = resolve(HERE, '../../../docs/reference/sdk.mdx')
 
 const SCHEMAS = {
   remember: { input: rememberToolInputSchema, output: rememberToolOutputSchema },
-  search: { input: searchQuerySchema, output: searchToolOutputSchema },
+  search: { input: searchQuerySchema, output: searchRestResponseV2Schema },
   facts: { input: factsQueryInputSchema, output: factsToolOutputSchema },
   revise: {
     input: reviseToolInputSchema.omit({ predecessorId: true }),

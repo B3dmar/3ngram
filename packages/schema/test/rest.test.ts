@@ -1,12 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
 import {
+  invalidInputRestErrorResponseSchema,
+  MAX_REST_ERROR_DETAIL_LENGTH,
   memoriesListResponseSchema,
   memoryDetailSchema,
   memoryHistoryResponseSchema,
 } from '../src/index.js'
 
 const iso = '2026-06-01T00:00:00.000Z'
+
+describe('REST error response contract', () => {
+  it('accepts detail at the boundary and rejects one character more', () => {
+    expect(
+      invalidInputRestErrorResponseSchema.safeParse({
+        error: 'invalid_input',
+        detail: 'x'.repeat(MAX_REST_ERROR_DETAIL_LENGTH),
+      }).success,
+    ).toBe(true)
+    expect(
+      invalidInputRestErrorResponseSchema.safeParse({
+        error: 'invalid_input',
+        detail: 'x'.repeat(MAX_REST_ERROR_DETAIL_LENGTH + 1),
+      }).success,
+    ).toBe(false)
+  })
+})
 
 function identity(id = crypto.randomUUID()) {
   return {

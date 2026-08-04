@@ -229,6 +229,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "blockers": {
                       "additionalProperties": false,
                       "properties": {
@@ -836,6 +843,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid briefing input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Session briefing over an explicit selector (mirrors the MCP briefing tool)"
@@ -992,6 +1023,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 25,
                       "minimum": 0,
@@ -1063,6 +1101,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Dashboard search continuation with identity-only hits"
@@ -4220,6 +4282,13 @@
                 "schema": {
                   "additionalProperties": false,
                   "properties": {
+                    "appliedScope": {
+                      "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$",
+                      "type": "string"
+                    },
                     "count": {
                       "maximum": 9007199254740991,
                       "minimum": 0,
@@ -4280,6 +4349,30 @@
               }
             },
             "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "detail": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "error": {
+                      "const": "invalid_input",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid search input; detail names retryable scopes when retrieval policy requires one"
           }
         },
         "summary": "Unified semantic + keyword retrieval (mirrors the MCP search tool)"

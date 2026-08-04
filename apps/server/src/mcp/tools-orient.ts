@@ -27,9 +27,9 @@ import { briefing, handoff } from '@3ngram/core'
 import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
 import {
   briefingToolInputV3Schema,
-  briefingToolOutputV3Schema,
+  briefingToolOutputV4Schema,
   handoffToolInputV3Schema,
-  handoffToolOutputV3Schema,
+  handoffToolOutputV4Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -60,9 +60,9 @@ const briefingTool: ToolDefinition = {
   config: {
     title: 'Briefing',
     description:
-      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (all, scope, project, or scope_project) — no unfiltered default. A PROJECT selector only matches memories written WITH that project; a memory written without a project (project IS NULL) never appears through the project lens. The scope_project selector narrows to one scope AND one project together; its includeUnscoped: true additionally opts NULL-project memories of that scope in (default false = strict intersection; the bare project selector is never widened). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.',
+      'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (all, scope, project, or scope_project) — no unfiltered default. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A PROJECT selector only matches memories written WITH that project; a memory written without a project (project IS NULL) never appears through the project lens. The scope_project selector narrows to one scope AND one project together; its includeUnscoped: true additionally opts NULL-project memories of that scope in (default false = strict intersection; the bare project selector is never widened). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.',
     inputSchema: briefingToolInputV3Schema,
-    outputSchema: briefingToolOutputV3Schema,
+    outputSchema: briefingToolOutputV4Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = briefingToolInputV3Schema.parse(args)
@@ -70,6 +70,11 @@ const briefingTool: ToolDefinition = {
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
+    // RETRIEVAL-SCOPE POLICY (issue #47): resolved at most once per request
+    // (memoized thunk from the route) and injected — core owns the
+    // enforcement and the appliedScope echo.
+    const retrievalPolicy =
+      ctx.retrievalPolicy === undefined ? undefined : await ctx.retrievalPolicy()
     // `now` is read at the transport edge (composition root), not in core/db.
     // Optional knobs ride only when present (exactOptionalPropertyTypes).
     const result = await briefing(ctx.userId, {
@@ -78,8 +83,9 @@ const briefingTool: ToolDefinition = {
       now: new Date(),
       ...(input.sections !== undefined ? { sections: input.sections } : {}),
       ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
+      ...(retrievalPolicy !== undefined ? { retrievalPolicy } : {}),
     })
-    return ok(parseOutput('briefing', briefingToolOutputV3Schema, result))
+    return ok(parseOutput('briefing', briefingToolOutputV4Schema, result))
   },
 }
 
@@ -99,9 +105,9 @@ const handoffTool: ToolDefinition = {
   config: {
     title: 'Handoff',
     description:
-      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (all, scope, project, or scope_project); the payload is bounded. A scope_project selector narrows to one scope AND one project; its includeUnscoped: true additionally exports NULL-project memories of that scope (default false). Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
+      'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (all, scope, project, or scope_project); the payload is bounded. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A scope_project selector narrows to one scope AND one project; its includeUnscoped: true additionally exports NULL-project memories of that scope (default false). Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
     inputSchema: handoffToolInputV3Schema,
-    outputSchema: handoffToolOutputV3Schema,
+    outputSchema: handoffToolOutputV4Schema,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = handoffToolInputV3Schema.parse(args)
@@ -109,6 +115,10 @@ const handoffTool: ToolDefinition = {
     // BEFORE the db op (self-host allowAllAccess allows all; back-compat when no
     // gate is wired).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
+    // RETRIEVAL-SCOPE POLICY (issue #47): same once-per-request resolution +
+    // injection as briefing — core owns enforcement and the appliedScope echo.
+    const retrievalPolicy =
+      ctx.retrievalPolicy === undefined ? undefined : await ctx.retrievalPolicy()
     // Optional fields ride only when present (exactOptionalPropertyTypes): only
     // include the key when present so it is `string`, never `string | undefined`.
     const result = await handoff(ctx.userId, {
@@ -116,11 +126,12 @@ const handoffTool: ToolDefinition = {
       now: new Date(),
       ...(input.generatedFor !== undefined ? { generatedFor: input.generatedFor } : {}),
       ...(input.sectionLimit !== undefined ? { sectionLimit: input.sectionLimit } : {}),
+      ...(retrievalPolicy !== undefined ? { retrievalPolicy } : {}),
     })
     // Decision/preference lines carry core's bounded content EXCERPT —
     // long imported rows can exceed any write-time cap, so core bounds
     // them before this output parse ever sees the payload.
-    return ok(parseOutput('handoff', handoffToolOutputV3Schema, result))
+    return ok(parseOutput('handoff', handoffToolOutputV4Schema, result))
   },
 }
 

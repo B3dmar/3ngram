@@ -204,3 +204,83 @@ describe('describeEnvironmentOutputV2Schema (additive report field)', () => {
     expect(r.success).toBe(false)
   })
 })
+
+describe('appliedScope output successors (layer 3)', () => {
+  const SEARCH_PAGE = { hits: [], count: 0, hasMore: false }
+
+  it('search V3 admits the echo, keeps V2 refinements, and V2 stays byte-identical', async () => {
+    const { searchToolOutputV2Schema, searchToolOutputV3Schema } = await import('../src/index.js')
+    expect(
+      searchToolOutputV3Schema.parse({ ...SEARCH_PAGE, appliedScope: 'work' }).appliedScope,
+    ).toBe('work')
+    // Absent echo parses (off/no-policy responses are byte-identical).
+    expect('appliedScope' in searchToolOutputV3Schema.parse(SEARCH_PAGE)).toBe(false)
+    // V2 consistency refinements carry through the composition.
+    expect(
+      searchToolOutputV3Schema.safeParse({ ...SEARCH_PAGE, count: 1, appliedScope: 'work' })
+        .success,
+    ).toBe(false)
+    expect(
+      searchToolOutputV3Schema.safeParse({ ...SEARCH_PAGE, nextCursor: 'x', appliedScope: 'work' })
+        .success,
+    ).toBe(false)
+    // The SHIPPED V2 schema must NOT admit the new key.
+    expect(
+      searchToolOutputV2Schema.safeParse({ ...SEARCH_PAGE, appliedScope: 'work' }).success,
+    ).toBe(false)
+  })
+
+  it('REST search + dashboard responses compose the echo the same way', async () => {
+    const { searchRestResponseV2Schema, dashboardSearchResponseV2Schema } = await import(
+      '../src/index.js'
+    )
+    expect(
+      searchRestResponseV2Schema.parse({ hits: [], count: 0, appliedScope: 'work' }).appliedScope,
+    ).toBe('work')
+    expect(
+      dashboardSearchResponseV2Schema.parse({ ...SEARCH_PAGE, appliedScope: 'work' }).appliedScope,
+    ).toBe('work')
+  })
+
+  it('briefing/handoff V4 admit the echo and keep their V3 refinements', async () => {
+    const { briefingToolOutputV4Schema, handoffToolOutputV4Schema } = await import(
+      '../src/index.js'
+    )
+    const section = { count: 0, items: [], hasMore: false }
+    const briefing = {
+      selector: { kind: 'scope', scope: 'work' },
+      mode: 'brief',
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      commitments: section,
+      appliedScope: 'work',
+    }
+    expect(briefingToolOutputV4Schema.parse(briefing).appliedScope).toBe('work')
+    // V3 refinement (hasMore consistency) still rejects through V4.
+    expect(
+      briefingToolOutputV4Schema.safeParse({
+        ...briefing,
+        commitments: { count: 0, items: [], hasMore: true },
+      }).success,
+    ).toBe(false)
+
+    const handoff = {
+      selector: { kind: 'scope', scope: 'work' },
+      generatedFor: null,
+      generatedAt: '2026-08-04T00:00:00.000Z',
+      decisions: [],
+      commitments: [],
+      preferences: [],
+      notes: [],
+      counts: { decisions: 0, commitments: 0, preferences: 0 },
+      truncated: { decisions: false, commitments: false, preferences: false },
+      appliedScope: 'work',
+    }
+    expect(handoffToolOutputV4Schema.parse(handoff).appliedScope).toBe('work')
+    expect(
+      handoffToolOutputV4Schema.safeParse({
+        ...handoff,
+        truncated: { decisions: true, commitments: false, preferences: false },
+      }).success,
+    ).toBe(false)
+  })
+})

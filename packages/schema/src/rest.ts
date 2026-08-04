@@ -28,6 +28,23 @@ import {
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
+/** Maximum recovery detail exposed in a non-2xx REST response. */
+export const MAX_REST_ERROR_DETAIL_LENGTH = 512
+
+/** Stable non-2xx REST response read by SDKs and generated clients. */
+export const restErrorResponseSchema = z
+  .object({
+    error: z.string(),
+    detail: z.string().max(MAX_REST_ERROR_DETAIL_LENGTH).optional(),
+  })
+  .strict()
+export type RestErrorResponse = z.infer<typeof restErrorResponseSchema>
+
+/** Invalid-input response; detail carries bounded recovery guidance when available. */
+export const invalidInputRestErrorResponseSchema = restErrorResponseSchema.safeExtend({
+  error: z.literal('invalid_input'),
+})
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/dashboard/search - dashboard search continuation
 // ---------------------------------------------------------------------------

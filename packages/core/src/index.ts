@@ -125,6 +125,7 @@ export {
   type FrozenOrdering,
   type FullBriefing,
   type FusionWeights,
+  formatUnscopedRetrievalDetail,
   type GetMemoriesOptions,
   getCurrentUser,
   getFacts,

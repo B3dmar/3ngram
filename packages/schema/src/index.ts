@@ -288,6 +288,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  RestErrorResponse,
   StatsResponse,
 } from './rest.js'
 export {
@@ -298,8 +299,10 @@ export {
   dashboardSearchHitSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
+  invalidInputRestErrorResponseSchema,
   MAX_DASHBOARD_SEARCH_LIMIT,
   MAX_MEMORIES_LIMIT,
+  MAX_REST_ERROR_DETAIL_LENGTH,
   MAX_REST_PROPOSALS_LIMIT,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
@@ -316,24 +319,35 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  restErrorResponseSchema,
   statsResponseSchema,
 } from './rest.js'
 // --- retrieval-scope policy (issue #47) — appended block ---
 export type {
+  BriefingToolOutputV4,
   ConfigureScopeInputV2,
   ConfigureScopeOutputV2,
+  DashboardSearchResponseV2,
   DescribeEnvironmentOutputV2,
+  HandoffToolOutputV4,
   RetrievalScopeMode,
   RetrievalScopePolicy,
+  SearchRestResponseV2,
+  SearchToolOutputV3,
   SetRetrievalDefaultInput,
 } from './retrieval-scope.js'
 export {
+  briefingToolOutputV4Schema,
   configureScopeInputV2Schema,
   configureScopeOutputV2Schema,
+  dashboardSearchResponseV2Schema,
   describeEnvironmentOutputV2Schema,
+  handoffToolOutputV4Schema,
   retrievalScopeModeSchema,
   retrievalScopePolicySchema,
   retrievalScopePolicyScopeRequirements,
+  searchRestResponseV2Schema,
+  searchToolOutputV3Schema,
   setRetrievalDefaultInputSchema,
 } from './retrieval-scope.js'
 export type { Scope } from './scope.js'

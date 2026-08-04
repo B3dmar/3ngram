@@ -52,8 +52,23 @@ describe('dashboard search cursor codec (v2 frozen ordering)', () => {
 
   it('round-trips a payload carrying the query fingerprint', () => {
     const fp = searchFingerprint('find me', { scope: 'work' })
-    const payload = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, fp }
+    const payload = {
+      v: 2 as const,
+      ids: [ID_A],
+      scores: [0.9],
+      off: 0,
+      fp,
+      policyScope: 'work',
+    }
     expect(decodeCursor(encodeCursor(payload))).toEqual(payload)
+  })
+
+  it('round-trips the nullable policy binding and accepts legacy v2 omission', () => {
+    const unscoped = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0, policyScope: null }
+    expect(decodeCursor(encodeCursor(unscoped))).toEqual(unscoped)
+
+    const legacyV2 = { v: 2 as const, ids: [ID_A], scores: [0.9], off: 0 }
+    expect(decodeCursor(encodeCursor(legacyV2))).toEqual(legacyV2)
   })
 })
 
@@ -86,6 +101,15 @@ describe('searchFingerprint — stable query+filter binding', () => {
     expect(searchFingerprint('find me', { scope: 'personal' })).not.toBe(fp)
     expect(searchFingerprint('find me', {})).not.toBe(fp)
     expect(searchFingerprint('Find me', { scope: 'work' })).not.toBe(fp)
+  })
+
+  it('distinguishes a policy-applied scope from the same explicit scope', () => {
+    const explicit = searchFingerprint('find me', { scope: 'work' }, 'work')
+    const policyApplied = searchFingerprint('find me', {}, 'work', true)
+
+    expect(explicit).toBe(searchFingerprint('find me', { scope: 'work' }))
+    expect(policyApplied).not.toBe(explicit)
+    expect(searchFingerprint('find me', {}, 'work', true)).toBe(policyApplied)
   })
 
   it('preserves INNER whitespace: core embeds the exact query, so "find\\nme" is a different search', () => {

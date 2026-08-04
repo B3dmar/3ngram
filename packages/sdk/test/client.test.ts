@@ -205,6 +205,18 @@ describe('ThreengramClient error mapping', () => {
     expect((error as ThreengramApiError).reason).toBe('embedding_unavailable')
   })
 
+  it('preserves optional recovery detail on ThreengramApiError', async () => {
+    const detail = 'registered scopes: personal, work'
+    const { fetch } = stubFetch(400, { error: 'invalid_input', detail })
+    const client = new ThreengramClient(CONFIG, fetch)
+
+    await expect(client.search('x')).rejects.toMatchObject({
+      status: 400,
+      reason: 'invalid_input',
+      detail,
+    })
+  })
+
   it('falls back to reason "unknown" when the error body has no error code', async () => {
     const { fetch } = stubFetch(409, { not_the_error_key: 'x' })
     const client = new ThreengramClient(CONFIG, fetch)
