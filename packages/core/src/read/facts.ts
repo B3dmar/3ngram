@@ -7,6 +7,13 @@
 // (REST/MCP) validate inputs via the single Zod boundary in packages/schema
 // (factsQueryInputSchema) before calling core (hard rule 2).
 //
+// RETRIEVAL-SCOPE POLICY DECISION (issue #47): getFacts is deliberately NOT
+// policy-enforced. The facts surface has NO scope axis — FactsQuery is
+// subject/predicate/asOf/limit and the facts table carries no scope column —
+// so a `default` scope has nothing to apply and `require` would brick the
+// tool with no compliant call shape. If facts ever grow a scope axis, they
+// adopt the shared helpers in ./retrieval-policy.ts with it.
+//
 // Observability (hard rule 6): subject/predicate/value are content-adjacent and
 // are NEVER logged. This module logs nothing; callers honour the same rule.
 import { type FactRow, type FactsQuery, getFacts as getFactsDb, withTenant } from '@3ngram/db'

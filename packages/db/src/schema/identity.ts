@@ -270,8 +270,9 @@ export const userProfileAttributes = pgTable(
  * and 'off' FORBID it — so a drifting pair can never be stored, whatever path
  * writes it. `default_scope` is a DENORMALIZED scope name (same model as
  * memories.scope: no FK to the scopes registry — registry existence is the
- * write-time handler check, and deleting a registry row must not break the
- * stored policy). RLS scopes every row to its owner (hard rule 3).
+ * write-time handler check). Core keeps this denormalized value synchronized
+ * with registry renames/deletes in one locked tenant transaction. RLS scopes
+ * every row to its owner (hard rule 3).
  */
 export const userRetrievalPolicy = pgTable(
   'user_retrieval_policy',

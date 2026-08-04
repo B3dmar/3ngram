@@ -18,8 +18,10 @@
 // or not ('personal' itself ships unregistered). Consequence for DELETE: removing
 // a scope row is purely a registry edit; it NEVER touches memory rows, so a
 // memory whose scope text matches a deleted scope keeps that text intact and
-// stays fully valid. There is no orphaning and no cascade — by design (docs/concepts/memory-model.mdx
-// append-and-supersede protects MEMORY data; the registry is not memory data).
+// stays fully valid. Core separately keeps the denormalized retrieval-policy
+// default coherent in the same transaction. There is no memory orphaning or
+// cascade — by design (docs/concepts/memory-model.mdx append-and-supersede
+// protects MEMORY data; the registry is not memory data).
 // The runtime role therefore holds a real DELETE grant on `scopes` ONLY
 // (provision-roles.sql) — every memory-domain table stays DELETE-denied.
 //

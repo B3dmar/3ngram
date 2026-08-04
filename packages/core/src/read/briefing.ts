@@ -53,6 +53,8 @@ import {
 
 export type { BriefingSelector } from '@3ngram/db'
 
+import { applyPolicyToSelector, type RetrievalPolicy } from './retrieval-policy.js'
+
 /**
  * Thrown when a briefing/handoff is requested without an explicit selector, or
  * with a scope/project selector missing its value. The no-firehose rule is the
@@ -142,6 +144,15 @@ export interface BriefingQuery {
   mode?: BriefingMode
   sections?: readonly BriefingSectionName[] | undefined
   sectionLimit?: number | undefined
+  /**
+   * Injected per-user retrieval-scope policy (issue #47), resolved once per
+   * request by the transport (ADR-0011: a parameter, never ambient state).
+   * A `kind: 'all'` selector under mode `default` is narrowed to the
+   * configured scope — the result echoes BOTH the effective selector and
+   * `appliedScope` (never silent); under `require` it throws the typed
+   * UnscopedRetrievalError. A scope/project selector always passes through.
+   */
+  retrievalPolicy?: RetrievalPolicy | undefined
   now: Date
 }
 
@@ -200,6 +211,14 @@ export interface Briefing {
   selector: BriefingSelector
   mode: BriefingMode
   generatedAt: string
+  /**
+   * The scope the injected retrieval policy applied to a `kind: 'all'` call
+   * (issue #47) — PRESENT exactly when the policy narrowed this briefing (the
+   * echoed `selector` is then the effective scope selector, not the caller's
+   * `all`). Omitted when nothing was narrowed: no policy, mode `off`, or an
+   * explicit caller selector. Narrowing is never silent.
+   */
+  appliedScope?: string
   commitments?: BriefingSection<BriefingCommitment>
   overdue?: BriefingSection<BriefingCommitment>
   blockers?: BriefingSection<BriefingMemoryItem>
@@ -408,7 +427,11 @@ export async function briefing(
 ): Promise<FullBriefing>
 export async function briefing(userId: string, query: BriefingQuery): Promise<Briefing>
 export async function briefing(userId: string, query: BriefingQuery): Promise<Briefing> {
-  const selector = requireSelector(query.selector)
+  const requested = requireSelector(query.selector)
+  // RETRIEVAL-SCOPE POLICY (issue #47): a `kind: 'all'` selector is the scope
+  // axis omitted — `default` narrows it (echoed below, never silent),
+  // `require` rejects it typed, an explicit selector always passes through.
+  const { selector, appliedScope } = applyPolicyToSelector(query.retrievalPolicy, requested)
   if (query.sections !== undefined && query.sections.length === 0) {
     throw new EmptySectionsError()
   }
@@ -461,6 +484,10 @@ export async function briefing(userId: string, query: BriefingQuery): Promise<Br
     selector,
     mode,
     generatedAt: query.now.toISOString(),
+    // Present exactly when the policy narrowed this call (conditional spread —
+    // the key is OMITTED, never a fabricated null, matching the section shape
+    // discipline above).
+    ...(appliedScope !== null ? { appliedScope } : {}),
     ...toSections(fetched, top, query.now),
   }
 }
