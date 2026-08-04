@@ -32,6 +32,49 @@ import {
   handoffToolInputSchema,
   handoffToolOutputSchema,
 } from './mcp.js'
+import { scopeSchema } from './scope.js'
+import { projectSchema } from './write.js'
+
+/**
+ * Selector variant `scope_project` (issue #46): scope AND project TOGETHER —
+ * the intersection the shipped union cannot express (its `scope` and `project`
+ * variants are mutually exclusive by construction).
+ *
+ * `includeUnscoped` is the principled NULL-project mitigation (internal
+ * tracker item 244): a memory written WITHOUT a project lands with
+ * project=NULL and never appears through the project lens. Opting in widens
+ * the match to `project = $p OR project IS NULL` WITHIN the scope — explicit,
+ * per-call visibility, never a silent widening of strict project briefings.
+ * Default false = the strict scope+project intersection. The shipped bare
+ * `project` variant is NOT widened — this variant is the opt-in path.
+ */
+export const scopeProjectSelectorSchema = z
+  .object({
+    kind: z.literal('scope_project'),
+    scope: scopeSchema,
+    project: projectSchema,
+    includeUnscoped: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Also match memories in the scope written with NO project (project IS NULL). Default false: strict scope AND project intersection.',
+      ),
+  })
+  .strict()
+export type ScopeProjectSelectorInput = z.infer<typeof scopeProjectSelectorSchema>
+
+/**
+ * The orientation selector V2 — the shipped {@link briefingSelectorSchema}
+ * union GROWN by the {@link scopeProjectSelectorSchema} variant (issue #46).
+ * Composed FROM the shipped variant objects (`.options` spread), so the three
+ * shipped variants stay byte-identical (ADR-0011): a legacy selector parses
+ * IDENTICALLY through V1 and V2, and V1 keeps rejecting `scope_project`.
+ */
+export const briefingSelectorV2Schema = z.discriminatedUnion('kind', [
+  ...briefingSelectorSchema.options,
+  scopeProjectSelectorSchema,
+])
+export type BriefingSelectorV2Input = z.infer<typeof briefingSelectorV2Schema>
 
 /**
  * The hard SERVER-SIDE ceiling on a caller-requested briefing `sectionLimit`.
