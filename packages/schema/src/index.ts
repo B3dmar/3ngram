@@ -274,6 +274,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  RestErrorResponse,
   StatsResponse,
 } from './rest.js'
 export {
@@ -284,6 +285,7 @@ export {
   dashboardSearchHitSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseSchema,
+  invalidInputRestErrorResponseSchema,
   MAX_DASHBOARD_SEARCH_LIMIT,
   MAX_MEMORIES_LIMIT,
   MAX_REST_PROPOSALS_LIMIT,
@@ -302,6 +304,7 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  restErrorResponseSchema,
   statsResponseSchema,
 } from './rest.js'
 // --- retrieval-scope policy (issue #47) — appended block ---

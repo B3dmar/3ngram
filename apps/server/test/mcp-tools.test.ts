@@ -170,6 +170,17 @@ class UnscopedRetrievalError extends Error {
     this.registeredScopes = registeredScopes
   }
 }
+function applyPolicyToScopeFilter(
+  policy: { mode: string; defaultScope?: string; registeredScopes?: readonly string[] } | undefined,
+  requestedScope: string | undefined,
+) {
+  if (requestedScope !== undefined) return { scope: requestedScope, appliedScope: null }
+  if (policy?.mode === 'default') {
+    return { scope: policy.defaultScope, appliedScope: policy.defaultScope ?? null }
+  }
+  if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
+  return { scope: undefined, appliedScope: null }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -218,6 +229,7 @@ class SuccessorNotLiveError extends Error {
   }
 }
 vi.mock('@3ngram/core', () => ({
+  applyPolicyToScopeFilter,
   remember,
   searchDashboardPage,
   getFacts,
@@ -550,6 +562,33 @@ describe('search tool', () => {
       off: 1,
       fp: searchFingerprint('sdk pin', {}),
     })
+  })
+
+  it('binds continuation cursors to the effective policy scope', async () => {
+    searchDashboardPage.mockResolvedValue(
+      pageOf([HIT], { nextOffset: 1, hasMore: true, appliedScope: 'work' }),
+    )
+    const issued = await call(
+      'search',
+      { query: 'sdk pin', limit: 1 },
+      ctx({ retrievalPolicy: vi.fn(async () => ({ mode: 'default', defaultScope: 'work' })) }),
+    )
+    const cursor = (issued.structuredContent as { nextCursor: string }).nextCursor
+    expect(decodeCursor(cursor)?.fp).toBe(searchFingerprint('sdk pin', {}, 'work'))
+
+    vi.clearAllMocks()
+    for (const policy of [
+      { mode: 'default', defaultScope: 'personal' },
+      { mode: 'off' },
+    ] as const) {
+      const replay = await call(
+        'search',
+        { query: 'sdk pin', cursor },
+        ctx({ retrievalPolicy: vi.fn(async () => policy) }),
+      )
+      expect(replay.isError).toBe(true)
+    }
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('decodes a fingerprint-less legacy cursor and threads the frozen ordering to core (#49)', async () => {
@@ -1954,6 +1993,39 @@ describe('retrieval-scope policy wiring', () => {
     expect(thunk).toHaveBeenCalledTimes(1)
     expect(searchDashboardPage.mock.calls[0]?.[3]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
     expect((result.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+  })
+
+  it('search: asserts read access before resolving policy', async () => {
+    const order: string[] = []
+    const access = {
+      assertRead: vi.fn(async () => {
+        order.push('access')
+      }),
+      assertWrite: vi.fn(),
+    }
+    const thunk = vi.fn(async () => {
+      order.push('policy')
+      return DEFAULT_WORK
+    })
+    searchDashboardPage.mockImplementation(async () => {
+      order.push('search')
+      return {
+        hits: [],
+        frozen: { ids: [], scores: [] },
+        nextOffset: 0,
+        hasMore: false,
+        appliedScope: 'work',
+      }
+    })
+
+    await call(
+      'search',
+      { query: 'q' },
+      ctx({ access: access as unknown as ToolContext['access'], retrievalPolicy: thunk }),
+    )
+
+    expect(order).toEqual(['access', 'policy', 'search'])
+    expect(searchDashboardPage.mock.calls[0]?.[3]).not.toHaveProperty('access')
   })
 
   it('search: no policy narrowing -> NO appliedScope key (byte-identical legacy)', async () => {

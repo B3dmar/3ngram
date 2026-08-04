@@ -23,6 +23,7 @@ import { log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
 import {
   type AccessGate,
+  applyPolicyToScopeFilter,
   applyProposal,
   archiveMemory,
   type BudgetEnforcement,
@@ -480,6 +481,7 @@ export function restRouter(options: RestRouterOptions): Router {
       // (default narrows an unscoped call; require -> typed 400 with the
       // registered scopes in `detail`). The policy overload returns the
       // envelope so the appliedScope echo is core-owned, never derived here.
+      if (options.access) await options.access.assertRead(tenant(req))
       const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
       const result = await search(
         tenant(req),
@@ -525,6 +527,10 @@ export function restRouter(options: RestRouterOptions): Router {
         status: input.status,
         asOf: toAsOf(input.asOf),
       })
+      // Assert access before the policy resolver performs its tenant lookup.
+      if (options.access) await options.access.assertRead(tenant(req))
+      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
+      const policyScope = applyPolicyToScopeFilter(retrievalPolicy, filters.scope)
       // Frozen-ordering cursor: the first page ranks the bounded
       // candidate pool once and freezes the ordering into the cursor; a
       // continuation pages by position within it, so mid-session corpus drift
@@ -536,7 +542,7 @@ export function restRouter(options: RestRouterOptions): Router {
       // query/filters is a typed 400 (CursorQueryMismatchError), never a
       // silent re-page of the old search's frozen ids. Fingerprint-less
       // cursors minted before the binding stay valid (verify-when-present).
-      const fingerprint = searchFingerprint(input.query, filters)
+      const fingerprint = searchFingerprint(input.query, filters, policyScope.scope)
       const decoded =
         input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
       const frozen =
@@ -546,7 +552,6 @@ export function restRouter(options: RestRouterOptions): Router {
       // RETRIEVAL-SCOPE POLICY (issue #47): enforced on EVERY page of a walk,
       // same as the MCP search tool (core applies it before the frozen-ordering
       // machinery on page 1 and before each continuation's eligibility check).
-      const retrievalPolicy = await resolveRetrievalPolicy(tenant(req))
       const page = await searchDashboardPage(
         tenant(req),
         input.query,

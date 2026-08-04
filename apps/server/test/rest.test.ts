@@ -89,6 +89,17 @@ class UnscopedRetrievalError extends Error {
     this.registeredScopes = registeredScopes
   }
 }
+function applyPolicyToScopeFilter(
+  policy: { mode: string; defaultScope?: string; registeredScopes?: readonly string[] } | undefined,
+  requestedScope: string | undefined,
+) {
+  if (requestedScope !== undefined) return { scope: requestedScope, appliedScope: null }
+  if (policy?.mode === 'default') {
+    return { scope: policy.defaultScope, appliedScope: policy.defaultScope ?? null }
+  }
+  if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
+  return { scope: undefined, appliedScope: null }
+}
 class NotCommitmentMemoryError extends Error {}
 class PredecessorAlreadySupersededError extends Error {
   readonly predecessorId = 'x'
@@ -128,6 +139,7 @@ class ResourceLimitExceededError extends Error {
 const getBudgetStatus = vi.fn()
 
 vi.mock('@3ngram/core', () => ({
+  applyPolicyToScopeFilter,
   remember,
   search,
   searchDashboardPage,
@@ -509,6 +521,27 @@ describe('POST /api/v1/search', () => {
     expect(res.status).toBe(503)
     await new Promise<void>((resolve) => noGwApp.close(() => resolve()))
   })
+
+  it('preserves retrieval-policy recovery detail in a 400 response', async () => {
+    resolveRetrievalPolicy.mockResolvedValue({
+      mode: 'require',
+      registeredScopes: ['personal', 'work'],
+    })
+    search.mockRejectedValue(new UnscopedRetrievalError(['personal', 'work']))
+
+    const res = await call('/api/v1/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me' },
+    })
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
+      error: 'invalid_input',
+      detail:
+        'this account requires an explicit retrieval scope — registered scopes: personal, work',
+    })
+  })
 })
 
 describe('POST /api/v1/dashboard/search', () => {
@@ -632,6 +665,36 @@ describe('POST /api/v1/dashboard/search', () => {
     })
     expect(res.status).toBe(200)
     expect(searchDashboardPage.mock.calls.at(-1)?.[3]).toHaveProperty('frozen')
+  })
+
+  it('binds a cursor to the effective policy scope and rejects policy changes', async () => {
+    searchDashboardPage.mockResolvedValue({
+      hits: [],
+      frozen: { ids: FROZEN_IDS, scores: [0.9, 0.8] },
+      nextOffset: 1,
+      hasMore: true,
+      appliedScope: 'work',
+    })
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    const first = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1 },
+    })
+    const cursor = ((await first.json()) as { nextCursor: string }).nextCursor
+    expect(decodeCursor(cursor)?.fp).toBe(searchFingerprint('find me', {}, 'work'))
+
+    vi.clearAllMocks()
+    authenticateApiKey.mockResolvedValue(TENANT)
+    touchApiKeyLastUsed.mockResolvedValue()
+    resolveRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'personal' })
+    const replay = await call('/api/v1/dashboard/search', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { query: 'find me', limit: 1, cursor },
+    })
+    expect(replay.status).toBe(400)
+    expect(searchDashboardPage).not.toHaveBeenCalled()
   })
 
   it('400s a cursor replayed against a CHANGED query/filters (typed mismatch, never a silent re-page)', async () => {

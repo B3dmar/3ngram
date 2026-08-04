@@ -35,7 +35,7 @@ export const SDK_METHODS: readonly SdkMethodReference[] = [
   },
   {
     name: 'search',
-    signature: 'search(query: string, opts?: SearchOptions): Promise<SearchToolOutput>',
+    signature: 'search(query: string, opts?: SearchOptions): Promise<SearchRestResponseV2>',
     route: 'POST /api/v1/search',
     summary: 'Run semantic and keyword retrieval with optional pre-fusion filters.',
     requestSchema: 'search',
@@ -94,7 +94,7 @@ export const SDK_ERRORS = [
   {
     name: 'ThreengramApiError',
     description:
-      'Thrown for non-2xx REST responses. Carries status and reason from the response body.',
+      'Thrown for non-2xx REST responses. Carries status, reason, and optional recovery detail from the response body.',
   },
   {
     name: 'ThreengramNetworkError',

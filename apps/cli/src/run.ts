@@ -56,6 +56,7 @@ function handleError(error: unknown, io: Io): number {
   }
   if (error instanceof ThreengramApiError) {
     io.stderr(`error: the 3ngram server rejected the request (${error.status} ${error.reason})`)
+    if (error.detail !== undefined) io.stderr(`detail: ${error.detail}`)
     return 1
   }
   if (error instanceof ThreengramNetworkError) {

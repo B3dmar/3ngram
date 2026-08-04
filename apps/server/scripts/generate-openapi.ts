@@ -30,6 +30,7 @@ import {
   dashboardSearchResponseV2Schema,
   factsQueryInputSchema,
   factsToolOutputSchema,
+  invalidInputRestErrorResponseSchema,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -313,7 +314,8 @@ interface RouteDoc {
   errors?: readonly {
     status: number
     description: string
-    reasons: readonly string[]
+    reasons?: readonly string[]
+    response?: z.ZodType
   }[]
 }
 
@@ -325,10 +327,10 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/memories/facets', operationId: 'getMemoryFacets', summary: 'Distinct scope and project values for the tenant (filter population)', status: 200, response: memoriesFacetsResponseSchema },
   { method: 'get', path: '/api/v1/memories/:id', operationId: 'getMemory', summary: 'Inspect a single memory, including content', status: 200, response: memoryDetailSchema },
   { method: 'get', path: '/api/v1/memories/:id/history', operationId: 'getMemoryHistory', summary: 'Inspect memory lineage, direct relationships, and audit metadata', status: 200, response: memoryHistoryResponseSchema },
-  { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchRestResponseV2Schema },
-  { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseV2Schema },
+  { method: 'post', path: '/api/v1/search', operationId: 'search', summary: 'Unified semantic + keyword retrieval (mirrors the MCP search tool)', body: searchQuerySchema, status: 200, response: searchRestResponseV2Schema, errors: [{ status: 400, description: 'Invalid search input; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
+  { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseV2Schema, errors: [{ status: 400, description: 'Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/facts', operationId: 'getFacts', summary: 'Currently-valid facts, with optional bi-temporal time travel (mirrors the MCP get_facts tool)', query: factsQuery, status: 200, response: factsToolOutputSchema },
-  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV3Schema },
+  { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV3Schema, errors: [{ status: 400, description: 'Invalid briefing input; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
   { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor (mirrors the MCP revise tool)', body: reviseToolInputSchema.omit({ predecessorId: true }), status: 200, response: reviseToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory (REST-only lifecycle operation; no MCP mirror)', status: 200, response: archiveResult },
@@ -429,12 +431,15 @@ function buildOperation(route: RouteDoc): Record<string, unknown> {
             description: error.description,
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { error: { type: 'string', enum: error.reasons } },
-                  required: ['error'],
-                  additionalProperties: false,
-                },
+                schema:
+                  error.response === undefined
+                    ? {
+                        type: 'object',
+                        properties: { error: { type: 'string', enum: error.reasons } },
+                        required: ['error'],
+                        additionalProperties: false,
+                      }
+                    : toJson(error.response, 'output'),
               },
             },
           },

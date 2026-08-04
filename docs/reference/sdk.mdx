@@ -197,7 +197,7 @@ await client.remember({
 
 Run semantic and keyword retrieval with optional pre-fusion filters.
 
-**Signature:** `search(query: string, opts?: SearchOptions): Promise<SearchToolOutput>`  
+**Signature:** `search(query: string, opts?: SearchOptions): Promise<SearchRestResponseV2>`  
 **REST route:** `POST /api/v1/search`
 
 ### Example
@@ -725,5 +725,5 @@ await client.resolve(memoryId, 'resolved')
 
 | Error | Description |
 | --- | --- |
-| `ThreengramApiError` | Thrown for non-2xx REST responses. Carries status and reason from the response body. |
+| `ThreengramApiError` | Thrown for non-2xx REST responses. Carries status, reason, and optional recovery detail from the response body. |
 | `ThreengramNetworkError` | Thrown when fetch rejects before a server response is available. |
