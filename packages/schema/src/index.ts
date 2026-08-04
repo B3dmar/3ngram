@@ -319,6 +319,7 @@ export {
   describeEnvironmentOutputV2Schema,
   retrievalScopeModeSchema,
   retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
   setRetrievalDefaultInputSchema,
 } from './retrieval-scope.js'
 export type { Scope } from './scope.js'

@@ -1002,6 +1002,14 @@ export function restRouter(options: RestRouterOptions): Router {
               updatedAt: data.profile.updatedAt.toISOString(),
             }
           : null,
+        retrievalPolicy: data.retrievalPolicy
+          ? {
+              mode: data.retrievalPolicy.mode,
+              defaultScope: data.retrievalPolicy.defaultScope,
+              createdAt: data.retrievalPolicy.createdAt.toISOString(),
+              updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
+            }
+          : null,
         counts: {
           memories: data.memories.length,
           facts: data.facts.length,

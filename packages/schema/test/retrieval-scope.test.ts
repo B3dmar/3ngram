@@ -17,6 +17,7 @@ import {
   describeEnvironmentOutputSchema,
   describeEnvironmentOutputV2Schema,
   retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
   setRetrievalDefaultInputSchema,
 } from '../src/index.js'
 
@@ -134,6 +135,17 @@ describe('configureScopeInputV2Schema (composed action union)', () => {
 })
 
 describe('retrievalScopePolicySchema + configureScopeOutputV2Schema', () => {
+  it('derives accepted scope nullability from the schema-owned mode rules', () => {
+    for (const [mode, requirement] of Object.entries(retrievalScopePolicyScopeRequirements)) {
+      const scope = requirement === 'required' ? 'work' : null
+      expect(retrievalScopePolicySchema.safeParse({ mode, scope }).success).toBe(true)
+      expect(
+        retrievalScopePolicySchema.safeParse({ mode, scope: scope === null ? 'work' : null })
+          .success,
+      ).toBe(false)
+    }
+  })
+
   it('accepts a consistent stored policy', () => {
     expect(retrievalScopePolicySchema.parse({ mode: 'default', scope: 'work' })).toEqual({
       mode: 'default',

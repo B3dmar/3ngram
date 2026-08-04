@@ -1655,6 +1655,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ],
+    retrievalPolicy: {
+      mode: 'default',
+      defaultScope: 'work',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    },
   })
 
   it('returns the caller dataset, calls core under the key tenant, sets a download header', async () => {
@@ -1677,6 +1683,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       proposals: Array<{ rationale: string | null }>
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
+      retrievalPolicy: { mode: string; defaultScope: string | null } | null
       counts: {
         memories: number
         facts: number
@@ -1707,6 +1714,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     expect(body.userBudgets[0]?.capUsdOverride).toBe('5.000000000000')
     expect(body.llmUsage[0]?.operation).toBe('memory.embed')
     expect(body.llmUsage[0]?.costUsd).toBe('0.000000240000')
+    expect(body.retrievalPolicy).toMatchObject({ mode: 'default', defaultScope: 'work' })
     expect(body.counts).toEqual({
       memories: 1,
       facts: 1,

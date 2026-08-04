@@ -10,6 +10,7 @@ import {
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
   proposalStatusSchema,
+  retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
@@ -71,6 +72,14 @@ const auditRlsSql = readFileSync(
   join(import.meta.dirname, '../migrations/0029_audit_log_rls.sql'),
   'utf8',
 )
+const retrievalPolicySql = readFileSync(
+  join(import.meta.dirname, '../migrations/0030_user_retrieval_policy.sql'),
+  'utf8',
+)
+const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
+const retrievalPolicySnapshot = JSON.parse(
+  readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
+) as { tables: Record<string, unknown> }
 // Drift corpus = EVERY migration, enumerated dynamically. Previously this was a
 // hand-curated concatenation of ~10 named files; a new tenant table shipped in a
 // migration nobody remembered to add to that list would slip past the RLS/policy
@@ -522,6 +531,24 @@ describe('tenant-isolation hardening (0028/0029)', () => {
 
   it('provisioning re-asserts NOBYPASSRLS unconditionally on the runtime role', () => {
     expect(rolesSql).toContain('ALTER ROLE app_user NOBYPASSRLS;')
+  })
+})
+
+describe('retrieval policy migration generation (0030)', () => {
+  it('derives every scope-consistency branch from the schema-owned rules', () => {
+    for (const [mode, requirement] of Object.entries(retrievalScopePolicyScopeRequirements)) {
+      const nullability = requirement === 'required' ? 'IS NOT NULL' : 'IS NULL'
+      expect(retrievalPolicySql).toContain(
+        `"user_retrieval_policy"."mode" = '${mode}' AND "user_retrieval_policy"."default_scope" ${nullability}`,
+      )
+    }
+  })
+
+  it('excludes platform billing tables without emitting destructive SQL', () => {
+    expect(drizzleConfig).toContain("tablesFilter: ['!stripe_events', '!subscriptions']")
+    expect(retrievalPolicySnapshot.tables).not.toHaveProperty('public.stripe_events')
+    expect(retrievalPolicySnapshot.tables).not.toHaveProperty('public.subscriptions')
+    expect(retrievalPolicySql).not.toMatch(/DROP TABLE.*(?:stripe_events|subscriptions)/)
   })
 })
 
