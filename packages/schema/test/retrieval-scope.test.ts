@@ -17,6 +17,7 @@ import {
   describeEnvironmentOutputSchema,
   describeEnvironmentOutputV2Schema,
   retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
   setRetrievalDefaultInputSchema,
 } from '../src/index.js'
 
@@ -134,6 +135,17 @@ describe('configureScopeInputV2Schema (composed action union)', () => {
 })
 
 describe('retrievalScopePolicySchema + configureScopeOutputV2Schema', () => {
+  it('derives accepted scope nullability from the schema-owned mode rules', () => {
+    for (const [mode, requirement] of Object.entries(retrievalScopePolicyScopeRequirements)) {
+      const scope = requirement === 'required' ? 'work' : null
+      expect(retrievalScopePolicySchema.safeParse({ mode, scope }).success).toBe(true)
+      expect(
+        retrievalScopePolicySchema.safeParse({ mode, scope: scope === null ? 'work' : null })
+          .success,
+      ).toBe(false)
+    }
+  })
+
   it('accepts a consistent stored policy', () => {
     expect(retrievalScopePolicySchema.parse({ mode: 'default', scope: 'work' })).toEqual({
       mode: 'default',
@@ -230,8 +242,8 @@ describe('appliedScope output successors (layer 3)', () => {
     ).toBe('work')
   })
 
-  it('briefing/handoff V3 admit the echo and keep their V2 refinements', async () => {
-    const { briefingToolOutputV3Schema, handoffToolOutputV3Schema } = await import(
+  it('briefing/handoff V4 admit the echo and keep their V3 refinements', async () => {
+    const { briefingToolOutputV4Schema, handoffToolOutputV4Schema } = await import(
       '../src/index.js'
     )
     const section = { count: 0, items: [], hasMore: false }
@@ -242,10 +254,10 @@ describe('appliedScope output successors (layer 3)', () => {
       commitments: section,
       appliedScope: 'work',
     }
-    expect(briefingToolOutputV3Schema.parse(briefing).appliedScope).toBe('work')
-    // V2 refinement (hasMore consistency) still rejects through V3.
+    expect(briefingToolOutputV4Schema.parse(briefing).appliedScope).toBe('work')
+    // V3 refinement (hasMore consistency) still rejects through V4.
     expect(
-      briefingToolOutputV3Schema.safeParse({
+      briefingToolOutputV4Schema.safeParse({
         ...briefing,
         commitments: { count: 0, items: [], hasMore: true },
       }).success,
@@ -263,9 +275,9 @@ describe('appliedScope output successors (layer 3)', () => {
       truncated: { decisions: false, commitments: false, preferences: false },
       appliedScope: 'work',
     }
-    expect(handoffToolOutputV3Schema.parse(handoff).appliedScope).toBe('work')
+    expect(handoffToolOutputV4Schema.parse(handoff).appliedScope).toBe('work')
     expect(
-      handoffToolOutputV3Schema.safeParse({
+      handoffToolOutputV4Schema.safeParse({
         ...handoff,
         truncated: { decisions: true, commitments: false, preferences: false },
       }).success,

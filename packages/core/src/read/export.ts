@@ -32,6 +32,7 @@ export type {
   ExportMemoryEventRow,
   ExportMemoryRow,
   ExportProposalRow,
+  ExportRetrievalPolicyRow,
   ExportScopeRow,
   ExportUserProfileRow,
   UserDataExport,

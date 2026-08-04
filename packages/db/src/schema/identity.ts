@@ -19,6 +19,7 @@ import {
   profileUseCaseSchema,
   type RetrievalScopeMode,
   retrievalScopeModeSchema,
+  retrievalScopePolicyScopeRequirements,
   type TokenEndpointAuthMethod,
   tokenEndpointAuthMethodSchema,
 } from '@3ngram/schema'
@@ -34,7 +35,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { enumCheckSql, tenantPolicy } from './helpers.js'
+import { enumCheckSql, modeNullableValueCheckSql, tenantPolicy } from './helpers.js'
 
 const uuidv7 = () => sql`uuidv7()`
 
@@ -269,8 +270,9 @@ export const userProfileAttributes = pgTable(
  * and 'off' FORBID it — so a drifting pair can never be stored, whatever path
  * writes it. `default_scope` is a DENORMALIZED scope name (same model as
  * memories.scope: no FK to the scopes registry — registry existence is the
- * write-time handler check, and deleting a registry row must not break the
- * stored policy). RLS scopes every row to its owner (hard rule 3).
+ * write-time handler check). Core keeps this denormalized value synchronized
+ * with registry renames/deletes in one locked tenant transaction. RLS scopes
+ * every row to its owner (hard rule 3).
  */
 export const userRetrievalPolicy = pgTable(
   'user_retrieval_policy',
@@ -288,12 +290,9 @@ export const userRetrievalPolicy = pgTable(
       'user_retrieval_policy_mode_check',
       enumCheckSql(t.mode, retrievalScopeModeSchema.options),
     ),
-    // Mirror of the schema-boundary refinement (retrievalScopePolicySchema):
-    // 'default' requires a scope to apply; the other modes never apply one.
     check(
       'user_retrieval_policy_scope_consistency_check',
-      sql`(${t.mode} = 'default' AND ${t.defaultScope} IS NOT NULL)
-        OR (${t.mode} <> 'default' AND ${t.defaultScope} IS NULL)`,
+      modeNullableValueCheckSql(t.mode, t.defaultScope, retrievalScopePolicyScopeRequirements),
     ),
     tenantPolicy(),
   ],

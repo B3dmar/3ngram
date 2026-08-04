@@ -46,27 +46,41 @@ export {
 // --- briefing/handoff bounds V2 (sectionLimit + sections, issue #45) ---
 export type {
   BriefingSectionName,
+  BriefingSelectorV2Input,
   BriefingToolArgsV2,
+  BriefingToolArgsV3,
   BriefingToolInputV2,
+  BriefingToolInputV3,
   BriefingToolOutputV2,
+  BriefingToolOutputV3,
   HandoffCountsOutput,
   HandoffToolArgsV2,
+  HandoffToolArgsV3,
   HandoffToolInputV2,
+  HandoffToolInputV3,
   HandoffToolOutputV2,
+  HandoffToolOutputV3,
   HandoffTruncatedOutput,
+  ScopeProjectSelectorInput,
 } from './briefing-bounds.js'
 export {
   BRIEFING_SECTION_NAMES,
   briefingSectionNameSchema,
+  briefingSelectorV2Schema,
   briefingToolInputV2Schema,
+  briefingToolInputV3Schema,
   briefingToolOutputV2Schema,
+  briefingToolOutputV3Schema,
   HANDOFF_SECTION_NAMES,
   handoffCountsSchema,
   handoffToolInputV2Schema,
+  handoffToolInputV3Schema,
   handoffToolOutputV2Schema,
+  handoffToolOutputV3Schema,
   handoffTruncatedSchema,
   MAX_BRIEFING_SECTION_CEILING,
   MAX_HANDOFF_SECTION_CEILING,
+  scopeProjectSelectorSchema,
 } from './briefing-bounds.js'
 export type { BudgetStatusResponse, PlanTier } from './budget.js'
 export { budgetStatusResponseSchema, PLAN_TIERS, planTierSchema } from './budget.js'
@@ -310,12 +324,12 @@ export {
 } from './rest.js'
 // --- retrieval-scope policy (issue #47) — appended block ---
 export type {
-  BriefingToolOutputV3,
+  BriefingToolOutputV4,
   ConfigureScopeInputV2,
   ConfigureScopeOutputV2,
   DashboardSearchResponseV2,
   DescribeEnvironmentOutputV2,
-  HandoffToolOutputV3,
+  HandoffToolOutputV4,
   RetrievalScopeMode,
   RetrievalScopePolicy,
   SearchRestResponseV2,
@@ -323,14 +337,15 @@ export type {
   SetRetrievalDefaultInput,
 } from './retrieval-scope.js'
 export {
-  briefingToolOutputV3Schema,
+  briefingToolOutputV4Schema,
   configureScopeInputV2Schema,
   configureScopeOutputV2Schema,
   dashboardSearchResponseV2Schema,
   describeEnvironmentOutputV2Schema,
-  handoffToolOutputV3Schema,
+  handoffToolOutputV4Schema,
   retrievalScopeModeSchema,
   retrievalScopePolicySchema,
+  retrievalScopePolicyScopeRequirements,
   searchRestResponseV2Schema,
   searchToolOutputV3Schema,
   setRetrievalDefaultInputSchema,

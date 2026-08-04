@@ -49,7 +49,7 @@ import {
 import type { Gateway } from '@3ngram/llm'
 import {
   accountDeleteBodySchema,
-  briefingToolInputV2Schema,
+  briefingToolInputV3Schema,
   factsQueryInputSchema,
   memoriesListQuerySchema,
   proposalRejectBodySchema,
@@ -460,23 +460,35 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // GET /api/v1/briefing — mirrors the MCP briefing tool. Flat query params
-  // (kind/scope/project/mode) are reshaped into the nested selector BEFORE the
-  // single briefingToolInputV2Schema parse. Bounds V2 (issue #45): `sections`
-  // arrives comma-separated (`?sections=commitments,overdue` — a querystring
-  // has no natural array; repeated `?sections=` params also work via the qs
-  // array) and `sectionLimit` as an integer string — both reshaped BEFORE the
-  // SAME single parse, so the V2 schema still 400s duplicates/unknown names and
-  // out-of-range limits (no second validation layer). A legacy query (neither
-  // knob) parses byte-identically through V2 (pinned in packages/schema).
-  // `now` is stamped here.
+  // (kind/scope/project/includeUnscoped/mode) are reshaped into the nested
+  // selector BEFORE the single briefingToolInputV3Schema parse. Bounds V2
+  // (issue #45): `sections` arrives comma-separated
+  // (`?sections=commitments,overdue` — a querystring has no natural array;
+  // repeated `?sections=` params also work via the qs array) and
+  // `sectionLimit` as an integer string — both reshaped BEFORE the SAME single
+  // parse, so the schema still 400s duplicates/unknown names and out-of-range
+  // limits (no second validation layer). Selector V2 (issue #46):
+  // `kind=scope_project` takes scope AND project together; `includeUnscoped`
+  // arrives as the literal string true/false — only those two coerce to a
+  // boolean, anything else rides through for the schema's 400 (the same
+  // Number(...) idiom the numeric params use). A legacy query parses
+  // byte-identically through V3 (pinned in packages/schema). `now` is stamped
+  // here.
   router.get('/api/v1/briefing', (req, res) => {
     void guard('briefing', res, async () => {
-      const input = briefingToolInputV2Schema.parse(
+      const includeUnscoped =
+        req.query.includeUnscoped === 'true'
+          ? true
+          : req.query.includeUnscoped === 'false'
+            ? false
+            : req.query.includeUnscoped
+      const input = briefingToolInputV3Schema.parse(
         defined({
           selector: defined({
             kind: req.query.kind,
             scope: req.query.scope,
             project: req.query.project,
+            includeUnscoped,
           }),
           mode: req.query.mode,
           sections:
@@ -848,6 +860,13 @@ export function restRouter(options: RestRouterOptions): Router {
               referralSource: data.profile.referralSource,
               createdAt: data.profile.createdAt.toISOString(),
               updatedAt: data.profile.updatedAt.toISOString(),
+            }
+          : null,
+        retrievalPolicy: data.retrievalPolicy
+          ? {
+              mode: data.retrievalPolicy.mode,
+              defaultScope: data.retrievalPolicy.defaultScope,
+              updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
             }
           : null,
         counts: {

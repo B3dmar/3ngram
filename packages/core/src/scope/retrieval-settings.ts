@@ -17,6 +17,7 @@
 import {
   getRetrievalPolicy as getRetrievalPolicyDb,
   listScopes as listScopesDb,
+  lockRetrievalScopePolicy,
   ScopeNotFoundError,
   upsertRetrievalPolicy as upsertRetrievalPolicyDb,
   withTenant,
@@ -68,15 +69,17 @@ export function resolveRetrievalPolicy(userId: string): Promise<RetrievalPolicy>
  * schema boundary's job (hard rule 2); THIS layer asserts the one semantic
  * invariant only state can answer: a `default` scope must be REGISTERED, so
  * a typo'd scope can never silently narrow every future read to an empty
- * slice. Missing → the existing typed {@link ScopeNotFoundError} (same
- * not-found mapping as rename/delete). Returns the stored setting (what the
- * next describe_environment reports).
+ * slice. Scope mutations share this setter's per-user transaction lock and
+ * preserve the invariant after configuration. Missing → the existing typed
+ * {@link ScopeNotFoundError} (same not-found mapping as rename/delete).
+ * Returns the stored setting (what the next describe_environment reports).
  */
 export function setRetrievalDefault(
   userId: string,
   policy: RetrievalPolicySetting,
 ): Promise<RetrievalPolicySetting> {
   return withTenant(userId, async (tx): Promise<RetrievalPolicySetting> => {
+    await lockRetrievalScopePolicy(tx, userId)
     if (policy.mode === 'default' && policy.scope !== null) {
       const scopes = await listScopesDb(tx, userId)
       if (!scopes.some((s) => s.name === policy.scope)) {

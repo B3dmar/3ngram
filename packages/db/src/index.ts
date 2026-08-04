@@ -153,6 +153,7 @@ export {
   type ExportMemoryEventRow,
   type ExportMemoryRow,
   type ExportProposalRow,
+  type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
   readUserDataExport,
@@ -256,7 +257,9 @@ export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {
   getRetrievalPolicy,
+  lockRetrievalScopePolicy,
   type RetrievalPolicyRow,
+  replaceRetrievalPolicyDefault,
   upsertRetrievalPolicy,
 } from './retrieval-policy.js'
 // --- runtime fail-closed RLS guard (readiness/boot verification) ---

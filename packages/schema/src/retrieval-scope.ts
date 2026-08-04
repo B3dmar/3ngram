@@ -15,7 +15,7 @@
 // composed-schema pattern (successor schemas compose over shipped ones;
 // shipped variants stay byte-identical).
 import { z } from 'zod'
-import { briefingToolOutputV2Schema, handoffToolOutputV2Schema } from './briefing-bounds.js'
+import { briefingToolOutputV3Schema, handoffToolOutputV3Schema } from './briefing-bounds.js'
 import {
   configureScopeInputSchema,
   configureScopeOutputSchema,
@@ -41,6 +41,25 @@ export const retrievalScopeModeSchema = z.enum(['off', 'default', 'require'])
 export type RetrievalScopeMode = z.infer<typeof retrievalScopeModeSchema>
 
 /**
+ * Schema-owned mode-to-scope requirements. The DB package consumes this same
+ * declarative record when generating its consistency CHECK, so adding a mode
+ * cannot leave transport validation and storage constraints out of sync.
+ */
+export const retrievalScopePolicyScopeRequirements = {
+  off: 'forbidden',
+  default: 'required',
+  require: 'forbidden',
+} as const satisfies Record<RetrievalScopeMode, 'required' | 'forbidden'>
+
+function hasConsistentPolicyScope(policy: {
+  mode: RetrievalScopeMode
+  scope: string | null
+}): boolean {
+  const hasScope = policy.scope !== null
+  return (retrievalScopePolicyScopeRequirements[policy.mode] === 'required') === hasScope
+}
+
+/**
  * The stored policy as every surface reports it: the mode plus the configured
  * scope. CONSISTENCY IS ENFORCED, not advisory (refinement, same discipline as
  * the get-memories/search-cursor output contracts): `default` REQUIRES a
@@ -54,7 +73,7 @@ export const retrievalScopePolicySchema = z
     scope: scopeNameSchema.nullable(),
   })
   .strict()
-  .refine((p) => (p.mode === 'default') === (p.scope !== null), {
+  .refine(hasConsistentPolicyScope, {
     message: "mode 'default' requires a scope; 'require' and 'off' take scope: null",
     path: ['scope'],
   })
@@ -76,7 +95,7 @@ export const setRetrievalDefaultInputSchema = z
     mode: retrievalScopeModeSchema,
   })
   .strict()
-  .refine((p) => (p.mode === 'default') === (p.scope !== null), {
+  .refine(hasConsistentPolicyScope, {
     message: "mode 'default' requires a scope; 'require' and 'off' take scope: null",
     path: ['scope'],
   })
@@ -171,17 +190,18 @@ export const dashboardSearchResponseV2Schema =
 export type DashboardSearchResponseV2 = z.infer<typeof dashboardSearchResponseV2Schema>
 
 /**
- * `briefing` output V3: the bounds-V2 envelope (its section-consistency
- * refinements carry through) plus the {@link appliedScopeField} echo. When
- * present, the echoed `selector` is the EFFECTIVE scope selector the policy
- * substituted for the caller's `kind: 'all'`.
+ * `briefing` output V4: the selector-V3 envelope (its section-consistency
+ * refinements and `scope_project` selector carry through) plus the
+ * {@link appliedScopeField} echo. When present, the echoed `selector` is the
+ * EFFECTIVE scope selector the policy substituted for the caller's
+ * `kind: 'all'`.
  */
-export const briefingToolOutputV3Schema = briefingToolOutputV2Schema.safeExtend(appliedScopeField)
-export type BriefingToolOutputV3 = z.infer<typeof briefingToolOutputV3Schema>
+export const briefingToolOutputV4Schema = briefingToolOutputV3Schema.safeExtend(appliedScopeField)
+export type BriefingToolOutputV4 = z.infer<typeof briefingToolOutputV4Schema>
 
 /**
- * `handoff` output V3: the bounds-V2 envelope (counts/truncated refinements
- * carry through) plus the {@link appliedScopeField} echo.
+ * `handoff` output V4: the selector-V3 envelope (`scope_project` plus the
+ * counts/truncated refinements) plus the {@link appliedScopeField} echo.
  */
-export const handoffToolOutputV3Schema = handoffToolOutputV2Schema.safeExtend(appliedScopeField)
-export type HandoffToolOutputV3 = z.infer<typeof handoffToolOutputV3Schema>
+export const handoffToolOutputV4Schema = handoffToolOutputV3Schema.safeExtend(appliedScopeField)
+export type HandoffToolOutputV4 = z.infer<typeof handoffToolOutputV4Schema>
