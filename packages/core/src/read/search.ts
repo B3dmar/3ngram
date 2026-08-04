@@ -288,8 +288,14 @@ export async function search(
   userId: string,
   query: string,
   source: EmbeddingSource,
-  opts?: SearchOptions,
+  opts?: Omit<SearchOptions, 'retrievalPolicy'> & { retrievalPolicy?: undefined },
 ): Promise<SearchHit[]>
+export async function search(
+  userId: string,
+  query: string,
+  source: EmbeddingSource,
+  opts: SearchOptions,
+): Promise<SearchHit[] | ScopedSearchResult>
 export async function search(
   userId: string,
   query: string,

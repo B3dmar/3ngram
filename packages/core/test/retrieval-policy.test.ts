@@ -7,7 +7,8 @@
 // mocked (the search/briefing test-file pattern); enforcement composition is
 // what is under test — the real SQL + RLS run in the integration suites.
 import { EMBEDDING_DIMENSIONS } from '@3ngram/llm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import type { ScopedSearchResult, SearchHit, SearchOptions } from '../src/read/search.js'
 
 const searchFused = vi.fn()
 const fetchHitsByIds = vi.fn()
@@ -166,6 +167,33 @@ describe('enforcement helpers', () => {
 })
 
 describe('search per mode', () => {
+  it('keeps widened policy-bearing options type-safe', async () => {
+    searchFused.mockResolvedValue([HIT])
+    const policyOptions: SearchOptions = { retrievalPolicy: OFF }
+    const plainOptions = { limit: 1 } satisfies SearchOptions
+    const widened = search(USER, 'q', { queryEmbedding: dim() }, policyOptions)
+    const plain = search(USER, 'q', { queryEmbedding: dim() }, plainOptions)
+    const scoped = search(USER, 'q', { queryEmbedding: dim() }, { retrievalPolicy: OFF })
+
+    expectTypeOf(widened).toEqualTypeOf<Promise<SearchHit[] | ScopedSearchResult>>()
+    expectTypeOf(plain).toEqualTypeOf<Promise<SearchHit[]>>()
+    expectTypeOf(scoped).toEqualTypeOf<Promise<ScopedSearchResult>>()
+    await Promise.all([widened, plain, scoped])
+  })
+
+  it('returns an envelope for widened policy-bearing options at runtime', async () => {
+    searchFused.mockResolvedValue([HIT])
+    const policyOptions: SearchOptions = { retrievalPolicy: OFF }
+
+    const result = await search(USER, 'q', { queryEmbedding: dim() }, policyOptions)
+
+    expect(Array.isArray(result)).toBe(false)
+    expect(result).toEqual({
+      hits: [expect.objectContaining(HIT)],
+      appliedScope: null,
+    })
+  })
+
   it('no policy: the shipped plain-array contract is untouched', async () => {
     searchFused.mockResolvedValue([HIT])
     const hits = await search(USER, 'q', { queryEmbedding: dim() })
