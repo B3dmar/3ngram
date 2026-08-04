@@ -8,9 +8,9 @@
 //
 // The ROUTES table below is hand-maintained (router.ts registers plain Express
 // handlers — there is no declarative route registry to introspect), so
-// assertRouteCoverage() parses router.ts and FAILS the run when a registered
-// route is missing from the table (or vice versa) — a new route cannot silently
-// drop from the published reference.
+// assertRouteCoverage() parses the REST route modules and FAILS when a
+// registered route is missing from the table (or vice versa) — a new route
+// cannot silently drop from the published reference.
 //
 // Platform-only values (the servers base URL) are injected HERE at export time —
 // runtime schemas stay free of platform URLs.
@@ -55,7 +55,10 @@ import {
 import { z } from 'zod'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROUTER_SOURCE = resolve(HERE, '../src/rest/router.ts')
+const ROUTER_SOURCES = [
+  resolve(HERE, '../src/rest/router.ts'),
+  resolve(HERE, '../src/rest/search-router.ts'),
+] as const
 const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
 const SERVERS = [{ url: 'https://api.3ngram.ai', description: '3ngram platform' }]
@@ -346,22 +349,23 @@ const ROUTES: readonly RouteDoc[] = [
 ]
 
 /**
- * COVERAGE ASSERTION: parse router.ts for every `router.<method>('<path>'`
- * registration and fail when the set differs from ROUTES — a newly added route
- * cannot silently drop out of the published spec.
+ * COVERAGE ASSERTION: parse every REST route module for registrations and fail
+ * when their set differs from ROUTES.
  */
 function assertRouteCoverage(): void {
-  const source = readFileSync(ROUTER_SOURCE, 'utf8')
   const registered = new Set<string>()
-  for (const match of source.matchAll(/router\.(get|post|put|patch|delete)\(\s*'([^']+)'/g)) {
-    registered.add(`${match[1]} ${match[2]}`)
+  for (const sourcePath of ROUTER_SOURCES) {
+    const source = readFileSync(sourcePath, 'utf8')
+    for (const match of source.matchAll(/router\.(get|post|put|patch|delete)\(\s*'([^']+)'/g)) {
+      registered.add(`${match[1]} ${match[2]}`)
+    }
   }
   const documented = new Set(ROUTES.map((route) => `${route.method} ${route.path}`))
   const missing = [...registered].filter((entry) => !documented.has(entry))
   const stale = [...documented].filter((entry) => !registered.has(entry))
   if (missing.length > 0 || stale.length > 0) {
     throw new Error(
-      `openapi route table out of sync with router.ts — missing: [${missing.join(', ')}] stale: [${stale.join(', ')}]`,
+      `openapi route table out of sync with REST modules — missing: [${missing.join(', ')}] stale: [${stale.join(', ')}]`,
     )
   }
 }

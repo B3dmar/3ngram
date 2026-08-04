@@ -316,6 +316,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
       expect(await res.json()).toEqual({ error: 'unauthorized' })
     }
     expect(remember).not.toHaveBeenCalled()
+    expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
   })
 
   it('401s an unknown/revoked key (api-key resolver returns undefined)', async () => {
@@ -2046,6 +2047,14 @@ describe('access gate enforcement (#429)', () => {
     ],
     ['memories.facets (read)', 'GET', '/api/v1/memories/facets', undefined, listMemoryFacets],
     ['scopes.list (read)', 'GET', '/api/v1/scopes', undefined, listScopes],
+    ['search (read)', 'POST', '/api/v1/search', { query: 'find me' }, search],
+    [
+      'dashboard.search (read)',
+      'POST',
+      '/api/v1/dashboard/search',
+      { query: 'find me' },
+      searchDashboardPage,
+    ],
     ['facts (read)', 'GET', '/api/v1/facts', undefined, getFacts],
     ['briefing (read)', 'GET', '/api/v1/briefing?kind=all', undefined, briefing],
     ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listProposals],
@@ -2071,6 +2080,7 @@ describe('access gate enforcement (#429)', () => {
     expect(await res.json()).toEqual({ error: 'access_denied' })
     // The gate blocked BEFORE the db op — the core fn was never invoked.
     expect(coreSpy).not.toHaveBeenCalled()
+    expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
   })
 
   it('still serves GET /api/v1/budget under a denying gate — deliberately ungated', async () => {
