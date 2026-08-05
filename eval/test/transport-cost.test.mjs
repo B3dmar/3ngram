@@ -70,7 +70,10 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // (issues #46/#47): scope_project, set_retrieval_default, and the
       // appliedScope/retrievalScopePolicy output fields all ride tools/list;
       // precise recorded-range descriptions account for the final delta.
-      mcp: [19675, 159216, 40182],
+      // +13/+104/+26 (issue #71): the `remember` description now names the
+      // scope_project includeUnscoped opt-in instead of asserting flatly that a
+      // NULL-project memory never matches a project filter.
+      mcp: [19688, 159320, 40208],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },

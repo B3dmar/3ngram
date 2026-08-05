@@ -168,7 +168,7 @@ const rememberTool: ToolDefinition = {
   requiredScope: MEMORY_WRITE_SCOPE,
   config: {
     title: 'Remember',
-    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches a project filter (issue #244).`,
+    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in.`,
     inputSchema: rememberToolInputSchema,
     outputSchema: rememberToolOutputSchema,
   },
