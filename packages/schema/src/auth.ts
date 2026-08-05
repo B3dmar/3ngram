@@ -215,6 +215,14 @@ export const clientIdMetadataUrlSchema = z
 export type ClientIdMetadataUrl = z.infer<typeof clientIdMetadataUrlSchema>
 
 /**
+ * Grant types this AS actually issues for a CIMD public client. A document may
+ * advertise more (see the narrowing in clientIdMetadataDocumentSchema); anything
+ * outside this set is dropped rather than treated as a malformed document.
+ */
+export const SUPPORTED_CIMD_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const
+export type SupportedCimdGrantType = (typeof SUPPORTED_CIMD_GRANT_TYPES)[number]
+
+/**
  * Client ID Metadata Document — the single structural validation boundary.
  * MCP requires client_id, client_name, and redirect_uris. This first
  * implementation deliberately supports public PKCE clients only; symmetric
@@ -229,12 +237,61 @@ export const clientIdMetadataDocumentSchema = z.object({
   client_name: z.string().min(1).max(255),
   redirect_uris: z.array(redirectUriSchema).min(1).max(16),
   token_endpoint_auth_method: z.literal('none').default('none'),
+  // grant_types/response_types advertise what the client MAY use (RFC 7591 §2).
+  // A grant this AS does not implement is not a malformed document — it is a
+  // grant we simply never issue. MCP's CIMD requirements for an authorization
+  // server are to validate that client_id matches the URL, that redirect_uris
+  // match, and that the structure is valid JSON with the required fields
+  // (client_id, client_name, redirect_uris) — grant_types is not even required.
+  // Nothing licenses rejecting the WHOLE document over one unsupported entry,
+  // and doing so locked out real clients: claude.ai advertises
+  // urn:ietf:params:oauth:grant-type:jwt-bearer alongside the two we support,
+  // which failed both the old enum and its max(2) cap.
+  //
+  // So parse permissively and NARROW to what we implement. The bound stays on
+  // the RAW array (unbounded input is the actual risk); the narrowed result is
+  // by construction no larger than the supported set. Narrowing to EMPTY is
+  // allowed on purpose — usability is a policy question, and the /authorize
+  // path already rejects a client without authorization_code, reporting the
+  // precise `unsupported_grant_type` instead of a blanket invalid_document.
   grant_types: z
-    .array(z.enum(['authorization_code', 'refresh_token']))
+    // No per-element length cap: it would reject BEFORE narrowing, so one long
+    // unsupported extension URI would still condemn a document we can otherwise
+    // serve — the exact failure this narrowing exists to prevent. Input is
+    // already bounded upstream (the resolver caps the fetched document at 5 KiB)
+    // and here by the array length, which is what actually needs a bound.
+    .array(z.string())
     .min(1)
-    .max(2)
-    .default(['authorization_code']),
-  response_types: z.array(z.literal('code')).min(1).max(1).default(['code']),
+    .max(16)
+    .default(['authorization_code'])
+    .transform((values) =>
+      values.filter((value): value is SupportedCimdGrantType =>
+        (SUPPORTED_CIMD_GRANT_TYPES as readonly string[]).includes(value),
+      ),
+    ),
+  // response_types tolerates EXTRA advertised values but still requires `code`
+  // to survive narrowing — unlike grant_types, which may narrow to empty.
+  // The asymmetry is deliberate and not stylistic: /authorize already rejects a
+  // client without authorization_code (reporting `unsupported_grant_type`),
+  // whereas NOTHING downstream consults the client's advertised response_types.
+  // Allowing that to narrow to empty would admit a document advertising only
+  // `token` and still issue it an authorization code, quietly dropping a
+  // constraint the old `z.literal('code')` array enforced. Keep it at the one
+  // validation boundary (hard rule 2) rather than adding a route-side check.
+  response_types: z
+    // No per-element length cap: it would reject BEFORE narrowing, so one long
+    // unsupported extension URI would still condemn a document we can otherwise
+    // serve — the exact failure this narrowing exists to prevent. Input is
+    // already bounded upstream (the resolver caps the fetched document at 5 KiB)
+    // and here by the array length, which is what actually needs a bound.
+    .array(z.string())
+    .min(1)
+    .max(16)
+    .default(['code'])
+    .transform((values) => values.filter((value): value is 'code' => value === 'code'))
+    .refine((values) => values.length > 0, {
+      message: 'client must advertise the code response type',
+    }),
   client_uri: z
     .url({ protocol: /^https$/ })
     .max(2048)
