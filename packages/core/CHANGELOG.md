@@ -1,10 +1,20 @@
 # @3ngram/core
 
+## 0.8.4
+
+### Patch Changes
+
+- Keep `engines.node` at `>=22`. The Node 24 work should only have moved what we build, test and ship on — CI and the container base — not what consumers must run. Nothing in this closure uses a Node 24 feature, and Node 22 is supported upstream until 2027-04-30, so raising the published floor would have hard-failed Node 22 consumers on a patch release. Raising it becomes a deliberate major when there is a reason.
+- Updated dependencies
+  - @3ngram/db@0.7.3
+  - @3ngram/schema@0.6.3
+  - @3ngram/llm@0.2.4
+
 ## 0.8.3
 
 ### Patch Changes
 
-- 6e06cd6: Raise the supported Node floor to 24 (Active LTS). Node 22 entered maintenance on 2025-10-21 and receives security fixes only; Node 24 has been Active LTS since 2025-10-28. `engines.node` moves to `>=24`, CI and the release workflow test on 24, and the server image base moves to `node:24-bookworm-slim`.
+- 6e06cd6: Build, test and ship on Node 24 (Active LTS). CI, the release workflow and the server image base move to Node 24 — `node:24-bookworm-slim`, digest-pinned. `engines.node` deliberately stays `>=22`: nothing here requires a Node 24 feature, so consumers on Node 22 (supported until 2027-04-30) remain supported.
 - Updated dependencies [6e06cd6]
   - @3ngram/db@0.7.2
   - @3ngram/schema@0.6.2
