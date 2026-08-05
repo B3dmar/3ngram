@@ -1,5 +1,12 @@
 # @3ngram/db
 
+## 0.7.1
+
+### Patch Changes
+
+- Updated dependencies [75ff6f4]
+  - @3ngram/schema@0.6.1
+
 ## 0.7.0
 
 ### Minor Changes
