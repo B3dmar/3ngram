@@ -78,7 +78,12 @@ export interface OAuthTokenResponse {
   token_type: 'bearer'
   expires_in: number
   scope: string
-  refresh_token: string
+  /**
+   * OPTIONAL per RFC 6749 §5.1, and genuinely absent here: a client that never
+   * advertised the `refresh_token` grant is not issued one, because the token
+   * route would reject it as invalid_client on first use.
+   */
+  refresh_token?: string
 }
 
 /**
@@ -207,35 +212,53 @@ export function resolveRegisteredRedirectUri(
 interface MintedTokenPair {
   response: OAuthTokenResponse
   accessRow: NewOauthToken
-  refreshRow: NewOauthToken
+  /** Absent when the client never advertised the refresh_token grant. */
+  refreshRow: NewOauthToken | undefined
 }
 
-/** Mint an access JWT + opaque refresh token; rows carry hashes only. */
+/**
+ * Mint an access JWT and — only when the client advertised the `refresh_token`
+ * grant — an opaque refresh token; rows carry hashes only.
+ *
+ * The grant check is NOT redundant with the token route's
+ * `client.grant_types.includes(input.grant_type)` gate. That gate rejects a
+ * refresh EXCHANGE; this one governs ISSUANCE. Without it a client registered
+ * for `authorization_code` alone (also the schema default when a CIMD document
+ * omits grant_types) receives a refresh token that the very next request
+ * rejects as invalid_client — inert on arrival, with nothing in the response
+ * telling the client so. Suppressing it here makes the token response state
+ * what the AS will actually honour.
+ */
 async function buildTokenPair(
   userId: string,
-  clientId: string,
+  client: OAuthClientInformation,
   scope: string,
   config: OAuthVerifyConfig,
 ): Promise<MintedTokenPair> {
+  const clientId = client.client_id
   const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000)
-  const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000)
   const accessToken = await signAccessToken({ userId, scope, expiresAt: accessExpiresAt }, config)
+  const accessRow: NewOauthToken = {
+    tokenHash: sha256Hex(accessToken),
+    kind: 'access',
+    clientId,
+    scope,
+    expiresAt: accessExpiresAt,
+  }
+  const response: OAuthTokenResponse = {
+    access_token: accessToken,
+    token_type: 'bearer',
+    expires_in: ACCESS_TOKEN_TTL_SECONDS,
+    scope,
+  }
+  if (!client.grant_types.includes('refresh_token')) {
+    return { response, accessRow, refreshRow: undefined }
+  }
+  const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000)
   const refreshToken = randomBytes(TOKEN_BYTES).toString('base64url')
   return {
-    response: {
-      access_token: accessToken,
-      token_type: 'bearer',
-      expires_in: ACCESS_TOKEN_TTL_SECONDS,
-      scope,
-      refresh_token: refreshToken,
-    },
-    accessRow: {
-      tokenHash: sha256Hex(accessToken),
-      kind: 'access',
-      clientId,
-      scope,
-      expiresAt: accessExpiresAt,
-    },
+    response: { ...response, refresh_token: refreshToken },
+    accessRow,
     refreshRow: {
       tokenHash: sha256Hex(refreshToken),
       kind: 'refresh',
@@ -318,7 +341,7 @@ export function createOAuthServerProvider(
       if (redirectUri !== undefined && redirectUri !== consumed.redirectUri) {
         throw new OAuthGrantError('invalid_grant')
       }
-      const pair = await buildTokenPair(consumed.userId, client.client_id, consumed.scope, config)
+      const pair = await buildTokenPair(consumed.userId, client, consumed.scope, config)
       // insertOauthTokenPair serializes against account deletion (account-lifecycle
       // lock) and returns false when the user is a deletion tombstone — refuse to
       // mint on a deleted account (resurrection race). The code is
@@ -356,7 +379,13 @@ export function createOAuthServerProvider(
         }
         scope = requested.join(' ')
       }
-      const pair = await buildTokenPair(resolved.userId, client.client_id, scope, config)
+      // Reachable only for a client that advertised refresh_token (the token
+      // route gates the grant), so the rotated pair always carries a new
+      // refresh row. Check it rather than assert it: a client whose advertised
+      // grants were narrowed between issuance and rotation would otherwise
+      // rotate into a grant with no successor token.
+      const pair = await buildTokenPair(resolved.userId, client, scope, config)
+      if (pair.refreshRow === undefined) throw new OAuthGrantError('invalid_grant')
       const { maxActiveMcpClients } = await resolveResourceLimits(resolveLimits, resolved.userId)
       const rotated = await rotateOauthRefreshToken(
         resolved.userId,

@@ -156,26 +156,30 @@ async function assertClientCanRotate(
 }
 
 /**
- * Persist a freshly minted access+refresh pair in one transaction, serialized
- * against account deletion by the account-lifecycle advisory lock.
+ * Persist a freshly minted access token — and its refresh token when one was
+ * issued — in one transaction, serialized against account deletion by the
+ * account-lifecycle advisory lock.
  * Returns false WITHOUT inserting when the user is a deletion tombstone — the
  * caller maps that to invalid_grant, so a code-exchange that raced a deletion
  * never resurrects a live credential on the deleted account.
+ *
+ * `refresh` is undefined for a client that never advertised the refresh_token
+ * grant. Storing a hash for a token no client was ever handed would leave a row
+ * that can never be presented and never rotated, so it is simply not written.
  */
 export async function insertOauthTokenPair(
   userId: string,
   access: NewOauthToken,
-  refresh: NewOauthToken,
+  refresh: NewOauthToken | undefined,
   maxActiveMcpClients?: number,
 ): Promise<boolean> {
   return withTenant(userId, async (tx) => {
     await lockAccountLifecycle(tx, userId)
     if (!(await userIsLiveForIssuance(tx, userId))) return false
     await assertClientCanBeIssued(tx, userId, access.clientId, maxActiveMcpClients)
-    await tx.insert(oauthTokens).values([
-      { ...access, userId },
-      { ...refresh, userId },
-    ])
+    const rows = [{ ...access, userId }]
+    if (refresh !== undefined) rows.push({ ...refresh, userId })
+    await tx.insert(oauthTokens).values(rows)
     return true
   })
 }
