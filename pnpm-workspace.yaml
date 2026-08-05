@@ -12,18 +12,29 @@ overrides:
   esbuild@<0.25.0: ">=0.25.0"
   esbuild@>=0.27.3 <0.28.1: ^0.28.1
   fast-uri@<3.1.4: ^3.1.4
-  hono@<4.12.25: ^4.12.25
+  hono@<4.12.34: ^4.12.34
   ip-address@<10.3.1: 10.3.1
   js-yaml@<3.15.0: ^3.15.0
   js-yaml@>=4.0.0 <4.3.0: ^4.3.0
   nodemailer@<=9.0.0: ^9.0.1
-  postcss@<=8.5.17: 8.5.18
+  postcss@<=8.5.22: 8.5.23
 
 # Supply-chain posture (docs/contributing.mdx — active npm worm era).
 # pnpm 11 reads these from pnpm-workspace.yaml, NOT .npmrc (.npmrc is auth/registry only in v11).
 # Reproducibility:
 saveExact: true
 engineStrict: true
+
+# Registry cooldown: reject every dependency version published less than seven days ago unless
+# its exact version is reviewed and listed in minimumReleaseAgeExclude below. Strict mode fails
+# resolution instead of silently falling back to a too-new version when no mature version
+# satisfies the requested range.
+#
+# Both keys are required. minimumReleaseAgeExclude on its own does nothing: pnpm defaults
+# minimumReleaseAge to 0, so an exclude list without this setting is decoration, not policy —
+# the same class of silent-no-op that closed PR #379 and that .npmrc warns about.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
 
 # Lifecycle-script policy: default-deny + fail-closed. strictDepBuilds turns an undeclared
 # build-script dependency into a hard install error (ERR_PNPM_IGNORED_BUILDS) instead of a
@@ -44,7 +55,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - esbuild@0.28.1
   - '@opentelemetry/core@2.8.0'
-  - hono@4.12.25
+  - hono@4.12.34
   - nodemailer@9.0.1
   - js-yaml@3.15.0
   - js-yaml@4.3.0
