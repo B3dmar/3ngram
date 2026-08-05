@@ -120,4 +120,23 @@ describe('clientIdMetadataDocumentSchema', () => {
       clientIdMetadataDocumentSchema.safeParse(document({ response_types: ['token'] })).success,
     ).toBe(false)
   })
+
+  // A per-element length cap would reject before the filter runs, so one long
+  // vendor extension URI would condemn a document we can otherwise serve —
+  // exactly what narrowing exists to prevent. Size is bounded upstream (the
+  // resolver caps the fetched document at 5 KiB) and by the array length here.
+  it('narrows a long unsupported extension grant instead of rejecting it', () => {
+    const longGrant = `urn:example:params:oauth:grant-type:${'x'.repeat(200)}`
+    const parsed = clientIdMetadataDocumentSchema.parse(
+      document({ grant_types: ['authorization_code', longGrant] }),
+    )
+    expect(parsed.grant_types).toEqual(['authorization_code'])
+  })
+
+  it('narrows a long unsupported response type instead of rejecting it', () => {
+    const parsed = clientIdMetadataDocumentSchema.parse(
+      document({ response_types: ['code', 'y'.repeat(300)] }),
+    )
+    expect(parsed.response_types).toEqual(['code'])
+  })
 })

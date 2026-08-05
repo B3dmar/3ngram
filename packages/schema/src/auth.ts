@@ -255,7 +255,12 @@ export const clientIdMetadataDocumentSchema = z.object({
   // path already rejects a client without authorization_code, reporting the
   // precise `unsupported_grant_type` instead of a blanket invalid_document.
   grant_types: z
-    .array(z.string().max(128))
+    // No per-element length cap: it would reject BEFORE narrowing, so one long
+    // unsupported extension URI would still condemn a document we can otherwise
+    // serve — the exact failure this narrowing exists to prevent. Input is
+    // already bounded upstream (the resolver caps the fetched document at 5 KiB)
+    // and here by the array length, which is what actually needs a bound.
+    .array(z.string())
     .min(1)
     .max(16)
     .default(['authorization_code'])
@@ -274,7 +279,12 @@ export const clientIdMetadataDocumentSchema = z.object({
   // constraint the old `z.literal('code')` array enforced. Keep it at the one
   // validation boundary (hard rule 2) rather than adding a route-side check.
   response_types: z
-    .array(z.string().max(128))
+    // No per-element length cap: it would reject BEFORE narrowing, so one long
+    // unsupported extension URI would still condemn a document we can otherwise
+    // serve — the exact failure this narrowing exists to prevent. Input is
+    // already bounded upstream (the resolver caps the fetched document at 5 KiB)
+    // and here by the array length, which is what actually needs a bound.
+    .array(z.string())
     .min(1)
     .max(16)
     .default(['code'])
