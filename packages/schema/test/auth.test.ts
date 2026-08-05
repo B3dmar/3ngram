@@ -67,4 +67,47 @@ describe('clientIdMetadataDocumentSchema', () => {
   ])('rejects unsafe or incomplete metadata: %o', (override) => {
     expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
   })
+
+  // grant_types/response_types advertise what the client MAY use. MCP's CIMD
+  // requirements for an AS are client_id-matches-URL, redirect_uri validation,
+  // and valid JSON with the required fields — grant_types is not among them, so
+  // an unsupported entry must NOT condemn the whole document. Rejecting it
+  // locked out claude.ai, whose real document is the first case below.
+  it('narrows unsupported grant types instead of rejecting the document', () => {
+    const parsed = clientIdMetadataDocumentSchema.parse(
+      document({
+        grant_types: [
+          'authorization_code',
+          'refresh_token',
+          'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        ],
+      }),
+    )
+    expect(parsed.grant_types).toEqual(['authorization_code', 'refresh_token'])
+  })
+
+  it('narrows unsupported response types instead of rejecting the document', () => {
+    const parsed = clientIdMetadataDocumentSchema.parse(
+      document({ response_types: ['code', 'token', 'id_token'] }),
+    )
+    expect(parsed.response_types).toEqual(['code'])
+  })
+
+  // Narrowing to empty is deliberate: usability is a policy question the
+  // /authorize path answers with a precise `unsupported_grant_type`, not a
+  // blanket invalid_document from the structural boundary.
+  it('narrows to an empty grant list rather than failing structurally', () => {
+    const parsed = clientIdMetadataDocumentSchema.parse(
+      document({ grant_types: ['client_credentials'] }),
+    )
+    expect(parsed.grant_types).toEqual([])
+  })
+
+  it.each([
+    { grant_types: [] },
+    { grant_types: 'authorization_code' },
+    { response_types: [] },
+  ])('still rejects a structurally malformed advertisement: %o', (override) => {
+    expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
+  })
 })
