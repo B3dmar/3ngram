@@ -1,5 +1,12 @@
 # @3ngram/sdk
 
+## 1.2.4
+
+### Patch Changes
+
+- Updated dependencies [75ff6f4]
+  - @3ngram/schema@0.6.1
+
 ## 1.2.3
 
 ## 1.2.2
