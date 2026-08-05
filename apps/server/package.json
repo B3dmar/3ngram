@@ -70,6 +70,7 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@modelcontextprotocol/server-legacy": "2.0.0",
     "express": "5.2.1",
+    "hono": "4.12.34",
     "ioredis": "5.11.1",
     "nodemailer": "9.0.1",
     "rate-limiter-flexible": "11.2.0",
