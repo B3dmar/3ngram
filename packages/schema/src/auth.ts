@@ -264,12 +264,24 @@ export const clientIdMetadataDocumentSchema = z.object({
         (SUPPORTED_CIMD_GRANT_TYPES as readonly string[]).includes(value),
       ),
     ),
+  // response_types tolerates EXTRA advertised values but still requires `code`
+  // to survive narrowing — unlike grant_types, which may narrow to empty.
+  // The asymmetry is deliberate and not stylistic: /authorize already rejects a
+  // client without authorization_code (reporting `unsupported_grant_type`),
+  // whereas NOTHING downstream consults the client's advertised response_types.
+  // Allowing that to narrow to empty would admit a document advertising only
+  // `token` and still issue it an authorization code, quietly dropping a
+  // constraint the old `z.literal('code')` array enforced. Keep it at the one
+  // validation boundary (hard rule 2) rather than adding a route-side check.
   response_types: z
     .array(z.string().max(128))
     .min(1)
     .max(16)
     .default(['code'])
-    .transform((values) => values.filter((value): value is 'code' => value === 'code')),
+    .transform((values) => values.filter((value): value is 'code' => value === 'code'))
+    .refine((values) => values.length > 0, {
+      message: 'client must advertise the code response type',
+    }),
   client_uri: z
     .url({ protocol: /^https$/ })
     .max(2048)

@@ -110,4 +110,14 @@ describe('clientIdMetadataDocumentSchema', () => {
   ])('still rejects a structurally malformed advertisement: %o', (override) => {
     expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
   })
+
+  // Asymmetric with grant_types ON PURPOSE: /authorize rejects a client lacking
+  // authorization_code, but nothing downstream consults response_types, so a
+  // document advertising only `token` would otherwise be issued an
+  // authorization code it never advertised support for.
+  it('rejects a document whose response types narrow to empty', () => {
+    expect(
+      clientIdMetadataDocumentSchema.safeParse(document({ response_types: ['token'] })).success,
+    ).toBe(false)
+  })
 })
