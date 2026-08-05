@@ -33,3 +33,7 @@ CLAUDE.local.md
 .claude/
 .agents/
 .specify/
+
+# Local pnpm content-addressable store (created by `pnpm install --store-dir`);
+# machine-local cache, never source.
+.pnpm-store/

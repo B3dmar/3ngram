@@ -10,7 +10,7 @@
 # ---- base: pin Node + pnpm once, reuse in every stage --------------------------
 # Pin the multi-platform OCI index (linux/amd64 + linux/arm64) so builds cannot
 # silently pick up a newly-published base image. Renovate updates this digest.
-ARG NODE_IMAGE=node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
 FROM ${NODE_IMAGE} AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH

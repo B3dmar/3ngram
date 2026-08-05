@@ -291,7 +291,7 @@ jobs:
       # env var is absent — and OIDC needs no token config at all.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install (frozen lockfile; dependency lifecycle scripts denied by workspace policy)
         run: pnpm install --frozen-lockfile

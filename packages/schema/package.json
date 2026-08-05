@@ -8,7 +8,7 @@
     "url": "https://github.com/B3dmar/3ngram/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "repository": {
     "type": "git",
