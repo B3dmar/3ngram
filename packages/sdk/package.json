@@ -15,7 +15,7 @@
     "typescript"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "type": "module",
   "publishConfig": {
