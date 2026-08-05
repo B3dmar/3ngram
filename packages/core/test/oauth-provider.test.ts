@@ -199,6 +199,9 @@ describe('exchangeAuthorizationCode (consume-then-verify)', () => {
     expect(access.kind).toBe('access')
     expect(access.tokenHash).toBe(sha256(tokens.access_token))
     expect(refresh.kind).toBe('refresh')
+    // CLIENT advertises refresh_token, so one must be issued (see the
+    // suppression case below for a client that does not).
+    if (tokens.refresh_token === undefined) throw new Error('expected a refresh_token')
     expect(refresh.tokenHash).toBe(sha256(tokens.refresh_token))
     // The minted access token verifies against the same config (iss/aud/sig).
     resolveOauthToken.mockResolvedValue({
@@ -210,6 +213,37 @@ describe('exchangeAuthorizationCode (consume-then-verify)', () => {
     })
     const verified = await verifyAccessToken(tokens.access_token, config)
     expect(verified.ok).toBe(true)
+  })
+
+  // Issue #86: the token route rejects a refresh EXCHANGE from a client whose
+  // advertised grants exclude refresh_token, so issuing one at the code
+  // exchange handed out a credential that was inert on arrival — and nothing in
+  // the response said so. Issuance now matches what the AS will honour.
+  it('issues NO refresh token to a client that never advertised the grant', async () => {
+    consumeOauthCode.mockResolvedValue(consumed)
+    insertOauthTokenPair.mockResolvedValue(true)
+    const codeOnlyClient = { ...CLIENT, grant_types: ['authorization_code'] }
+
+    const tokens = await provider().exchangeAuthorizationCode(
+      codeOnlyClient,
+      'the-code',
+      VERIFIER,
+      'https://client.example/cb',
+    )
+
+    // The access token is unaffected — this narrows the response, not the grant.
+    expect(tokens.access_token).toEqual(expect.any(String))
+    expect(tokens.token_type).toBe('bearer')
+    expect(tokens.refresh_token).toBeUndefined()
+    // And no refresh row is persisted: a hash nobody holds can never be
+    // presented or rotated, so writing it would be dead state.
+    const [, access, refresh] = insertOauthTokenPair.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+      Record<string, unknown> | undefined,
+    ]
+    expect(access.kind).toBe('access')
+    expect(refresh).toBeUndefined()
   })
 
   it('validates and forwards the active-client cap on authorization-code issuance', async () => {
@@ -365,6 +399,7 @@ describe('exchangeRefreshToken (one-time rotation)', () => {
     expect(userId).toBe(USER_ID)
     expect(predecessorHash).toBe(sha256('refresh-1'))
     expect(access.tokenHash).toBe(sha256(tokens.access_token))
+    if (tokens.refresh_token === undefined) throw new Error('expected a rotated refresh_token')
     expect(refresh.tokenHash).toBe(sha256(tokens.refresh_token))
     expect(tokens.refresh_token).not.toBe('refresh-1')
   })
@@ -396,6 +431,20 @@ describe('exchangeRefreshToken (one-time rotation)', () => {
   it('rejects a refresh token bound to ANOTHER client', async () => {
     resolveOauthToken.mockResolvedValue({ ...liveRefresh, clientId: 'client-2' })
     await expect(provider().exchangeRefreshToken(CLIENT, 'stolen')).rejects.toThrow('invalid_grant')
+  })
+
+  // Issue #86: the token route gates the refresh GRANT, so this path is
+  // normally unreachable for a code-only client. It becomes reachable if the
+  // client's advertised grants are narrowed (a re-fetched CIMD document)
+  // between issuance and rotation — rotating would then revoke the predecessor
+  // and mint no successor, silently ending the session. Fail closed instead.
+  it('rejects rotation for a client whose advertised grants no longer include refresh_token', async () => {
+    resolveOauthToken.mockResolvedValue(liveRefresh)
+    const codeOnlyClient = { ...CLIENT, grant_types: ['authorization_code'] }
+    await expect(provider().exchangeRefreshToken(codeOnlyClient, 'refresh-1')).rejects.toThrow(
+      'invalid_grant',
+    )
+    expect(rotateOauthRefreshToken).not.toHaveBeenCalled()
   })
 
   it('fails closed when a concurrent rotation already revoked the predecessor', async () => {
