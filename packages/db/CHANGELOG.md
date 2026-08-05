@@ -1,5 +1,13 @@
 # @3ngram/db
 
+## 0.7.2
+
+### Patch Changes
+
+- 6e06cd6: Raise the supported Node floor to 24 (Active LTS). Node 22 entered maintenance on 2025-10-21 and receives security fixes only; Node 24 has been Active LTS since 2025-10-28. `engines.node` moves to `>=24`, CI and the release workflow test on 24, and the server image base moves to `node:24-bookworm-slim`.
+- Updated dependencies [6e06cd6]
+  - @3ngram/schema@0.6.2
+
 ## 0.7.1
 
 ### Patch Changes

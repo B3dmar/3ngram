@@ -1,6 +1,6 @@
 {
   "name": "3ngram",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Command-line client for the 3ngram typed memory API.",
   "license": "Apache-2.0",
   "homepage": "https://3ngram.ai",
