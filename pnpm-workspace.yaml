@@ -25,6 +25,17 @@ overrides:
 saveExact: true
 engineStrict: true
 
+# Registry cooldown: reject every dependency version published less than seven days ago unless
+# its exact version is reviewed and listed in minimumReleaseAgeExclude below. Strict mode fails
+# resolution instead of silently falling back to a too-new version when no mature version
+# satisfies the requested range.
+#
+# Both keys are required. minimumReleaseAgeExclude on its own does nothing: pnpm defaults
+# minimumReleaseAge to 0, so an exclude list without this setting is decoration, not policy —
+# the same class of silent-no-op that closed PR #379 and that .npmrc warns about.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+
 # Lifecycle-script policy: default-deny + fail-closed. strictDepBuilds turns an undeclared
 # build-script dependency into a hard install error (ERR_PNPM_IGNORED_BUILDS) instead of a
 # silent skip, so a NEW dependency that ships a postinstall fails CI until reviewed.
