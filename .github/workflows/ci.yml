@@ -189,14 +189,14 @@ jobs:
       - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       # hygiene only runs `pnpm config get` (no install), so it needs Node + pnpm but NOT the
       # pnpm cache — `cache: pnpm` would fail trying to save a store that was never populated.
       - if: ${{ matrix.lane == 'hygiene' }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 24
       - name: Install (frozen)
         if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
         run: pnpm install --frozen-lockfile
@@ -454,7 +454,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 24
       - name: Golden-set gate
         run: node eval/src/run.mjs --model openai-large-1536
 
@@ -572,7 +572,7 @@ jobs:
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install (frozen)
         if: ${{ steps.shard.outputs.enabled == 'true' }}
