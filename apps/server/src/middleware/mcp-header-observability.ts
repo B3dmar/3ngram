@@ -21,11 +21,10 @@ import { TOOLS } from '../mcp/tools.js'
  * missing here is labelled `unknown_method`: nothing errors, no test goes red,
  * the dashboard simply under-reports the new surface while looking healthy.
  *
- * Currently absent BY DESIGN, because the server does not serve it yet:
- * `completion/complete` (issue #104). It belongs in this set in the same PR
- * that starts serving it, not before — listing a method the server answers with
- * `-32601` would mislabel the resulting traffic as recognized. The
- * `resources/*` entries below arrived with issue #105 under exactly that rule.
+ * The `resources/*` and `completion/complete` entries below arrived with issues
+ * #105 and #104, each in the PR that started serving it — never earlier, since
+ * listing a method the server answers with `-32601` would mislabel the resulting
+ * traffic as recognized.
  */
 const KNOWN_METHODS = new Set([
   'server/discover',
@@ -41,6 +40,7 @@ const KNOWN_METHODS = new Set([
   // `list: undefined`, so enumeration returns nothing. It is allowlisted anyway
   // — a client that probes it produces real traffic worth labelling correctly.
   'resources/list',
+  'completion/complete',
 ])
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name))
 const PROMPT_NAMES = new Set(PROMPTS.map((prompt) => prompt.name))
