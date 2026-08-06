@@ -121,7 +121,34 @@ export interface ToolContext {
   retrievalPolicy?: (() => Promise<RetrievalPolicy>) | undefined
 }
 
-/** Wrap a structured payload as a tool success result (text mirror + structured). */
+/**
+ * Wrap a structured payload as a tool success result: a JSON text mirror
+ * ALONGSIDE structuredContent. THE canonical explanation of that duplication —
+ * the identical helpers in tools-search / tools-orient / tools-inspect /
+ * tools-admin point here rather than restating it.
+ *
+ * WHY THE MIRROR STAYS (issue #75). `structuredContent` arrived in protocol
+ * revision 2025-06-18, but the SDK still serves 2025-03-26, 2024-11-05, and
+ * 2024-10-07 — and 2025-03-26 is what a client that sends no version negotiates
+ * by DEFAULT. Those revisions have no structuredContent at all, so their clients
+ * read `content` only. The SDK does not paper over this: a contentless result is
+ * normalized to `content: []`, so dropping the mirror would hand them an empty
+ * SUCCESS — a silent wrong answer, the worst failure mode available. Gating on
+ * the protocol ERA is not sufficient either, because the legacy era spans both
+ * sides of 2025-06-18; it would need per-VERSION gating.
+ *
+ * WHAT IT COSTS: slightly MORE than 2x, not exactly 2x. The mirror is
+ * stringified and then placed in a `text` field, so the envelope's own
+ * serialization escapes every quote and newline inside it a second time.
+ * Measured through this helper on a worst-case get_memories payload (the only
+ * tool whose budget makes this material): 284 KB structured + 315 KB mirror =
+ * 599 KB on the wire, a factor of 2.11x, of which the re-escaping is +10.7%.
+ * The cost is bounded and caller-requested — a caller asking for 20 full bodies
+ * asked for the bytes.
+ *
+ * test/mcp-text-mirror.test.ts pins the worst case under a named ceiling, so
+ * raising a get_memories budget cannot quietly double the wire cost with it.
+ */
 function ok(structured: Record<string, unknown>): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(structured) }],

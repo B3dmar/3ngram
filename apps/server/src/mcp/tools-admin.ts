@@ -59,7 +59,12 @@ import type { ToolContext, ToolDefinition } from './tools.js'
 
 type ToolResult = CallToolResult
 
-/** Wrap a structured payload as a tool success result (text mirror + structured). */
+/**
+ * Wrap a structured payload as a tool success result (text mirror + structured).
+ * The mirror is deliberate and load-bearing: see the `ok` doc comment in
+ * tools.ts for why it cannot be dropped and what the >2x duplication costs
+ * (issue #75).
+ */
 function ok(structured: Record<string, unknown>): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(structured) }],
