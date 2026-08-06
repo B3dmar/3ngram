@@ -15,10 +15,11 @@ import { runTool, TOOLS, type ToolContext } from './tools.js'
 const SERVER_INFO = { name: '3ngram', version: SERVER_VERSION } as const
 
 /**
- * Tool and prompt definitions change only with a server deployment. One hour
- * avoids reconnect refetches without making a rolling deployment's old catalog
- * sticky for long. Both lists are identical across tenants, so shared caching
- * is safe; tool authorization still runs on every tools/call.
+ * Tool definitions, prompt definitions, and the discovery advertisement change
+ * only with a server deployment. One hour avoids reconnect refetches without
+ * making a rolling deployment's old catalog sticky for long. All three payloads
+ * are identical across tenants, so shared caching is safe; tool authorization
+ * still runs on every tools/call.
  */
 export const MCP_CATALOG_CACHE_TTL_MS = 60 * 60_000
 
@@ -35,7 +36,17 @@ export const MCP_CATALOG_CACHE_TTL_MS = 60 * 60_000
  */
 export function createMcpServer(ctx: ToolContext): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    // The 2026-07-28 spec requires cache hints on every cacheable result, and
+    // server/discover is on that list. Without a CONFIGURED hint the SDK does
+    // not leave the fields off — its 2026 codec fills them from its own
+    // defaults (ttlMs 0, cacheScope 'private'), so discovery advertises itself
+    // as immediately stale and clients re-probe on every reconnect.
+    // 'public' is correct for the same reason it is correct on the catalogs:
+    // DiscoverResult carries supportedVersions, capabilities, and serverInfo —
+    // no tenant data. It shares the catalog TTL because it goes stale on
+    // exactly the same trigger: a deployment.
     cacheHints: {
+      'server/discover': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
       'tools/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
       'prompts/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
     },
