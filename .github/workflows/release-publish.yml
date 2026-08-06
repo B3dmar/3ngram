@@ -113,6 +113,20 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # AWAIT, don't sample. platform-contract is written ASYNCHRONOUSLY:
+      # platform-contract.yml dispatches engine-contract.yml into the private
+      # platform repo and waits for it, so the status is `pending` (or absent
+      # entirely) for minutes after the staging→main merge. A single read here
+      # therefore fails for a release that is merely early, not broken — and
+      # because `immutable-v-tags` forbids moving or deleting a v* tag, the
+      # only recovery is a manual re-dispatch. v1.2.6 hit exactly this
+      # ("got 'pending'", 7s after its merge) and needed a hand re-run.
+      #
+      # A bounded poll keeps the gate identical in strength — a red contract
+      # still fails, and fails FAST rather than waiting out the clock — while
+      # removing the race. The ceiling exceeds platform-contract.yml's own
+      # await budget (~35min: 60x5s for the run to appear + 180x10s for it to
+      # finish), so a timeout here means that workflow is stuck, not slow.
       - name: Require private platform compatibility proof
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,13 +134,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          state=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}/status" \
-            --jq '([.statuses[] | select(.context == "platform-contract")] | first | .state) // "missing"')
-          if [[ "$state" != 'success' ]]; then
-            echo "platform-contract must be successful for $RELEASE_COMMIT; got '$state'" >&2
-            exit 1
-          fi
+          attempts=120 # x20s = 40 minutes
+          for attempt in $(seq 1 "$attempts"); do
+            state=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}/status" \
+              --jq '([.statuses[] | select(.context == "platform-contract")] | first | .state) // "missing"')
+
+            case "$state" in
+              success)
+                echo "platform-contract: success for $RELEASE_COMMIT (after $((attempt * 20))s)"
+                exit 0
+                ;;
+              failure | error)
+                echo "platform-contract reported '$state' for $RELEASE_COMMIT — refusing to publish" >&2
+                exit 1
+                ;;
+            esac
+
+            echo "platform-contract: '$state' (attempt ${attempt}/${attempts}) — waiting"
+            sleep 20
+          done
+
+          echo "platform-contract still '$state' for $RELEASE_COMMIT after 40m; giving up" >&2
+          exit 1
 
   container-scan:
     name: Scan release image (amd64 + arm64)
