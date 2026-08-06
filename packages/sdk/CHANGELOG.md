@@ -1,5 +1,7 @@
 # @3ngram/sdk
 
+## 1.2.7
+
 ## 1.2.6
 
 ### Patch Changes
