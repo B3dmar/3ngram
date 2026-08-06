@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadSmtpConfig, parseEnv, resetEnvCache } from '../src/env.js'
+import {
+  isAllowedMcpOrigin,
+  loadMcpAllowedOrigins,
+  loadSmtpConfig,
+  parseEnv,
+  resetEnvCache,
+} from '../src/env.js'
 
 // A minimal valid RS256 private JWK array — production requires OAUTH_JWKS, so
 // the LOG_HASH_SALT acceptance case must carry a structurally valid key set.
@@ -372,5 +378,92 @@ describe('SMTP port (issue #267 part B: empty-string-is-unset)', () => {
     const config = loadSmtpConfig()
     expect(config).toBeDefined()
     expect(config?.port).toBe(2525)
+  })
+})
+
+describe('MCP origin allowlist (issue #101: Streamable HTTP Origin MUST)', () => {
+  const originalEnv = { ...process.env }
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    resetEnvCache()
+  })
+
+  it('treats an empty MCP_ALLOWED_ORIGINS as unset', () => {
+    // Empty-string-is-unset, the BASE_URL / WEB_APP_URL convention: CI surfaces
+    // unset secrets as ''. A '' that survived to the splitter would add the
+    // useless entry '' to the allowlist.
+    expect(parseEnv({ MCP_ALLOWED_ORIGINS: '' }).MCP_ALLOWED_ORIGINS).toBeUndefined()
+    expect(parseEnv({}).MCP_ALLOWED_ORIGINS).toBeUndefined()
+  })
+
+  it('is EMPTY with neither var set, so any present Origin is rejected', () => {
+    // The fail-closed default. Non-browser clients send no Origin and are
+    // untouched; a browser caller requires explicit configuration.
+    process.env = {}
+    resetEnvCache()
+    expect(loadMcpAllowedOrigins().size).toBe(0)
+    expect(isAllowedMcpOrigin('https://app.3ngram.test')).toBe(false)
+  })
+
+  it('admits WEB_APP_URL without any MCP_ALLOWED_ORIGINS', () => {
+    // The dashboard is the one first-party browser caller, so it is allowlisted
+    // by virtue of already being configured — no second var to remember.
+    process.env = { WEB_APP_URL: 'https://app.3ngram.test' }
+    resetEnvCache()
+    expect(isAllowedMcpOrigin('https://app.3ngram.test')).toBe(true)
+  })
+
+  it('unions WEB_APP_URL with a comma-separated MCP_ALLOWED_ORIGINS', () => {
+    process.env = {
+      WEB_APP_URL: 'https://app.3ngram.test',
+      MCP_ALLOWED_ORIGINS: 'http://localhost:6274, https://inspector.test',
+    }
+    resetEnvCache()
+    expect(loadMcpAllowedOrigins().size).toBe(3)
+    expect(isAllowedMcpOrigin('https://app.3ngram.test')).toBe(true)
+    // Surrounding whitespace is trimmed — a human-edited env var will have it.
+    expect(isAllowedMcpOrigin('http://localhost:6274')).toBe(true)
+    expect(isAllowedMcpOrigin('https://inspector.test')).toBe(true)
+  })
+
+  it('normalizes case, default ports, trailing slashes, and paths', () => {
+    // An Origin header is a SERIALIZED ORIGIN (lowercase host, no default port,
+    // no path). Configured values are human-written URLs and are not, so both
+    // sides must be normalized or the same origin misses itself.
+    process.env = { MCP_ALLOWED_ORIGINS: 'https://App.Example.test:443/dashboard/' }
+    resetEnvCache()
+    expect(loadMcpAllowedOrigins()).toEqual(new Set(['https://app.example.test']))
+    expect(isAllowedMcpOrigin('https://app.example.test')).toBe(true)
+    expect(isAllowedMcpOrigin('HTTPS://APP.EXAMPLE.TEST')).toBe(true)
+  })
+
+  it('does not treat a non-default port or a scheme change as the same origin', () => {
+    process.env = { MCP_ALLOWED_ORIGINS: 'https://app.example.test' }
+    resetEnvCache()
+    expect(isAllowedMcpOrigin('https://app.example.test:8443')).toBe(false)
+    expect(isAllowedMcpOrigin('http://app.example.test')).toBe(false)
+    expect(isAllowedMcpOrigin('https://evil.example')).toBe(false)
+    // Prefix/suffix confusion must not pass.
+    expect(isAllowedMcpOrigin('https://app.example.test.evil.example')).toBe(false)
+  })
+
+  it('skips unparseable entries instead of throwing at boot', () => {
+    // A typo in a deployment's env must narrow the allowlist, never take the
+    // server down — and skipping fails closed.
+    process.env = { MCP_ALLOWED_ORIGINS: 'not a url,https://good.test,,   ' }
+    resetEnvCache()
+    expect(loadMcpAllowedOrigins()).toEqual(new Set(['https://good.test']))
+  })
+
+  it('rejects an opaque or literal-null Origin even so', () => {
+    // `new URL('data:...').origin` serializes to the STRING "null", and a
+    // sandboxed iframe sends the literal header `Origin: null`. Admitting
+    // either would allowlist every sandboxed browsing context.
+    process.env = { MCP_ALLOWED_ORIGINS: 'data:text/html,x' }
+    resetEnvCache()
+    expect(loadMcpAllowedOrigins().size).toBe(0)
+    expect(isAllowedMcpOrigin('null')).toBe(false)
+    expect(isAllowedMcpOrigin('')).toBe(false)
   })
 })

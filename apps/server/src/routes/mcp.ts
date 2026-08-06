@@ -35,6 +35,7 @@ import {
 } from '@modelcontextprotocol/server'
 import { Router } from 'express'
 import { createMcpServer } from '../mcp/server.js'
+import { mcpOriginValidation } from '../middleware/mcp-origin.js'
 import { oauthBearerAuth } from '../middleware/oauth-bearer.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 
@@ -127,11 +128,18 @@ export function mcpRouter(options: McpRouterOptions): Router {
     onerror: (err) => log().error(crashSafeError(err), 'mcp: node adapter error'),
   })
 
+  // Origin validation runs FIRST (spec MUST, DNS-rebinding defense): a foreign
+  // browser origin is refused before authentication and before it can consume a
+  // rate-limit point. It sits here rather than beside app.use('/mcp', ...) so
+  // all /mcp route policy stays in one file; the tradeoff is that it runs AFTER
+  // express.json(), so a rejected body was parsed first — acceptable, since the
+  // per-IP edgeLimiter already bounds that upstream and nothing past the 403 runs.
+  //
   // Bearer-only guard on every method (POST/GET/DELETE). The 401 challenge +
   // WWW-Authenticate is the RFC 9728 client bootstrap. The per-user limiter runs
   // AFTER auth so it keys on the verified req.userId (docs/concepts/mcp-design.mdx per-user
   // bucket); an unauthenticated request is rejected before it can consume a point.
-  router.all('/mcp', oauthBearerAuth, options.limiter, (req, res) => {
+  router.all('/mcp', mcpOriginValidation, oauthBearerAuth, options.limiter, (req, res) => {
     handle(req, res, req.body).catch((err: unknown) => {
       log().error(crashSafeError(err), 'mcp: unhandled handler rejection')
       if (!res.headersSent) res.status(500).json({ error: 'internal_error' })

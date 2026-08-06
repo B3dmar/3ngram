@@ -222,6 +222,18 @@ export const envSchema = z
         value === undefined || !/^https?:\/\//.test(value) ? undefined : value,
       )
       .pipe(z.url().optional()),
+    // Extra browser origins allowed to call /mcp, comma-separated. The MCP
+    // Streamable HTTP spec REQUIRES servers to reject a present-but-invalid
+    // Origin (DNS-rebinding defense); loadMcpAllowedOrigins() unions this list
+    // with WEB_APP_URL to build that allowlist. Empty-string-is-unset (the
+    // BASE_URL / WEB_APP_URL convention): CI surfaces unset secrets as ''.
+    // Entries are normalized to serialized origins at load, so a trailing
+    // slash, a path, or mixed case is accepted here and compared correctly.
+    // Local dev against MCP Inspector: MCP_ALLOWED_ORIGINS=http://localhost:6274
+    MCP_ALLOWED_ORIGINS: z
+      .string()
+      .optional()
+      .transform((value) => (value === undefined || value === '' ? undefined : value)),
     OAUTH_JWKS: z
       .string()
       .optional()
@@ -520,6 +532,7 @@ export function loadEnv(): Env {
 export function resetEnvCache(): void {
   cached = undefined
   cachedOAuth = undefined
+  cachedMcpOrigins = undefined
 }
 
 type ParseJwksResult = { ok: true; keys: OAuthJwk[] } | { ok: false; message: string }
@@ -587,6 +600,74 @@ export function loadOAuthConfig(): OAuthConfig {
     keys: parsed.keys,
   }
   return cachedOAuth
+}
+
+let cachedMcpOrigins: ReadonlySet<string> | undefined
+
+/**
+ * Normalize a configured URL to the SERIALIZED ORIGIN form an `Origin` header
+ * carries: `new URL().origin` lowercases the host, drops a default port, and
+ * strips any path/query, so `https://App.Example.com:443/dashboard` and
+ * `https://app.example.com` compare equal. Returns undefined for anything that
+ * does not parse — a typo in the allowlist must narrow it, never widen it.
+ *
+ * Deliberately NOT webOrigin() from apps/server/src/links.ts: that helper only
+ * trims a trailing slash, lives in the app layer, and would let two spellings
+ * of one origin miss each other.
+ */
+function normalizeOrigin(value: string): string | undefined {
+  try {
+    const { origin } = new URL(value.trim())
+    // A non-http(s) or opaque input (e.g. "data:…") serializes as "null";
+    // admitting it would allowlist every sandboxed browsing context.
+    return origin === 'null' ? undefined : origin
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The browser origins allowed to reach /mcp: WEB_APP_URL (the dashboard, the
+ * one first-party browser caller) ∪ MCP_ALLOWED_ORIGINS. Memoized; every entry
+ * is normalized so the middleware compares like with like.
+ *
+ * FAIL-CLOSED BY DEFAULT: with neither var set this is EMPTY, so any request
+ * carrying an Origin is rejected. That is the correct default — the spec's MUST
+ * is conditional on the header being present, and non-browser clients (Claude
+ * Desktop, the CLI, agent runtimes) send none, so they are untouched. An
+ * operator wiring a browser client sets MCP_ALLOWED_ORIGINS (see .env.example).
+ *
+ * Unparseable entries are SKIPPED rather than thrown: a malformed origin in a
+ * deployment's env must not take the whole server down at boot, and skipping
+ * fails closed (that origin simply is not allowed).
+ */
+export function loadMcpAllowedOrigins(): ReadonlySet<string> {
+  if (cachedMcpOrigins) return cachedMcpOrigins
+  const env = loadEnv()
+  const configured = env.MCP_ALLOWED_ORIGINS?.split(',') ?? []
+  const origins = new Set<string>()
+  for (const candidate of [env.WEB_APP_URL, ...configured]) {
+    if (candidate === undefined || candidate.trim() === '') continue
+    const normalized = normalizeOrigin(candidate)
+    if (normalized !== undefined) origins.add(normalized)
+  }
+  cachedMcpOrigins = origins
+  return cachedMcpOrigins
+}
+
+/**
+ * Whether a raw `Origin` header value may reach /mcp. THE decision function —
+ * the middleware asks this and does no parsing of its own, so the header and
+ * the allowlist are always normalized by the same code (hard rule 2's spirit:
+ * one place owns the comparison).
+ *
+ * An unparseable header, or the literal `null` a sandboxed iframe sends, is
+ * NOT allowed: it cannot be matched against any configured origin, so treating
+ * it as valid would be a hole rather than a convenience.
+ */
+export function isAllowedMcpOrigin(originHeader: string): boolean {
+  const normalized = normalizeOrigin(originHeader)
+  return normalized !== undefined && loadMcpAllowedOrigins().has(normalized)
 }
 
 /**
