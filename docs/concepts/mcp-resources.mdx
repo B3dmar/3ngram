@@ -8,6 +8,15 @@ icon: "link"
 answered before any code, per [issue #105](https://github.com/B3dmar/3ngram/issues/105).
 No `resources/*` method is served today.
 
+<Note>
+**The scheme is `threengram`, not `3ngram`.** Issue #105 and the first version of
+this document both specified `3ngram://memory/{id}`. That URI cannot exist: RFC 3986
+requires a scheme to begin with a letter (`scheme = ALPHA *( ALPHA / DIGIT / "+" /
+"-" / "." )`), so `new URL('3ngram://memory/x')` throws, and the SDK hands the read
+callback a real `URL`. The template would have been advertised and never read.
+Caught during implementation, not review — the string typechecks and reads perfectly.
+</Note>
+
 ## Why this is worth revisiting
 
 [MCP design](/concepts/mcp-design) deferred resources "until a client demonstrably
@@ -39,7 +48,7 @@ closes the predecessor's `valid_to` and **inserts a new row with a new id** — 
 comment is explicit that "content, topic, tags are NEVER touched." The successor is a
 different memory, not a new version of the old one.
 
-`3ngram://memory/{id}` is therefore **already version-addressed by construction.** A
+`threengram://memory/{id}` is therefore **already version-addressed by construction.** A
 `{id}/{version}` URI would invent a dimension the schema does not have: there is no
 version column, no revision counter, nothing for the second path segment to name.
 
