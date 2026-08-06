@@ -20,6 +20,7 @@ import {
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { decodeSearchCursor, encodeCursor, searchFingerprint } from '../cursor.js'
 import { parseOutput } from '../output-validation.js'
+import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
 import type { ToolDefinition } from './tools.js'
 
 /**
@@ -139,6 +140,7 @@ const searchTool: ToolDefinition = {
       'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query and filters that issued it: passing it with a changed query or filters is rejected as invalid input — omit the cursor to start a new search. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.',
     inputSchema: searchQueryV3Schema,
     outputSchema: searchToolOutputV3Schema,
+    annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args, ctx) {
     if (ctx.gateway === undefined) {

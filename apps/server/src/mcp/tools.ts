@@ -39,10 +39,11 @@ import {
   reviseToolInputSchema,
   reviseToolOutputSchema,
 } from '@3ngram/schema'
-import type { CallToolResult } from '@modelcontextprotocol/server'
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server'
 import type { ZodType } from 'zod'
 import { parseOutput } from '../output-validation.js'
 import { mapToolError } from './errors.js'
+import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
 // Admin tools: configure_scope / describe_environment /
 // review_proposals — defined in their own module (500-line discipline), appended
 // to the registry below via the factory (append-only edit to TOOLS).
@@ -86,6 +87,22 @@ export interface ToolDefinition {
     description: string
     inputSchema: ZodType
     outputSchema: ZodType
+    /**
+     * Behavioural hints a client uses to decide whether a call can be
+     * auto-approved or needs a confirmation prompt. REQUIRED on every tool (the
+     * registry invariant test enforces it): without them every tool looks
+     * equally dangerous, so a read like `search` collects the same friction as
+     * a write like `revise`.
+     *
+     * Deliberately NOT derived from {@link RequiredScope}. The mapping is not
+     * total — the per-action tools carry `anyOf` and span read AND write — and
+     * an explicit table is easier to review than a clever inference.
+     *
+     * `title` is available on ToolAnnotations too and is deliberately left
+     * unset: {@link ToolDefinition.config.title} already carries it, and two
+     * sources for one display string is how they drift.
+     */
+    annotations: ToolAnnotations
   }
   handler: (args: unknown, ctx: ToolContext) => Promise<ToolResult>
 }
@@ -198,6 +215,15 @@ const rememberTool: ToolDefinition = {
     description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in.`,
     inputSchema: rememberToolInputSchema,
     outputSchema: rememberToolOutputSchema,
+    // Appends a NEW row on every call, so repeating it is not a no-op —
+    // idempotentHint: false. destructiveHint: false is a real product claim:
+    // remember never merges into or overwrites an existing memory (hard rule 1).
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
   },
   async handler(args, ctx) {
     // core remember() is THE validation boundary; pass the args straight through.
@@ -257,6 +283,7 @@ const getFactsTool: ToolDefinition = {
       'Currently-valid facts for a subject, with optional bi-temporal time travel. List mode (no subject) returns the most recent facts, bounded by an optional limit (default 50, max 200).',
     inputSchema: factsQueryInputSchema,
     outputSchema: factsToolOutputSchema,
+    annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args, ctx) {
     const input = factsQueryInputSchema.parse(args)
@@ -321,6 +348,19 @@ const reviseTool: ToolDefinition = {
     // key is rejected, never silently stripped.
     inputSchema: reviseToolInputSchema,
     outputSchema: reviseToolOutputSchema,
+    // destructiveHint: false is the claim worth making visible. AGENTS.md hard
+    // rule 1: no write path destroys memory data. revise closes the
+    // predecessor's validity and APPENDS a successor row — the predecessor's
+    // content is never rewritten (packages/db/src/memory-revise.ts), and archive
+    // moves `status`, not content. Not idempotent: each call appends a new
+    // successor, and a repeat against an already-superseded predecessor is a
+    // typed rejection rather than a no-op.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
   },
   async handler(args, ctx) {
     // core revise() is THE validation boundary; pass args straight through. It
@@ -370,6 +410,17 @@ const resolveTool: ToolDefinition = {
       'Settle a memory by its id. A commitment transitions to a target status (open, waiting, resolved, expired) — serves resolve and unresolve (resolved -> open); illegal transitions are rejected. A blocker is archived (status active -> archived) and leaves the active-blocker briefing; the passed status is ignored for blockers and the result reports archived. Commitments AND blockers must be written WITH a project to be resolvable from a project-scoped briefing.',
     inputSchema: resolveToolInputSchema,
     outputSchema: resolveToolOutputSchema,
+    // A transition to a TARGET state, not a delta, so repeating it lands on the
+    // same state — idempotentHint: true. (An illegal repeat is rejected by the
+    // FSM rather than applied twice, which is the same guarantee from the
+    // client's side: no second effect.) Archiving a blocker moves `status`; the
+    // memory row is untouched, so destructiveHint stays false.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   },
   async handler(args, ctx) {
     const input = resolveToolInputSchema.parse(args)

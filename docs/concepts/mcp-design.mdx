@@ -21,6 +21,10 @@ The MCP surface is designed from **jobs to be done** and capped at **11 tools** 
 | "Review what the consolidator proposes" | `review_proposals` |
 | "Know what this server can do / how I'm set up" | `describe_environment` |
 
+This table is compressed into `SERVER_INSTRUCTIONS` (`apps/server/src/mcp/server.ts`), which the server advertises as `DiscoverResult.instructions` — the spec's slot for telling the model *how to use the server*, as opposed to the per-tool descriptions that only explain one tool at a time. **Change the two together**: the constant is a policy statement derived from this table, and it is prepended to model context on every client that surfaces it, so it competes with the tool descriptions for attention.
+
+Every tool also declares [annotations](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) — `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` — so a client can auto-approve a read like `search` without giving it the same friction as a write. They are **not** derived from `requiredScope`: the per-action tools (`configure_scope`, `review_proposals`) span read and write, so the mapping is not total and an explicit table is easier to review than an inference. `destructiveHint` is `false` on every memory write — append-and-supersede never destroys memory data (hard rule 1), and that is a claim worth making visible. `configure_scope` is the one `true`, because `delete` removes a scope registry entry.
+
 ## Tools (11)
 
 1. **`remember`** — append a memory (type, scope, project). Never merges. Returns the created memory + any consolidation proposals it triggered (advisory).
