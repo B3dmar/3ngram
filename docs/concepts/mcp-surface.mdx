@@ -1,0 +1,174 @@
+---
+title: "MCP surface budget"
+description: "Why the tool cap is ours and not the protocol's, how to choose between a tool, a resource and a prompt, and what the surface should become next."
+icon: "scale-balanced"
+---
+
+**Status: design.** Nothing here is built. It exists to settle *how* the MCP surface
+should grow before the next feature argues about it, because the current budget is
+already over-subscribed and the rule everyone is arguing under turns out not to be a
+protocol rule at all.
+
+## The cap is ours
+
+`AGENTS.md` hard rule 8 caps the tool count at 12, and `MAX_TOOLS = 12` enforces it.
+That number is **3ngram's own discipline**. It entered at the `v1.0.0` launch commit and
+is not sourced to anything upstream.
+
+Verified two ways:
+
+- The [2026-07-28 tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
+  defines no maximum or recommended tool count. What it constrains is tool *name* length
+  (1–128 characters), and it gives `tools/list` **pagination** — which anticipates
+  servers with more tools than fit in one response.
+- The pinned SDK enforces no count limit anywhere.
+
+<Note>
+This matters because "the protocol says 12" would be a reason to stop designing. "We
+chose 12 to force evidence" is a reason to **produce the evidence and then re-choose**.
+`mcp-design.mdx` states the actual rule: a new tool needs a JTBD no existing tool covers
+*and* evidence an agent needs it. The number is a forcing function attached to that
+requirement, not a ceiling with independent authority.
+</Note>
+
+The real constraint is **model behaviour**, and it is about description quality rather
+than count: tool-selection accuracy degrades as the list grows, and every description is
+re-sent on every `tools/list`. Two well-separated tools cost less than one overloaded
+one. That is what to optimise; the number is a proxy.
+
+## Choosing between a tool, a resource and a prompt
+
+| | Use when | Costs a slot |
+|---|---|---|
+| **Tool** | The agent must *do* something, or the read is a **query** (filters, ranking, fusion) | Yes |
+| **Resource** | The thing is **addressable** by a stable identifier and is *read* | No |
+| **Prompt** | The agent needs *orienting* toward a workflow it would not start on its own | No |
+
+Two corrections to intuitions that have already caused mistakes here:
+
+**Resources are not a general pressure valve.** They avoid the tool cap, which is real,
+but a resource needs a URI. `search` could never be one — a fused, filtered, ranked
+query has no address. Reach for a resource when there is a *name or id*, not merely
+because the budget is tight.
+
+**Cacheability is a separate question from addressability.** Per
+[MCP resources](/concepts/mcp-resources), a long TTL requires an immutable body. A
+mutable thing can still be a resource; it just carries a short TTL and buys only the slot
+saving, not the caching win.
+
+## The budget today
+
+Eleven tools registered, one slot left — and **two features claim it**:
+
+- `mcp-design.mdx` and `tools.ts` reserve slot 12 for `manage_context`.
+- [Threads](/concepts/threads) spends it on `configure_thread`.
+
+`manage_context` has no design document, no issue, and no specification. It appears in
+four places, all of which merely reserve the name. **An undefined placeholder is
+currently blocking a fully-designed feature**, and that should be resolved first: either
+specify `manage_context` or release the reservation.
+
+## Proposals
+
+### 1. `search` and `handoff` return resource links
+
+`get_memories` exists for exactly one job — *"the follow-up read for a `truncated: true`
+search/handoff line"* — and the protocol has a content type built for that job:
+
+```json
+{ "type": "resource_link", "uri": "threengram://memory/{id}", "name": "…" }
+```
+
+`ResourceLinkSchema` is part of `ContentBlockSchema`, so the pinned SDK can already emit
+these in a tool result. A client could then fetch bodies itself, from a cache, with no
+second tool call — and avoid the 2.11× text-mirror cost on the largest payload we serve
+(see the output-size discipline note in [MCP design](/concepts/mcp-design)).
+
+<Warning>
+**This must be additive. Do not retire `get_memories` on the strength of it.**
+
+The specification places no `MUST` on clients to follow a resource link, and explicitly
+notes that linked resources need not appear in `resources/list`. A client is free to
+ignore the block entirely. Retiring the tool would then delete the truncated-read path
+for those clients and leave a search result that cannot be expanded at all.
+
+This is the same trap as the text mirror in `ok()`: the fallback exists for clients whose
+behaviour we cannot observe, and removing it converts an unknown into a silent failure.
+</Warning>
+
+**Staged, with an evidence gate:**
+
+1. Emit `resource_link` blocks alongside today's structured hits. Purely additive, no
+   client can regress.
+2. Gather evidence that real clients follow them.
+3. Only then consider retiring `get_memories` — and that becomes a genuine JTBD
+   argument, not a budget trick.
+
+Honest tradeoff at step 3: twenty bodies becomes twenty resource reads rather than one
+batched call. Chattier on a cold cache, cheaper on every later session.
+
+### 2. Threads as an index resource plus one curation tool
+
+Threads decompose along the read/write seam:
+
+- **`threengram://thread/{name}`** — the *index*: member ids and minimal metadata. Short
+  TTL, because membership mutates. Small by construction, so no firehose.
+- **`threengram://memory/{id}`** — the bodies. Immutable, long TTL, already built.
+
+A client walks the index and fetches bodies that are likely already cached from any
+earlier read. The expensive half is the half that caches well.
+
+This does **not** remove the need for a curation tool — create, rename, archive, delete,
+pin, unpin are writes, and MCP resources are read-only. [Threads](/concepts/threads)
+already considered and rejected folding these into `configure_scope`: scopes are
+exclusive partitions, threads are overlapping collections, and one tool describing both
+models confuses the agent reading the description. That argument stands.
+
+What the resource *does* buy: threads never need a **second** tool for reading, and the
+thread filter on `search` becomes a convenience rather than the only way in.
+
+### 3. Settle `manage_context`
+
+Specify it or release the slot. A reservation with no design cannot be weighed against a
+feature that has one.
+
+### 4. Prompts are under-used, and the cap is also ours
+
+`MAX_PROMPTS = 2` is self-imposed; the protocol sets no limit. Prompts carry no tenant
+data and cost no slot.
+
+The one clear gap is **`review_proposals` has no prompt**. It is the tool an agent is
+least likely to invoke spontaneously — nothing in a session naturally suggests "check
+what the consolidator proposed." `briefing` and `debrief` orient session start and end; a
+`review` prompt would orient the loop that keeps the corpus clean.
+
+Note that `SERVER_INSTRUCTIONS` now carries cross-tool policy, so some of what a prompt
+would have done reaches the model without one.
+
+## Sequencing
+
+| Step | Unblocks | Gate |
+|---|---|---|
+| Settle `manage_context` | Threads, and every later tool | A decision, not code |
+| Resource links (additive) | Evidence for retiring `get_memories` | Client follow-through |
+| Thread index resource | Threads' read path | Ships with threads |
+| `review` prompt + raise the prompt cap | Consolidation loop | Cheap; do it anytime |
+| Re-set the tool cap | — | Only after the above |
+
+Re-set the cap **last**, and record the reasoning as description overlap and selection
+accuracy rather than a number inherited from launch day.
+
+## What is deliberately not here
+
+- **`subscriptions/listen`** — held-open streams defeat the stateless deploy model. See
+  the catalog-staleness note in [MCP design](/concepts/mcp-design).
+- **`resources/list`** for memories — corpus enumeration; the memory template returns
+  nothing by design.
+- **Completion for the memory `{id}`** — suggesting memory ids is the same enumeration
+  through a different door.
+- **Roots and Sampling** — client capabilities a server cannot use, and Sampling is
+  deprecated in this revision besides.
+- **Logging** — deprecated by SEP-2577; OpenTelemetry covers it.
+
+Multi-round-trip confirmation and the Tasks extension are tracked separately and remain
+the most valuable unbuilt protocol features.
