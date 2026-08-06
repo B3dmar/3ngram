@@ -9,7 +9,7 @@ The 3ngram MCP server registers 11 tools (hard ceiling: 12). Every tool validate
 
 ## remember
 
-Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at 2000 characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass `project` — a memory written with a NULL project never matches a project filter (issue #244).
+Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at 2000 characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass `project` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in.
 
 **Title:** Remember · **Required scope:** `memory:write`
 

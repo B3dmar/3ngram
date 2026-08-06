@@ -315,6 +315,17 @@ jobs:
         run: |
           node scripts/check-dependency-licenses.mjs --self-test
           node scripts/check-dependency-licenses.mjs
+      # Guards a failure class the test suite structurally cannot see: Vitest
+      # pre-bundles CJS deps through Vite's own interop and synthesises named
+      # exports, so `import * as x from '<cjs-pkg>'` passes every unit test and
+      # yields an all-undefined namespace under real Node ESM in production.
+      # Lives in workspace-checks (not hygiene) because it resolves real packages
+      # and therefore needs the frozen install; the hygiene lane never installs.
+      - name: CJS namespace-import interop guard
+        if: ${{ matrix.lane == 'workspace-checks' }}
+        run: |
+          node scripts/check-cjs-namespace-imports.mjs --self-test
+          node scripts/check-cjs-namespace-imports.mjs
       - name: Unit tests
         if: ${{ matrix.lane == 'unit' }}
         run: pnpm run test
