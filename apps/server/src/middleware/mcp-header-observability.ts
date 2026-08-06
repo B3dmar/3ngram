@@ -10,6 +10,23 @@ import type { NextFunction, Request, Response } from 'express'
 import { PROMPTS } from '../mcp/prompts.js'
 import { TOOLS } from '../mcp/tools.js'
 
+/**
+ * Every MCP method this server actually serves. The set is an ALLOWLIST for
+ * metric labels, not a router: an unrecognized value collapses to the literal
+ * `'unknown'` so an attacker-controlled header can never open the label
+ * cardinality.
+ *
+ * EXTEND THIS ALONGSIDE ANY NEWLY SERVED METHOD — this is the coupling nobody
+ * remembers, and its failure mode is the quiet kind. Real traffic for a method
+ * missing here is labelled `unknown_method`: nothing errors, no test goes red,
+ * the dashboard simply under-reports the new surface while looking healthy.
+ *
+ * Currently absent BY DESIGN, because the server does not serve them yet:
+ * `resources/list`, `resources/templates/list`, `resources/read` (issue #105)
+ * and `completion/complete` (issue #104). Each belongs in this set in the same
+ * PR that starts serving it, not before — listing a method the server answers
+ * with `-32601` would mislabel the resulting traffic as recognized.
+ */
 const KNOWN_METHODS = new Set([
   'server/discover',
   'initialize',
