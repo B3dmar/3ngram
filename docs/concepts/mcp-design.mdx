@@ -42,7 +42,7 @@ The MCP surface is designed from **jobs to be done** and capped at **11 tools** 
 - Every tool: Zod input schema + `outputSchema` (structured output) from `packages/schema` — same types the REST API and SDK use.
 - Output size discipline: structured, `brief` modes, pagination — oversized responses are an easy trap, so design the size discipline in from the start.
 - MCP and REST are thin adapters over the same `packages/core` service layer — no logic in the transport layer, no MCP↔API drift.
-- Prompts: start with 2 (`briefing`, `debrief`) as code-defined templates. Resources: defer until a client demonstrably uses them.
+- Prompts: start with 2 (`briefing`, `debrief`) as code-defined templates. Resources: still unbuilt, but no longer deferred on "wait for a client to ask" reasoning — `resources/read` became cacheable in 2026-07-28, which is a real reason to serve one. The addressing, payload, and authorization decisions are settled in [MCP resources](/concepts/mcp-resources).
 - **`GET /api/v1/memories/facets`**: returns `{ scopes: string[], projects: string[] }` — DISTINCT live-corpus values for the browse filter UI. Registered before `GET /api/v1/memories/:id` to prevent Express matching "facets" as an `:id` param. Also extends `GET /api/v1/memories` to accept repeated `?project=` params for multi-project IN filtering.
 
 ## Protocol compatibility

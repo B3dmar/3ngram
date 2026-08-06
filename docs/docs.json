@@ -58,6 +58,7 @@
               "concepts/threads",
               "concepts/data-model",
               "concepts/mcp-design",
+              "concepts/mcp-resources",
               "concepts/architecture",
               "concepts/observability",
               "concepts/local-development",
