@@ -4,7 +4,7 @@ description: "How the MCP tool surface is scoped from jobs to be done, capped at
 icon: "wrench"
 ---
 
-The MCP surface is designed from **jobs to be done** and capped at **11 tools** — deliberately small, because tool sprawl across tools, prompts, and resources is a leading complexity source. Adding a tool requires: (a) a JTBD no existing tool covers, (b) evidence an agent actually needs it (transcript/eval), (c) removing or absorbing a tool if the count would exceed the hard ceiling of 12 (the current surface is 11; 12 is the absolute cap, not the target — the last slot is reserved for a future `manage_context`).
+The MCP surface is designed from **jobs to be done** and capped at **11 tools** — deliberately small, because tool sprawl across tools, prompts, and resources is a leading complexity source. Adding a tool requires: (a) a JTBD no existing tool covers, (b) evidence an agent actually needs it (transcript/eval), (c) removing or absorbing a tool if the count would exceed the hard ceiling of 12 (the current surface is 11; 12 is the absolute cap, not the target — the last slot is reserved for a future `manage_context`). The cap is **3ngram's own**, not a protocol limit: the specification defines no maximum tool count and paginates `tools/list`. See [MCP surface budget](/concepts/mcp-surface) for what it is really protecting and how the surface should grow.
 
 ## Jobs to be done
 

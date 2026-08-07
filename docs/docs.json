@@ -59,6 +59,7 @@
               "concepts/data-model",
               "concepts/mcp-design",
               "concepts/mcp-resources",
+              "concepts/mcp-surface",
               "concepts/architecture",
               "concepts/observability",
               "concepts/local-development",
