@@ -297,6 +297,7 @@ export type {
   ProposalsListQueryInput,
   RestErrorResponse,
   StatsResponse,
+  VersionResponse,
 } from './rest.js'
 export {
   accountDeleteBodySchema,
@@ -328,6 +329,7 @@ export {
   proposalsListQuerySchema,
   restErrorResponseSchema,
   statsResponseSchema,
+  versionResponseSchema,
 } from './rest.js'
 // --- retrieval-scope policy (issue #47) — appended block ---
 export type {
