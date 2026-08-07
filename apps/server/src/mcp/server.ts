@@ -8,6 +8,7 @@
 import { McpServer } from '@modelcontextprotocol/server'
 import { SERVER_VERSION } from '../version.js'
 import { registerPrompts } from './prompts.js'
+import { registerResources } from './resources.js'
 import { runTool, TOOLS, type ToolContext } from './tools.js'
 
 // `version` derives from package.json (see ../version.ts) so the `initialize`
@@ -75,11 +76,23 @@ export function createMcpServer(ctx: ToolContext): McpServer {
       'server/discover': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
       'tools/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
       'prompts/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
+      // The TEMPLATE list is a static descriptor — one uri template and its
+      // human-readable metadata, identical for every tenant — so it caches
+      // 'public' alongside the other catalogs and changes on the same trigger.
+      // The RESOURCE BODIES are the opposite: resources/read carries tenant
+      // data and is pinned 'private' with its own long TTL at the registration
+      // site (see resources.ts). Per-resource hints win over this map field by
+      // field, so the two never collide.
+      'resources/templates/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
     },
   })
   for (const tool of TOOLS) {
     server.registerTool(tool.name, tool.config, (args: unknown) => runTool(tool, args, ctx))
   }
   registerPrompts(server)
+  // Resources need the per-request ToolContext: unlike prompts (static text, no
+  // tenant data), a resource read returns memory content and therefore enforces
+  // the same tenant + scope + access guards a read tool does.
+  registerResources(server, ctx)
   return server
 }
