@@ -89,7 +89,9 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   for (const tool of TOOLS) {
     server.registerTool(tool.name, tool.config, (args: unknown) => runTool(tool, args, ctx))
   }
-  registerPrompts(server)
+  // Prompts now take the request ToolContext too: their TEXT still carries no
+  // tenant data, but a completable argument reads the tenant's own facets.
+  registerPrompts(server, ctx)
   // Resources need the per-request ToolContext: unlike prompts (static text, no
   // tenant data), a resource read returns memory content and therefore enforces
   // the same tenant + scope + access guards a read tool does.
