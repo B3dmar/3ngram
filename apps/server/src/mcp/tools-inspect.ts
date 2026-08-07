@@ -35,6 +35,7 @@ import {
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
+import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
 import type { ToolContext, ToolDefinition } from './tools.js'
 
 /**
@@ -67,6 +68,7 @@ const getMemoriesTool: ToolDefinition = {
     description: `Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to ${MAX_GET_MEMORIES_IDS} ids plus an optional maxContentChars per-item bound (default ${DEFAULT_GET_CONTENT_CHARS}, max ${MAX_GET_CONTENT_CHARS}; ids × maxContentChars may not exceed ${MAX_GET_TOTAL_CHARS} per call); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.`,
     inputSchema: getMemoriesInputSchema,
     outputSchema: getMemoriesOutputSchema,
+    annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = getMemoriesInputSchema.parse(args)

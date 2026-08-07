@@ -33,6 +33,7 @@ import {
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
+import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
 import type { ToolContext, ToolDefinition } from './tools.js'
 
 /**
@@ -68,6 +69,7 @@ const briefingTool: ToolDefinition = {
       'Structured session orientation: open/overdue commitments, blockers, stale candidates, recent decisions, preferences. Requires an explicit selector (all, scope, project, or scope_project) — no unfiltered default. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A PROJECT selector only matches memories written WITH that project; a memory written without a project (project IS NULL) never appears through the project lens. The scope_project selector narrows to one scope AND one project together; its includeUnscoped: true additionally opts NULL-project memories of that scope in (default false = strict intersection; the bare project selector is never widened). Active blockers leave this set when resolved (resolve archives the blocker memory). brief mode (default) returns counts plus top items; full returns the bounded lists. Optional sections picks a subset (un-requested sections are skipped and omitted); optional sectionLimit (1-100) tunes the per-section bound. Each section reports its exact count and hasMore when more rows exist than returned.',
     inputSchema: briefingToolInputV3Schema,
     outputSchema: briefingToolOutputV4Schema,
+    annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = briefingToolInputV3Schema.parse(args)
@@ -113,6 +115,7 @@ const handoffTool: ToolDefinition = {
       'Export structured context (decisions, open commitments, preferences — with content) for another agent or provider to pick up the thread. Requires an explicit selector (all, scope, project, or scope_project); the payload is bounded. If a retrieval-scope policy is set (configure_scope set_retrieval_default), a kind: "all" selector may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope selector. A scope_project selector narrows to one scope AND one project; its includeUnscoped: true additionally exports NULL-project memories of that scope (default false). Optional sectionLimit (1-100) tunes the per-section bound. The envelope reports exact per-section counts, and truncated flags a section whose list is incomplete. Item content is a bounded excerpt — when a line reports truncated: true, call get_memories with its id to read the full content.',
     inputSchema: handoffToolInputV3Schema,
     outputSchema: handoffToolOutputV4Schema,
+    annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args: unknown, ctx: ToolContext): Promise<CallToolResult> {
     const input = handoffToolInputV3Schema.parse(args)

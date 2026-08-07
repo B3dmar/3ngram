@@ -15,6 +15,31 @@ import { runTool, TOOLS, type ToolContext } from './tools.js'
 const SERVER_INFO = { name: '3ngram', version: SERVER_VERSION } as const
 
 /**
+ * Natural-language usage policy surfaced to the model via
+ * `DiscoverResult.instructions`. It is the ONLY place an agent learns when to
+ * reach for one tool over another — the 11 tool descriptions each explain
+ * themselves, with no cross-tool framing.
+ *
+ * TREAT AS POLICY, NOT DOCUMENTATION. Clients that surface this prepend it to
+ * model context on every session, so it competes with the tool descriptions for
+ * attention. Every sentence here has to earn its place; the failure mode this
+ * targets is "the agent has the tools but never writes anything worth keeping",
+ * which is a usage problem, not a schema problem.
+ *
+ * This is a compression of the JTBD table in docs/concepts/mcp-design.mdx.
+ * Change them together — the doc links back here for exactly that reason.
+ */
+export const SERVER_INSTRUCTIONS = `3ngram is the user's persistent memory across sessions and tools.
+
+Start a session with \`briefing\` to load what is already known. Before saying something is not known, not decided, or not recorded, \`search\` for it — this corpus outlives the conversation you can see.
+
+Memory is append-only. Never rewrite or delete: use \`revise\` to supersede a memory that has become wrong, and \`resolve\` to settle a commitment or blocker. Superseding keeps the old version readable as history.
+
+Write decisions, commitments, blockers, and stated preferences — the things that would be expensive to rediscover. Do not write transcript noise, restatements of what the user just said, or anything re-derivable from the code.
+
+Scope and project decide what later reads return, so set them when you \`remember\`: a memory written with no project will not appear in that project's briefing.`
+
+/**
  * Tool definitions, prompt definitions, and the discovery advertisement change
  * only with a server deployment. One hour avoids reconnect refetches without
  * making a rolling deployment's old catalog sticky for long. All three payloads
@@ -36,6 +61,7 @@ export const MCP_CATALOG_CACHE_TTL_MS = 60 * 60_000
  */
 export function createMcpServer(ctx: ToolContext): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    instructions: SERVER_INSTRUCTIONS,
     // The 2026-07-28 spec requires cache hints on every cacheable result, and
     // server/discover is on that list. Without a CONFIGURED hint the SDK does
     // not leave the fields off — its 2026 codec fills them from its own

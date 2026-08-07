@@ -55,6 +55,7 @@ import {
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
+import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
 import type { ToolContext, ToolDefinition } from './tools.js'
 
 type ToolResult = CallToolResult
@@ -274,6 +275,18 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
         'Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). set_retrieval_default binds your READS to a scope: mode "default" narrows unscoped search/briefing/handoff calls to the given scope (results report appliedScope), "require" rejects unscoped reads until a scope is passed, "off" restores unrestricted reads (scope must be null for require/off). Mutating actions require the write scope.',
       inputSchema: configureScopeInputV2Schema,
       outputSchema: configureScopeOutputV2Schema,
+      // Per-action tool, so the hints describe the WORST action it can take —
+      // that is how a client uses them (deciding whether to prompt). `delete`
+      // removes a scope registry entry, hence destructiveHint: true. It does NOT
+      // touch memories (they keep their scope string), so hard rule 1 still
+      // holds; the hint is about the registry, not the corpus. `create`/`rename`
+      // are not repeatable, so idempotentHint: false.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     async handler(args, ctx) {
       const input = configureScopeInputV2Schema.parse(args)
@@ -290,6 +303,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
       outputSchema: describeEnvironmentOutputV2Schema,
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
       describeEnvironmentInputSchema.parse(args)
@@ -328,6 +342,17 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
         'List consolidation proposals (optionally by status), reject one, or accept one (materializes the proposed edge; a supersedes/updates edge also closes the predecessor). Reject and accept require the write scope.',
       inputSchema: reviewProposalsInputSchema,
       outputSchema: reviewProposalsOutputSchema,
+      // Per-action (list is a read; reject/accept are writes), so the hints
+      // describe the write path. destructiveHint: false: accepting materializes
+      // an edge, and a supersedes/updates edge CLOSES the predecessor's validity
+      // rather than deleting it — append-and-supersede (hard rule 1). Rejecting
+      // records a rejection. Neither is repeatable, so idempotentHint: false.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     async handler(args, ctx) {
       const input = reviewProposalsInputSchema.parse(args)

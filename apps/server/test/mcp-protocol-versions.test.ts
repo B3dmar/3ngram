@@ -97,6 +97,11 @@ describe('MCP protocol compatibility', () => {
           ttlMs: MCP_CATALOG_CACHE_TTL_MS,
           cacheScope: 'public',
         })
+        // Usage policy reaches the model through DiscoverResult.instructions
+        // (issue #102). Assert it is present and non-trivial, NEVER its exact
+        // text — pinning the wording turns a copy edit into a failing test.
+        expect(discover.instructions).toBeDefined()
+        expect((discover.instructions ?? '').length).toBeGreaterThan(200)
       } else {
         expect(toolCatalog).not.toHaveProperty('ttlMs')
         expect(toolCatalog).not.toHaveProperty('cacheScope')
