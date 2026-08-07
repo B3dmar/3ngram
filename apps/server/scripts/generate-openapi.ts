@@ -53,6 +53,7 @@ import {
   searchQuerySchema,
   searchRestResponseV2Schema,
   statsResponseSchema,
+  versionResponseSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
 
@@ -360,6 +361,7 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/stats', operationId: 'getStats', summary: 'Bounded count aggregates (counts only, never content)', status: 200, response: statsResponseSchema },
   { method: 'get', path: '/api/v1/me', operationId: 'getMe', summary: 'The authenticated identity', status: 200, response: meResponseSchema },
   { method: 'get', path: '/api/v1/budget', operationId: 'getBudget', summary: 'The caller\'s current budget status (effective cap + spend this cycle)', status: 200, response: budgetStatusResponseSchema },
+  { method: 'get', path: '/api/v1/version', operationId: 'getVersion', summary: 'The running server build (deploy verification)', status: 200, response: versionResponseSchema },
   { method: 'get', path: '/api/v1/export', operationId: 'exportAccount', summary: 'Download the caller\'s complete data archive (GDPR Art. 20 portability)', status: 200, response: accountExport },
   { method: 'delete', path: '/api/v1/account', operationId: 'deleteAccount', summary: 'Self-serve account deletion: erase PII in place and revoke credentials (GDPR Art. 17 erasure)', body: accountDeleteBodySchema, status: 200, response: accountDeletion },
 ]
