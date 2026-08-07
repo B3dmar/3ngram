@@ -1,5 +1,13 @@
 # @3ngram/worker
 
+## 1.3.0
+
+### Patch Changes
+
+- Updated dependencies [139473c]
+  - @3ngram/config@0.2.6
+  - @3ngram/core@0.8.6
+
 ## 1.2.7
 
 ### Patch Changes
