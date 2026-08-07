@@ -1,0 +1,184 @@
+---
+title: "MCP Resources"
+description: "Design for 3ngram://memory/{id} — why the resource addresses the id, what its body may carry, and why resources cannot replace a tool."
+icon: "link"
+---
+
+**Status: design, not built.** This document settles the questions that had to be
+answered before any code, per [issue #105](https://github.com/B3dmar/3ngram/issues/105).
+No `resources/*` method is served today.
+
+<Note>
+**The scheme is `threengram`, not `3ngram`.** Issue #105 and the first version of
+this document both specified `3ngram://memory/{id}`. That URI cannot exist: RFC 3986
+requires a scheme to begin with a letter (`scheme = ALPHA *( ALPHA / DIGIT / "+" /
+"-" / "." )`), so `new URL('3ngram://memory/x')` throws, and the SDK hands the read
+callback a real `URL`. The template would have been advertised and never read.
+Caught during implementation, not review — the string typechecks and reads perfectly.
+</Note>
+
+## Why this is worth revisiting
+
+[MCP design](/concepts/mcp-design) deferred resources "until a client demonstrably
+uses them." That was the right call under the 2025 protocol, where a resource was
+just a second way to read something a tool already returned.
+
+The 2026-07-28 revision changed the calculus in one specific way: **`resources/read`
+is a cacheable result.** It carries `ttlMs` and `cacheScope`, so a client can hold a
+memory body locally instead of re-fetching it. That turns resources from a redundant
+read path into a bandwidth and latency story, and it is the strongest capability the
+v2 migration unlocked that 3ngram does not yet use.
+
+The job it serves: `search` and `handoff` return bounded excerpts and mark long
+bodies `truncated: true`. Reading the full body means calling `get_memories` — every
+time, for every hit, in every session, even when the body has not changed since the
+last read. A cacheable resource makes the second and later reads free.
+
+## The question that had to be settled first
+
+Memories are append-only, but "append-only" is not the same as "immutable", and a
+cache built on the wrong one of those is a correctness bug. `revise` supersedes, and
+archiving changes status. So: does the resource address the memory **id**, or a
+**version** of it? And how long may the TTL be?
+
+### The premise was wrong, and that resolves it
+
+Supersession does not modify a memory. `reviseMemory` (`packages/db/src/memory-revise.ts`)
+closes the predecessor's `valid_to` and **inserts a new row with a new id** — its own
+comment is explicit that "content, topic, tags are NEVER touched." The successor is a
+different memory, not a new version of the old one.
+
+`threengram://memory/{id}` is therefore **already version-addressed by construction.** A
+`{id}/{version}` URI would invent a dimension the schema does not have: there is no
+version column, no revision counter, nothing for the second path segment to name.
+
+Enumerating every write path that touches the `memories` table gives the complete
+picture:
+
+| Path | Columns mutated |
+|---|---|
+| `memory-revise.ts` — supersede | `valid_to`, `updated_at` |
+| `memory-revise.ts` — archive | `status`, `valid_to`, `updated_at` |
+| `memory-import.ts` — close predecessor | `valid_to`, `updated_at` |
+| `proposals-apply.ts` — accepted consolidation | `valid_to`, `updated_at` |
+| `memory-embedding.ts` — backfill | `embedding`, `updated_at` |
+| `account-delete.ts` — PII erasure | `content`, `topic`, `tags` |
+
+Everything above the last row moves **lifecycle** state. Only account erasure touches
+the substance of a memory, and it is a special case handled below.
+
+### The decision
+
+**Address the `id`. Keep a long private TTL. Put only immutable material in the body.**
+
+The resource returns `content`, `contentLength`, `memoryType`, `topic`, `scope`,
+`project`, and `recordedAt` — the columns no ordinary write path can change.
+
+It **deliberately omits** `status`, `validTo`, `commitmentStatus`, and `tags`. Those
+are exactly the fields supersession, archiving, and `resolve` move, and they are the
+only reason anyone was tempted to shorten the TTL.
+
+<Warning>
+This omission is a **load-bearing invariant, not an oversight.** The long TTL is sound
+only because nothing in the cached body can go stale. Adding `status` — or any other
+lifecycle field — to the resource silently converts a correct cache into one that
+serves wrong answers, and would force the TTL down to the point where the feature
+stops paying for itself. If you want lifecycle state in the resource, you are choosing
+a different design; revisit this document rather than editing the payload.
+</Warning>
+
+Mutable state stays where it can be answered live: `search`, `get_memories`, and
+`briefing` are tool calls, and tool results are never cacheable under the spec. This
+is a clean split rather than a workaround — "what did this memory say" is a stable
+fact, and "is it still current" is a question about right now.
+
+### The one real exception: PII erasure
+
+`account-delete.ts` overwrites `content`, `topic`, and `tags` with `[erased]`. A
+client holding a cached body would keep displaying erased content until the TTL
+expired.
+
+What closes this is that erasure **revokes every OAuth token in the same transaction.**
+`cacheScope: "private"` means a cache entry is reusable only within the same
+authorization context, so a compliant client cannot serve those entries to a caller
+whose token no longer authenticates. The gap is real but bounded, it depends on client
+compliance with a rule the spec already states, and it applies to a path that deletes
+the whole account rather than editing a memory.
+
+Recorded here so a future reader knows it was weighed. If erasure latency in client
+caches ever becomes a compliance requirement rather than a nicety, the answer is a
+shorter TTL on this resource, not a change to the addressing scheme.
+
+## `cacheScope` must be `private`
+
+Memory content is tenant data. The spec is explicit that a `public` result from an
+authenticated endpoint may be served across authorization contexts — different access
+tokens can hit the same cache entry. `public` here would be a cross-tenant disclosure
+bug with a cache in front of it.
+
+This is the same rule that makes `public` correct on `server/discover`, `tools/list`,
+and `prompts/list`: those payloads are identical for every tenant, and this one is
+not. One rule, two answers, and the reasoning is what carries between them, not the
+value.
+
+## TTL
+
+The resource gets its **own constant**, not a reuse of `MCP_CATALOG_CACHE_TTL_MS`.
+
+The catalogs go stale on a deployment. A memory body goes stale essentially never.
+Coupling them to one number would mean the next person tuning deployment freshness
+silently retunes memory caching, which is a coupling with no upside.
+
+## Authorization
+
+Resources are not a side door. `resources/read` must:
+
+- Resolve the tenant from verified `authInfo`, on the same path `runTool` uses — never
+  from the URI, which is caller-supplied.
+- Enforce `MEMORY_READ_SCOPE` fail-closed, the way `runTool` already does.
+- Run the same access gate `get_memories` runs before exporting content.
+- Make a cross-tenant id **indistinguishable** from a missing one. `get_memories`
+  already implements this by collapsing not-found and not-owned into `notFound`; the
+  resource must answer the same for both, or the URI becomes an existence oracle for
+  other tenants' memory ids.
+
+`cacheScope` is not access control. Authorization runs on every read regardless of
+what any cache holds.
+
+## Scope
+
+**In:** `resources/templates/list` advertising one template, and `resources/read` for
+a single memory.
+
+**Out — `resources/list`.** Enumerating a tenant's corpus is the firehose the
+[no-firehose rule](/concepts/mcp-design) exists to prevent. It would also need
+pagination, with `cacheScope` identical across every page.
+
+**Out — `subscriptions/listen`.** Long-lived streams fit poorly with a stateless
+deployment model, which is the property the current architecture is built around.
+Absent invalidation is acceptable precisely because the cached body cannot go stale.
+
+## Resources are not a substitute for a tool
+
+[Issue #109](https://github.com/B3dmar/3ngram/issues/109) asks whether thread curation
+could ship as resources instead of `configure_thread`, because
+[threads](/concepts/threads) take the MCP tool count to 12 of 12 and exhaust the cap in
+`AGENTS.md` rule 8.
+
+**It cannot.** The premise holds — resources genuinely do not consume a tool slot — but
+the primitive is **read-only**. MCP offers `resources/list`,
+`resources/templates/list`, and `resources/read`, and no write verb. Thread curation
+(create, rename, pin, unpin, accept or reject a membership proposal) is a write, and
+there is no resource-shaped way to express it.
+
+Nor do resources help on the read side: a read-only view of the thread registry is
+already served by `describe_environment`.
+
+The tool-budget question in #109 is real and needs a different answer — merge a
+low-traffic tool, or accept 12 of 12 and the constraint that comes with it. Resources
+are not the escape hatch.
+
+## Related
+
+`ref/resource` completion becomes available once a resource template exists, which is
+the one place this design does unlock something beyond caching.

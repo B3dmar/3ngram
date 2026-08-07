@@ -143,6 +143,34 @@ describe('/mcp transport auth (Bearer-only, strict RS)', () => {
     expect(res.status).toBe(401)
     expect(res.headers.get('www-authenticate')).toContain('Bearer')
   })
+
+  // Origin validation (issue #101). The whole suite already sends no Origin, so
+  // a middleware that rejected on ABSENT Origin would break everything — but
+  // that failure would surface as an unrelated-looking cascade. These two name
+  // the contract so a regression reports itself.
+  it('serves a normal Bearer tool call carrying NO Origin header', async () => {
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
+    const catalog = await client.listTools()
+    expect(catalog.tools.length).toBeGreaterThan(0)
+    await client.close()
+  })
+
+  it('403s a foreign Origin even WITH a valid Bearer token', async () => {
+    // A valid token must not buy past the rebinding check: the origin decision
+    // runs first and is independent of authentication.
+    const res = await fetch(`${app.baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        authorization: `Bearer ${tokenA}`,
+        origin: 'https://evil.example',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    expect(res.status).toBe(403)
+    await expect(res.json()).resolves.toMatchObject({ jsonrpc: '2.0', id: null })
+  })
 })
 
 describe('/mcp tools end-to-end (real transport, runtime role)', () => {

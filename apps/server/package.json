@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/server",
-  "version": "1.2.7",
+  "version": "1.3.0",
   "description": "MCP server and REST API for persistent, typed AI-agent memory.",
   "license": "Apache-2.0",
   "homepage": "https://3ngram.ai",

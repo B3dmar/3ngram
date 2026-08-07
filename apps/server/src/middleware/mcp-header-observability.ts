@@ -10,6 +10,22 @@ import type { NextFunction, Request, Response } from 'express'
 import { PROMPTS } from '../mcp/prompts.js'
 import { TOOLS } from '../mcp/tools.js'
 
+/**
+ * Every MCP method this server actually serves. The set is an ALLOWLIST for
+ * metric labels, not a router: an unrecognized value collapses to the literal
+ * `'unknown'` so an attacker-controlled header can never open the label
+ * cardinality.
+ *
+ * EXTEND THIS ALONGSIDE ANY NEWLY SERVED METHOD — this is the coupling nobody
+ * remembers, and its failure mode is the quiet kind. Real traffic for a method
+ * missing here is labelled `unknown_method`: nothing errors, no test goes red,
+ * the dashboard simply under-reports the new surface while looking healthy.
+ *
+ * The `resources/*` and `completion/complete` entries below arrived with issues
+ * #105 and #104, each in the PR that started serving it — never earlier, since
+ * listing a method the server answers with `-32601` would mislabel the resulting
+ * traffic as recognized.
+ */
 const KNOWN_METHODS = new Set([
   'server/discover',
   'initialize',
@@ -18,6 +34,13 @@ const KNOWN_METHODS = new Set([
   'tools/call',
   'prompts/list',
   'prompts/get',
+  'resources/templates/list',
+  'resources/read',
+  // Served (the SDK answers it) but always empty: the memory template registers
+  // `list: undefined`, so enumeration returns nothing. It is allowlisted anyway
+  // — a client that probes it produces real traffic worth labelling correctly.
+  'resources/list',
+  'completion/complete',
 ])
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name))
 const PROMPT_NAMES = new Set(PROMPTS.map((prompt) => prompt.name))

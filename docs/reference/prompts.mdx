@@ -56,11 +56,11 @@ Close a session cleanly: review what happened, then persist what is worth keepin
   "type": "object",
   "properties": {
     "scope": {
-      "description": "Optional scope (kebab-case, e.g. work, personal) the session belonged to.",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^[a-z0-9][a-z0-9-]*$"
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Optional scope (kebab-case, e.g. work, personal) the session belonged to."
     }
   }
 }

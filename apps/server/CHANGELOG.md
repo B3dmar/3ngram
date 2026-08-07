@@ -1,5 +1,90 @@
 # @3ngram/server
 
+## 1.3.0
+
+### Minor Changes
+
+- 0484afe: mcp: complete scope names from the tenant's own facets
+
+  The server now declares the `completions` capability and answers
+  `completion/complete` for the `debrief` prompt's `scope` argument, offering the
+  tenant's real scope names filtered by what has been typed. Previously a client
+  had no way to discover them, so users typed scopes from memory and a typo
+  silently matched nothing.
+
+  It is an adapter over the existing `listMemoryFacets`, with the same guards the
+  REST facets route carries: the tenant comes from verified auth rather than the
+  request, `memory:read` is enforced fail-closed, and the access gate runs before
+  the read. A caller that may not read completes to an empty list rather than an
+  error.
+
+- a8408b8: mcp: serve memory bodies as a cacheable resource
+
+  Adds `threengram://memory/{id}` — `resources/templates/list` plus
+  `resources/read` — so a client that pulled a `truncated: true` search hit can
+  cache the full body instead of re-calling `get_memories` every session.
+  `resources/read` is cacheable on protocol revision 2026-07-28, which is what
+  makes this worth serving; resources also consume no slot against the 12-tool cap.
+
+  The body carries only fields that never change after write (content, topic,
+  type, scope, project, recordedAt) and deliberately omits lifecycle state
+  (status, validity, commitment status, tags), which is what allows a 24-hour
+  `cacheScope: private` TTL without ever serving a stale answer. Reads enforce the
+  same tenant, read-scope, and access guards as the read tools, and an id
+  belonging to another tenant is indistinguishable from one that does not exist.
+
+  `resources/list` returns nothing by design — enumerating a tenant's corpus is
+  the firehose the no-firehose rule exists to prevent.
+
+### Patch Changes
+
+- fd79244: mcp: describe the server to clients
+
+  The server now advertises `instructions` on `server/discover` — a short usage
+  policy telling the model to open with `briefing`, to search before asserting
+  something is unknown, that memory is append-only (use `revise`, never rewrite),
+  and that scope/project decide what later reads return. Previously the only
+  guidance an agent received was 11 individual tool descriptions with no
+  cross-tool framing.
+
+  Every tool now declares annotations (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`), so a client can auto-approve a read like
+  `search` instead of prompting for it the same way it prompts for a write.
+  `destructiveHint` is `false` on every memory write, which is accurate:
+  supersession is append-only and never destroys memory data.
+
+- 139473c: mcp: close two 2026-07-28 specification MUSTs
+
+  `server/discover` now advertises the same one-hour `cacheScope: 'public'` hint the
+  tool and prompt catalogs carry. It previously fell through to the SDK's defaults
+  (`ttlMs: 0`, `cacheScope: 'private'`), so clients treated discovery as immediately
+  stale and re-probed on every reconnect.
+
+  `/mcp` now validates the `Origin` header. A request with no `Origin` is allowed —
+  non-browser clients do not send one — and a present `Origin` must appear in the
+  allowlist (`WEB_APP_URL` plus the new optional `MCP_ALLOWED_ORIGINS`) or the request
+  is refused with `403` before authentication runs. With neither variable configured
+  the allowlist is empty, so any browser origin is rejected; non-browser clients are
+  unaffected.
+
+- 43a200c: Add `GET /api/v1/version`, returning the running server's package version, so deploy tooling can tell a finished rollout from one still in flight.
+
+  Nothing previously exposed build identity over HTTP: `/health` reports liveness and `/ready` reports readiness, but neither says _which build_ answered. A post-deploy probe therefore could not distinguish a completed rollout from an in-flight one, and would happily verify the **previous** build while reporting success — a green light for code that was never exercised.
+
+  **Authenticated, like every `/api/v1` route.** It sits behind `apiOrSessionAuth`, so the exact version is never disclosed on an unauthenticated surface; this matches `/ready`, which logs RLS violations server-side but deliberately keeps catalog and role detail out of its HTTP response. Deploy tooling authenticates anyway.
+
+  **Deliberately ungated.** The response is the server's own build identity — not memory, not memory-derived, not tenant data — so no access gate applies. Staying ungated also keeps it orthogonal to the `AccessGate`: a deploy probe must remain answerable when the gate itself is broken, which is exactly the incident in which an operator most needs to know what is running.
+
+  The value comes from the existing `SERVER_VERSION` (read from `apps/server/package.json` at runtime), so it cannot skew from the published package version at a release; a test asserts that against `package.json` directly rather than against the constant.
+
+  Adds `versionResponseSchema` / `VersionResponse` to `@3ngram/schema` and the corresponding `getVersion` operation to the generated OpenAPI document.
+
+- Updated dependencies [139473c]
+- Updated dependencies [43a200c]
+  - @3ngram/config@0.2.6
+  - @3ngram/schema@0.6.4
+  - @3ngram/core@0.8.6
+
 ## 1.2.7
 
 ### Patch Changes

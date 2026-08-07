@@ -87,11 +87,30 @@ describe('MCP protocol compatibility', () => {
           ttlMs: MCP_CATALOG_CACHE_TTL_MS,
           cacheScope: 'public',
         })
+        // server/discover is the third cacheable result the spec requires hints
+        // on. Assert the VALUES, never mere presence: the SDK's 2026 codec fills
+        // ttlMs/cacheScope from its own defaults (0 / 'private') when the server
+        // configures no hint, so a presence-only check passes against a server
+        // that advertises discovery as immediately stale.
+        const discover = await client.discover()
+        expect(discover).toMatchObject({
+          ttlMs: MCP_CATALOG_CACHE_TTL_MS,
+          cacheScope: 'public',
+        })
+        // Usage policy reaches the model through DiscoverResult.instructions
+        // (issue #102). Assert it is present and non-trivial, NEVER its exact
+        // text — pinning the wording turns a copy edit into a failing test.
+        expect(discover.instructions).toBeDefined()
+        expect((discover.instructions ?? '').length).toBeGreaterThan(200)
       } else {
         expect(toolCatalog).not.toHaveProperty('ttlMs')
         expect(toolCatalog).not.toHaveProperty('cacheScope')
         expect(promptCatalog).not.toHaveProperty('ttlMs')
         expect(promptCatalog).not.toHaveProperty('cacheScope')
+        // The era-correct statement of "no hints on legacy": a legacy verdict
+        // means no server/discover happened at all, so there is no result to
+        // carry them.
+        expect(client.getDiscoverResult()).toBeUndefined()
       }
     })
   }

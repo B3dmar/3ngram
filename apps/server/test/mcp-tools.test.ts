@@ -10,6 +10,7 @@
 // typed errors to isError — all without a Postgres dependency.
 
 import { runWithContext } from '@3ngram/config'
+import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
 import { fakeEmbedding } from '@3ngram/llm'
 import {
   briefingToolOutputV2Schema,
@@ -354,6 +355,49 @@ describe('MCP tool registry discipline', () => {
         expect(Object.keys(tool.config.inputSchema).length).toBeGreaterThan(0)
       }
       expect(Object.keys(tool.config.outputSchema).length).toBeGreaterThan(0)
+    }
+  })
+
+  // Annotations (issue #102). A registry-wide invariant is worth more than
+  // per-tool assertions: the failure it prevents is a NEW tool shipping with no
+  // hints, which no per-tool test would ever catch.
+  it('every tool declares annotations, and none claims an open world', () => {
+    for (const tool of TOOLS) {
+      expect(tool.config.annotations, `${tool.name} declares no annotations`).toBeDefined()
+      expect(typeof tool.config.annotations.readOnlyHint).toBe('boolean')
+      // Every tool operates on the tenant's own corpus, never an open external
+      // world. If a future tool needs `true`, that is a design conversation.
+      expect(tool.config.annotations.openWorldHint, `${tool.name} openWorldHint`).toBe(false)
+    }
+  })
+
+  it('marks exactly the read-scoped tools readOnlyHint: true', () => {
+    // requiredScope is the ground truth for the read/write split, so the two
+    // must agree. Annotations are NOT derived from it (the per-action tools
+    // carry `anyOf` and span both), which is precisely why the agreement needs
+    // asserting rather than assuming.
+    const readOnly = TOOLS.filter((t) => t.config.annotations.readOnlyHint === true).map(
+      (t) => t.name,
+    )
+    expect(readOnly.sort()).toEqual(
+      ['briefing', 'describe_environment', 'get_facts', 'get_memories', 'handoff', 'search'].sort(),
+    )
+    for (const tool of TOOLS) {
+      const isReadScoped = tool.requiredScope === MEMORY_READ_SCOPE
+      expect(tool.config.annotations.readOnlyHint, `${tool.name}`).toBe(isReadScoped)
+    }
+  })
+
+  it('never claims a write path is destructive to memory data (hard rule 1)', () => {
+    // AGENTS.md hard rule 1: no write path destroys memory data — supersession
+    // is append-only. destructiveHint: false on the memory writers is therefore
+    // ACCURATE, and saying so to clients is a genuine product claim.
+    // configure_scope is the one exception: `delete` removes a scope REGISTRY
+    // entry (memories keep their scope string), so it is honestly destructive.
+    for (const tool of TOOLS) {
+      if (tool.config.annotations.readOnlyHint === true) continue
+      const expected = tool.name === 'configure_scope'
+      expect(tool.config.annotations.destructiveHint, `${tool.name}`).toBe(expected)
     }
   })
 })
