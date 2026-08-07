@@ -4444,6 +4444,34 @@
         },
         "summary": "Bounded count aggregates (counts only, never content)"
       }
+    },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "version"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "summary": "The running server build (deploy verification)"
+      }
     }
   },
   "security": [
