@@ -472,6 +472,24 @@ export const meResponseSchema = z
 export type MeResponse = z.infer<typeof meResponseSchema>
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/version — the running server build
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/v1/version response: the running server's package version.
+ * Exists so a post-deploy probe can tell a finished rollout from one still in
+ * flight — /health and /ready report liveness/readiness but carry no build
+ * identity, so without this a probe can verify the PREVIOUS build and report
+ * success.
+ */
+export const versionResponseSchema = z
+  .object({
+    version: z.string().min(1),
+  })
+  .strict()
+export type VersionResponse = z.infer<typeof versionResponseSchema>
+
+// ---------------------------------------------------------------------------
 // DELETE /api/v1/account — self-serve account deletion
 // ---------------------------------------------------------------------------
 

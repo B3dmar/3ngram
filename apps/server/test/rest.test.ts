@@ -16,6 +16,7 @@ import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import { SERVER_VERSION } from '../src/version.js'
 
 // --- core memory tools (the thin adapter's target) ---
 const remember = vi.fn()
@@ -316,6 +317,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
     ['GET', '/api/v1/me'],
     ['GET', '/api/v1/budget'],
     ['GET', '/api/v1/export'],
+    ['GET', '/api/v1/version'],
     ['DELETE', '/api/v1/account'],
   ]
 
@@ -1810,6 +1812,32 @@ describe('GET /api/v1/me', () => {
   })
 })
 
+describe('GET /api/v1/version (deploy verification)', () => {
+  it('happy path under X-API-Key: returns the running build version', async () => {
+    const res = await call('/api/v1/version', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ version: SERVER_VERSION })
+  })
+
+  it('happy path under a session Bearer', async () => {
+    const res = await call('/api/v1/version', { token: VALID_TOKEN })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ version: SERVER_VERSION })
+  })
+
+  // The POINT of the endpoint is that a deploy probe can trust it. A version
+  // that can drift from the published package version would let a probe confirm
+  // a rollout that never happened, so assert against package.json itself rather
+  // than against SERVER_VERSION (which would be tautological).
+  it('reports exactly the apps/server package version — cannot skew at a release', async () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version: string }
+    const res = await call('/api/v1/version', { key: VALID_KEY })
+    expect(await res.json()).toEqual({ version: manifest.version })
+  })
+})
+
 describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
   const sampleExport = () => ({
     account: {
@@ -2333,5 +2361,14 @@ describe('access gate enforcement (#429)', () => {
     const res = await callGated('/api/v1/budget', { key: VALID_KEY })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ effectiveCapUsd: 25, consumedUsd: 25 })
+  })
+
+  it('still serves GET /api/v1/version under a denying gate — deliberately ungated', async () => {
+    // A deploy probe must stay answerable when the gate itself is broken: that
+    // is precisely when an operator most needs to know which build is running.
+    // Gating it would make the endpoint useless in the one incident it exists for.
+    const res = await callGated('/api/v1/version', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ version: SERVER_VERSION })
   })
 })

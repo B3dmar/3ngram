@@ -62,6 +62,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
+import { SERVER_VERSION } from '../version.js'
 import { defined, guard, tenant, toAsOf } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 
@@ -700,6 +701,28 @@ export function restRouter(options: RestRouterOptions): Router {
     void guard('me', res, async () => {
       const user = await getCurrentUser(tenant(req))
       res.status(200).json({ id: user.id, email: user.email })
+    })
+  })
+
+  // GET /api/v1/version — the running server build, for deploy verification.
+  // Answers "is the new build actually serving yet?", which nothing else could:
+  // /health and /ready report liveness/readiness but carry no build identity, so
+  // a post-deploy probe cannot tell a finished rollout from one still in flight
+  // and may verify the PREVIOUS build while reporting success.
+  //
+  // AUTHENTICATED, on purpose: this sits behind apiOrSessionAuth like every
+  // /api/v1 route, so the exact version is never disclosed on an unauthenticated
+  // surface. That matches how /ready refuses to leak catalog/role detail in its
+  // HTTP response. Deploy tooling authenticates anyway.
+  //
+  // DELIBERATELY UNGATED: returns the server's own build identity — not memory,
+  // not memory-derived, not tenant data — so no access gate applies. Keeping it
+  // ungated also keeps it orthogonal to the AccessGate: a deploy probe must stay
+  // answerable when the gate itself is broken, which is precisely the situation
+  // an operator most needs to identify the running build.
+  router.get('/api/v1/version', (_req, res) => {
+    void guard('version', res, async () => {
+      res.status(200).json({ version: SERVER_VERSION })
     })
   })
 
