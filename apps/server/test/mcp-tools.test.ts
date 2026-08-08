@@ -326,7 +326,7 @@ describe('MCP tool registry discipline', () => {
     // (get_memories) + D3 admin (configure_scope, describe_environment,
     // review_proposals) -> the 11-tool surface. The cap (<=12,
     // docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling; the last
-    // slot is reserved for manage_context.
+    // slot is UNRESERVED — it goes to whichever tool next earns it.
     expect(TOOLS).toHaveLength(11)
     expect(TOOLS.map((t) => t.name)).toEqual([
       'remember',
