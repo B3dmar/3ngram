@@ -467,7 +467,16 @@ export const TOOLS: readonly ToolDefinition[] = [
   ...createAdminTools(() => TOOLS.map((t) => t.name)),
 ]
 
-/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12 registered; the LAST slot is reserved for the future `manage_context` tool. */
+/**
+ * Working ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12
+ * registered, and the twelfth is UNRESERVED — it goes to whichever tool next
+ * earns it on the JTBD + evidence test.
+ *
+ * The number is 3ngram's own, not the protocol's: the 2026-07-28 specification
+ * defines no maximum tool count and paginates `tools/list`. What it proxies for
+ * is description overlap and model selection accuracy, which is what to argue
+ * about when this binds. See docs/concepts/mcp-surface.mdx.
+ */
 export const MAX_TOOLS = 12
 
 /**
