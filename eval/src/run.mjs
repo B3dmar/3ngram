@@ -10,6 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseFlag } from './lib.mjs'
+import { formatToolSelection, runToolSelectionSlice } from './tool-selection.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, '../fixtures')
@@ -112,6 +113,15 @@ results.slices = {
   tau: +tau.toFixed(4),
 }
 process.stdout.write(`${JSON.stringify(results, null, 2)}\n`)
+
+// REPORT-ONLY SLICE (docs/concepts/mcp-surface.mdx): tool-selection accuracy +
+// description overlap. It is printed alongside the gated metrics but is NOT in
+// results.slices and NOT in floors.json — it can never move the exit code, and a
+// missing embeddings fixture is reported, never fatal (the fixture lands in a
+// later PR that also baselines its floors from the observed output).
+process.stdout.write(
+  `\n${formatToolSelection(runToolSelectionSlice({ fixturesDir: fixtures, model }))}\n\n`,
+)
 
 if (record) {
   writeFileSync(floorsPath, JSON.stringify({ model, recorded: results.slices }, null, 2))

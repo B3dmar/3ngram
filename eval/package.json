@@ -12,6 +12,8 @@
     "advisory:real": "node src/longmemeval.mjs --retriever real",
     "advisory:mab": "node src/memoryagentbench.mjs",
     "transport-cost": "node src/transport-cost.mjs",
+    "tool-selection": "node src/tool-selection.mjs",
+    "gen:tool-selection": "node scripts/gen-tool-selection-embeddings.mjs",
     "test": "node --test 'test/**/*.test.mjs'"
   },
   "dependencies": {

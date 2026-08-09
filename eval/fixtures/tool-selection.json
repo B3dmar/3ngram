@@ -1,0 +1,318 @@
+{
+  "_meta": {
+    "description": "Agent-utterance -> MCP surface routing scenarios for the tool-selection advisory slice (docs/concepts/mcp-surface.mdx: the real constraint on the tool budget is model selection accuracy and description overlap, not the count).",
+    "authoring": "Each utterance is phrased the way a coding or personal agent states an INTERNAL need mid-session, not as a tool invocation. Near-miss pairs are deliberate and dense: search vs get_facts vs get_memories, briefing vs handoff, revise vs resolve vs remember. An utterance never names its target tool.",
+    "toolScenarios": "expected_tool is one of the 11 registered tools (apps/server/src/mcp/tools.ts TOOLS). 5 per tool.",
+    "surfaceScenarios": "A SEPARATE array whose correct target is NOT a tool — the memory resource template or one of the 2 code-defined prompts. Kept distinct so the tool metrics stay clean; the slice scores these only as tool-attraction (how confidently a non-tool need is pulled onto a tool description), because prompt/resource descriptions are not in the committed registry capture.",
+    "synthetic": "Every utterance is synthetic. No production content, no real identifiers."
+  },
+  "toolScenarios": [
+    {
+      "id": "ts-remember-1",
+      "utterance": "I should save this decision before the session ends: we are going with row-level security for tenant isolation instead of a filter in the service layer.",
+      "expected_tool": "remember"
+    },
+    {
+      "id": "ts-remember-2",
+      "utterance": "That is a durable preference rather than a one-off remark, so it belongs in my memory: conventional commit subjects, imperative, capped at fifty characters.",
+      "expected_tool": "remember"
+    },
+    {
+      "id": "ts-remember-3",
+      "utterance": "New blocker worth persisting: the staging deploy cannot proceed until the signing key rotation lands.",
+      "expected_tool": "remember"
+    },
+    {
+      "id": "ts-remember-4",
+      "utterance": "I just committed to reviewing the release checklist tomorrow morning; persist that as an open obligation so it survives this session.",
+      "expected_tool": "remember"
+    },
+    {
+      "id": "ts-remember-5",
+      "utterance": "Append this so the next agent inherits it: the auth client retry budget is three attempts with jitter, and nothing above that.",
+      "expected_tool": "remember"
+    },
+    {
+      "id": "ts-search-1",
+      "utterance": "Did I already settle how auth retries work, or am I about to redecide something that was decided weeks ago?",
+      "expected_tool": "search"
+    },
+    {
+      "id": "ts-search-2",
+      "utterance": "Look through everything I know for anything touching the vector index rebuild, semantically, not just an exact keyword hit.",
+      "expected_tool": "search"
+    },
+    {
+      "id": "ts-search-3",
+      "utterance": "Before I propose this schema change, check whether an earlier recorded decision contradicts it.",
+      "expected_tool": "search"
+    },
+    {
+      "id": "ts-search-4",
+      "utterance": "Pull up anything recorded in the last month about the billing webhook flakiness, ranked by relevance, top five is enough.",
+      "expected_tool": "search"
+    },
+    {
+      "id": "ts-search-5",
+      "utterance": "Has this topic come up before? Run a ranked query across my memories, filtered to the work scope.",
+      "expected_tool": "search"
+    },
+    {
+      "id": "ts-get_facts-1",
+      "utterance": "What is currently true about the production database host? I want the standing value, not the history and not a ranked list.",
+      "expected_tool": "get_facts"
+    },
+    {
+      "id": "ts-get_facts-2",
+      "utterance": "For the subject 'release cadence', which values were valid as of the first of June, given what was known at the time?",
+      "expected_tool": "get_facts"
+    },
+    {
+      "id": "ts-get_facts-3",
+      "utterance": "Give me the currently valid attribute values for this subject, bi-temporally correct.",
+      "expected_tool": "get_facts"
+    },
+    {
+      "id": "ts-get_facts-4",
+      "utterance": "List the most recent standing facts on record, bounded to fifty, so I can see the current state rather than search for it.",
+      "expected_tool": "get_facts"
+    },
+    {
+      "id": "ts-get_facts-5",
+      "utterance": "Which assertions about this subject still hold today, and which ones have already been closed out by a newer value?",
+      "expected_tool": "get_facts"
+    },
+    {
+      "id": "ts-revise-1",
+      "utterance": "That earlier decision is wrong now; supersede it with the corrected version and keep the link between the two.",
+      "expected_tool": "revise"
+    },
+    {
+      "id": "ts-revise-2",
+      "utterance": "The retry count moved from three to five, so append a corrected successor to the old note instead of editing it in place.",
+      "expected_tool": "revise"
+    },
+    {
+      "id": "ts-revise-3",
+      "utterance": "I need to correct the record without destroying it: the old entry stays where it is, the new one takes over.",
+      "expected_tool": "revise"
+    },
+    {
+      "id": "ts-revise-4",
+      "utterance": "This note is stale and should stop surfacing in results; archive it rather than leaving it active.",
+      "expected_tool": "revise"
+    },
+    {
+      "id": "ts-revise-5",
+      "utterance": "Update the deployment memory with what we actually shipped, linked as an update edge off the original.",
+      "expected_tool": "revise"
+    },
+    {
+      "id": "ts-resolve-1",
+      "utterance": "The commitment to write that migration is finished; mark it settled.",
+      "expected_tool": "resolve"
+    },
+    {
+      "id": "ts-resolve-2",
+      "utterance": "That blocker cleared this morning, so it should drop off the active blocker list.",
+      "expected_tool": "resolve"
+    },
+    {
+      "id": "ts-resolve-3",
+      "utterance": "I closed that obligation too early; put it back to open, the work is not actually done.",
+      "expected_tool": "resolve"
+    },
+    {
+      "id": "ts-resolve-4",
+      "utterance": "Park this obligation in waiting; it is blocked on an external review I do not control.",
+      "expected_tool": "resolve"
+    },
+    {
+      "id": "ts-resolve-5",
+      "utterance": "The follow-up I promised never happened and its window has passed; move it to expired.",
+      "expected_tool": "resolve"
+    },
+    {
+      "id": "ts-briefing-1",
+      "utterance": "Session just started. Orient me on this project: what is open, what is blocked, what was decided recently.",
+      "expected_tool": "briefing"
+    },
+    {
+      "id": "ts-briefing-2",
+      "utterance": "What is overdue and what has gone stale in the work scope before I pick up a task?",
+      "expected_tool": "briefing"
+    },
+    {
+      "id": "ts-briefing-3",
+      "utterance": "Give me the structured start-of-session picture: counts first, then the top items in each section.",
+      "expected_tool": "briefing"
+    },
+    {
+      "id": "ts-briefing-4",
+      "utterance": "I want a status read across this one scope: open obligations, active blockers, standing preferences.",
+      "expected_tool": "briefing"
+    },
+    {
+      "id": "ts-briefing-5",
+      "utterance": "Before I plan anything, tell me what is still outstanding across all of my memories.",
+      "expected_tool": "briefing"
+    },
+    {
+      "id": "ts-handoff-1",
+      "utterance": "I am passing this thread to another agent; export the decisions, open commitments, and preferences it will need to continue.",
+      "expected_tool": "handoff"
+    },
+    {
+      "id": "ts-handoff-2",
+      "utterance": "Package this context for a different provider so it can pick up where I left off without re-reading the transcript.",
+      "expected_tool": "handoff"
+    },
+    {
+      "id": "ts-handoff-3",
+      "utterance": "Bundle the working state of this project, content included, into a payload a downstream tool can consume.",
+      "expected_tool": "handoff"
+    },
+    {
+      "id": "ts-handoff-4",
+      "utterance": "The reviewer agent takes over from here; produce the structured carry-over envelope for this scope and project.",
+      "expected_tool": "handoff"
+    },
+    {
+      "id": "ts-handoff-5",
+      "utterance": "Serialize what matters about this workstream so an external assistant can act on it, not just counts but the actual text.",
+      "expected_tool": "handoff"
+    },
+    {
+      "id": "ts-get_memories-1",
+      "utterance": "That result came back truncated, so fetch the complete stored body for its id.",
+      "expected_tool": "get_memories"
+    },
+    {
+      "id": "ts-get_memories-2",
+      "utterance": "I already have the ids I care about; read their full content in one batched call rather than querying again.",
+      "expected_tool": "get_memories"
+    },
+    {
+      "id": "ts-get_memories-3",
+      "utterance": "The excerpt is not enough to act on. Pull the whole text for these four identifiers.",
+      "expected_tool": "get_memories"
+    },
+    {
+      "id": "ts-get_memories-4",
+      "utterance": "Expand these twelve ids to their untruncated bodies, and raise the per-item character bound while you are at it.",
+      "expected_tool": "get_memories"
+    },
+    {
+      "id": "ts-get_memories-5",
+      "utterance": "The handoff line is flagged as incomplete; go read the full record behind it by id.",
+      "expected_tool": "get_memories"
+    },
+    {
+      "id": "ts-configure_scope-1",
+      "utterance": "Register a new scope for the consulting work and give it a short alias I can type.",
+      "expected_tool": "configure_scope"
+    },
+    {
+      "id": "ts-configure_scope-2",
+      "utterance": "Rename the scope I have been writing into; the current name is confusing everyone.",
+      "expected_tool": "configure_scope"
+    },
+    {
+      "id": "ts-configure_scope-3",
+      "utterance": "Which scopes are registered on my memory space right now?",
+      "expected_tool": "configure_scope"
+    },
+    {
+      "id": "ts-configure_scope-4",
+      "utterance": "Pin my reads to the work scope by default so an unscoped query stops spanning everything I own.",
+      "expected_tool": "configure_scope"
+    },
+    {
+      "id": "ts-configure_scope-5",
+      "utterance": "Drop that unused scope from the registry; the memories already labelled with it can keep the label.",
+      "expected_tool": "configure_scope"
+    },
+    {
+      "id": "ts-describe_environment-1",
+      "utterance": "What can this memory server actually do? Which capabilities are registered, and at what version?",
+      "expected_tool": "describe_environment"
+    },
+    {
+      "id": "ts-describe_environment-2",
+      "utterance": "Am I set up correctly here? Report my registered scopes and how much I have stored.",
+      "expected_tool": "describe_environment"
+    },
+    {
+      "id": "ts-describe_environment-3",
+      "utterance": "Before I design a workflow around this backend, tell me which operations it supports.",
+      "expected_tool": "describe_environment"
+    },
+    {
+      "id": "ts-describe_environment-4",
+      "utterance": "Roughly how many memories and commitments do I have, and is a retrieval-scope policy currently active?",
+      "expected_tool": "describe_environment"
+    },
+    {
+      "id": "ts-describe_environment-5",
+      "utterance": "Give me a read on the environment I am connected to: configuration shape and counts, no secrets.",
+      "expected_tool": "describe_environment"
+    },
+    {
+      "id": "ts-review_proposals-1",
+      "utterance": "What did the consolidator propose? I want to look at the pending suggestions before anything is applied.",
+      "expected_tool": "review_proposals"
+    },
+    {
+      "id": "ts-review_proposals-2",
+      "utterance": "Accept that suggested merge and materialize the edge it wants to create.",
+      "expected_tool": "review_proposals"
+    },
+    {
+      "id": "ts-review_proposals-3",
+      "utterance": "Turn down the proposed supersession; the background job read those two as duplicates and they are not.",
+      "expected_tool": "review_proposals"
+    },
+    {
+      "id": "ts-review_proposals-4",
+      "utterance": "List the consolidation candidates still waiting on a human decision.",
+      "expected_tool": "review_proposals"
+    },
+    {
+      "id": "ts-review_proposals-5",
+      "utterance": "The background pass flagged some near-duplicates; show me its recommendations so I can approve or decline them.",
+      "expected_tool": "review_proposals"
+    }
+  ],
+  "surfaceScenarios": [
+    {
+      "id": "sf-resource-1",
+      "utterance": "I hold the exact identifier and only want the stored body; address it directly so the client can cache the read instead of spending a call.",
+      "expected_surface": "resource:memory"
+    },
+    {
+      "id": "sf-resource-2",
+      "utterance": "Read this memory at its stable URI, the immutable fields only, because I will read the same one again later this session.",
+      "expected_surface": "resource:memory"
+    },
+    {
+      "id": "sf-prompt-briefing-1",
+      "utterance": "Start me off using the server's own session-start template so I follow its selector rules rather than improvising a call.",
+      "expected_surface": "prompt:briefing"
+    },
+    {
+      "id": "sf-prompt-briefing-2",
+      "utterance": "Give me the canned orientation workflow this server ships, the one that tells me how to open a session.",
+      "expected_surface": "prompt:briefing"
+    },
+    {
+      "id": "sf-prompt-debrief-1",
+      "utterance": "Close out the session using the server's end-of-session routine so nothing worth keeping gets dropped.",
+      "expected_surface": "prompt:debrief"
+    },
+    {
+      "id": "sf-prompt-debrief-2",
+      "utterance": "Walk me through the wrap-up template the server defines for reviewing and persisting what happened.",
+      "expected_surface": "prompt:debrief"
+    }
+  ]
+}

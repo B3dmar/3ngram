@@ -70,6 +70,51 @@ Opt-in `--download` slice: streams the **official MIT-licensed** upstream subset
 
 > **Deferred (no dependency added this batch):** parquet **decoding** of the downloaded subsets. The single lockfile slot was owned by another track, so no parquet-reader dependency was added. The `--download` lane therefore verifies pinned integrity (url/sha256/bytes) and reports a content-free result, but does **not** yet run the oracle over the decoded official rows — the default offline lane uses the synthetic fixture. Wiring the decode (vendored or zero-dep reader) is a follow-up.
 
+## Tool-selection + description overlap (report-only, inside the gate)
+
+`src/tool-selection.mjs` measures what the MCP tool cap is a *proxy* for
+(`docs/concepts/mcp-surface.mdx`): whether an agent utterance routes to the right tool,
+and how much the tool descriptions overlap each other. It runs **inside** `run.mjs` and
+prints alongside the gated metrics, but it is **report-only — no floors, and it can never
+move the exit code**. Floors are deliberately deferred to a later PR that baselines them
+from this slice's observed output.
+
+| Metric | Meaning |
+|---|---|
+| `selection_accuracy_at_1` | the nearest tool **description** (cosine) is the tool the utterance should reach |
+| `selection_margin` | mean top1−top2 cosine gap — how *decisively* the right tool wins |
+| `max_description_overlap` | largest pairwise cosine between two tool descriptions, reported with the offending pair |
+| `surface_slice` | the non-tool scenarios (memory resource / `briefing`+`debrief` prompts): how hard the tool descriptions pull on a need that is not a tool's |
+
+Nearest-description-by-cosine is a deterministic **proxy** for a model's tool choice, not
+a model run — the same substitution the blocking gate makes for the product retriever.
+
+- Scenarios: `fixtures/tool-selection.json` — 5 agent utterances per registered tool
+  (55) plus a separate `surfaceScenarios` array whose correct target is not a tool.
+- Descriptions come from the committed `fixtures/transport-surfaces.json` (the real
+  `tools/list` capture), and each embedded description is stored with a **sha256 of the
+  exact text**. A description edit, a new tool, or a retired tool makes the slice fail
+  loudly with a regenerate instruction instead of scoring a stale vector.
+- **Absence of the embeddings fixture is not a failure**: the gate prints
+  `fixture not generated` and stays green.
+
+Regenerate (needs an embedding credential; one command):
+
+```bash
+OPENAI_API_KEY=… pnpm --filter @3ngram/eval run gen:tool-selection
+```
+
+Optional: build `apps/server` first (`pnpm --filter @3ngram/server build`) and the
+generator additionally cross-checks the committed capture against the **live** registry,
+refusing to generate from a stale one. Without the build it prints that the cross-check
+was skipped.
+
+Standalone (exits 2 on an integrity failure — the gate wiring does not):
+
+```bash
+pnpm --filter @3ngram/eval run tool-selection [-- --json]
+```
+
 ## Regenerating fixtures (`pipeline/`)
 
 Manual, network-using, in order: export (psql from the production database) → `anonymize.mjs` (Claude Haiku; PII scan after) → `gen-queries.mjs` → `embed.mjs openai-large-1536`. Regeneration invalidates floors — re-record and justify in the PR.
