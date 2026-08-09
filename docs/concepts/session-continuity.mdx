@@ -1,0 +1,243 @@
+---
+title: "Session continuity"
+description: "Why session-boundary capture was removed, what the evidence actually shows, and the provenance-first design that closes the loop without writing to the corpus."
+icon: "arrows-rotate"
+---
+
+**Status: design.** Nothing here is built. It settles *how* work should carry across
+sessions and across harnesses, because the obvious answer — capture more at session end —
+was already tried here and removed on purpose.
+
+A session ends. Its decisions are in the corpus if someone ran `/debrief`, and lost
+otherwise. The next session, possibly in a different harness, starts from a briefing that
+cannot tell it what the previous one did or which of its own commitments the work closed.
+That gap is the subject.
+
+## What was already tried
+
+<Note>
+**Product decision, 2026-06-11 — capture transport removed.** The mechanical
+`PostToolUse` capture hook was killed end-to-end (migration 0010, promoted to main and
+applied to prod). Rationale: a `PostToolUse` hook only sees tool I/O, so it can log
+mechanical *what happened* — already in git and GitHub, carrying no *why*, and adding
+retrieval noise. The recorded lesson: **value comes from intentional writes, LLM-summarized
+decisions, and orientation — not from auto-scraping tool events.**
+</Note>
+
+The damage was structural rather than per-item, which is the part worth remembering
+because it is counterintuitive:
+
+| Symptom | Measurement |
+|---|---|
+| Volume dominance | 897/1177 (76%) of hook memories were legacy `commit:`/`session-end` rows |
+| Payload bloat | one commit capture swallowed a ~10 KB audit report via pattern matching |
+| Null-value writes | session-end emitted `Files modified: …, Commits: none` when everything was zero |
+| Cluster distortion | including hooks moved clustering 75 → 99, one cluster holding 47× `commit: engram` |
+| Suppression debt | 0.5× search dampening, `cluster_exclude_sources=['hook']`, plus a digest job to archive |
+| Parallel attempt | GitHub commit sync produced 619 rows with no embeddings, no scope, no tags |
+
+Yet a 200-memory sample scored **98% signal** (63% HIGH, 35% MEDIUM, 2% NOISE). Per-item
+quality was fine and the filters worked. Mechanical captures share a syntactic shape, so
+they collapse into source-shape clusters and dominate by count — a corpus can be wrecked
+by rows that are individually useful. **Judge a capture mechanism by what it does to the
+corpus, not by spot-checking its rows.**
+
+## But the curated path has a measured hole
+
+The same decision blessed `/debrief`. A coverage audit over 10 sessions then measured that
+path:
+
+| Metric | Result |
+|---|---|
+| Overall recall | **26%** (50 candidates, 13 matched, 37 missed) |
+| Commitment recall | **0%** |
+| Decision / project / user recall | 25% / 29% / 33% |
+| Spurious captures | none |
+
+with a structural cause: `PostToolUse` fires on tool events only, so user-turn feedback and
+preferences *cannot* be hook-captured at all, and `/debrief` only runs when a human
+remembers to type it.
+
+So both positions have holes. Mechanical capture pollutes; curated capture misses
+three-quarters of what matters. **The gap was never a missing capture mechanism — it is
+that the good mechanism fires unreliably.**
+
+## What the misreporting evidence actually shows
+
+The intuitive fix is to capture verification evidence (git SHA, files touched, test exit
+codes) so a handoff reflects what happened rather than what an agent claims. The corpus
+contains four documented misreportings, and they do not support it:
+
+| Incident | What happened | Would exit-code capture catch it? |
+|---|---|---|
+| Dep-audit gates (2× in one batch) | Both sub-agents reported `npx <tool> exits 0` locally; both failed CI. Cause: hoisted `node_modules` vs CI's `npm ci --workspaces=false` | **No — it captures `0` and certifies the wrong answer** |
+| Fabricated symbols | An agent invented five nonexistent function names; review caught all five | No — needs source reads |
+| Stale-diff review | 4 review agents on a 254-file diff; all 4 blocking findings false | No |
+| Stale memories | **6 instances in one session**: a PR called "the only open PR" had merged 5 days earlier; an item said "reserve the npm name" when it was published; one item sat blocked ~4 months on a gate that had already cleared | No — the failure is read-side |
+
+The one case of "a gate reported green when it wasn't" is precisely the case where
+mechanical capture would have recorded green, now with the authority of evidence. The
+frequent, recent, still-recurring failure is the fourth row, and its recorded cause is
+that **nothing re-checks an externally-gated item when its gate clears**.
+
+## Hook mechanics
+
+The design is constrained by what the harness actually permits.
+
+| | `Stop` | `SessionEnd` |
+|---|---|---|
+| Fires | after each turn | session already terminating |
+| Receives | `last_assistant_message`, `stop_hook_active`, `session_id`, `cwd` | `session_id`, `transcript_path`, `cwd`, `reason` |
+| Inject context | **yes** — `hookSpecificOutput.additionalContext` | no — there is no model call left |
+| Make the agent work | **yes** — `decision: "block"` continues the turn | no |
+| Budget | normal timeout | **1.5 s shared** across all SessionEnd hooks |
+
+Two consequences:
+
+1. **A debrief cannot run at `SessionEnd`.** By then there is nobody to instruct. This is
+   why `3ngram-hook sync` sits at that event and is a deliberate no-op
+   (`cmd/3ngram-hook/sync.go:38`) — pushing files needs no model, and that slot cannot be
+   upgraded into a triage.
+2. **`Stop` is the only hook that can make an agent reconcile its own work**, via
+   `decision: "block"` plus `additionalContext`. It fires **once per turn**, not once per
+   session, which makes gating the central design problem rather than a detail.
+
+## Recommendation
+
+Three layers, in dependency order. None writes to the corpus and none consumes a tool slot.
+
+### 1. Session provenance on `memory_events` (no migration)
+
+`memories` carries no provenance — no `source`, no `session_id`, no metadata column. But
+`memory_events` already has the shape:
+
+```sql
+CREATE TABLE "memory_events" (
+  "memory_id"  uuid NOT NULL,
+  "event_kind" text NOT NULL,  -- create|revise|supersede|resolve|unresolve|archive|import
+  "actor_kind" text NOT NULL,  -- …|capture_hook|worker|importer|system
+  "payload"    jsonb,          -- already present, nullable, unconstrained
+  "created_at" timestamptz NOT NULL
+);
+```
+
+Write `{ session_id, agent, project }` into `payload` on the `create` event — and on
+`revise` and `resolve` too.
+
+<Note>
+**This is the architectural line between this design and the system that was removed.**
+The old hook wrote rows in `memories`: new retrievable objects competing in search,
+clustering into source-shape bubbles, needing dampening to suppress. Provenance writes
+rows in `memory_events`, which is **not in the retrieval path**. Corpus size, embedding
+count and cluster geometry are all unchanged. The 2026-06-11 decision rejected
+auto-scraping *into the corpus*; it says nothing against metadata on writes the agent
+already chose to make.
+</Note>
+
+Annotating revisions is safe, and for two independent reasons rather than one. `revise`
+never mutates a row — it appends a successor plus a `memory_edges` row, so the original
+stays byte-identical (the append-and-supersede guarantee). And provenance lands in
+`memory_events` regardless, never on the memory. Revisions are in fact the *interesting*
+case: "which session corrected this, and was it Claude or Codex" is the cross-harness
+question.
+
+**Keep the payload minimal — `session_id`, `agent`, `project`.** Not `transcript_path` or
+`cwd`: both embed the local home directory and machine layout, and memories are shareable.
+
+### 2. A gated `Stop` triage
+
+3ngram already serves the words. `apps/server/src/mcp/prompts.ts:153` registers a
+`debrief` prompt instructing the agent to extract decisions, commitments, follow-ups and
+preferences, persist each via `remember`, and *"for any commitment COMPLETED this session,
+call the `resolve` TOOL on its memory id."*
+
+MCP prompts are user-invoked; a server cannot push one. So the hook fetches the text over
+REST and injects it as `additionalContext` with `decision: "block"`. **3ngram owns the
+words, the hook owns the trigger** — which is what buys cross-harness parity, since both
+harnesses then read identical instructions from one source.
+
+Two things the shipped prompt does not do, and they are the useful additions:
+
+- It never **re-reads the memories this session wrote**. Provenance makes that a query.
+- It extracts from the conversation only, never **querying pre-existing open commitments**
+  the work may have closed. That is the 0%-commitment-recall hole and the stale-gate
+  failure, which are the same failure seen from two directions.
+
+With provenance the gate is a query rather than a heuristic:
+
+| Condition | Source |
+|---|---|
+| `stop_hook_active` is false | hook stdin |
+| memories created this session > 0, **or** briefed commitments exist | `memory_events` |
+| no triage event already recorded for this session | `memory_events` |
+
+Fires once per session, on real signal, provably not twice. Without provenance this
+degrades into guessing from turn counts and file mtimes.
+
+### 3. A `SessionEnd` seal
+
+Side effects are unrestricted at `SessionEnd`; only model interaction is barred, and one
+POST fits the 1.5 s budget. Its job is **not** capture — `remember` already wrote the
+memories. It marks the session closed with a cursor, which is what makes *"what changed
+since you last looked"* computable at the next `SessionStart`, in any harness. Read-side
+enablement, not capture.
+
+## Cost to the tool budget: zero
+
+Eleven tools are registered with one slot left and no reservation on it, and
+[threads](/concepts/threads) is the leading claimant. Per
+[MCP surface budget](/concepts/mcp-surface), prompts and resources cost no slot. This
+design uses an existing prompt, an existing REST surface, and an existing table. **It must
+not need a tool, and it does not.**
+
+## Relation to threads
+
+[Threads](/concepts/threads) supply the relevance query this design otherwise lacks.
+
+"Related open commitments" scoped by project is noisy. Scoped by thread — *commitments
+confirmed in the threads this session's memories belong to* — it is precise, because a
+thread is by construction a continuous theme that cuts across scopes. The planned `thread`
+filter on `search` and `thread` selector on `briefing` are exactly the primitives a
+cross-session, cross-harness briefing wants.
+
+The two designs are independent and compose: provenance answers *which episode produced
+this memory*, threads answer *which theme it belongs to*. Sessions are episodes and should
+not be modelled as threads.
+
+## Explicitly not proposed
+
+| Rejected | Why |
+|---|---|
+| Test/exit-code evidence capture | The one documented green-that-wasn't is the case it certifies wrongly. Belongs in the sub-agent prompt as a clean-checkout verification step |
+| Reviving mechanical event capture | Settled 2026-06-11; the corpus damage is measured above |
+| Sharing raw transcripts between harnesses | Codex does not guarantee its transcript format; replaying a full session carries dead ends and stale assumptions at high token cost |
+| New MCP tools for work state | `briefing`, `search`, `remember`, `resolve` and `handoff` already cover the jobs; the slot is spoken for |
+| A SQLite/JSONL side store | A second system of record with a migration nobody needs |
+
+## Plan
+
+Sequenced so each step is independently useful and under the PR size guidance.
+
+| # | Step | Validates |
+|---|---|---|
+| 1 | Verify Codex exposes a blocking `Stop` equivalent | **Gates 2–4.** If it does not, this is Claude-only and the cross-harness case weakens sharply |
+| 2 | Provenance in `memory_events.payload` on create/revise/resolve | Attribution queryable; no migration; independently useful |
+| 3 | `Stop` triage behind the gate, one project, `additionalContext` only | Recall against the 26% / 0% baseline |
+| 4 | `SessionEnd` seal + delta cursor on `briefing` | Second session receives a delta, not a re-briefing |
+
+**Validation bar.** Step 3 has a real baseline: 26% overall recall and 0% for commitments,
+measured over 10 sessions. A re-run of that audit method is the pass/fail test. Step 1 is
+cheap and gates the rest, so it goes first.
+
+## Open questions
+
+- **Codex `Stop` parity.** A 2026-05-07 decision noted Codex `SessionStart` hooks and that
+  "Stop/PostToolUse hooks can handle debrief," but a *blocking* Stop has not been
+  confirmed. Unverified, and it decides the scope of the whole design.
+- **Gate tuning.** "Memories created > 0" may fire on sessions with nothing worth
+  reconciling. Turn count or elapsed time may need to join the predicate.
+- **Cost.** Every trigger is extra model turns plus tool calls on a session the user
+  believed was finished. Worth measuring before it defaults to on.
+- **Evidence provenance.** The corpus-damage measurements above come from the engram-era
+  Python implementation, migrated into this corpus. The mechanism is gone from this
+  codebase; the numbers describe the corpus it left behind.
