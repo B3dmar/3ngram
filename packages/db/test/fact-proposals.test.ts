@@ -14,7 +14,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { describe, expect, it } from 'vitest'
-import { insertFactProposals } from '../src/fact-proposals.js'
+import {
+  insertFactProposals,
+  listFactProposals,
+  rejectFactProposal,
+} from '../src/fact-proposals.js'
+import { applyFactProposal } from '../src/fact-proposals-apply.js'
 
 /** Collapse the template's whitespace so assertions read as one line. */
 const normalize = (sql: string) => sql.replaceAll(/\s+/g, ' ').trim()
@@ -93,5 +98,78 @@ describe('insertFactProposals', () => {
       },
     ) as never
     await expect(insertFactProposals(unusableTx, [])).resolves.toBe(0)
+  })
+})
+
+/** Capture the SQL + bound params a tx-taking helper emits, without a database. */
+async function emitted(run: (tx: never) => Promise<unknown>): Promise<{
+  sql: string
+  params: unknown[]
+}> {
+  const seen: { sql: string; params: unknown[] }[] = []
+  // drizzle's node-postgres session calls client.query(config, params) — the
+  // bound values arrive as the SECOND argument, not on the config object.
+  const client = {
+    query: async (config: { text: string }, params: unknown[] = []) => {
+      seen.push({ sql: config.text, params })
+      return { rows: [], rowCount: 0 }
+    },
+  }
+  const db = drizzle(client as never)
+  await run(db as never).catch(() => undefined)
+  const [first] = seen
+  if (first === undefined) throw new Error('no statement emitted')
+  return first
+}
+
+const USER = '00000000-0000-7000-8000-0000000000aa'
+const PROPOSAL = '00000000-0000-7000-8000-0000000000bb'
+
+describe('tenant binding is two-layer (explicit user_id, not RLS alone)', () => {
+  // These would all still PASS a cross-tenant integration test with RLS intact:
+  // the policy hides the row either way. They fail only if the explicit
+  // predicate is dropped — which is exactly the layer that has to survive a
+  // query running outside withTenant(), a dropped policy, or a BYPASSRLS role.
+  it('listFactProposals filters on the caller user_id', async () => {
+    const { sql, params } = await emitted((tx) => listFactProposals(tx, USER, {}))
+    expect(sql).toContain('"user_id" =')
+    expect(params).toContain(USER)
+  })
+
+  it('listFactProposals keeps the user_id filter alongside a status filter', async () => {
+    const { sql, params } = await emitted((tx) =>
+      listFactProposals(tx, USER, { status: 'proposed' }),
+    )
+    expect(sql).toContain('"user_id" =')
+    expect(params).toEqual(expect.arrayContaining([USER, 'proposed']))
+  })
+
+  it('rejectFactProposal pins user_id in addition to id and status', async () => {
+    const { sql, params } = await emitted((tx) => rejectFactProposal(tx, USER, PROPOSAL))
+    expect(sql).toContain('"user_id" =')
+    expect(params).toEqual(expect.arrayContaining([USER, PROPOSAL, 'proposed']))
+  })
+
+  it('applyFactProposal pins user_id on the claiming update', async () => {
+    const { sql, params } = await emitted((tx) => applyFactProposal(tx, USER, PROPOSAL))
+    expect(sql).toContain('update "fact_proposals"')
+    expect(sql).toContain('"user_id" =')
+    expect(params).toEqual(expect.arrayContaining([USER, PROPOSAL, 'proposed']))
+  })
+
+  it('inserted rows carry the caller user_id', async () => {
+    const { params } = await emitted((tx) =>
+      insertFactProposals(tx, [
+        {
+          userId: USER,
+          memoryId: PROPOSAL,
+          subject: 's',
+          predicate: 'p',
+          value: 'v',
+          memoryType: 'fact',
+        },
+      ]),
+    )
+    expect(params).toContain(USER)
   })
 })

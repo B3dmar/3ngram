@@ -62,7 +62,13 @@ export async function applyFactProposal(
   const [proposal] = await tx
     .update(factProposals)
     .set({ status: 'applied', decidedAt: sql`now()` })
-    .where(and(eq(factProposals.id, proposalId), eq(factProposals.status, 'proposed')))
+    .where(
+      and(
+        eq(factProposals.userId, userId),
+        eq(factProposals.id, proposalId),
+        eq(factProposals.status, 'proposed'),
+      ),
+    )
     .returning(FACT_PROPOSAL_COLUMNS)
   if (proposal === undefined) throw new ProposalNotFoundError(proposalId)
 

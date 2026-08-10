@@ -148,12 +148,17 @@ export interface FactProposalsQuery {
  */
 export async function listFactProposals(
   tx: TenantTx,
+  userId: string,
   query: FactProposalsQuery = {},
 ): Promise<FactProposalRow[]> {
   const ordered = tx
     .select(FACT_PROPOSAL_COLUMNS)
     .from(factProposals)
-    .where(query.status === undefined ? undefined : eq(factProposals.status, query.status))
+    .where(
+      query.status === undefined
+        ? eq(factProposals.userId, userId)
+        : and(eq(factProposals.userId, userId), eq(factProposals.status, query.status)),
+    )
     .orderBy(desc(factProposals.createdAt), desc(factProposals.id))
   return query.limit === undefined ? ordered : ordered.limit(query.limit)
 }
@@ -171,12 +176,19 @@ export async function listFactProposals(
  */
 export async function rejectFactProposal(
   tx: TenantTx,
+  userId: string,
   proposalId: string,
 ): Promise<FactProposalRow> {
   const [row] = await tx
     .update(factProposals)
     .set({ status: 'rejected', decidedAt: sql`now()` })
-    .where(and(eq(factProposals.id, proposalId), eq(factProposals.status, 'proposed')))
+    .where(
+      and(
+        eq(factProposals.userId, userId),
+        eq(factProposals.id, proposalId),
+        eq(factProposals.status, 'proposed'),
+      ),
+    )
     .returning(FACT_PROPOSAL_COLUMNS)
   if (row === undefined) throw new ProposalNotFoundError(proposalId)
   return row

@@ -49,7 +49,7 @@ const candidate = (overrides: Partial<FactProposalWrite> = {}): FactProposalWrit
 const insert = (rows: FactProposalWrite[], userId = uid) =>
   withTenant(userId, (tx) => insertFactProposals(tx, rows))
 
-const list = (userId = uid) => withTenant(userId, (tx) => listFactProposals(tx, {}))
+const list = (userId = uid) => withTenant(userId, (tx) => listFactProposals(tx, userId, {}))
 
 async function countFacts(userId: string): Promise<number> {
   const r = await ownerPool.query('SELECT count(*)::int AS n FROM facts WHERE user_id = $1', [
@@ -97,7 +97,7 @@ describe('insertFactProposals idempotency (open-proposal index inference)', () =
   it('allows re-proposing the same triple once the open row is DECIDED', async () => {
     expect(await insert([candidate()])).toBe(1)
     const [open] = await list()
-    await withTenant(uid, (tx) => rejectFactProposal(tx, open?.id as string))
+    await withTenant(uid, (tx) => rejectFactProposal(tx, uid, open?.id as string))
     // The partial index only constrains status='proposed', so a rejected row
     // does not block a fresh proposal of the same claim.
     expect(await insert([candidate()])).toBe(1)
@@ -118,7 +118,7 @@ describe('rejectFactProposal', () => {
     await insert([candidate()])
     const [open] = await list()
 
-    const rejected = await withTenant(uid, (tx) => rejectFactProposal(tx, open?.id as string))
+    const rejected = await withTenant(uid, (tx) => rejectFactProposal(tx, uid, open?.id as string))
     expect(rejected.status).toBe('rejected')
     expect(rejected.decidedAt).not.toBeNull()
     expect(await countFacts(uid)).toBe(0)
@@ -127,10 +127,10 @@ describe('rejectFactProposal', () => {
   it('raises ProposalNotFoundError on an already-decided proposal', async () => {
     await insert([candidate()])
     const [open] = await list()
-    await withTenant(uid, (tx) => rejectFactProposal(tx, open?.id as string))
+    await withTenant(uid, (tx) => rejectFactProposal(tx, uid, open?.id as string))
 
     await expect(
-      withTenant(uid, (tx) => rejectFactProposal(tx, open?.id as string)),
+      withTenant(uid, (tx) => rejectFactProposal(tx, uid, open?.id as string)),
     ).rejects.toBeInstanceOf(ProposalNotFoundError)
   })
 })
@@ -194,7 +194,7 @@ describe('applyFactProposal', () => {
 
     await insert([candidate({ predicate: 'top_set.reps', value: '3' })])
     const rejected = (await list()).find((row) => row.status === 'proposed')
-    await withTenant(uid, (tx) => rejectFactProposal(tx, rejected?.id as string))
+    await withTenant(uid, (tx) => rejectFactProposal(tx, uid, rejected?.id as string))
     await expect(
       withTenant(uid, (tx) => applyFactProposal(tx, uid, rejected?.id as string)),
     ).rejects.toBeInstanceOf(ProposalNotFoundError)
@@ -228,7 +228,7 @@ describe('tenant isolation', () => {
     // RLS makes the row invisible to the other tenant, so a decision attempt is
     // indistinguishable from a missing proposal — by design.
     await expect(
-      withTenant(otherUid, (tx) => rejectFactProposal(tx, open?.id as string)),
+      withTenant(otherUid, (tx) => rejectFactProposal(tx, otherUid, open?.id as string)),
     ).rejects.toBeInstanceOf(ProposalNotFoundError)
     await expect(
       withTenant(otherUid, (tx) => applyFactProposal(tx, otherUid, open?.id as string)),
