@@ -149,8 +149,13 @@ export function assertFixtureMatchesRegistry(fixture, registryDescriptions) {
   }
 }
 
-/** Rank every tool description against one utterance vector, best first. */
-function rankTools(utteranceVector, toolVectors) {
+/**
+ * Rank every tool description against one utterance vector, best first.
+ * Exported so the nightly model-in-the-loop slice (tool-selection-model.mjs)
+ * can compute the deterministic proxy's top-1 pick per scenario for its
+ * agreement metric WITHOUT re-deriving the ranking math.
+ */
+export function rankTools(utteranceVector, toolVectors) {
   return Object.entries(toolVectors)
     .map(([name, vector]) => ({ name, score: cosine(utteranceVector, vector) }))
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
