@@ -73,7 +73,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // +13/+104/+26 (issue #71): the `remember` description now names the
       // scope_project includeUnscoped opt-in instead of asserting flatly that a
       // NULL-project memory never matches a project filter.
-      mcp: [19688, 159320, 40208],
+      // +263/+2104/+512 (freshness-gate regen): the committed fixture predated
+      // per-tool ToolAnnotations (readOnlyHint/idempotentHint/openWorldHint) —
+      // live on tools/list already, just never re-captured. A fresh regen picks
+      // them up; the CI freshness gate (this PR) now catches this class of drift.
+      mcp: [19951, 161424, 40720],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
@@ -225,6 +229,50 @@ test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (11 tool
   // prompts/list is part of the same standing MCP surface — the 2 code-defined
   // prompts (briefing, debrief) the SDK serves.
   assert.deepEqual(surfaces.mcp.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
+})
+
+test('the MCP surface fixture covers resource templates and completions (additive sections)', () => {
+  // Additive: transport-cost.mjs's surfaceTokens() only reads mcp.tools/prompts
+  // and cli/rest, so these sections carry no per-task token cost — they exist so
+  // the freshness gate (CI) covers the FULL MCP surface, not just tools/prompts.
+  const surfaces = JSON.parse(
+    readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
+  )
+  // resources/templates/list: the one threengram://memory/{id} template
+  // (apps/server/src/mcp/resources.ts), including its registration-time
+  // cacheHint (never echoed on the wire; recovered by running the real
+  // registerResources against a capturing stub — see gen-transport-surfaces.mjs).
+  assert.equal(surfaces.mcp.resourceTemplates.length, 1)
+  const memoryTemplate = surfaces.mcp.resourceTemplates[0]
+  assert.equal(memoryTemplate.name, 'memory')
+  assert.equal(memoryTemplate.uriTemplate, 'threengram://memory/{id}')
+  assert.deepEqual(memoryTemplate.cacheHint, { ttlMs: 24 * 60 * 60_000, cacheScope: 'private' })
+
+  // Completions coverage: which prompt args and resource-template URI variables
+  // are wired to completable() (apps/server/src/mcp/completions.ts, resources.ts).
+  // No `completions.tools`: the MCP completion protocol dispatches
+  // completion/complete on ref/prompt or ref/resource only — there is no
+  // ref/tool, so a tool argument can never be a completion target, and a
+  // section that is `completable: false` for every tool arg by construction
+  // would freeze a protocol fact, not a registry fact worth gating on.
+  const { completions } = surfaces.mcp
+  assert.ok(!('tools' in completions), 'completions must not carry a tools section')
+  assert.deepEqual(completions.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
+
+  // Today exactly one prompt arg — debrief's `scope`, via
+  // facetCompleter(ctx, 'scopes') — is completable; every other prompt arg is not.
+  const completablePromptArgs = completions.prompts.flatMap(({ name, args }) =>
+    args.filter((arg) => arg.completable).map((arg) => `${name}.${arg.name}`),
+  )
+  assert.deepEqual(completablePromptArgs, ['debrief.scope'])
+
+  // The memory template's {id} carries NO complete callback (resources.ts
+  // registers `list: undefined` and no complete map) — docs/concepts/mcp-surface
+  // .mdx rules this out deliberately (enumerating {id} is a cross-tenant
+  // existence oracle by a different door), so this must stay false.
+  assert.deepEqual(completions.resources, [
+    { name: 'memory', variables: [{ name: 'id', completable: false }] },
+  ])
 })
 
 test('the search surface is the WIDER searchQuerySchema on BOTH transports', () => {
