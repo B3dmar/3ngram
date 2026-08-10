@@ -34,7 +34,7 @@ function memoryInput(userId: string, memoryType = 'fact') {
     scope: 'work',
     tags: [] as string[],
     contentHash: nextHash(),
-    actorKind: 'agent' as const,
+    actorKind: 'user_api' as const,
   }
 }
 
