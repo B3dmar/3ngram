@@ -310,19 +310,37 @@ export const factProposals = pgTable(
     }).onDelete('cascade'),
     // one OPEN proposal per candidate fact; re-proposal after rejection allowed
     // (mirrors proposals_open_idx). The eventual insert path's ON CONFLICT
-    // target must byte-mirror these columns and this predicate.
+    // target must byte-mirror these columns, this expression, and this predicate.
+    //
+    // value is indexed as md5(value), not verbatim: it is unbounded text at the
+    // DB and a long multi-byte value would blow btree's ~2704-byte tuple limit,
+    // failing a LEGITIMATE insert with "index row size exceeds btree maximum".
+    // The digest is fixed-width and collision risk here is irrelevant — a
+    // collision can only merge two open proposals on the same (memory, subject,
+    // predicate). subject/predicate stay verbatim: both are Zod-bounded well
+    // under the limit, and keeping them readable makes the index usable for the
+    // review lookup too.
+    //
+    // What the key deliberately OMITS is as load-bearing as what it contains:
+    // memory_type, confidence, and the validity window are NOT part of it, so
+    // two extractions of the same triple collapse to ONE open proposal and the
+    // FIRST one's metadata wins. Re-proposing with a better confidence or a
+    // corrected window is therefore a no-op until the open row is decided.
     uniqueIndex('fact_proposals_open_idx')
-      .on(t.userId, t.memoryId, t.subject, t.predicate, t.value)
+      .on(t.userId, t.memoryId, t.subject, t.predicate, sql`md5(${t.value})`)
       .where(sql`status = 'proposed'`),
     index('fact_proposals_review_idx').on(t.userId, t.status, t.createdAt),
     check('fact_proposals_type_check', enumCheckSql(t.memoryType, memoryTypeSchema.options)),
     check('fact_proposals_status_check', enumCheckSql(t.status, proposalStatusSchema.options)),
-    // Same shape as facts_validity_check and nullable-tolerant by construction:
-    // with valid_from NULL the comparison is NULL, which a CHECK does not treat
-    // as a violation.
+    // Stricter than facts_validity_check because valid_from is nullable here.
+    // The plain `valid_to IS NULL OR valid_from <= valid_to` would evaluate to
+    // NULL — i.e. PASS — for valid_from NULL with valid_to set: an interval
+    // that ends but never begins. That state is unrepresentable in facts
+    // (valid_from is NOT NULL there), so admitting it would only defer the
+    // failure to accept time, on a row a human already approved.
     check(
       'fact_proposals_validity_check',
-      sql`${t.validTo} IS NULL OR ${t.validFrom} <= ${t.validTo}`,
+      sql`${t.validTo} IS NULL OR (${t.validFrom} IS NOT NULL AND ${t.validFrom} <= ${t.validTo})`,
     ),
     tenantPolicy(),
   ],

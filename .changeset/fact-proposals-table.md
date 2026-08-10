@@ -20,3 +20,8 @@ from the `@3ngram/schema` enums rather than restated in SQL.
 `fact_proposals` is a sibling of `consolidation_proposals`, not a new mode on
 it: every shipped database object is left byte-identical. Grants are
 SELECT/INSERT/UPDATE only — a decision flips a status, it never deletes a row.
+
+Deploy note: creating the composite foreign key takes a brief lock on
+`memories`, so on a busy database the migration can queue behind a long-running
+transaction. Run it with a `lock_timeout` and retry rather than letting it
+block writes.

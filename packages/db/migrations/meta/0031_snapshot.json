@@ -1,5 +1,5 @@
 {
-  "id": "53c5e472-3ff2-4804-bd99-80bef75a1506",
+  "id": "535f6109-23f0-43d1-8684-deff01efde08",
   "prevId": "ac613e9f-bb46-41a2-ae8c-5cee5141435b",
   "version": "7",
   "dialect": "postgresql",
@@ -1700,9 +1700,9 @@
               "nulls": "last"
             },
             {
-              "expression": "value",
-              "isExpression": false,
+              "expression": "md5(\"value\")",
               "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],
@@ -1783,7 +1783,7 @@
         },
         "fact_proposals_validity_check": {
           "name": "fact_proposals_validity_check",
-          "value": "\"fact_proposals\".\"valid_to\" IS NULL OR \"fact_proposals\".\"valid_from\" <= \"fact_proposals\".\"valid_to\""
+          "value": "\"fact_proposals\".\"valid_to\" IS NULL OR (\"fact_proposals\".\"valid_from\" IS NOT NULL AND \"fact_proposals\".\"valid_from\" <= \"fact_proposals\".\"valid_to\")"
         }
       },
       "isRLSEnabled": false

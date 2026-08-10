@@ -15,13 +15,13 @@ CREATE TABLE "fact_proposals" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "fact_proposals_type_check" CHECK ("fact_proposals"."memory_type" IN ('decision', 'commitment', 'blocker', 'fact', 'preference', 'pattern', 'note', 'event')),
 	CONSTRAINT "fact_proposals_status_check" CHECK ("fact_proposals"."status" IN ('proposed', 'applied', 'rejected')),
-	CONSTRAINT "fact_proposals_validity_check" CHECK ("fact_proposals"."valid_to" IS NULL OR "fact_proposals"."valid_from" <= "fact_proposals"."valid_to")
+	CONSTRAINT "fact_proposals_validity_check" CHECK ("fact_proposals"."valid_to" IS NULL OR ("fact_proposals"."valid_from" IS NOT NULL AND "fact_proposals"."valid_from" <= "fact_proposals"."valid_to"))
 );
 --> statement-breakpoint
 ALTER TABLE "fact_proposals" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "fact_proposals" ADD CONSTRAINT "fact_proposals_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fact_proposals" ADD CONSTRAINT "fact_proposals_memory_fk" FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "fact_proposals_open_idx" ON "fact_proposals" USING btree ("user_id","memory_id","subject","predicate","value") WHERE status = 'proposed';--> statement-breakpoint
+CREATE UNIQUE INDEX "fact_proposals_open_idx" ON "fact_proposals" USING btree ("user_id","memory_id","subject","predicate",md5("value")) WHERE status = 'proposed';--> statement-breakpoint
 CREATE INDEX "fact_proposals_review_idx" ON "fact_proposals" USING btree ("user_id","status","created_at");--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "fact_proposals" AS PERMISSIVE FOR ALL TO public USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid) WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);--> statement-breakpoint
 -- Tenant-isolation hardening (0028 precedent): FORCE so the tenant_isolation

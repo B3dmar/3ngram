@@ -568,9 +568,22 @@ describe('fact proposals staging table (0031)', () => {
 
   it('constrains one OPEN proposal per candidate fact, re-proposal after rejection allowed', () => {
     // The eventual insert path's ON CONFLICT target must byte-mirror this
-    // column list and predicate, so both are pinned here.
+    // column list, the md5 expression, and the predicate, so all three are
+    // pinned here. value is digested rather than indexed verbatim: it is
+    // unbounded text, and a long multi-byte value would otherwise exceed
+    // btree's ~2704-byte tuple limit and fail a legitimate insert.
     expect(factProposalsSql).toContain(
-      'CREATE UNIQUE INDEX "fact_proposals_open_idx" ON "fact_proposals" USING btree ("user_id","memory_id","subject","predicate","value") WHERE status = \'proposed\'',
+      'CREATE UNIQUE INDEX "fact_proposals_open_idx" ON "fact_proposals" USING btree ("user_id","memory_id","subject","predicate",md5("value")) WHERE status = \'proposed\'',
+    )
+  })
+
+  it('rejects a validity window that ends but never begins', () => {
+    // valid_from is nullable here (an extractor often cannot date a claim), so
+    // the plain facts-style CHECK would evaluate to NULL — a PASS — for
+    // valid_from NULL with valid_to set. facts cannot represent that row, so
+    // the proposal must not accept it and defer the failure to accept time.
+    expect(factProposalsSql).toContain(
+      '"fact_proposals_validity_check" CHECK ("fact_proposals"."valid_to" IS NULL OR ("fact_proposals"."valid_from" IS NOT NULL AND "fact_proposals"."valid_from" <= "fact_proposals"."valid_to"))',
     )
   })
 
