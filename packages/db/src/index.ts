@@ -168,6 +168,13 @@ export {
   transactionTimePredicate,
   validTimePredicate,
 } from './facts-read.js'
+// --- facts write path: tx-taking inserts composed by the memory write ---
+export {
+  type FactWrite,
+  insertFact,
+  insertFacts,
+  type MemoryFactWrite,
+} from './facts-write.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
 // Revise path + typed edges (slice 2) — appended as its own block.
