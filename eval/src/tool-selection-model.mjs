@@ -24,7 +24,13 @@
 // judge.mjs uses) — a distinct env var from judge.mjs's LLM_JUDGE_MODEL so the
 // two advisory lanes can be pointed at different models independently. No
 // concurrency limit: judge.mjs's runJudge has none either, and this makes one
-// sequential call per scenario the same way.
+// sequential call per scenario the same way. Every request also sets
+// `max_completion_tokens: 32` (a registered tool name is short; this caps a
+// prose-happy model well before the gateway default, on every one of the
+// ~55 sequential calls) and `temperature: 0` (single-sample determinism is
+// load-bearing for the week-over-week comparison this slice exists for, not
+// a quality preference — see createGatewayFromEnv for the parameter-name
+// rationale).
 //
 // FORCED STRUCTURED ANSWER: the prompt asks for exactly one bare tool name.
 // Anything that is not an EXACT match to a registered tool name is scored as
@@ -137,7 +143,28 @@ export function createGatewayFromEnv(env = process.env) {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          // A registered tool name is at most 20 chars (~a handful of
+          // tokens); 32 leaves headroom for a stray wrapper (backticks,
+          // quotes) without ever truncating a valid name, but caps a
+          // prose-happy model well short of the gateway default on every
+          // one of the ~55 sequential calls this slice makes. `max_tokens`
+          // is DEPRECATED by OpenAI in favor of `max_completion_tokens`
+          // (and unsupported by o-series/reasoning models); neither judge.mjs
+          // nor packages/llm's OpenAI gateway sets a token cap today, so
+          // there is no existing convention to match — use the current,
+          // non-deprecated name.
+          max_completion_tokens: 32,
+          // Determinism is LOAD-BEARING here, not a quality preference: this
+          // slice is read week-over-week for drift against the deterministic
+          // proxy, and an unset temperature can default to a nonzero value on
+          // an OpenAI-compatible gateway, making single-sample picks vary
+          // night to night — noise indistinguishable from the drift being
+          // measured.
+          temperature: 0,
+        }),
         signal: AbortSignal.timeout(30_000),
       })
       if (!res.ok) throw new Error(`gateway error: ${res.status} ${res.statusText}`)

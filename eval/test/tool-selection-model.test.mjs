@@ -252,6 +252,36 @@ test('createGatewayFromEnv returns a gateway when the secret is set', () => {
   assert.equal(typeof gateway.complete, 'function')
 })
 
+test('createGatewayFromEnv sends max_completion_tokens:32 and temperature:0 on every request', async () => {
+  // No real network: swap the global fetch for an inspecting fake for the
+  // duration of this test only, then restore it — pins the exact request
+  // body createGatewayFromEnv sends without a live gateway.
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body))
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'search' } }],
+        model: 'fake-served-model',
+      }),
+    }
+  }
+  try {
+    const gateway = createGatewayFromEnv({ [GATEWAY_API_KEY_ENV]: 'sk-test' })
+    await gateway.complete('prompt one')
+    await gateway.complete('prompt two')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  assert.equal(requests.length, 2)
+  for (const body of requests) {
+    assert.equal(body.max_completion_tokens, 32)
+    assert.equal(body.temperature, 0)
+  }
+})
+
 /**
  * Write `content` to `path`, run `fn`, then always delete `path` (even on a
  * thrown assertion). Unlike tool-selection.test.mjs's corrupt-fixture helper,
