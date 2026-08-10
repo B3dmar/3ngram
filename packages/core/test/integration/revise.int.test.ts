@@ -286,8 +286,10 @@ describe('revise (runtime role, real withTenant)', () => {
 
   it('tier-penalizes the superseded predecessor in searchFused (supersedes intent)', async () => {
     // Both memories share the searched term so both match FTS; supersession
-    // ranking (search.ts: e.to_id = predecessor, edge_type='supersedes') must
-    // sink the predecessor BELOW its successor, NOT filter it out (docs/concepts/memory-model.mdx).
+    // ranking (search.ts: e.to_id = predecessor, edge_type IN ('supersedes',
+    // 'updates') — this test exercises the 'supersedes' case specifically, the
+    // sibling 'updates intent' test above exercises the other) must sink the
+    // predecessor BELOW its successor, NOT filter it out (docs/concepts/memory-model.mdx).
     const { id: predId } = await remember(
       userA,
       { ...baseMemory(), content: 'kubernetes rollout uses a blue-green strategy' },

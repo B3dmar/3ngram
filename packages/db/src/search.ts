@@ -108,9 +108,11 @@ export interface SearchHit {
    * `proposals-apply.ts`'s `CLOSES_PREDECESSOR` set). Ranking is
    * supersession-AWARE, never supersession-FILTERED (docs/concepts/memory-model.mdx):
    * this flag lets a caller distinguish/label a demoted row rather than
-   * silently receiving it unmarked. Always present (defaults `false` on the
-   * leg-only queries that do not compute it — searchFts/searchRecency/
-   * searchVector — since none of those legs' callers key off it).
+   * silently receiving it unmarked. Always present and always COMPUTED (never
+   * a stubbed default): every leg (searchFts, searchRecency, searchVector,
+   * searchFused, fetchHitsByIds) selects it via the shared
+   * {@link supersededExists} predicate, so a superseded row is correctly
+   * labeled on every retrieval path, not only the fused one.
    */
   superseded: boolean
 }
@@ -246,13 +248,14 @@ export async function searchFts(
     WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS tsq),
     ranked AS (
       SELECT m.id, m.memory_type, m.topic, m.content,
+             ${supersededExists('m.')} AS superseded,
              ts_rank(m.search_tsv, q.tsq) AS rank
       FROM memories m, q
       WHERE m.user_id = ${userId}::uuid AND m.status = 'active' AND m.search_tsv @@ q.tsq
       ORDER BY rank DESC
       LIMIT ${limit}
     )
-    SELECT id, memory_type, topic, content,
+    SELECT id, memory_type, topic, content, superseded,
            CASE WHEN max(rank) OVER () = min(rank) OVER () THEN 1.0
                 ELSE (rank - min(rank) OVER ()) / (max(rank) OVER () - min(rank) OVER ())
            END AS score
@@ -274,6 +277,7 @@ export async function searchRecency(
 ): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
+           ${supersededExists('')} AS superseded,
            power(0.5, EXTRACT(EPOCH FROM (now() - recorded_at)) / 86400.0
                       / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS score
     FROM memories
@@ -314,6 +318,7 @@ export async function searchVector(
   const vec = toVectorLiteral(queryEmbedding)
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
+           ${supersededExists('')} AS superseded,
            GREATEST(0, 1 - (embedding <=> ${vec}::vector)) AS score
     FROM memories
     WHERE user_id = ${userId}::uuid AND status = 'active' AND embedding IS NOT NULL
@@ -633,8 +638,9 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
 
 /**
  * Fusion: weighted sum of the FTS, recency, and vector legs, minus the
- * supersession penalty for rows with an incoming supersedes edge. Ranking is
- * supersession-AWARE, never supersession-FILTERED.
+ * supersession penalty for rows with an incoming supersedes/updates edge
+ * (CLOSES_PREDECESSOR, proposals-apply.ts). Ranking is supersession-AWARE,
+ * never supersession-FILTERED.
  *
  * The vector leg is purely additive and weight-gated: it contributes
  * candidates and a score ONLY when weights.vector > 0 AND a queryEmbedding is
@@ -656,6 +662,31 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
  * embedding cast `::vector` at EVERY occurrence and validated 1536-dim first
  * (throws {@link InvalidEmbeddingError}) so the DB never sees a malformed vector.
  */
+/**
+ * EXISTS predicate for the CLOSES_PREDECESSOR incoming-edge check
+ * (proposals-apply.ts): true when the row at `${prefix}id` has an incoming
+ * `supersedes` or `updates` edge, i.e. it is a superseded predecessor (either
+ * revise kind). `${prefix}user_id = e.user_id` is defense in depth (module
+ * header: TENANT ISOLATION IS TWO-LAYER) — RLS already scopes `memory_edges`
+ * to the caller inside withTenant(), and this predicate ADDITIONALLY binds the
+ * edge to the SAME tenant as the row it labels, matching the explicit
+ * caller-bound pattern every other join/subquery in this file uses (e.g. the
+ * `commitments` join's `c.user_id = m.user_id`) rather than resting on RLS
+ * alone. EXPORTED and reused verbatim by every call site that computes the
+ * `superseded` flag or the tier-penalty (searchFused's candidates CTE, the
+ * standalone legs below, {@link fetchHitsByIds}) so the two-edge-type
+ * definition and the tenant bind can never drift between them.
+ */
+export function supersededExists(prefix: '' | 'm.'): SQL {
+  const idCol = sql.raw(`${prefix}id`)
+  const userIdCol = sql.raw(`${prefix}user_id`)
+  return sql`EXISTS (
+    SELECT 1 FROM memory_edges e
+    WHERE e.to_id = ${idCol} AND e.user_id = ${userIdCol}
+      AND e.edge_type IN ('supersedes', 'updates')
+  )`
+}
+
 /**
  * Keyset continuation predicate over the fused `score` total order
  * (`score DESC, id ASC`). First page (no cursor) → `true`; a continuation page
@@ -800,10 +831,7 @@ export async function searchFused(
              -- the predecessor's validity, so both demote it here — an
              -- 'updates' revise must rank its predecessor down exactly like a
              -- 'supersedes' revise does, not escape demotion silently.
-             EXISTS (
-               SELECT 1 FROM memory_edges e
-               WHERE e.to_id = m.id AND e.edge_type IN ('supersedes', 'updates')
-             ) AS superseded
+             ${supersededExists('m.')} AS superseded
       FROM memories m
       LEFT JOIN fts_norm f ON f.id = m.id
       LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
@@ -865,10 +893,7 @@ export async function fetchHitsByIds(
   )
   const rows = await tx.execute(sql`
     SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
-           EXISTS (
-             SELECT 1 FROM memory_edges e
-             WHERE e.to_id = m.id AND e.edge_type IN ('supersedes', 'updates')
-           ) AS superseded,
+           ${supersededExists('m.')} AS superseded,
            0::float8 AS score
     FROM memories m
     LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
@@ -901,8 +926,10 @@ function mapHits(result: { rows: unknown[] }, withVectorScore = false): SearchHi
     topic: r.topic,
     content: r.content,
     score: Number(r.score),
-    // Always present (required on SearchHit): defaults false on the leg-only
-    // queries (searchFts/searchRecency/searchVector) that never select it.
+    // Always present (required on SearchHit) and always genuinely computed —
+    // every caller of mapHits selects `superseded` via supersededExists, so
+    // Boolean(...) here is a type coercion (raw driver value), never a
+    // stubbed default for a query that skipped the column.
     superseded: Boolean(r.superseded),
     ...(withVectorScore && r.vector_score !== undefined
       ? { vectorScore: Number(r.vector_score) }

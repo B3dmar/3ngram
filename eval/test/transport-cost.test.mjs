@@ -77,7 +77,15 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // per-tool ToolAnnotations (readOnlyHint/idempotentHint/openWorldHint) —
       // live on tools/list already, just never re-captured. A fresh regen picks
       // them up; the CI freshness gate (this PR) now catches this class of drift.
-      mcp: [19951, 161424, 40720],
+      // +66/+528/+129 (supersession visibility): the search tool's output
+      // schema (both full and compact hit shapes) grew a `superseded: boolean`
+      // field, plus a tool-description sentence naming it. Only MCP moves: its
+      // per-tool tools/list surface tokenizes the REAL outputSchema (a standing
+      // per-turn tax). REST's routes[].responseShape in
+      // gen-transport-surfaces.mjs is a hand-maintained compact summary string,
+      // not derived from the live Zod schema, and was not touched here — a
+      // pre-existing approximation this change does not widen.
+      mcp: [20017, 161952, 40849],
       cli: [333, 1236, 1236],
       rest: [1821, 2838, 2838],
     },
