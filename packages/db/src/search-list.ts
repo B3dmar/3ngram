@@ -114,15 +114,19 @@ export async function searchList(
   // (search.ts) explains why an unaliased FROM silently binds the EXISTS
   // subquery's unqualified id/user_id to memory_edges' OWN columns instead of
   // this row's.
-  // recorded_at is selected TWICE on purpose: the bare column drives ORDER BY
-  // (the true timestamptz value, never renamed — avoids any ambiguity between
-  // a SELECT-list alias and the FROM column in ORDER BY resolution) and the
-  // to_char(... 'US' ...) alias below carries the SAME instant out as
-  // full-precision opaque text for the cursor. `AT TIME ZONE 'UTC'` first
-  // converts the timestamptz to a zone-less wall-clock reading of the UTC
-  // instant — without it, to_char's implicit timestamptz->timestamp
-  // conversion follows the SESSION's `timezone` GUC, and a non-UTC session
-  // would silently mislabel a local time with the trailing "Z".
+  // The to_char(... 'US' ...) text below is aliased `recorded_at_iso`, NOT
+  // `recorded_at` — deliberately a DIFFERENT name from the table column, so
+  // `ORDER BY recorded_at` unambiguously resolves to the true timestamptz
+  // column (sorted as a timestamp) rather than to a SELECT-list alias holding
+  // its text representation (which would sort lexicographically instead —
+  // harmless here since fixed-width zero-padded ISO 8601 text happens to
+  // sort identically to its chronological order, but there is no reason to
+  // rely on that coincidence when a distinct alias name removes the ambiguity
+  // outright). `AT TIME ZONE 'UTC'` first converts the timestamptz to a
+  // zone-less wall-clock reading of the UTC instant — without it, to_char's
+  // implicit timestamptz->timestamp conversion follows the SESSION's
+  // `timezone` GUC, and a non-UTC session would silently mislabel a local
+  // time with the trailing "Z".
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
            to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at_iso,
