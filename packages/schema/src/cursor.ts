@@ -20,17 +20,20 @@
 // dependency-light (zod only — no @types/node). Clients treat the token as
 // opaque and never decode it.
 import { z } from 'zod'
-import { exceedsRecordedBoundPrecision } from './recorded-range.js'
+import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 
 /** Upper bound on the frozen ordering carried in the cursor (candidate-pool sized). */
 const MAX_FROZEN_ORDERING = 1000
 
-/** The `fp` fingerprint shape shared by every cursor variant (truncated sha256, hex). */
-const fingerprintField = z
-  .string()
-  .regex(/^[0-9a-f]{16}$/)
-  .optional()
+/** Postgres timestamptz's native resolution — see cursorPayloadV3Schema's `recordedAt` doc comment. */
+const MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS = 6
+
+/** The bare `fp` shape (truncated sha256, hex), before either variant decides optional/required. */
+const fingerprintShape = z.string().regex(/^[0-9a-f]{16}$/)
+
+/** v2's `fp`: OPTIONAL — a legacy token minted before the field existed carries none. */
+const fingerprintField = fingerprintShape.optional()
 
 /**
  * Decoded frozen-ordering cursor (v2): the page-1 ranked candidate ordering
@@ -76,29 +79,56 @@ export type CursorPayloadV2 = z.infer<typeof cursorPayloadV2Schema>
  * `recorded_at` never changes after insert (unlike a fused score), immune to
  * the drift a v2 keyset would need the frozen pool to guard against.
  *
- * `recordedAt` carries the SAME millisecond-precision cap as the
- * recordedAfter/recordedBefore filter bounds (recorded-range.ts): it is
- * DECODED BACK into a `Date` and bound into SQL as the keyset boundary, so an
- * over-precision value would silently truncate and could shift the boundary —
- * the same inclusive-bound leak issue #58 item 2 fixed for the filter bounds,
- * applied here defensively since the cursor is caller-tamperable (opaque
- * base64, not re-derived server-side).
+ * `recordedAt` is OPAQUE full-precision ISO 8601 text, capped at
+ * {@link MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS} (6 — Postgres's OWN
+ * microsecond resolution for `timestamptz`), NOT the 3-digit millisecond cap
+ * the recordedAfter/recordedBefore FILTER bounds use (recorded-range.ts).
+ * That 3-digit cap exists ONLY because those bounds convert through a JS
+ * `Date` (millisecond-limited) before reaching SQL — this field NEVER does:
+ * the db layer selects it via `to_char(...)` and binds it back as
+ * `::timestamptz` verbatim (packages/db/src/search-list.ts), so it carries
+ * the SAME precision Postgres itself stores. A 3-digit cap here would
+ * REJECT the one representation that round-trips correctly and FORCE
+ * millisecond truncation — which silently drops rows: `now()` is
+ * transaction-constant, so a same-transaction batch insert gives every row
+ * an IDENTICAL microsecond-precision timestamp; truncating the cursor's
+ * boundary to milliseconds while the column keeps microseconds can make
+ * `recorded_at = cursor.recordedAt` false for a whole tied group that a
+ * millisecond-precision cursor can no longer address, silently excluding it
+ * from every subsequent page. Still capped (not unbounded) because the
+ * cursor is caller-tamperable (opaque base64, not re-derived server-side)
+ * and Postgres itself never stores more than 6 digits — issue #58 item 2's
+ * inclusive-bound-leak concern, applied at the resolution that is actually
+ * real here.
  *
  * `fp` mirrors v2's binding, but is computed with `order` folded into the
  * hashed filter set (apps/server/src/mcp/tools-search.ts) — v2's fingerprint
  * computation is UNCHANGED (no `order` key), so a pre-existing v2 cursor keeps
  * verifying after this deploy; only the new chronological path adds the
  * discriminator, which is what lets a cursor minted by ONE order mode be
- * rejected (mismatch, not a crash) if replayed against the other.
+ * rejected (mismatch, not a crash) if replayed against the other. UNLIKE v2,
+ * `fp` is REQUIRED here: v3 is introduced in this same change, so no
+ * fingerprint-less v3 token has ever legitimately existed — v2's optional
+ * `fp` is a backward-compatibility carve-out for tokens minted before the
+ * field existed, which has no v3 analogue. Requiring it closes a real gap: an
+ * optional `fp` (inherited from v2's shape) would let a HAND-STRIPPED v3
+ * token bypass the fingerprint mismatch check and fall through to the
+ * shape-guard fallback in the transport (apps/server/src/mcp/tools-search.ts,
+ * apps/server/src/rest/search-router.ts) — which is a legitimate LAST resort
+ * for a genuinely legacy cursor, not a hole a well-formed v3 token should
+ * ever need.
  */
 export const cursorPayloadV3Schema = z
   .object({
     v: z.literal(3),
-    recordedAt: z.iso.datetime().refine((iso) => !exceedsRecordedBoundPrecision(iso), {
-      message: 'recordedAt precision exceeds milliseconds',
-    }),
+    recordedAt: z.iso
+      .datetime()
+      .refine(
+        (iso) => !exceedsFractionalSecondPrecision(iso, MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS),
+        { message: 'recordedAt precision exceeds microseconds' },
+      ),
     id: z.uuid(),
-    fp: fingerprintField,
+    fp: fingerprintShape,
   })
   .strict()
 export type CursorPayloadV3 = z.infer<typeof cursorPayloadV3Schema>

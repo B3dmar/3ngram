@@ -1020,7 +1020,7 @@ describe('search tool', () => {
         nextCursor:
           last === undefined
             ? undefined
-            : { recordedAt: new Date('2026-01-01T00:00:00Z'), id: last.id },
+            : { recordedAt: '2026-01-01T00:00:00.000000Z', id: last.id },
         appliedScope: null,
         ...overrides,
       }
@@ -1057,11 +1057,14 @@ describe('search tool', () => {
       expect(searchChronological).toHaveBeenCalledTimes(1)
     })
 
-    it('mints a v3 keyset cursor, decodable and distinct in shape from the v2 frozen cursor', async () => {
+    it('mints a v3 keyset cursor, decodable, distinct in shape from the v2 frozen cursor, at full microsecond precision', async () => {
+      // A non-zero microsecond remainder (.654321, not .000000) proves the
+      // cursor carries the value through VERBATIM — a `new Date()` round-trip
+      // anywhere in the path would floor this to .654 and fail the assertion.
       searchChronological.mockResolvedValue(
         listPageOf([HIT], {
           hasMore: true,
-          nextCursor: { recordedAt: new Date('2026-03-01T00:00:00Z'), id: MEMO_ID },
+          nextCursor: { recordedAt: '2026-03-01T00:00:00.654321Z', id: MEMO_ID },
         }),
       )
       const result = await call('search', { order: 'chronological', scope: 'work' }, ctx())
@@ -1070,7 +1073,7 @@ describe('search tool', () => {
       const decoded = decodeCursor(cursor) as { v: number; recordedAt?: string; id?: string }
       expect(decoded.v).toBe(3)
       expect(decoded.id).toBe(MEMO_ID)
-      expect(decoded.recordedAt).toBe('2026-03-01T00:00:00.000Z')
+      expect(decoded.recordedAt).toBe('2026-03-01T00:00:00.654321Z')
     })
 
     it('rejects a v2 (relevance) cursor replayed under chronological order as invalid input', async () => {
@@ -1092,31 +1095,35 @@ describe('search tool', () => {
       expect(searchChronological).not.toHaveBeenCalled()
     })
 
-    it('restarts at page 1 on a fingerprint-less v3 cursor replayed under relevance order (shape guard)', async () => {
-      // A v3 payload with NO fp (the legacy/fingerprint-less case every cursor
-      // shape must tolerate — decodeSearchCursor only verifies when `fp` is
-      // present) skips the fingerprint check entirely, so it is the shape
-      // guard (`decoded.v === 2`) alone that must stop this from being
-      // misread as a v2 frozen-pool state (`.ids`/`.scores` would be
-      // undefined on a v3 payload). Restarts at page 1 instead of crashing.
-      const fingerprintLessV3Cursor = encodeCursor({
-        v: 3,
-        recordedAt: '2026-01-01T00:00:00.000Z',
-        id: MEMO_ID,
-      })
-      searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+    it('rejects a hand-crafted fingerprint-less v3 cursor as invalid input (fp is required on v3)', async () => {
+      // `fp` is REQUIRED on cursorPayloadV3Schema — v3 is introduced in this
+      // same change, so no legacy fp-less v3 token has ever legitimately
+      // existed (unlike v2's optional `fp`, a backward-compatibility carve-out
+      // for tokens minted before that field existed). Bypass encodeCursor's
+      // typed CursorPayload param (which now REJECTS this shape at compile
+      // time) to simulate a hand-stripped/malicious token: it must not decode
+      // as a v3 shape at all — a fp-less v3 payload is rejected as malformed
+      // input, the same as a garbled token, never silently accepted via the
+      // shape-guard fallback.
+      const malformedV3Cursor = Buffer.from(
+        JSON.stringify({ v: 3, recordedAt: '2026-01-01T00:00:00.000000Z', id: MEMO_ID }),
+        'utf8',
+      ).toString('base64url')
       const result = await call(
         'search',
-        { query: 'sdk pin', cursor: fingerprintLessV3Cursor },
-        ctx(),
+        { order: 'chronological', scope: 'work', cursor: malformedV3Cursor },
+        ctx({ gateway: undefined }),
       )
-      expect(result.isError).toBeFalsy()
-      expect(searchDashboardPage.mock.calls[0]?.[3]).not.toHaveProperty('frozen')
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
     })
 
     it('binds the cursor fingerprint to order, so a chronological cursor is rejected under relevance order', async () => {
       searchChronological.mockResolvedValue(
-        listPageOf([HIT], { hasMore: true, nextCursor: { recordedAt: new Date(), id: MEMO_ID } }),
+        listPageOf([HIT], {
+          hasMore: true,
+          nextCursor: { recordedAt: '2026-01-01T00:00:00.000000Z', id: MEMO_ID },
+        }),
       )
       const chronoResult = await call(
         'search',

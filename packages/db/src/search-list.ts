@@ -24,9 +24,20 @@ import { type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { rowEligibility, type SearchFilters, type SearchHit, supersededExists } from './search.js'
 
-/** Position within the chronological total order (`recorded_at DESC, id DESC`). */
+/**
+ * Position within the chronological total order (`recorded_at DESC, id
+ * DESC`). `recordedAt` is OPAQUE full-precision ISO 8601 TEXT — NEVER a JS
+ * `Date`. A `Date` cannot represent Postgres's microsecond `timestamptz`
+ * resolution (JS Date is millisecond-limited): `now()` is transaction-constant,
+ * so a same-transaction batch insert gives every row an IDENTICAL
+ * microsecond-precision timestamp, and a millisecond-truncated cursor
+ * boundary can silently exclude the remainder of that tied group from every
+ * later page (see search-list.ts's buildChronologicalCursorPredicate doc and
+ * packages/schema/src/cursor.ts's cursorPayloadV3Schema doc for the full
+ * mechanism). `id` is the row's uuid tiebreak.
+ */
 export interface ChronologicalCursor {
-  recordedAt: Date
+  recordedAt: string
   id: string
 }
 
@@ -43,7 +54,11 @@ export interface ChronologicalPage {
  * id DESC`). Unlike {@link buildCursorPredicate}'s fused-score keyset,
  * `recorded_at` is DRIFT-FREE — it never changes after insert — so this
  * cursor can never repeat or skip a row even under concurrent writes; no
- * frozen candidate pool is needed the way ranked search needs one.
+ * frozen candidate pool is needed the way ranked search needs one. BUT this
+ * guarantee holds only because `cursor.recordedAt` is bound at FULL
+ * microsecond precision (opaque text, `::timestamptz` cast) — a
+ * millisecond-truncated boundary compared against a full-precision column
+ * can silently strand rows that tie with the cursor row (module comment).
  */
 function buildChronologicalCursorPredicate(cursor: ChronologicalCursor | undefined): SQL {
   if (cursor === undefined) return sql`true`
@@ -56,7 +71,13 @@ interface ListRow {
   memory_type: string
   topic: string
   content: string
-  recorded_at: string
+  /**
+   * Full microsecond-precision ISO 8601 text (`to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+   * in the query below) — NEVER the raw driver-parsed column, which the
+   * pg driver would hand back as a JS `Date` (millisecond-limited, silently
+   * dropping the microsecond remainder before this code ever sees it).
+   */
+  recorded_at_iso: string
   superseded: boolean
   score: string | number
 }
@@ -93,8 +114,18 @@ export async function searchList(
   // (search.ts) explains why an unaliased FROM silently binds the EXISTS
   // subquery's unqualified id/user_id to memory_edges' OWN columns instead of
   // this row's.
+  // recorded_at is selected TWICE on purpose: the bare column drives ORDER BY
+  // (the true timestamptz value, never renamed — avoids any ambiguity between
+  // a SELECT-list alias and the FROM column in ORDER BY resolution) and the
+  // to_char(... 'US' ...) alias below carries the SAME instant out as
+  // full-precision opaque text for the cursor. `AT TIME ZONE 'UTC'` first
+  // converts the timestamptz to a zone-less wall-clock reading of the UTC
+  // instant — without it, to_char's implicit timestamptz->timestamp
+  // conversion follows the SESSION's `timezone` GUC, and a non-UTC session
+  // would silently mislabel a local time with the trailing "Z".
   const rows = await tx.execute(sql`
-    SELECT id, memory_type, topic, content, recorded_at,
+    SELECT id, memory_type, topic, content,
+           to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at_iso,
            ${supersededExists('m')} AS superseded,
            0::float8 AS score
     FROM memories m
@@ -115,8 +146,7 @@ export async function searchList(
       score: Number(r.score),
       superseded: Boolean(r.superseded),
     })),
-    cursor:
-      last === undefined ? undefined : { recordedAt: new Date(last.recorded_at), id: last.id },
+    cursor: last === undefined ? undefined : { recordedAt: last.recorded_at_iso, id: last.id },
     hasMore,
   }
 }

@@ -175,14 +175,18 @@ async function handleRelevanceSearch(
     input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
   // Relevance (ranked) search only ever mints/consumes the v2 frozen-ordering
   // cursor — the v3 chronological keyset cursor belongs to order:
-  // 'chronological' only. In PRACTICE a v3 token minted with `fp` is already
-  // rejected as a typed mismatch by decodeSearchCursor above (its fingerprint
-  // folds in `order: 'chronological'`, which a relevance fingerprint never
-  // does, so the hashes can never coincidentally collide) — this shape guard
-  // is the fallback for a FINGERPRINT-LESS v3 token (the same
-  // verify-when-present carve-out legacy v1 cursors get): without it, `.ids`/
-  // `.scores` below would silently read as `undefined` off the wrong shape
-  // instead of restarting cleanly at page 1.
+  // 'chronological' only. A well-formed v3 token is NEVER reachable here at
+  // all: cursorPayloadV3Schema requires `fp` (packages/schema/src/cursor.ts —
+  // v3 has no legacy fp-less tokens to carve out, unlike v2), so
+  // decodeSearchCursor above has ALREADY thrown a typed mismatch for any real
+  // v3 token (its fingerprint folds in `order: 'chronological'`, which a
+  // relevance fingerprint never does, so the hashes can never coincidentally
+  // collide). This shape guard is therefore UNREACHABLE for any cursor that
+  // successfully decodes — it stays purely as defense in depth (the same
+  // two-layer posture this codebase applies elsewhere) against a malformed or
+  // hand-crafted v3-shaped payload reaching this line: without it, `.ids`/
+  // `.scores` below would read as `undefined` off the wrong shape instead of
+  // restarting cleanly at page 1.
   const decoded = decodedRaw !== undefined && decodedRaw.v === 2 ? decodedRaw : undefined
   const frozen =
     decoded === undefined
@@ -243,14 +247,19 @@ async function handleRelevanceSearch(
  *
  * The v3 keyset cursor (recordedAt, id) is DRIFT-FREE, unlike the ranked
  * path's frozen-pool cursor, so it needs no frozen candidate set — tiny by
- * comparison. Its fingerprint folds `order: 'chronological'` into the hashed
- * filter set, which the ranked path's fingerprint (byte-identical to pre-V4)
- * does NOT do — so a v2 (ranked) cursor carrying `fp`, replayed here, is
- * REJECTED as a typed CursorQueryMismatchError (invalid_input) by
- * decodeSearchCursor, never silently misread. Only a fingerprint-LESS legacy
- * token (pre-binding v2, or a hand-crafted fp-less v3) skips that check and
- * reaches the shape guard below, which restarts at page 1 rather than
- * crashing on the wrong shape.
+ * comparison. `recordedAt` is OPAQUE full-precision text, never a JS `Date`
+ * (packages/db/src/search-list.ts's ChronologicalCursor doc: a `Date` cannot
+ * represent Postgres's microsecond resolution, and truncating it can silently
+ * strand rows that tie on a same-transaction timestamp). Its fingerprint
+ * folds `order: 'chronological'` into the hashed filter set, which the ranked
+ * path's fingerprint (byte-identical to pre-V4) does NOT do — so a v2
+ * (ranked) cursor carrying `fp`, replayed here, is REJECTED as a typed
+ * CursorQueryMismatchError (invalid_input) by decodeSearchCursor, never
+ * silently misread. Only a fingerprint-LESS LEGACY v2 token (pre-binding,
+ * before `fp` existed) skips that check and reaches the shape guard below —
+ * v3 has no fp-less analogue, since `fp` is REQUIRED on cursorPayloadV3Schema
+ * (packages/schema/src/cursor.ts: v3 is introduced in this same change, so no
+ * legacy fp-less v3 token has ever legitimately existed).
  */
 async function handleChronologicalSearch(
   input: SearchQueryV4ChronologicalInput,
@@ -267,9 +276,23 @@ async function handleChronologicalSearch(
   )
   const decodedRaw =
     input.cursor === undefined ? undefined : decodeSearchCursor(input.cursor, fingerprint)
+  // UNLIKE the relevance handler's symmetric guard, this shape check IS
+  // reachable in a legitimate case: a fingerprint-LESS LEGACY v2 token
+  // (minted before `fp` existed) skips decodeSearchCursor's mismatch check
+  // entirely (verify-when-present) and reaches here with `v: 2` — `decoded`
+  // correctly resolves to undefined (restart at page 1) rather than
+  // misreading a v2 payload's `ids`/`scores` shape as `recordedAt`/`id`. A
+  // well-formed v3 token can never reach this branch already-mismatched: `fp`
+  // is required on it (packages/schema/src/cursor.ts), so any real v3 token
+  // either matches (falls through, `v: 3`) or was already rejected above.
   const decoded = decodedRaw !== undefined && decodedRaw.v === 3 ? decodedRaw : undefined
+  // recordedAt is OPAQUE full-precision text end to end — NEVER parsed
+  // through `new Date()` here, which would floor it to millisecond precision
+  // and could silently re-admit rows a same-transaction batch insert already
+  // returned (see db/search-list.ts's ChronologicalCursor doc for the full
+  // mechanism this must not reintroduce).
   const cursor =
-    decoded === undefined ? undefined : { recordedAt: new Date(decoded.recordedAt), id: decoded.id }
+    decoded === undefined ? undefined : { recordedAt: decoded.recordedAt, id: decoded.id }
 
   const page = await searchChronological(
     ctx.userId,
@@ -284,7 +307,7 @@ async function handleChronologicalSearch(
     page.hasMore && page.nextCursor !== undefined
       ? encodeCursor({
           v: 3,
-          recordedAt: page.nextCursor.recordedAt.toISOString(),
+          recordedAt: page.nextCursor.recordedAt,
           id: page.nextCursor.id,
           fp: fingerprint,
         })

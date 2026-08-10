@@ -712,4 +712,67 @@ describe('chronological list mode (searchList) — exhaustive, filter-driven enu
     const ids = page.hits.map((h) => h.id)
     expect(ids).toContain(pred)
   })
+
+  it('spans a page boundary within a same-transaction batch (shared now()) with zero skips or dups', async () => {
+    // REGRESSION for a ms-truncation bug: `now()` is TRANSACTION-CONSTANT in
+    // Postgres, so every row inserted in ONE transaction shares the EXACT
+    // same MICROSECOND-precision recorded_at. If the v3 cursor's recordedAt
+    // is ever round-tripped through a JS `Date` (millisecond-limited), a
+    // continuation's boundary check (`recorded_at = cursor.recordedAt`)
+    // silently stops matching the tied group's true (microsecond) timestamp,
+    // and the remainder of a same-transaction batch that spans a page
+    // boundary is DROPPED — never seen on any page, with no error. A fresh,
+    // isolated tenant + a small page size that forces the boundary to land
+    // INSIDE the 30-row tied batch (not at its edge) makes this deterministic
+    // rather than depending on incidental ordering, and proves the cursor is
+    // full-precision opaque text, not a Date, end to end.
+    const batchUid = await seedUser('search-batch-tie@test.local')
+    // A dedicated connection (not the module-level ownerPool.query one-shot
+    // helper) so all 30 inserts run inside ONE explicit transaction and share
+    // ONE now() — named ownerConn, not `client`, so it does not trip the
+    // no-raw-db.grit lint (banned identifiers: pool/client/pgPool/pgClient);
+    // this is the SAME owner-bypass trust level ownerPool.query already has.
+    const ownerConn = await ownerPool.connect()
+    const batchIds: string[] = []
+    try {
+      await ownerConn.query('BEGIN')
+      for (let i = 0; i < 30; i++) {
+        const r = await ownerConn.query<{ id: string }>(
+          `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+           VALUES ($1, 'note', 'batch-tie', $2, $3) RETURNING id`,
+          [batchUid, `batch-tie content ${i}`, `batch-tie-${i}`],
+        )
+        const id = r.rows[0]?.id
+        if (id === undefined) throw new Error('expected an inserted id')
+        batchIds.push(id)
+      }
+      await ownerConn.query('COMMIT')
+    } catch (err) {
+      await ownerConn.query('ROLLBACK')
+      throw err
+    } finally {
+      ownerConn.release()
+    }
+
+    const seen: string[] = []
+    let cursor: ChronologicalCursor | undefined
+    let hasMore = true
+    let guard = 0
+    while (hasMore) {
+      guard += 1
+      if (guard > 20) throw new Error('runaway pagination — infinite loop guard tripped')
+      const page = await withTenant(batchUid, (tx) => searchList(tx, batchUid, 7, {}, cursor))
+      seen.push(...page.hits.map((h) => h.id))
+      hasMore = page.hasMore
+      cursor = page.cursor
+    }
+
+    // Every row from the tied batch is seen EXACTLY once across the full
+    // walk — the old bug would drop rows past wherever a page boundary fell
+    // inside the tied group, so a shorter `seen` or a missing id is exactly
+    // the failure mode this test exists to catch.
+    expect(seen.length).toBe(batchIds.length)
+    expect(new Set(seen).size).toBe(batchIds.length)
+    expect(seen.slice().sort()).toEqual(batchIds.slice().sort())
+  })
 })

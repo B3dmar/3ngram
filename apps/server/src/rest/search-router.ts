@@ -82,12 +82,16 @@ function frozenPage(input: DashboardSearchQuery, fingerprint: string) {
   const decoded = decodeSearchCursor(input.cursor, fingerprint)
   // REST dashboard search only ever mints/consumes the v2 frozen-ordering
   // cursor — the v3 chronological keyset cursor (list mode) is MCP-only, and
-  // this route never folds `order` into `fingerprint` above, so a v3 token
-  // CARRYING `fp` is already rejected as a typed mismatch by
-  // decodeSearchCursor before this line ever runs. This shape guard is the
-  // fallback for a fingerprint-LESS v3 token: restart at page 1, the same
-  // graceful-restart behavior a legacy/garbled cursor already gets, rather
-  // than reading `.ids`/`.scores` off the wrong shape.
+  // this route never folds `order` into `fingerprint` above, so ANY v3 token
+  // is already rejected as a typed mismatch by decodeSearchCursor before this
+  // line ever runs: `fp` is REQUIRED on cursorPayloadV3Schema (v3 has no
+  // legacy fp-less analogue — it is introduced alongside this same required
+  // field, unlike v2's fp, which is optional only for tokens minted before it
+  // existed). So this shape guard is UNREACHABLE for a well-formed v3 token;
+  // it stays as defense in depth against a malformed/hand-crafted payload —
+  // restart at page 1, the same graceful-restart behavior a legacy/garbled
+  // cursor already gets, rather than reading `.ids`/`.scores` off the wrong
+  // shape.
   if (decoded === undefined || decoded.v !== 2) return undefined
   return {
     ids: decoded.ids,

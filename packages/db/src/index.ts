@@ -317,7 +317,6 @@ export {
   fetchHitsByIds,
   findSimilarPairs,
   InvalidEmbeddingError,
-  rowEligibility,
   type SearchAsOf,
   type SearchFilters,
   type SearchHit,
@@ -326,7 +325,6 @@ export {
   searchFused,
   searchRecency,
   searchVector,
-  supersededExists,
 } from './search.js'
 export {
   type ChronologicalCursor,

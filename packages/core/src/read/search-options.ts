@@ -2,7 +2,12 @@
 // Shared option contracts and resolution for core search surfaces. Keeping
 // policy application here makes search() and dashboard pagination enforce the
 // same scope semantics before either path performs metered or database work.
-import { DEFAULT_SUPERSESSION_PENALTY, type FusionWeights, type SearchFilters } from '@3ngram/db'
+import {
+  type ChronologicalCursor,
+  DEFAULT_SUPERSESSION_PENALTY,
+  type FusionWeights,
+  type SearchFilters,
+} from '@3ngram/db'
 import type { AccessGate, BudgetEnforcement } from '../budget/index.js'
 import { applyPolicyToScopeFilter, type RetrievalPolicy } from './retrieval-policy.js'
 
@@ -140,7 +145,7 @@ export function resolveDashboardPageOptions(query: string, opts: DashboardPageOp
  */
 export interface ListOptions {
   limit?: number
-  cursor?: { recordedAt: Date; id: string }
+  cursor?: ChronologicalCursor
   filters?: SearchFilters
   /** Optional read-access gate, matching search()/searchDashboardPage(). */
   access?: AccessGate | undefined

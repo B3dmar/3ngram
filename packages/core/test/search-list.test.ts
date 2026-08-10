@@ -37,7 +37,7 @@ const HIT = {
 }
 const PAGE = {
   hits: [HIT],
-  cursor: { recordedAt: new Date('2026-01-01T00:00:00Z'), id: 'm1' },
+  cursor: { recordedAt: '2026-01-01T00:00:00.000000Z', id: 'm1' },
   hasMore: false,
 }
 
@@ -66,7 +66,7 @@ describe('searchChronological — no embedding, no gateway dependency', () => {
 describe('searchChronological — passthrough to db.searchList', () => {
   it('passes limit, filters, and cursor straight to searchList', async () => {
     searchList.mockResolvedValue(PAGE)
-    const cursor = { recordedAt: new Date('2026-01-01T00:00:00Z'), id: 'prev' }
+    const cursor = { recordedAt: '2026-01-01T00:00:00.000000Z', id: 'prev' }
     const filters = { scope: 'work' }
     await searchChronological('u1', { limit: 10, filters, cursor })
     expect(searchList).toHaveBeenCalledWith(expect.anything(), 'u1', 10, filters, cursor)
@@ -163,7 +163,7 @@ describe('searchChronological — read-path content excerpting', () => {
 
 describe('searchChronological — continuation state', () => {
   it('echoes hasMore and the next keyset cursor from the db page', async () => {
-    const cursor = { recordedAt: new Date('2026-02-01T00:00:00Z'), id: 'last' }
+    const cursor = { recordedAt: '2026-02-01T00:00:00.000000Z', id: 'last' }
     searchList.mockResolvedValue({ hits: [HIT], cursor, hasMore: true })
     const page = await searchChronological('u1', {})
     expect(page.hasMore).toBe(true)

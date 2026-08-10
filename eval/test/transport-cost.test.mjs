@@ -366,15 +366,16 @@ test('generated MCP and REST contracts advertise the recorded-bound precision li
   )
   const searchTool = surfaces.mcp.tools.find((tool) => tool.name === 'search')
   // V4's inputSchema is a union (anyOf) of the relevance/chronological order
-  // variants — either branch carries recordedAfter/recordedBefore with the
-  // SAME description (see the previous test), so the first branch proves it.
-  const [firstVariant] = searchTool.inputSchema.anyOf
-  for (const field of ['recordedAfter', 'recordedBefore']) {
-    assert.match(
-      firstVariant.properties[field].description,
-      precision,
-      `MCP tools/list must advertise ${field} precision`,
-    )
+  // variants (see the previous test) — assert BOTH branches, not just one,
+  // so a future edit that only updates one variant's description is caught.
+  for (const variant of searchTool.inputSchema.anyOf) {
+    for (const field of ['recordedAfter', 'recordedBefore']) {
+      assert.match(
+        variant.properties[field].description,
+        precision,
+        `MCP tools/list must advertise ${field} precision on every order variant`,
+      )
+    }
   }
 
   const openapi = JSON.parse(

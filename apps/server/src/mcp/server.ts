@@ -32,7 +32,7 @@ const SERVER_INFO = { name: '3ngram', version: SERVER_VERSION } as const
  */
 export const SERVER_INSTRUCTIONS = `3ngram is the user's persistent memory across sessions and tools.
 
-Start a session with \`briefing\` to load what is already known. Before saying something is not known, not decided, or not recorded, \`search\` for it — this corpus outlives the conversation you can see.
+Start a session with \`briefing\` to load what is already known. Before saying something is not known, not decided, or not recorded, \`search\` for it (add order: "chronological" for an exhaustive listing instead of ranked relevance) — this corpus outlives the conversation you can see.
 
 Memory is append-only. Never rewrite or delete: use \`revise\` to supersede a memory that has become wrong, and \`resolve\` to settle a commitment or blocker. Superseding keeps the old version readable as history.
 
