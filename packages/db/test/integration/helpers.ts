@@ -56,6 +56,11 @@ export async function withTestTransaction<T>(
 
 const DOMAIN_TABLES = [
   'consolidation_proposals',
+  // TRUNCATE ... CASCADE would reach fact_proposals through its FK to memories
+  // anyway, but every other memory-domain child is named explicitly and this
+  // one is now written directly (fact-proposals.int.test.ts) — an implicit
+  // cascade is not a cleanup contract.
+  'fact_proposals',
   'memory_events',
   'commitments',
   'facts',
