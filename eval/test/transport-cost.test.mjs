@@ -85,9 +85,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // gen-transport-surfaces.mjs is a hand-maintained compact summary string,
       // not derived from the live Zod schema, and was not touched here — a
       // pre-existing approximation this change does not widen.
-      mcp: [20017, 161952, 40849],
+      // +693/+5544/+1352 mcp, +486/+486/+486 rest (structured facts on
+      // `remember`): the optional `facts` array joins the tool input schema, so
+      // it rides tools/list every MCP turn and the REST request surface once.
+      // CLI is unchanged — it shells the same commands and never carries the
+      // schema.
+      mcp: [20710, 167496, 42201],
       cli: [333, 1236, 1236],
-      rest: [1821, 2838, 2838],
+      rest: [2307, 3324, 3324],
     },
   )
 })

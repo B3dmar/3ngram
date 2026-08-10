@@ -22,6 +22,7 @@ import {
   handoffToolOutputV2Schema,
   handoffToolOutputV3Schema,
   rememberToolOutputSchema,
+  rememberToolOutputV2Schema,
   resolveToolOutputSchema,
   reviewProposalsOutputSchema,
   reviseToolOutputSchema,
@@ -473,6 +474,89 @@ describe('remember tool', () => {
   it('rejects a bad input (missing required content) without calling core', async () => {
     const result = await call('remember', { memoryType: 'decision', topic: 'x' }, ctx())
     expect(result.isError).toBe(true)
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('threads facts to core and echoes the written factIds', async () => {
+    const factIds = [crypto.randomUUID(), crypto.randomUUID()]
+    remember.mockResolvedValue({ id: MEMO_ID, factIds, embed: { settled: Promise.resolve(false) } })
+    const facts = [
+      { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' },
+      { subject: 'lift.back_squat', predicate: 'top_set.reps', value: '3' },
+    ]
+    const result = await call(
+      'remember',
+      { memoryType: 'fact', topic: 'training', content: 'squat session', facts },
+      ctx({ gateway: undefined }),
+    )
+
+    expect(result.isError).toBeFalsy()
+    // The tool registers the strict V2 schema, so `facts` survives to the
+    // handler instead of being stripped, and reaches core unchanged.
+    const coreInput = remember.mock.calls[0]?.[1] as { facts?: unknown }
+    expect(coreInput.facts).toEqual(facts)
+    const parsed = rememberToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.factIds).toEqual(factIds)
+  })
+
+  it('accepts an ISO validFrom on a fact (JSON carries no date type)', async () => {
+    remember.mockResolvedValue({
+      id: MEMO_ID,
+      factIds: [crypto.randomUUID()],
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'remember',
+      {
+        memoryType: 'fact',
+        topic: 'training',
+        content: 'squat session',
+        facts: [
+          {
+            subject: 'lift.back_squat',
+            predicate: 'top_set.weight_kg',
+            value: '98',
+            validFrom: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = remember.mock.calls[0]?.[1] as { facts: { validFrom: string }[] }
+    expect(coreInput.facts[0]?.validFrom).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('omits factIds entirely when no facts were written (V1 response unchanged)', async () => {
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      ctx({ gateway: undefined }),
+    )
+
+    const structured = result.structuredContent as Record<string, unknown>
+    expect('factIds' in structured).toBe(false)
+    // Byte-identical to the shipped surface: the V1 schema still parses it.
+    expect(rememberToolOutputSchema.parse(structured)).toEqual(structured)
+  })
+
+  it('rejects a malformed fact at the tool boundary without calling core', async () => {
+    // Empty value, a Date instead of an ISO string, an unknown key, and a
+    // validTo with no validFrom must each fail before core is reached.
+    for (const bad of [
+      { subject: 's', predicate: 'p', value: '' },
+      { subject: 's', predicate: 'p', value: 'v', validFrom: new Date() },
+      { subject: 's', predicate: 'p', value: 'v', memoryId: MEMO_ID },
+      { subject: 's', predicate: 'p', value: 'v', validTo: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      const result = await call(
+        'remember',
+        { memoryType: 'fact', topic: 't', content: 'c', facts: [bad] },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError, JSON.stringify(bad)).toBe(true)
+    }
     expect(remember).not.toHaveBeenCalled()
   })
 

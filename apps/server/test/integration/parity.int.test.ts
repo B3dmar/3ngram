@@ -196,6 +196,42 @@ describe('A4 remember parity (REST x-api-key ≡ MCP Bearer, same tenant)', () =
     expect(restBody.memory.scope).toBe('personal')
   })
 
+  it('writes structured facts and echoes factIds identically on both transports', async () => {
+    const facts = [{ subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }]
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: {
+        memoryType: 'fact',
+        topic: 'parity-facts',
+        content: `facts-rest-${crypto.randomUUID()}`,
+        facts,
+      },
+    })
+    expect(restRes.status).toBe(201)
+    const restBody = (await restRes.json()) as { factIds: string[] }
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: {
+        memoryType: 'fact',
+        topic: 'parity-facts',
+        content: `facts-mcp-${crypto.randomUUID()}`,
+        facts,
+      },
+    })
+    expect(mcpRes.isError).toBeFalsy()
+    const mcpBody = mcpRes.structuredContent as { factIds: string[] }
+    await client.close()
+
+    // Both transports accept the same `facts` shape and return the same
+    // response key carrying one id per written fact. (Ids differ — distinct rows.)
+    expect(restBody.factIds).toHaveLength(facts.length)
+    expect(mcpBody.factIds).toHaveLength(facts.length)
+    expect(Object.keys(restBody).sort()).toEqual(Object.keys(mcpBody).sort())
+  })
+
   it('surfaces the auto-created commitmentId for a commitment memory on both', async () => {
     const restRes = await rest('/api/v1/memories', {
       method: 'POST',

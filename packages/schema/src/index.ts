@@ -272,6 +272,13 @@ export {
   MAX_RECORDED_BOUND_FRACTION_DIGITS,
   recordedRangeIssues,
 } from './recorded-range.js'
+// --- remember V2: structured facts on the write surface ---
+export type {
+  RememberToolArgsV2,
+  RememberToolInputV2,
+  RememberToolOutputV2,
+} from './remember-facts.js'
+export { rememberToolInputV2Schema, rememberToolOutputV2Schema } from './remember-facts.js'
 export type { ResourceLimitKind, ResourceLimits } from './resource-limits.js'
 export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits.js'
 // --- REST /api/v1 dashboard contract — appended block ---
