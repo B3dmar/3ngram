@@ -20,6 +20,7 @@ import {
   descriptionOverlap,
   embeddingsFixtureName,
   formatToolSelection,
+  l2Norm,
   runToolSelectionSlice,
   selectionMetrics,
   sha256,
@@ -43,6 +44,13 @@ const SCENARIO_VECTORS = { s1: [1, 0], s2: [0, 1] }
 // cos(45 degrees), rounded the way the slice rounds its metrics.
 const HALF_ROOT_TWO = +Math.SQRT1_2.toFixed(4)
 
+/** The fixture's scenario shape: vector + a hash of the utterance embedded. */
+function scenarioEntries(scenarios, vectors) {
+  return Object.fromEntries(
+    scenarios.map((s) => [s.id, { utteranceSha256: sha256(s.utterance), vector: vectors[s.id] }]),
+  )
+}
+
 function fixtureFor(overrides = {}) {
   return {
     model: 'synthetic',
@@ -52,7 +60,7 @@ function fixtureFor(overrides = {}) {
         { descriptionSha256: sha256(DESCRIPTIONS[name]), vector },
       ]),
     ),
-    toolScenarios: SCENARIO_VECTORS,
+    toolScenarios: scenarioEntries(SCENARIOS, SCENARIO_VECTORS),
     surfaceScenarios: {},
     ...overrides,
   }
@@ -62,6 +70,61 @@ test('cosine is 1 for identical, 0 for orthogonal, and scale-invariant', () => {
   assert.equal(cosine([1, 0], [1, 0]), 1)
   assert.equal(cosine([1, 0], [0, 1]), 0)
   assert.equal(cosine([1, 0], [7, 0]), 1)
+})
+
+test('cosine THROWS on a zero-norm vector instead of returning NaN', () => {
+  // NaN is the dangerous answer: it survives every comparison in the ranking and
+  // reports as a metric under status: 'ok'. Both argument positions are guarded.
+  assert.throws(() => cosine([0, 0], [1, 0]), /cosine is undefined for a zero-norm vector/)
+  assert.throws(() => cosine([1, 0], [0, 0]), /cosine is undefined for a zero-norm vector/)
+  assert.throws(() => cosine([0, 0], [0, 0]), /regenerate embeddings/)
+})
+
+test('l2Norm is the shared definition both ends of the guard use', () => {
+  assert.equal(l2Norm([3, 4]), 5)
+  assert.equal(l2Norm([0, 0]), 0)
+})
+
+test('a zero-norm vector in the fixture is an integrity error, not a NaN metric', () => {
+  // Defense at the reading end: the fixture is committed and could be hand-edited
+  // after generation, so the slice must not trust the generator's guard alone.
+  const zeroTool = fixtureFor()
+  zeroTool.tools.beta.vector = [0, 0]
+  assert.throws(
+    () =>
+      computeToolSelection({
+        scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
+        fixture: zeroTool,
+        registryDescriptions: DESCRIPTIONS,
+      }),
+    /tool beta description: vector has zero norm/,
+  )
+
+  const zeroScenario = fixtureFor()
+  zeroScenario.toolScenarios.s2.vector = [0, 0]
+  assert.throws(
+    () =>
+      computeToolSelection({
+        scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
+        fixture: zeroScenario,
+        registryDescriptions: DESCRIPTIONS,
+      }),
+    /tool scenario s2: vector has zero norm/,
+  )
+})
+
+test('a non-finite element in a stored vector is an integrity error', () => {
+  const fixture = fixtureFor()
+  fixture.toolScenarios.s1.vector = [1, null]
+  assert.throws(
+    () =>
+      computeToolSelection({
+        scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
+        fixture,
+        registryDescriptions: DESCRIPTIONS,
+      }),
+    /tool scenario s1: element 1 is not a finite number/,
+  )
 })
 
 test('selection_accuracy_at_1 counts the nearest description, not the label', () => {
@@ -132,10 +195,48 @@ test('a scenario with no cached vector fails loudly instead of shrinking the met
     () =>
       computeToolSelection({
         scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
-        fixture: fixtureFor({ toolScenarios: { s1: [1, 0] } }),
+        fixture: fixtureFor({
+          toolScenarios: scenarioEntries([SCENARIOS[0]], SCENARIO_VECTORS),
+        }),
         registryDescriptions: DESCRIPTIONS,
       }),
     /tool scenarios have no cached embedding: s2/,
+  )
+})
+
+test('an EDITED utterance under a stable id fails loudly (stale cached vector)', () => {
+  // The silent one: ids are stable by design, so retuning the wording in place
+  // would otherwise keep scoring the vector of the OLD sentence indefinitely and
+  // every metric would still look healthy.
+  const edited = [SCENARIOS[0], { ...SCENARIOS[1], utterance: 'b, reworded' }]
+  assert.throws(
+    () =>
+      computeToolSelection({
+        scenarios: { toolScenarios: edited, surfaceScenarios: [] },
+        fixture: fixtureFor(),
+        registryDescriptions: DESCRIPTIONS,
+      }),
+    (err) => {
+      assert.match(err.message, /tool utterance changed since the embeddings were generated: s2/)
+      assert.match(err.message, /regenerate embeddings/)
+      return true
+    },
+  )
+})
+
+test('a surface-scenario utterance edit is caught the same way', () => {
+  const surface = [{ id: 'x1', utterance: 'original', expected_surface: 'resource:memory' }]
+  assert.throws(
+    () =>
+      computeToolSelection({
+        scenarios: {
+          toolScenarios: SCENARIOS,
+          surfaceScenarios: [{ ...surface[0], utterance: 'edited' }],
+        },
+        fixture: fixtureFor({ surfaceScenarios: scenarioEntries(surface, { x1: [1, 1] }) }),
+        registryDescriptions: DESCRIPTIONS,
+      }),
+    /surface utterance changed since the embeddings were generated: x1/,
   )
 })
 
@@ -166,10 +267,25 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   for (const s of scenarios.toolScenarios) {
     assert.ok(registered.has(s.expected_tool), `${s.id} targets unregistered ${s.expected_tool}`)
   }
-  // Coverage: every registered tool carries scenarios, so the metric can never
-  // report a healthy average while a tool is untested.
-  const covered = new Set(scenarios.toolScenarios.map((s) => s.expected_tool))
-  assert.deepEqual([...covered].sort(), [...registered].sort())
+  // Coverage: EXACTLY 5 scenarios per registered tool. Set equality alone would
+  // pass with a single surviving scenario per tool, and a per-tool accuracy over
+  // n=1 is noise reported as a metric. 5 is what this fixture promises, so 5 is
+  // what is asserted — an exact count also catches accidental duplication, which
+  // a >= floor would wave through. (The lifecycle rule for a FUTURE tool is >= 3;
+  // that is a different contract and belongs with the change that introduces it.)
+  const PER_TOOL = 5
+  const counts = new Map([...registered].map((name) => [name, 0]))
+  for (const s of scenarios.toolScenarios)
+    counts.set(s.expected_tool, counts.get(s.expected_tool) + 1)
+  const offenders = [...counts.entries()].filter(([, n]) => n !== PER_TOOL)
+  assert.deepEqual(
+    offenders,
+    [],
+    `every registered tool needs exactly ${PER_TOOL} scenarios; offenders: ${offenders
+      .map(([name, n]) => `${name}=${n}`)
+      .join(', ')}`,
+  )
+  assert.equal(scenarios.toolScenarios.length, registered.size * PER_TOOL)
   for (const s of scenarios.surfaceScenarios) {
     assert.match(s.expected_surface, /^(resource|prompt):/)
   }

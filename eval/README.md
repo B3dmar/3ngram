@@ -89,12 +89,17 @@ from this slice's observed output.
 Nearest-description-by-cosine is a deterministic **proxy** for a model's tool choice, not
 a model run — the same substitution the blocking gate makes for the product retriever.
 
-- Scenarios: `fixtures/tool-selection.json` — 5 agent utterances per registered tool
-  (55) plus a separate `surfaceScenarios` array whose correct target is not a tool.
+- Scenarios: `fixtures/tool-selection.json` — exactly 5 agent utterances per registered
+  tool (55; pinned by a unit test) plus a separate `surfaceScenarios` array whose correct
+  target is not a tool.
 - Descriptions come from the committed `fixtures/transport-surfaces.json` (the real
-  `tools/list` capture), and each embedded description is stored with a **sha256 of the
-  exact text**. A description edit, a new tool, or a retired tool makes the slice fail
-  loudly with a regenerate instruction instead of scoring a stale vector.
+  `tools/list` capture). **Every embedded text — each tool description AND each scenario
+  utterance — is stored with a sha256 of the exact string.** A description edit, an
+  utterance retuned in place (ids are stable, so this is the easy one to miss), a new
+  tool, or a retired tool makes the slice fail loudly with a regenerate instruction
+  instead of scoring a stale vector. Vectors are also rejected at both ends — generation
+  and load — if any element is non-finite or the L2 norm is zero, since cosine against a
+  zero vector is NaN and NaN would report as a metric rather than fail.
 - **Absence of the embeddings fixture is not a failure**: the gate prints
   `fixture not generated` and stays green.
 

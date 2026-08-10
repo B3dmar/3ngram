@@ -8,7 +8,9 @@
 // WHAT IT EMBEDS
 //   (a) every scenario utterance in fixtures/tool-selection.json — the tool
 //       scenarios AND the non-tool surface scenarios, keyed by scenario id (not
-//       by index, so re-ordering the fixture cannot silently re-label a vector);
+//       by index, so re-ordering the fixture cannot silently re-label a vector)
+//       and stamped with a sha256 of the utterance, because a STABLE id over
+//       EDITED text is exactly how a stale vector would go unnoticed;
 //   (b) every TOOL DESCRIPTION as the registry currently exports it, stored with
 //       a sha256 of the EXACT text embedded. That hash is the slice's tripwire:
 //       edit a description without re-running this script and the slice fails
@@ -45,12 +47,23 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { embeddingsFixtureName, loadRegistryDescriptions, sha256 } from '../src/tool-selection.mjs'
+import { parseFlag } from '../src/lib.mjs'
+import {
+  embeddingsFixtureName,
+  l2Norm,
+  loadRegistryDescriptions,
+  sha256,
+} from '../src/tool-selection.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, '../fixtures')
 const args = process.argv.slice(2)
-const model = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'openai-large-1536'
+// The SHARED parser (src/lib.mjs), so `--model=x` and `--model x` behave the same
+// here as in run.mjs. The hand-rolled indexOf this replaced accepted only the
+// space form, so `--model=bogus` silently fell back to the default and would have
+// generated a fixture under the wrong name instead of the unsupported-model error
+// — the exact class of silent misattribution issue #122 fixed for the gate.
+const model = parseFlag(args, 'model', 'openai-large-1536')
 
 const API_KEY = process.env.OPENAI_API_KEY ?? process.env.LLM_GATEWAY_API_KEY
 const BASE_URL = process.env.LLM_GATEWAY_URL || 'https://api.openai.com/v1'
@@ -61,6 +74,13 @@ const BASE_URL = process.env.LLM_GATEWAY_URL || 'https://api.openai.com/v1'
  * calling process.exit — see the main() guard at the bottom.
  */
 function assertPreconditions() {
+  // Unknown flags are REJECTED, not ignored: a misspelled `--modle=…` would
+  // otherwise generate silently under the default model.
+  const unknown = args.filter((a) => a.startsWith('--') && a.split('=')[0] !== '--model')
+  if (unknown.length) {
+    process.stderr.write(`unrecognized flag(s): ${unknown.join(' ')}\nusage: --model <name>\n`)
+    process.exit(2)
+  }
   if (!API_KEY) {
     process.stderr.write(
       'no embedding credential: set OPENAI_API_KEY (or LLM_GATEWAY_API_KEY) and re-run.\n',
@@ -105,6 +125,9 @@ async function crossCheckLiveRegistry(captured) {
  */
 const DIMS = 1536
 
+/** Mirrors the slice's own floor — the guard sits at both ends of the fixture. */
+const MIN_VECTOR_NORM = 1e-9
+
 /**
  * Rebuild ONE embedding as fresh primitives. Nothing from the response body is
  * written through: every element goes through Number() and a finiteness check,
@@ -132,6 +155,12 @@ export function toVector(embedding, position) {
       )
     }
     vector[i] = value
+  }
+  // An all-zero (or effectively-zero) vector is finite in every element and still
+  // unusable: cosine divides by its norm, so it would score NaN — and NaN
+  // propagates through comparisons without ever failing. Refuse to write one.
+  if (l2Norm(vector) < MIN_VECTOR_NORM) {
+    throw new Error(`embeddings response item ${position}: vector has zero norm`)
   }
   return vector
 }
@@ -190,10 +219,17 @@ async function embed(texts) {
   return out
 }
 
-/** Embed a scenario array and key the vectors by scenario id. */
+/**
+ * Embed a scenario array, keyed by scenario id and stamped with a sha256 of the
+ * EXACT utterance embedded. Ids are stable by design, so without the hash an
+ * utterance edited in place would keep scoring the old wording's vector forever
+ * — same tripwire the tool descriptions carry, for the same reason.
+ */
 async function embedScenarios(scenarios) {
   const vectors = await embed(scenarios.map((s) => s.utterance))
-  return Object.fromEntries(scenarios.map((s, i) => [s.id, vectors[i]]))
+  return Object.fromEntries(
+    scenarios.map((s, i) => [s.id, { utteranceSha256: sha256(s.utterance), vector: vectors[i] }]),
+  )
 }
 
 async function main() {

@@ -33,11 +33,13 @@
 // cross-checks it against the live built registry, so an embedding fixture can
 // never be generated from a stale capture.
 //
-// FAILURE IS LOUD, NOT SILENT. If a stored description hash no longer matches the
-// registry text, or a registered tool is missing from the fixture (or a fixture
-// tool is no longer registered), the computation THROWS. Run standalone it exits
-// 2; wired into run.mjs the error is printed prominently and the gate's exit code
-// is left alone (report-only).
+// FAILURE IS LOUD, NOT SILENT. The computation THROWS when the fixture no longer
+// describes what it claims: a tool description hash that no longer matches the
+// registry text, a SCENARIO UTTERANCE edited under its cached vector (ids are
+// stable, so this is the easy one to miss), a registered tool missing from the
+// fixture or a fixture tool no longer registered, or a vector that cosine cannot
+// score. Run standalone it exits 2; wired into run.mjs the error is printed
+// prominently and the gate's exit code is left alone (report-only).
 //
 // Usage: node eval/src/tool-selection.mjs [--model openai-large-1536] [--json]
 import { createHash } from 'node:crypto'
@@ -55,6 +57,22 @@ export function embeddingsFixtureName(model) {
   return `tool-selection-embeddings-${model}.json`
 }
 
+/**
+ * L2 norms below this are treated as zero. Cosine is UNDEFINED against a
+ * zero-norm vector (0/0 = NaN), and NaN does not fail — it propagates through
+ * the comparisons silently and reports as a metric. The fixture is committed and
+ * could in principle be hand-edited, so the guard lives at BOTH ends: the
+ * generator refuses to write such a vector, and this module refuses to score one.
+ */
+const MIN_VECTOR_NORM = 1e-9
+
+/** Euclidean norm — exported so both ends of the guard share one definition. */
+export function l2Norm(vector) {
+  let sum = 0
+  for (let i = 0; i < vector.length; i++) sum += vector[i] * vector[i]
+  return Math.sqrt(sum)
+}
+
 export function cosine(a, b) {
   let dot = 0
   let na = 0
@@ -64,12 +82,36 @@ export function cosine(a, b) {
     na += a[i] * a[i]
     nb += b[i] * b[i]
   }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb))
+  const denominator = Math.sqrt(na) * Math.sqrt(nb)
+  // `!(x > 0)` on purpose: catches 0 AND NaN. Returning NaN here would turn a
+  // corrupt vector into a plausible-looking score instead of a loud failure.
+  if (!(denominator > 0)) {
+    throw new Error(`cosine is undefined for a zero-norm vector. ${REGENERATE_HINT}`)
+  }
+  return dot / denominator
 }
 
-/** sha256 of the EXACT description text that was embedded — the drift tripwire. */
+/** sha256 of the EXACT text that was embedded — the drift tripwire. */
 export function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+/**
+ * A stored vector is usable iff every element is a finite number and its norm is
+ * not effectively zero. Checked at LOAD, so a corrupt fixture is named here
+ * rather than surfacing as a NaN metric under `status: 'ok'`.
+ */
+function assertUsableVector(vector, label) {
+  if (!Array.isArray(vector) || vector.length === 0) {
+    throw new Error(`${label}: expected a non-empty vector. ${REGENERATE_HINT}`)
+  }
+  const bad = vector.findIndex((v) => typeof v !== 'number' || !Number.isFinite(v))
+  if (bad !== -1) {
+    throw new Error(`${label}: element ${bad} is not a finite number. ${REGENERATE_HINT}`)
+  }
+  if (l2Norm(vector) < MIN_VECTOR_NORM) {
+    throw new Error(`${label}: vector has zero norm, cosine would be undefined. ${REGENERATE_HINT}`)
+  }
 }
 
 const round = (n) => +n.toFixed(4)
@@ -221,34 +263,60 @@ export function loadRegistryDescriptions(fixturesDir) {
   return Object.fromEntries(surfaces.mcp.tools.map((tool) => [tool.name, tool.description]))
 }
 
-/** Every scenario must carry a cached vector, or the metric would quietly shrink. */
-function assertScenarioVectors(scenarios, vectors, label) {
-  const missing = scenarios.filter((s) => !Array.isArray(vectors[s.id])).map((s) => s.id)
+/**
+ * Resolve every scenario to its cached vector, validating the whole contract on
+ * the way: a vector exists, its stored utteranceSha256 still matches the CURRENT
+ * utterance text, and the vector is usable.
+ *
+ * The hash is the load-bearing part. Scenario ids are stable by design, so
+ * editing an utterance in place — the most natural way to tune this fixture —
+ * would otherwise keep scoring the vector of the OLD wording indefinitely, and
+ * every metric would look fine. Same tripwire the tool descriptions carry.
+ */
+function resolveScenarioVectors(scenarios, entries, label) {
+  const missing = scenarios.filter((s) => !Array.isArray(entries[s.id]?.vector)).map((s) => s.id)
   if (missing.length) {
     throw new Error(
       `${label} scenarios have no cached embedding: ${missing.join(', ')}. ${REGENERATE_HINT}`,
     )
   }
+  const drifted = scenarios
+    .filter((s) => entries[s.id].utteranceSha256 !== sha256(s.utterance))
+    .map((s) => s.id)
+  if (drifted.length) {
+    throw new Error(
+      `${label} utterance changed since the embeddings were generated: ${drifted.join(', ')}. ${REGENERATE_HINT}`,
+    )
+  }
+  for (const s of scenarios) assertUsableVector(entries[s.id].vector, `${label} scenario ${s.id}`)
+  return Object.fromEntries(scenarios.map((s) => [s.id, entries[s.id].vector]))
 }
 
 /** The whole report, computed from already-loaded data (pure — the test seam). */
 export function computeToolSelection({ scenarios, fixture, registryDescriptions }) {
   assertFixtureMatchesRegistry(fixture, registryDescriptions)
-  assertScenarioVectors(scenarios.toolScenarios, fixture.toolScenarios, 'tool')
-  assertScenarioVectors(scenarios.surfaceScenarios, fixture.surfaceScenarios, 'surface')
+  const toolUtterances = resolveScenarioVectors(
+    scenarios.toolScenarios,
+    fixture.toolScenarios,
+    'tool',
+  )
+  const surfaceUtterances = resolveScenarioVectors(
+    scenarios.surfaceScenarios,
+    fixture.surfaceScenarios,
+    'surface',
+  )
   const toolVectors = Object.fromEntries(
-    Object.entries(fixture.tools).map(([name, entry]) => [name, entry.vector]),
+    Object.entries(fixture.tools).map(([name, entry]) => {
+      assertUsableVector(entry.vector, `tool ${name} description`)
+      return [name, entry.vector]
+    }),
   )
   return {
     model: fixture.model,
     tools: Object.keys(toolVectors).length,
-    ...selectionMetrics(scenarios.toolScenarios, fixture.toolScenarios, toolVectors),
+    ...selectionMetrics(scenarios.toolScenarios, toolUtterances, toolVectors),
     ...descriptionOverlap(toolVectors),
-    surface_slice: surfaceAttraction(
-      scenarios.surfaceScenarios,
-      fixture.surfaceScenarios,
-      toolVectors,
-    ),
+    surface_slice: surfaceAttraction(scenarios.surfaceScenarios, surfaceUtterances, toolVectors),
   }
 }
 

@@ -44,6 +44,13 @@ test('non-numeric elements are rejected even when they would coerce', () => {
   }
 })
 
+test('an all-zero vector of the right length is rejected at generation', () => {
+  // Every element is finite and the length is exactly DIMS, so the finiteness and
+  // shape checks both pass — the norm floor is the only thing standing between a
+  // zero vector and a committed fixture whose cosines are all NaN.
+  assert.throws(() => toVector(vector(0), 4), /item 4: vector has zero norm/)
+})
+
 test('a wrong-length or non-array embedding is rejected', () => {
   assert.throws(() => toVector(Array(1024).fill(0.1), 0), /expected 1536 numbers, got length 1024/)
   assert.throws(() => toVector(undefined, 2), /expected 1536 numbers, got undefined/)
