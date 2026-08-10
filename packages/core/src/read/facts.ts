@@ -5,14 +5,16 @@
 // read JTBD. It owns the DEFAULT limit and delegates the SQL to packages/db
 // (facts-read.ts) inside a withTenant transaction (hard rule 3). Transports
 // (REST/MCP) validate inputs via the single Zod boundary in packages/schema
-// (factsQueryInputSchema) before calling core (hard rule 2).
+// (factsQueryInputV2Schema, which composes the shipped factsQueryInputSchema
+// with the range axis — packages/schema/src/facts-range.ts) before calling
+// core (hard rule 2).
 //
 // RETRIEVAL-SCOPE POLICY DECISION (issue #47): getFacts is deliberately NOT
 // policy-enforced. The facts surface has NO scope axis — FactsQuery is
-// subject/predicate/asOf/limit and the facts table carries no scope column —
-// so a `default` scope has nothing to apply and `require` would brick the
-// tool with no compliant call shape. If facts ever grow a scope axis, they
-// adopt the shared helpers in ./retrieval-policy.ts with it.
+// subject/predicate/asOf/range/limit and the facts table carries no scope
+// column — so a `default` scope has nothing to apply and `require` would
+// brick the tool with no compliant call shape. If facts ever grow a scope
+// axis, they adopt the shared helpers in ./retrieval-policy.ts with it.
 //
 // Observability (hard rule 6): subject/predicate/value are content-adjacent and
 // are NEVER logged. This module logs nothing; callers honour the same rule.
@@ -32,10 +34,11 @@ const DEFAULT_FACTS_LIMIT = 50
 /**
  * Read facts for `userId`, bi-temporally.
  *
- * DEFAULT (no asOf): the CURRENT live fact per matching (subject, predicate);
- * list mode (no filters) is ordered by recency and BOUNDED to `query.limit`
- * (default 50) so it never returns the whole table. Mirrors the old system's
- * get_facts surface: current fact for a (subject, predicate), or a recency list.
+ * DEFAULT (no asOf, no range): the CURRENT live fact per matching (subject,
+ * predicate); list mode (no filters) is ordered by recency and BOUNDED to
+ * `query.limit` (default 50) so it never returns the whole table. Mirrors the
+ * old system's get_facts surface: current fact for a (subject, predicate), or
+ * a recency list.
  *
  * TIME-TRAVEL (asOf): travel along VALID TIME (validAt — what was TRUE at an
  * instant), TRANSACTION TIME (asKnownAt — what we KNEW at an instant), or BOTH
@@ -46,14 +49,24 @@ const DEFAULT_FACTS_LIMIT = 50
  * still appears closed; pair asKnownAt WITH validAt for the most faithful
  * as-known-at reads.
  *
+ * RANGE (a chronological time-series read): a half-open valid-time window
+ * `{from?, to?}` REPLACES the live-only default and returns every generation
+ * whose validity overlaps the window, including ones superseded inside it,
+ * ordered chronologically instead of by recency. Mutually exclusive with
+ * asOf — see packages/db facts-read.ts (validityOverlapPredicate, getFacts)
+ * for the predicate and ordering, and packages/schema/src/facts-range.ts for
+ * the boundary enforcement (empty range / inverted range / sub-ms precision
+ * all rejected before this function ever sees them).
+ *
  * Empty result is an empty array, never a throw. Runs inside withTenant(): RLS
  * enforces tenant isolation on every path.
  *
  * Input validation is the transport's responsibility (packages/schema
- * factsQueryInputSchema parsed by REST/MCP before calling core — hard rule 2).
+ * factsQueryInputV2Schema parsed by REST/MCP before calling core — hard rule 2).
  *
  * @param userId  Tenant whose RLS context the read runs under.
- * @param query   Optional subject/predicate filters and as_of coordinates.
+ * @param query   Optional subject/predicate filters, as_of coordinates, or a
+ *                range window (as_of and range are mutually exclusive).
  */
 export async function getFacts(userId: string, query: FactsQuery = {}): Promise<FactRow[]> {
   // Always bound the read — list mode (no filters) must never return the whole

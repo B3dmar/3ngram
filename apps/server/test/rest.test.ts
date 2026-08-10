@@ -878,6 +878,7 @@ describe('GET /api/v1/facts', () => {
         confidence: 0.8,
         validFrom: new Date('2026-01-01T00:00:00Z'),
         validTo: null,
+        recordedAt: new Date('2026-01-01T00:00:00Z'),
       },
     ])
     const res = await call('/api/v1/facts?subject=seb&limit=10', { key: VALID_KEY })
@@ -949,6 +950,66 @@ describe('GET /api/v1/facts', () => {
 
   it('400s a malformed asOf coordinate (z.iso.datetime boundary, never a silent drop)', async () => {
     const res = await call('/api/v1/facts?validAt=not-a-date', { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  // get_facts range read (from/to flat query keys reshaped into {range:{from?,to?}}
+  // before the SAME factsQueryInputV2Schema parse — mirrors the asOf reshape
+  // above).
+  it('forwards from/to as a range window (Date) to core', async () => {
+    getFacts.mockResolvedValue([])
+    const res = await call(
+      '/api/v1/facts?subject=seb&from=2020-01-01T00:00:00.000Z&to=2022-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    expect(getFacts).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({
+        subject: 'seb',
+        range: {
+          from: new Date('2020-01-01T00:00:00.000Z'),
+          to: new Date('2022-01-01T00:00:00.000Z'),
+        },
+      }),
+    )
+  })
+
+  it('accepts an open-ended range (from-only or to-only)', async () => {
+    getFacts.mockResolvedValue([])
+    const fromOnly = await call('/api/v1/facts?from=2020-01-01T00:00:00.000Z', {
+      key: VALID_KEY,
+    })
+    expect(fromOnly.status).toBe(200)
+    expect(getFacts).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ range: { from: new Date('2020-01-01T00:00:00.000Z') } }),
+    )
+  })
+
+  it('omits range entirely (current-facts default) when neither from nor to is given', async () => {
+    getFacts.mockResolvedValue([])
+    const res = await call('/api/v1/facts?subject=seb', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const [, opts] = getFacts.mock.calls[0] as [string, Record<string, unknown>]
+    expect(opts).not.toHaveProperty('range')
+  })
+
+  it('400s range together with asOf (mutually exclusive time-travel modes)', async () => {
+    const res = await call(
+      '/api/v1/facts?from=2020-01-01T00:00:00.000Z&validAt=2021-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(400)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('400s an inverted range (from later than to) — issue #58 precedent: reject, not clamp', async () => {
+    const res = await call(
+      '/api/v1/facts?from=2022-01-01T00:00:00.000Z&to=2020-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
     expect(res.status).toBe(400)
     expect(getFacts).not.toHaveBeenCalled()
   })

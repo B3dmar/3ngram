@@ -16,7 +16,7 @@ The MCP surface is designed from **jobs to be done** and capped at **11 tools** 
 | "Correct the record" (supersede, extend, resolve, archive) | `revise`, `resolve` |
 | "Start my session oriented" | `briefing` |
 | "Carry context to another tool/agent" | `handoff` |
-| "What is currently true about X" | `get_facts` |
+| "What is currently true about X" (or a chronological time-series over when it changed) | `get_facts` |
 | "Organize my memory space" | `configure_scope` |
 | "Review what was proposed for me" (consolidation edges and extracted facts) | `review_proposals` |
 | "Know what this server can do / how I'm set up" | `describe_environment` |
@@ -33,7 +33,7 @@ Every tool also declares [annotations](https://modelcontextprotocol.io/specifica
 4. **`resolve`** / unresolve (flag) — commitment/blocker FSM transitions.
 5. **`briefing`** — structured: commitments, blockers, overdue, stale, recent decisions, preferences. Requires explicit selector (scope/project/all) — carry forward the no-firehose rule. `brief` mode default.
 6. **`handoff`** — export structured context for another provider/agent.
-7. **`get_facts`** — currently-valid facts for a subject (bi-temporal aware).
+7. **`get_facts`** — currently-valid facts for a subject (bi-temporal aware), or a chronological time-series read across a valid-time window (`range: {from?, to?}`) — surfaces superseded generations inside the window, ordered oldest-first. `range` and the point-in-time `as_of` coordinate are mutually exclusive. No dedicated `get_series`-style tool: the range axis on `get_facts` covers that job without spending a tool slot.
 8. **`configure_scope`** — scope CRUD + aliases + mappings.
 9. **`review_proposals`** — list/accept/reject proposals (the human-in-the-loop side of background work). Two kinds share the flow: consolidation proposals, where accepting materializes the proposed edge, and **extracted-fact proposals**, where accepting writes the structured fact so `get_facts` can read it. Nothing extracted becomes queryable truth without review. The input is unchanged — accept/reject take the proposal id, and ids are disjoint across the two tables, so the id alone identifies the kind. The list response only grows a `factProposals` key when there are some, and accept/reject answer with their own `applied_fact`/`rejected_fact` variants, so a client written against the edge-only surface keeps seeing exactly what it saw.
 10. **`describe_environment`** — capabilities, config, scopes, stats.

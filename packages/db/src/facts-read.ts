@@ -34,7 +34,7 @@
 //
 // Content discipline (hard rule 6): subject/predicate/value are content-
 // adjacent and are NEVER logged here; callers log lengths/ids only.
-import { and, asc, desc, eq, gt, isNull, lte, or, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNull, lt, lte, or, type SQL } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { facts } from './schema/memory.js'
 
@@ -79,16 +79,34 @@ export interface AsOf {
 }
 
 /**
+ * A half-open VALID-TIME window `[from, to)` for a time-series read.
+ * Both bounds are individually optional (an open start or open end), but the
+ * caller must supply at least one — enforced at the schema boundary
+ * (packages/schema), not here; this type trusts its input. See {@link
+ * validityOverlapPredicate} for the overlap semantics.
+ */
+export interface FactsRange {
+  from?: Date
+  to?: Date
+}
+
+/**
  * Filters for {@link getFacts}. subject/predicate narrow the key space, both
  * optional; with neither, the call lists facts across all keys. `limit` BOUNDS
  * the row count — list mode would otherwise return every current fact, so the
  * caller (packages/core) always supplies a bounded default (no-firehose). Omitted
  * here means no LIMIT clause, but core never omits it.
+ *
+ * `range` and `asOf` are mutually exclusive time-travel modes (enforced at the
+ * schema boundary, hard rule 2 — not re-checked here). Supplying `range` puts
+ * {@link getFacts} into RANGE MODE: see the function doc for how that changes
+ * both the validity predicate and the ordering.
  */
 export interface FactsQuery {
   subject?: string
   predicate?: string
   asOf?: AsOf
+  range?: FactsRange
   limit?: number
 }
 
@@ -115,6 +133,44 @@ export function validTimePredicate(validAt?: Date): SQL {
 }
 
 /**
+ * VALID-TIME OVERLAP predicate for range mode (time-series reads): every
+ * fact whose validity window `[valid_from, valid_to)` OVERLAPS the query
+ * window `[range.from, range.to)`. Both windows are half-open, so this is the
+ * standard half-open interval overlap test — `a1 < b2 AND a2 < b1` — with an
+ * omitted bound treated as an infinity on that side:
+ *
+ *   valid_from < range.to   (skip when range.to is omitted — no upper bound)
+ *   AND
+ *   (valid_to IS NULL OR valid_to > range.from)  (skip when range.from is
+ *     omitted — no lower bound; valid_to IS NULL means "still open", which
+ *     always overlaps a bounded-below-only-in-the-past window)
+ *
+ * UNLIKE {@link validTimePredicate}, this REPLACES the live-only default: a
+ * fact superseded inside the window is still IN the window (it was true for
+ * part of it), so range mode intentionally surfaces superseded generations —
+ * that is the point of a time-series read (see {@link getFacts}).
+ *
+ * Returns `undefined` when NEITHER bound is set — an EMPTY range has no
+ * overlap condition to emit, and the caller must not let that silently
+ * collapse the WHERE clause to `user_id` only (every generation of every
+ * fact). {@link getFacts} treats `undefined` here as a hard error: the schema
+ * boundary (factsRangeSchema) already rejects an empty `range: {}` object, so
+ * this function trusts its typed input and only sees `undefined` if a direct
+ * db-layer caller bypasses that boundary — a bug to surface loudly, not
+ * paper over with a silent "match everything" fallback.
+ *
+ * Exported for unit testing the window logic in isolation.
+ */
+export function validityOverlapPredicate(range: FactsRange): SQL | undefined {
+  const conditions: SQL[] = []
+  if (range.to !== undefined) conditions.push(lt(facts.validFrom, range.to))
+  if (range.from !== undefined) {
+    conditions.push(or(isNull(facts.validTo), gt(facts.validTo, range.from)) as SQL)
+  }
+  return and(...conditions)
+}
+
+/**
  * TRANSACTION-TIME predicate. With no `asKnownAt`, imposes no constraint (all
  * recorded rows are visible). With an `asKnownAt`, restricts to rows we had
  * already recorded by that instant (recorded_at <= asKnownAt) — what we KNEW
@@ -129,12 +185,32 @@ export function transactionTimePredicate(asKnownAt?: Date): SQL | undefined {
 }
 
 /**
+ * Range-mode validity condition, or a thrown error for an empty range. The
+ * schema boundary (factsRangeSchema) already rejects `range: {}` before a
+ * transport ever calls {@link getFacts}, so this is a fail-closed guard
+ * against a direct db-layer caller bypassing that boundary — never a path
+ * production traffic can reach. Throwing (rather than silently falling back
+ * to {@link validTimePredicate}'s live-only default) keeps a misuse bug
+ * loud: falling back would make an empty range quietly MEAN something
+ * (the current-row default) instead of being the caller error it is.
+ */
+function requireRangeCondition(range: FactsRange): SQL {
+  const condition = validityOverlapPredicate(range)
+  if (condition === undefined) {
+    throw new Error(
+      'getFacts: range mode requires from or to (empty range should have been rejected at the schema boundary)',
+    )
+  }
+  return condition
+}
+
+/**
  * Read facts for the current tenant, bi-temporally.
  *
- * DEFAULT (no asOf): returns the CURRENT ROW per matching (subject, predicate)
- * — the live fact, valid_to IS NULL. In list mode (no subject/predicate filter)
- * results are ordered by recency (recorded_at DESC), matching search.ts's
- * recency leg — orchestrator decision, slice 2.
+ * DEFAULT (no asOf, no range): returns the CURRENT ROW per matching (subject,
+ * predicate) — the live fact, valid_to IS NULL. In list mode (no
+ * subject/predicate filter) results are ordered by recency (recorded_at
+ * DESC), matching search.ts's recency leg — orchestrator decision, slice 2.
  *
  * TIME-TRAVEL (asOf set): travels along either temporal axis or both —
  *   - validAt only:   what was TRUE at that instant (valid-time)
@@ -143,32 +219,50 @@ export function transactionTimePredicate(asKnownAt?: Date): SQL | undefined {
  *                     case — e.g. a late-recorded correction is invisible until
  *                     asKnownAt reaches its recorded_at)
  *
+ * RANGE MODE (range set, a time-series read): the unconditional live-only
+ * predicate is REPLACED (not appended) by {@link validityOverlapPredicate} —
+ * every fact whose valid-time window overlaps `[range.from, range.to)`,
+ * INCLUDING generations superseded inside the window (a time-series read
+ * wants the history, not just the current row). Ordering also flips from the
+ * recency axis to the valid-time axis: `ORDER BY valid_from ASC, id ASC`, so a
+ * range read comes back chronological rather than most-recent-first. `range`
+ * and `asOf` are mutually exclusive (schema-enforced, not re-checked here —
+ * hard rule 2); a caller supplying both would get range mode's predicate,
+ * since it takes precedence in the branch below.
+ *
  * Empty result is empty, never a throw. Runs inside withTenant(): RLS plus the
  * caller-bound `facts.user_id = userId` predicate enforce tenant isolation on
  * every path (module header).
  *
- * Primitive inputs (subject/predicate strings, asOf Dates) are validated at
- * this boundary by the caller in packages/core: there is NO facts-query Zod
- * input in packages/schema yet, and hard rule 2 forbids adding new schemas to
- * core, so core validates primitives inline and documents the gap. This helper
- * trusts its typed arguments.
+ * Primitive inputs (subject/predicate strings, asOf/range Dates) are validated
+ * at this boundary by the caller (packages/schema factsQueryInputV2Schema,
+ * bridged through packages/core); this helper trusts its typed arguments.
  *
  * @param tx      Tenant-scoped transaction from withTenant().
  * @param userId  The authenticated tenant (the withTenant userId) — bound as an
  *                explicit predicate alongside RLS.
- * @param query   Optional subject/predicate filters and as_of coordinates.
+ * @param query   Optional subject/predicate filters, as_of coordinates, or a
+ *                range window (as_of and range are mutually exclusive).
  */
 export async function getFacts(
   tx: TenantTx,
   userId: string,
   query: FactsQuery = {},
 ): Promise<FactRow[]> {
-  const conditions: SQL[] = [eq(facts.userId, userId), validTimePredicate(query.asOf?.validAt)]
+  const rangeMode = query.range !== undefined
+  const validityCondition = rangeMode
+    ? requireRangeCondition(query.range as FactsRange)
+    : validTimePredicate(query.asOf?.validAt)
+  const conditions: SQL[] = [eq(facts.userId, userId), validityCondition]
 
   const txTime = transactionTimePredicate(query.asOf?.asKnownAt)
   if (txTime !== undefined) conditions.push(txTime)
   if (query.subject !== undefined) conditions.push(eq(facts.subject, query.subject))
   if (query.predicate !== undefined) conditions.push(eq(facts.predicate, query.predicate))
+
+  const orderExprs = rangeMode
+    ? [asc(facts.validFrom), asc(facts.id)]
+    : [desc(facts.recordedAt), asc(facts.id)]
 
   const ordered = tx
     .select({
@@ -184,12 +278,13 @@ export async function getFacts(
     })
     .from(facts)
     .where(and(...conditions))
-    // List-mode recency axis: recorded_at DESC (consistent with search.ts), id
+    // Default recency axis: recorded_at DESC (consistent with search.ts), id
     // as a stable tiebreaker so equal-recency rows order deterministically.
-    .orderBy(desc(facts.recordedAt), asc(facts.id))
+    // Range mode flips to the valid-time axis (chronological) — see orderExprs.
+    .orderBy(...orderExprs)
 
   // Bound the window when the caller supplies a limit (core always does, so list
   // mode never returns the whole table — no-firehose). Applied AFTER ordering so
-  // it is the N most-recent rows.
+  // it is the N most-recent rows (default mode) or N earliest rows (range mode).
   return query.limit === undefined ? ordered : ordered.limit(query.limit)
 }

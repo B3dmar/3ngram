@@ -1190,6 +1190,69 @@ describe('get_facts tool', () => {
     expect(getFacts).toHaveBeenCalledOnce() // the over-cap call never reached core
   })
 
+  // get_facts range read: a chronological time-series read over a valid-time window.
+  it('forwards a range window to core and returns recordedAt on every fact', async () => {
+    getFacts.mockResolvedValue([
+      {
+        id: MEMO_ID,
+        memoryId: MEMO_ID,
+        subject: 'sdk',
+        predicate: 'version',
+        value: '1.28.0',
+        confidence: null,
+        validFrom: new Date('2025-01-01T00:00:00.000Z'),
+        validTo: new Date('2026-01-01T00:00:00.000Z'),
+        recordedAt: new Date('2025-01-01T00:00:00.000Z'),
+      },
+    ])
+    const result = await call(
+      'get_facts',
+      { range: { from: '2025-01-01T00:00:00.000Z', to: '2026-06-01T00:00:00.000Z' } },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getFacts).toHaveBeenCalledWith(
+      UID,
+      expect.objectContaining({
+        range: {
+          from: new Date('2025-01-01T00:00:00.000Z'),
+          to: new Date('2026-06-01T00:00:00.000Z'),
+        },
+      }),
+    )
+    const parsed = factsToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.facts[0]?.recordedAt).toBe('2025-01-01T00:00:00.000Z')
+  })
+
+  it('rejects an empty range object without calling core (mirrors asOf)', async () => {
+    const result = await call('get_facts', { range: {} }, ctx())
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('rejects range together with asOf (mutually exclusive time-travel modes)', async () => {
+    const result = await call(
+      'get_facts',
+      {
+        range: { from: '2025-01-01T00:00:00.000Z' },
+        asOf: { validAt: '2025-06-01T00:00:00.000Z' },
+      },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('rejects an inverted range (from later than to) — issue #58 precedent: reject, not clamp', async () => {
+    const result = await call(
+      'get_facts',
+      { range: { from: '2026-01-01T00:00:00.000Z', to: '2025-01-01T00:00:00.000Z' } },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
   // ACCESS GATE ENFORCEMENT: get_facts is a READ, so the handler asserts
   // ctx.access.assertRead BEFORE the core op. A denying gate must reject (isError
   // access_denied) AND getFacts must NEVER be reached. The other get_facts tests

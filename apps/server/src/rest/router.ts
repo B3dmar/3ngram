@@ -50,7 +50,7 @@ import type { Gateway } from '@3ngram/llm'
 import {
   accountDeleteBodySchema,
   briefingToolInputV3Schema,
-  factsQueryInputSchema,
+  factsQueryInputV2Schema,
   memoriesListQuerySchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
@@ -63,7 +63,7 @@ import { z } from 'zod'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 import { SERVER_VERSION } from '../version.js'
-import { defined, guard, tenant, toAsOf } from './route-helpers.js'
+import { defined, guard, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
@@ -414,26 +414,33 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // GET /api/v1/facts — get_facts (mirrors the MCP get_facts tool). Filters arrive
-  // as query params; factsQueryInputSchema is the boundary. The MCP tool takes the
-  // bi-temporal `asOf` coordinate in the body; over a GET querystring we accept it
-  // as TWO FLAT keys — `validAt` and `asKnownAt` (ISO-8601 datetime strings) — and
-  // reshape them into the nested `{asOf:{validAt?,asKnownAt?}}` object BEFORE the
-  // single parse. The SAME factsQueryInputSchema validates it, so asOfSchema's
-  // refine still rejects a bare `?asOf` with neither coordinate as a 400 (no silent
-  // drop). `asOf` is omitted entirely when neither key is present (current-facts
-  // default). ISO strings are coerced to Date at the core boundary via toAsOf,
-  // exactly as the MCP get_facts handler bridges (apps/server/src/mcp/tools.ts).
+  // as query params; factsQueryInputV2Schema is the boundary. The MCP tool takes
+  // the bi-temporal `asOf` coordinate and the range-read `range` window in the body;
+  // over a GET querystring we accept BOTH as flat keys — `validAt`/`asKnownAt`
+  // for asOf, `from`/`to` for range — and reshape them into their nested objects
+  // BEFORE the single parse. The SAME factsQueryInputV2Schema validates it, so
+  // asOfSchema's/factsRangeSchema's empty-object refines and the range/asOf
+  // mutual-exclusion + inverted-range superRefine still reject as a 400 (no
+  // silent drop). Each of `asOf`/`range` is omitted entirely when neither of its
+  // keys is present (current-facts default). ISO strings are coerced to Date at
+  // the core boundary via toAsOf/toRange, exactly as the MCP get_facts handler
+  // bridges (apps/server/src/mcp/tools.ts).
   router.get('/api/v1/facts', (req, res) => {
     void guard('facts', res, async () => {
       const asOf =
         req.query.validAt === undefined && req.query.asKnownAt === undefined
           ? undefined
           : defined({ validAt: req.query.validAt, asKnownAt: req.query.asKnownAt })
-      const input = factsQueryInputSchema.parse(
+      const range =
+        req.query.from === undefined && req.query.to === undefined
+          ? undefined
+          : defined({ from: req.query.from, to: req.query.to })
+      const input = factsQueryInputV2Schema.parse(
         defined({
           subject: req.query.subject,
           predicate: req.query.predicate,
           asOf,
+          range,
           limit: req.query.limit === undefined ? undefined : Number(req.query.limit),
         }),
       )
@@ -446,6 +453,7 @@ export function restRouter(options: RestRouterOptions): Router {
           subject: input.subject,
           predicate: input.predicate,
           asOf: toAsOf(input.asOf),
+          range: toRange(input.range),
           limit: input.limit,
         }),
       )
@@ -458,6 +466,7 @@ export function restRouter(options: RestRouterOptions): Router {
           confidence: fact.confidence,
           validFrom: fact.validFrom.toISOString(),
           validTo: fact.validTo?.toISOString() ?? null,
+          recordedAt: fact.recordedAt.toISOString(),
         })),
         count: facts.length,
       })

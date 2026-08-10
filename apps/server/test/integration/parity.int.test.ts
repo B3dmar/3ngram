@@ -432,19 +432,35 @@ describe('A4 get_facts parity (projection + bi-temporal as_of)', () => {
     }
     const mcpLive = (
       await client.callTool({ name: 'get_facts', arguments: { subject, predicate: 'role' } })
-    ).structuredContent as { facts: Array<{ value: string }> }
+    ).structuredContent as {
+      facts: Array<{
+        id: string
+        subject: string
+        predicate: string
+        value: string
+        confidence: number
+        validFrom: string
+        validTo: string | null
+        recordedAt: string
+      }>
+    }
     expect(restLive.facts.map((f) => f.value)).toEqual(['manager'])
     expect(mcpLive.facts.map((f) => f.value)).toEqual(['manager'])
-    // Identical projection field set on the live row.
-    expect(Object.keys(restLive.facts[0] ?? {}).sort()).toEqual([
+    // Identical projection field set on the live row, on BOTH transports.
+    // recordedAt (output-only strict widening for time-series consumers)
+    // rides both — see factSchema, packages/schema/src/mcp.ts.
+    const expectedKeys = [
       'confidence',
       'id',
       'predicate',
+      'recordedAt',
       'subject',
       'validFrom',
       'validTo',
       'value',
-    ])
+    ]
+    expect(Object.keys(restLive.facts[0] ?? {}).sort()).toEqual(expectedKeys)
+    expect(Object.keys(mcpLive.facts[0] ?? {}).sort()).toEqual(expectedKeys)
 
     // validAt mid-2021 -> the "lead" generation true then, not the live row.
     const restPit = (await (

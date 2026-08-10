@@ -410,7 +410,17 @@ export type FactsQueryInput = z.infer<typeof factsQueryInputSchema>
  */
 export type FactsQueryArgs = z.input<typeof factsQueryInputSchema>
 
-/** One currently-valid (or as-of) fact row, structured. */
+/**
+ * One currently-valid (or as-of / range) fact row, structured.
+ *
+ * `recordedAt` (transaction-time: when we LEARNED the fact) is an
+ * OUTPUT-ONLY widening — additive, `.strict()`-safe (a wider output never
+ * breaks a caller parsing a subset). Range-mode (time-series) reads return rows
+ * spanning multiple valid-time generations, several possibly recorded at
+ * different instants, so a time-series consumer needs recordedAt on every row
+ * to tell them apart — the default single-row read already had this on
+ * {@link FactRow} (packages/db), it just never reached the wire.
+ */
 export const factSchema = z
   .object({
     id: z.uuid(),
@@ -420,6 +430,7 @@ export const factSchema = z
     confidence: z.number().nullable(),
     validFrom: z.iso.datetime(),
     validTo: z.iso.datetime().nullable(),
+    recordedAt: z.iso.datetime(),
   })
   .strict()
 export type FactOutput = z.infer<typeof factSchema>
