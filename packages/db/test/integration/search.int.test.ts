@@ -164,6 +164,22 @@ describe('recency leg (searchRecency)', () => {
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
   })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // A DIRECT regression case for a scoping bug in supersededExists:
+    // searchRecency queries FROM memories UNALIASED, exactly the shape that
+    // let an unqualified id/user_id reference inside the EXISTS subquery
+    // silently bind to memory_edges' OWN id/user_id columns instead of the
+    // outer row's — returning superseded: false for every row, with no
+    // ambiguity error to catch it. limit spans the full golden set so the
+    // known g115/g116 supersession pair is guaranteed present regardless of
+    // recency order.
+    const hits = await withTenant(uid, (tx) => searchRecency(tx, uid, 200))
+    const succ = dbIdByGoldenId.get('g116') as string
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
 })
 
 describe('fusion (searchFused) — supersession-aware ranking', () => {
@@ -353,6 +369,18 @@ describe('vector leg (searchVector)', () => {
     }
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
+  })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // Same regression case as the recency leg, for searchVector's identical
+    // unaliased FROM memories shape. The predecessor's OWN embedding ranks it
+    // #1 by cosine similarity (exact match), so a small limit is enough to
+    // guarantee it is in the returned set.
+    const predEmbedding = embeddingByGoldenId.get('g115') as number[]
+    const hits = await withTenant(uid, (tx) => searchVector(tx, uid, predEmbedding, 5))
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits[0]?.id).toBe(pred)
+    expect(hits[0]?.superseded).toBe(true)
   })
 })
 

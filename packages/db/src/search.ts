@@ -248,7 +248,7 @@ export async function searchFts(
     WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS tsq),
     ranked AS (
       SELECT m.id, m.memory_type, m.topic, m.content,
-             ${supersededExists('m.')} AS superseded,
+             ${supersededExists('m')} AS superseded,
              ts_rank(m.search_tsv, q.tsq) AS rank
       FROM memories m, q
       WHERE m.user_id = ${userId}::uuid AND m.status = 'active' AND m.search_tsv @@ q.tsq
@@ -277,10 +277,10 @@ export async function searchRecency(
 ): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
-           ${supersededExists('')} AS superseded,
+           ${supersededExists('m')} AS superseded,
            power(0.5, EXTRACT(EPOCH FROM (now() - recorded_at)) / 86400.0
                       / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS score
-    FROM memories
+    FROM memories m
     WHERE user_id = ${userId}::uuid AND status = 'active'
     ORDER BY recorded_at DESC
     LIMIT ${limit}
@@ -318,9 +318,9 @@ export async function searchVector(
   const vec = toVectorLiteral(queryEmbedding)
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
-           ${supersededExists('')} AS superseded,
+           ${supersededExists('m')} AS superseded,
            GREATEST(0, 1 - (embedding <=> ${vec}::vector)) AS score
-    FROM memories
+    FROM memories m
     WHERE user_id = ${userId}::uuid AND status = 'active' AND embedding IS NOT NULL
     ORDER BY embedding <=> ${vec}::vector
     LIMIT ${limit}
@@ -676,10 +676,22 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
  * `superseded` flag or the tier-penalty (searchFused's candidates CTE, the
  * standalone legs below, {@link fetchHitsByIds}) so the two-edge-type
  * definition and the tenant bind can never drift between them.
+ *
+ * WARNING — the caller's `FROM memories` MUST be ALIASED and the alias MUST
+ * be passed here, even for a single-table query with no other table in scope.
+ * `memory_edges` (aliased `e` inside this EXISTS) has its OWN `id` and
+ * `user_id` columns, so an UNQUALIFIED `id`/`user_id` reference inside the
+ * subquery resolves to the subquery's OWN innermost scope (`e.id`/`e.user_id`)
+ * per standard SQL name resolution — NOT to the outer `memories` row, even
+ * with no alias collision error to catch it. That silently turned this into
+ * `e.to_id = e.id` (effectively never true) wherever a caller queried
+ * `FROM memories` unaliased. The signature therefore takes a MANDATORY alias
+ * (no bare/empty option), making the unqualified-reference mistake
+ * unrepresentable rather than merely documented.
  */
-export function supersededExists(prefix: '' | 'm.'): SQL {
-  const idCol = sql.raw(`${prefix}id`)
-  const userIdCol = sql.raw(`${prefix}user_id`)
+export function supersededExists(alias: string): SQL {
+  const idCol = sql.raw(`${alias}.id`)
+  const userIdCol = sql.raw(`${alias}.user_id`)
   return sql`EXISTS (
     SELECT 1 FROM memory_edges e
     WHERE e.to_id = ${idCol} AND e.user_id = ${userIdCol}
@@ -831,7 +843,7 @@ export async function searchFused(
              -- the predecessor's validity, so both demote it here — an
              -- 'updates' revise must rank its predecessor down exactly like a
              -- 'supersedes' revise does, not escape demotion silently.
-             ${supersededExists('m.')} AS superseded
+             ${supersededExists('m')} AS superseded
       FROM memories m
       LEFT JOIN fts_norm f ON f.id = m.id
       LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
@@ -893,7 +905,7 @@ export async function fetchHitsByIds(
   )
   const rows = await tx.execute(sql`
     SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
-           ${supersededExists('m.')} AS superseded,
+           ${supersededExists('m')} AS superseded,
            0::float8 AS score
     FROM memories m
     LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
