@@ -15,8 +15,13 @@
 // Observability (hard rule 6): never log memory content — ids/hashes/lengths
 // only. This module logs nothing; callers that do must honour the same rule.
 import { createHash } from 'node:crypto'
-import { type DuplicateMemoryError, type WrittenMemory, writeMemory } from '@3ngram/db'
-import { type ActorKind, rememberWithFactsInputSchema } from '@3ngram/schema'
+import {
+  type DuplicateMemoryError,
+  type MemoryFactWrite,
+  type WrittenMemory,
+  writeMemory,
+} from '@3ngram/db'
+import { type ActorKind, type FactWriteInput, rememberWithFactsInputSchema } from '@3ngram/schema'
 import { assertWithinBudget, resolveResourceLimits } from '../budget/index.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 
@@ -33,6 +38,24 @@ export type { EmbedOptions } from './embed.js'
  */
 export interface WriteResult extends WrittenMemory {
   embed: { settled: Promise<boolean> }
+}
+
+/**
+ * Bridge a parsed fact to the db write shape: the validity instants arrive as
+ * ISO-8601 strings (the tool-facing contract — JSON has no date type) and the
+ * db layer takes Dates. Converted exactly once, here, mirroring the `toAsOf`
+ * bridge the read tools use. Absent stays absent, so the column keeps its
+ * default instead of being written as an epoch.
+ */
+function toFactWrite(fact: FactWriteInput): MemoryFactWrite {
+  return {
+    subject: fact.subject,
+    predicate: fact.predicate,
+    value: fact.value,
+    confidence: fact.confidence,
+    validFrom: fact.validFrom === undefined ? undefined : new Date(fact.validFrom),
+    validTo: fact.validTo === undefined ? undefined : new Date(fact.validTo),
+  }
 }
 
 /**
@@ -116,7 +139,7 @@ export async function remember(
     // Same transaction as the memory (packages/db): a fact whose source memory
     // rolled back would be an unsourced claim. An empty list is equivalent to
     // none — the write returns no factIds for either.
-    parsed.facts,
+    parsed.facts?.map(toFactWrite),
   )
   // THEN kick the (best-effort, non-throwing, awaitable) embed.
   const embed = kickEmbed(userId, written.id, parsed.content, actorKind, embedOptions)

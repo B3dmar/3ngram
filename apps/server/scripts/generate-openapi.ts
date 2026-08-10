@@ -42,8 +42,8 @@ import {
   proposalRejectBodySchema,
   proposalStatusSchema,
   proposalsListQuerySchema,
-  rememberToolInputSchema,
-  rememberToolOutputSchema,
+  rememberToolInputV2Schema,
+  rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   retrievalScopeModeSchema,
@@ -342,7 +342,7 @@ interface RouteDoc {
 /** Every /api/v1 route. assertRouteCoverage() keeps this table honest. */
 // biome-ignore format: one route per line keeps the table auditable against router.ts
 const ROUTES: readonly RouteDoc[] = [
-  { method: 'post', path: '/api/v1/memories', operationId: 'remember', summary: 'Append a new memory (mirrors the MCP remember tool)', body: rememberToolInputSchema, status: 201, response: rememberToolOutputSchema, errors: [{ status: 409, description: 'The content is already live or the live-memory resource limit has been reached', reasons: ['duplicate_memory', 'resource_limit_exceeded'] }] },
+  { method: 'post', path: '/api/v1/memories', operationId: 'remember', summary: 'Append a new memory (mirrors the MCP remember tool)', body: rememberToolInputV2Schema, status: 201, response: rememberToolOutputV2Schema, errors: [{ status: 409, description: 'The content is already live or the live-memory resource limit has been reached', reasons: ['duplicate_memory', 'resource_limit_exceeded'] }] },
   { method: 'get', path: '/api/v1/memories', operationId: 'listMemories', summary: 'List memories (bounded; identity fields only, never content)', query: memoriesListQuerySchema, status: 200, response: memoriesListResponseSchema },
   { method: 'get', path: '/api/v1/memories/facets', operationId: 'getMemoryFacets', summary: 'Distinct scope and project values for the tenant (filter population)', status: 200, response: memoriesFacetsResponseSchema },
   { method: 'get', path: '/api/v1/memories/:id', operationId: 'getMemory', summary: 'Inspect a single memory, including content', status: 200, response: memoryDetailSchema },

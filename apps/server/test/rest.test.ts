@@ -393,6 +393,49 @@ describe('POST /api/v1/memories (remember)', () => {
     )
   })
 
+  it('echoes factIds when the body carries facts, and omits the key otherwise', async () => {
+    const factIds = [crypto.randomUUID()]
+    remember.mockResolvedValue({ id: NEW_ID, factIds, embed: { settled: Promise.resolve(true) } })
+    const withFacts = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: {
+        memoryType: 'fact',
+        topic: 'training',
+        content: 'squat session',
+        facts: [{ subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }],
+      },
+    })
+    expect(withFacts.status).toBe(201)
+    expect((await withFacts.json()) as { factIds: string[] }).toMatchObject({ factIds })
+
+    // No facts -> the key is absent entirely, so the shipped response shape is
+    // byte-identical for every existing caller.
+    remember.mockResolvedValue({ id: NEW_ID, embed: { settled: Promise.resolve(true) } })
+    const without = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'rest', content: 'no facts here' },
+    })
+    expect('factIds' in ((await without.json()) as object)).toBe(false)
+  })
+
+  it('400s a malformed fact at the REST boundary without calling core', async () => {
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: {
+        memoryType: 'fact',
+        topic: 't',
+        content: 'c',
+        facts: [{ subject: 's', predicate: 'p', value: 'v', validTo: '2026-01-01T00:00:00.000Z' }],
+      },
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('400s a payload missing required fields (schema boundary)', async () => {
     const res = await call('/api/v1/memories', {
       method: 'POST',

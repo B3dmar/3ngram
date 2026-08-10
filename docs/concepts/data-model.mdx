@@ -30,7 +30,7 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
 
-### Memory core (7)
+### Memory core (8)
 
 | Table | Purpose | Notes |
 |---|---|---|
@@ -38,8 +38,9 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 | `memory_edges` | `from_id`, `to_id`, `edge_type` (`supersedes`/`updates`/`extends`/`derives`), `created_by` (user/consolidator) | The typed-edge relationship model |
 | `memory_events` | Append-only lifecycle audit: `event_kind`, `actor_kind`, payload | INSERT-only grant; first-class actor taxonomy on every event |
 | `commitments` | Own entity with explicit FSM: `open → waiting → resolved/expired`, owner, due, recurrence, `next_surfacing_at`, FK → `memories` | Commitments modeled as their own entity, not columns on `memories` |
-| `facts` | Structured projection: subject, predicate, value, confidence, bi-temporal cols, FK → source memory | |
+| `facts` | Structured projection: subject, predicate, value, confidence, bi-temporal cols, FK → source memory | **Values are text**, so the unit belongs in the predicate and each row holds ONE measure: subject `lift.back_squat`, predicate `top_set.weight_kg`, value `98` — never a predicate `top_set` carrying `98kg x 3`. A range read is only comparable across rows if every writer follows it. A typed `value_numeric` column is deferred; it can be added later as a stored generated column without changing a writer. |
 | `consolidation_proposals` | Background-worker output: candidate edge + rationale + status (proposed/applied/rejected) + **`similarity` and `memory_type`** so the per-type precision bar is auditable | Advisory, type-aware; `event` type never auto-applies. **Edge direction is the locked contract**: `from_id`/`to_id` are materialized verbatim into `memory_edges`, so for a `supersedes`/`updates` proposal the successor is `from_id` and the **predecessor (the superseded row whose `valid_to` closes on accept) is `to_id`** — the same `successor → predecessor` convention `revise`/`search` rely on. The consolidator MUST emit rows in this orientation. |
+| `fact_proposals` | Staging area for extracted facts awaiting review: the same triple + bi-temporal columns as `facts`, plus `memory_type`, `rationale`, `status` (proposed/applied/rejected) and `decided_at`, FK → source memory | Nothing an extractor produced becomes queryable truth until a human accepts it. A sibling of `consolidation_proposals` rather than a mode on it, so every shipped object stays byte-identical. One OPEN proposal per (memory, subject, predicate, value) — re-proposal after a rejection is allowed, and repeated extractions of one triple collapse to the first. `valid_from` is nullable here (an extractor often cannot date a claim) but a `valid_to` still requires one. |
 | `scopes` | User scope config + aliases (personal/work/custom) | Unifies scope config and aliases in one table |
 
 ### Operations (3)

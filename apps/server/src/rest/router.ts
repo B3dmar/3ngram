@@ -54,7 +54,7 @@ import {
   memoriesListQuerySchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
-  rememberToolInputSchema,
+  rememberToolInputV2Schema,
   resolveToolInputSchema,
   reviseToolInputSchema,
 } from '@3ngram/schema'
@@ -181,7 +181,7 @@ export function restRouter(options: RestRouterOptions): Router {
   // the MCP tool does. Embedding is ack-before-embed: never awaited.
   router.post('/api/v1/memories', (req, res) => {
     void guard('memories', res, async () => {
-      const input = rememberToolInputSchema.parse(req.body)
+      const input = rememberToolInputV2Schema.parse(req.body)
       // Budget is wired alongside the gateway: it gates the embed this write will
       // kick, so it applies only when there is an embed to incur cost. The access
       // gate is threaded independently (even on the embeddings-off path) so the
@@ -209,6 +209,10 @@ export function restRouter(options: RestRouterOptions): Router {
           },
           embedded,
           commitmentId: written.commitmentId,
+          // Present only when facts were written, so a body without `facts`
+          // returns the byte-identical shipped response (defined() drops
+          // undefined keys). Ids only — the triples are memory content.
+          factIds: written.factIds,
         }),
       )
     })

@@ -38,7 +38,9 @@ Memory is append-only. Never rewrite or delete: use \`revise\` to supersede a me
 
 Write decisions, commitments, blockers, and stated preferences — the things that would be expensive to rediscover. Do not write transcript noise, restatements of what the user just said, or anything re-derivable from the code.
 
-Scope and project decide what later reads return, so set them when you \`remember\`: a memory written with no project will not appear in that project's briefing.`
+Scope and project decide what later reads return, so set them when you \`remember\`: a memory written with no project will not appear in that project's briefing.
+
+When a memory states something measurable, pass it as \`facts\` on the same \`remember\` call so \`get_facts\` can read it back without re-parsing prose. Values are text: put the unit in the predicate and keep one measure per fact.`
 
 /**
  * Tool definitions, prompt definitions, and the discovery advertisement change

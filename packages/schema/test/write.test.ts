@@ -162,16 +162,24 @@ describe('factWrite', () => {
     expect(parsed.validTo).toBeUndefined()
   })
 
-  it('coerces ISO-8601 instants and treats explicit null as absent', () => {
+  it('keeps instants as ISO strings and treats explicit null as absent', () => {
     const parsed = factWriteSchema.parse({
       ...validFact,
       validFrom: '2026-01-01T00:00:00.000Z',
       validTo: null,
     })
-    expect(parsed.validFrom).toEqual(new Date('2026-01-01T00:00:00.000Z'))
+    // ISO string, NOT a Date: this contract is published as JSON Schema on the
+    // remember tool, where a z.date() leg is unrepresentable. Core converts to
+    // a Date once, on the way to the db (the asOfSchema precedent).
+    expect(parsed.validFrom).toBe('2026-01-01T00:00:00.000Z')
     // null means DB-NULL (absent), never the 1970 epoch — an epoch validTo
     // would mark a live fact as already closed.
     expect(parsed.validTo).toBeUndefined()
+  })
+
+  it('rejects a Date and a non-ISO string (JSON has no date type)', () => {
+    expect(factWriteSchema.safeParse({ ...validFact, validFrom: new Date() }).success).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, validFrom: 'yesterday' }).success).toBe(false)
   })
 
   it('rejects a validTo with no validFrom (a window that ends but never begins)', () => {
@@ -190,6 +198,38 @@ describe('factWrite', () => {
         validTo: '2026-01-01T00:00:00.000Z',
       }).success,
     ).toBe(false)
+  })
+
+  it('orders MIXED-PRECISION instants by time, not lexicographically', () => {
+    // Regression: the refine compares parsed ISO strings, and string `<=` is
+    // lexicographic — '.' (0x2E) sorts before 'Z' (0x5A). Same-length pairs
+    // (every other case here) mask it; these differ in precision, which is
+    // exactly what a model-written call produces.
+    // A REAL 1ms window must be accepted:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.001Z',
+      }).success,
+    ).toBe(true)
+    // and the inverted pair rejected, though it sorts as "ascending" as text:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.001Z',
+        validTo: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(false)
+    // Equal instants written at different precisions are a zero-length window,
+    // which the DB CHECK admits (valid_from <= valid_to), so the schema must too.
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.000Z',
+      }).success,
+    ).toBe(true)
   })
 
   it('bounds the triple and the confidence', () => {

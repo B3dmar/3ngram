@@ -32,8 +32,8 @@ import {
   factsQueryInputSchema,
   factsToolOutputSchema,
   MAX_CONTENT_LENGTH,
-  rememberToolInputSchema,
-  rememberToolOutputSchema,
+  rememberToolInputV2Schema,
+  rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   reviseToolInputSchema,
@@ -212,9 +212,9 @@ const rememberTool: ToolDefinition = {
   requiredScope: MEMORY_WRITE_SCOPE,
   config: {
     title: 'Remember',
-    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in.`,
-    inputSchema: rememberToolInputSchema,
-    outputSchema: rememberToolOutputSchema,
+    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in. Optionally pass \`facts\`: the measurable claims the memory states, as subject/predicate/value triples that \`get_facts\` can then read back directly instead of re-reading the prose. Values are text, so put the unit in the predicate and keep one measure per fact (subject \`lift.back_squat\`, predicate \`top_set.weight_kg\`, value \`98\`). Give a fact a \`validFrom\` when it became true, if that is not now.`,
+    inputSchema: rememberToolInputV2Schema,
+    outputSchema: rememberToolOutputV2Schema,
     // Appends a NEW row on every call, so repeating it is not a no-op —
     // idempotentHint: false. destructiveHint: false is a real product claim:
     // remember never merges into or overwrites an existing memory (hard rule 1).
@@ -230,7 +230,7 @@ const rememberTool: ToolDefinition = {
     // It returns the new id only, so the structured output echoes the NORMALIZED
     // write input (scope default + null project applied here) for the rest.
     // Embedding is on iff a gateway is configured — best-effort, never blocks.
-    const input = rememberToolInputSchema.parse(args)
+    const input = rememberToolInputV2Schema.parse(args)
     const gatewayOpts =
       ctx.gateway === undefined
         ? { access: ctx.access, limits: ctx.limits }
@@ -251,7 +251,7 @@ const rememberTool: ToolDefinition = {
     // it without a follow-up lookup. Undefined (omitted) for every other type.
     const output = parseOutput(
       'remember',
-      rememberToolOutputSchema,
+      rememberToolOutputV2Schema,
       defined({
         memory: {
           id: written.id,
@@ -262,6 +262,11 @@ const rememberTool: ToolDefinition = {
         },
         embedded,
         commitmentId: written.commitmentId,
+        // Ids only, and only when facts were written: `defined()` drops the key
+        // when undefined, so a write without facts returns the V1 response
+        // byte-for-byte. The triples themselves are memory content and are not
+        // echoed back (hard rule 6).
+        factIds: written.factIds,
       }),
     )
     return ok(output)

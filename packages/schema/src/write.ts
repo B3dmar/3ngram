@@ -77,17 +77,22 @@ export type RememberInput = z.infer<typeof rememberInputSchema>
 export const MAX_FACTS_PER_WRITE = 16
 
 /**
- * DB-NULL semantics for the optional validity instants: a Date or an ISO-8601
- * string, with `null` and `undefined` both meaning ABSENT — never the 1970
- * epoch, which on validTo would mark a live fact as already closed.
+ * DB-NULL semantics for the optional validity instants: an ISO-8601 string,
+ * with `null` and `undefined` both meaning ABSENT — never the 1970 epoch, which
+ * on validTo would mark a live fact as already closed.
  *
- * Deliberately duplicated from import.ts's nullableTimestampSchema rather than
- * imported: import.ts already depends on this module, and the reverse import
- * would make the cycle.
+ * ISO STRING, NOT `z.date()`: this contract is aliased onto the `remember` MCP
+ * tool, and an MCP server publishes its input schema as JSON Schema in
+ * tools/list. A `z.date()` leg is unrepresentable there (it throws at
+ * generation), and JSON has no date type anyway. This matches asOfSchema
+ * (mcp.ts), the existing tool-facing instant contract; the string is converted
+ * to a Date once, in core, on the way to the db.
+ *
+ * The import path's nullableTimestampSchema DOES admit a Date because it is a
+ * programmatic/SDK contract, not a tool surface.
  */
-const factTimestampSchema = z
-  .union([z.date(), z.string()], { error: 'expected a Date or an ISO-8601 timestamp string' })
-  .pipe(z.coerce.date())
+const factTimestampSchema = z.iso
+  .datetime()
   .nullish()
   .transform((value) => value ?? undefined)
 
@@ -119,10 +124,21 @@ export const factWriteSchema = z
     message: 'validTo requires a validFrom — a window cannot end before it begins',
     path: ['validFrom'],
   })
-  .refine((fact) => !(fact.validFrom && fact.validTo) || fact.validFrom <= fact.validTo, {
-    message: 'validFrom must not be after validTo',
-    path: ['validTo'],
-  })
+  // COMPARE INSTANTS, NOT STRINGS. The refine runs on the parsed ISO strings,
+  // and `<=` on strings is LEXICOGRAPHIC: '.' (0x2E) sorts before 'Z' (0x5A),
+  // so '2026-01-01T00:00:00Z' <= '2026-01-01T00:00:00.001Z' is false — a valid
+  // 1ms window would be rejected, and the inverted pair accepted. Two
+  // timestamps that differ only in precision are exactly what a model-written
+  // call produces. z.iso.datetime() has already validated both, so Date.parse
+  // cannot return NaN here.
+  .refine(
+    (fact) =>
+      !(fact.validFrom && fact.validTo) || Date.parse(fact.validFrom) <= Date.parse(fact.validTo),
+    {
+      message: 'validFrom must not be after validTo',
+      path: ['validTo'],
+    },
+  )
 export type FactWriteInput = z.infer<typeof factWriteSchema>
 
 /**
