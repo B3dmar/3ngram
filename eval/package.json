@@ -13,6 +13,7 @@
     "advisory:mab": "node src/memoryagentbench.mjs",
     "transport-cost": "node src/transport-cost.mjs",
     "tool-selection": "node src/tool-selection.mjs",
+    "tool-selection-model": "node src/tool-selection-model.mjs",
     "gen:tool-selection": "node scripts/gen-tool-selection-embeddings.mjs",
     "test": "node --test 'test/**/*.test.mjs'"
   },

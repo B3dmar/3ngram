@@ -120,6 +120,37 @@ Standalone (exits 2 on an integrity failure — the gate wiring does not):
 pnpm --filter @3ngram/eval run tool-selection [-- --json]
 ```
 
+## Tool-selection: model-in-the-loop (advisory, nightly-only)
+
+`src/tool-selection-model.mjs` is the model-in-the-loop counterpart to the
+deterministic embedding-cosine proxy above. It runs **only** in
+`eval-nightly.yml` (never inside the gate) and, for every `toolScenarios`
+entry in `fixtures/tool-selection.json`, presents a live model with the REAL
+tool catalog (names + descriptions from `fixtures/transport-surfaces.json`
+`mcp.tools`) and forces a bare tool-name answer.
+
+| Metric | Meaning |
+|---|---|
+| `model_selection_accuracy_at_1` | overall + `per_tool`: did the model's forced pick match `expected_tool`? |
+| `unparseable_rate` | share of replies that were not an exact registered tool name — scored as incorrect, never as a harness error |
+| `confusions` | directed `expected -> predicted` pairs, `unparseable` used as the predicted label when the reply didn't parse |
+| `proxy_model_agreement` | how often the model's pick matches the deterministic proxy's pick, computed by reusing `tool-selection.mjs`'s own `rankTools` — only when the tool-selection embeddings fixture is present and valid; absent or corrupt skips this section with a clear note, never a failure |
+| `served_model` / `served_model_varied` | the response body's actual `model` field (first observed value) and whether it varied across calls — provenance for the requested alias, since e.g. `gpt-4o-mini` floats to whatever the provider currently points it at |
+| `n` / `n_answered` / `gateway_error_count` | a per-scenario gateway failure (timeout, non-OK response) is caught, not propagated, and recorded as its own pick class — excluded from `model_selection_accuracy_at_1` / `unparseable_rate` (those are model-behavior metrics) rather than discarding the whole run; `n_answered` is the explicit denominator both rates use |
+
+Gateway contract mirrors `--judge` (`src/judge.mjs`): `LLM_GATEWAY_API_KEY` /
+`LLM_GATEWAY_URL`, 30s timeout. Model override is `LLM_TOOL_SELECTION_MODEL`
+(default `gpt-4o-mini`) — kept distinct from `LLM_JUDGE_MODEL` so the two
+advisory lanes can point at different models independently; `eval-nightly.yml`
+passes it from the `LLM_TOOL_SELECTION_MODEL` repo/org Actions **variable**
+(not a secret — it's a model name). **Skips cleanly** (clear log line, exit
+0 — `{"status":"skipped","reason":…}` under `--json`) when
+`LLM_GATEWAY_API_KEY` is absent — never a silent network dependency.
+
+```bash
+LLM_GATEWAY_API_KEY=… pnpm --filter @3ngram/eval run tool-selection-model [-- --json]
+```
+
 ## Regenerating fixtures (`pipeline/`)
 
 Manual, network-using, in order: export (psql from the production database) → `anonymize.mjs` (Claude Haiku; PII scan after) → `gen-queries.mjs` → `embed.mjs openai-large-1536`. Regeneration invalidates floors — re-record and justify in the PR.
