@@ -76,6 +76,13 @@ const retrievalPolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0030_user_retrieval_policy.sql'),
   'utf8',
 )
+// 0031 stages extracted facts for human review before they reach `facts` —
+// fold it in so its composite FK, open-proposal uniqueness, generated status
+// CHECK, and tenant policy are drift-checked like the shipped memory tables.
+const factProposalsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0031_fact_proposals.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -552,6 +559,35 @@ describe('retrieval policy migration generation (0030)', () => {
   })
 })
 
+describe('fact proposals staging table (0031)', () => {
+  it('references the source memory through a tenant-qualified composite FK', () => {
+    expect(factProposalsSql).toContain(
+      '"fact_proposals_memory_fk" FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade',
+    )
+  })
+
+  it('constrains one OPEN proposal per candidate fact, re-proposal after rejection allowed', () => {
+    // The eventual insert path's ON CONFLICT target must byte-mirror this
+    // column list and predicate, so both are pinned here.
+    expect(factProposalsSql).toContain(
+      'CREATE UNIQUE INDEX "fact_proposals_open_idx" ON "fact_proposals" USING btree ("user_id","memory_id","subject","predicate","value") WHERE status = \'proposed\'',
+    )
+  })
+
+  it('generates the status CHECK from the schema enum', () => {
+    for (const s of proposalStatusSchema.options) {
+      expect(factProposalsSql, `status '${s}' missing from the generated CHECK`).toContain(`'${s}'`)
+    }
+    expect(factProposalsSql).toContain('fact_proposals_status_check')
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE (0028 precedent)', () => {
+    expect(factProposalsSql).toContain('CREATE POLICY "tenant_isolation" ON "fact_proposals"')
+    expect(factProposalsSql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(factProposalsSql).toContain('ALTER TABLE "fact_proposals" FORCE ROW LEVEL SECURITY')
+  })
+})
+
 describe('provision-roles.sql append-and-supersede grants', () => {
   it('memory_events and audit_log are INSERT-only for the runtime role', () => {
     expect(rolesSql).toMatch(/GRANT SELECT, INSERT ON memory_events, audit_log/)
@@ -561,7 +597,7 @@ describe('provision-roles.sql append-and-supersede grants', () => {
 
   it('no DELETE grant on any memory-domain table (the write path cannot destroy data)', () => {
     const memoryDomain =
-      /DELETE[^\n]*(memories|memory_edges|commitments|facts|consolidation_proposals)/
+      /DELETE[^\n]*(memories|memory_edges|commitments|facts|consolidation_proposals|fact_proposals)/
     expect(rolesSql).not.toMatch(memoryDomain)
   })
 

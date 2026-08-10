@@ -270,6 +270,64 @@ export const consolidationProposals = pgTable(
   ],
 )
 
+// Staging area for extracted facts: a candidate stays here until a human
+// accepts it, so nothing an extractor produced becomes queryable truth in
+// `facts` without review. A sibling table rather than a discriminator column on
+// consolidation_proposals — edge proposals and fact proposals share only a
+// status FSM, and folding them together would force relaxing shipped NOT NULLs
+// on a table whose insert path is already load-bearing (ADR-0011: compose
+// beside shipped objects, never reshape them).
+export const factProposals = pgTable(
+  'fact_proposals',
+  {
+    id: uuid('id').primaryKey().default(uuidv7()),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    memoryId: uuid('memory_id').notNull(),
+    subject: text('subject').notNull(),
+    predicate: text('predicate').notNull(),
+    value: text('value').notNull(),
+    confidence: real('confidence'),
+    // Nullable unlike facts.valid_from: an extractor often cannot date an
+    // assertion, and the reviewer supplies the window on accept. facts keeps
+    // its NOT NULL default now() — a proposal is not yet an assertion.
+    validFrom: timestamp('valid_from', { withTimezone: true }),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    // Mirrors consolidation_proposals.memory_type: per-type precision of the
+    // extractor must be auditable before any of it is trusted.
+    memoryType: text('memory_type').notNull(),
+    rationale: text('rationale'),
+    status: text('status').notNull().default('proposed'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'fact_proposals_memory_fk',
+      columns: [t.userId, t.memoryId],
+      foreignColumns: [memories.userId, memories.id],
+    }).onDelete('cascade'),
+    // one OPEN proposal per candidate fact; re-proposal after rejection allowed
+    // (mirrors proposals_open_idx). The eventual insert path's ON CONFLICT
+    // target must byte-mirror these columns and this predicate.
+    uniqueIndex('fact_proposals_open_idx')
+      .on(t.userId, t.memoryId, t.subject, t.predicate, t.value)
+      .where(sql`status = 'proposed'`),
+    index('fact_proposals_review_idx').on(t.userId, t.status, t.createdAt),
+    check('fact_proposals_type_check', enumCheckSql(t.memoryType, memoryTypeSchema.options)),
+    check('fact_proposals_status_check', enumCheckSql(t.status, proposalStatusSchema.options)),
+    // Same shape as facts_validity_check and nullable-tolerant by construction:
+    // with valid_from NULL the comparison is NULL, which a CHECK does not treat
+    // as a violation.
+    check(
+      'fact_proposals_validity_check',
+      sql`${t.validTo} IS NULL OR ${t.validFrom} <= ${t.validTo}`,
+    ),
+    tenantPolicy(),
+  ],
+)
+
 export const scopes = pgTable(
   'scopes',
   {
