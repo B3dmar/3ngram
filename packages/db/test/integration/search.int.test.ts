@@ -167,8 +167,8 @@ describe('recency leg (searchRecency)', () => {
 
   it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
     // A DIRECT regression case for a scoping bug in supersededExists:
-    // searchRecency queries FROM memories UNALIASED, exactly the shape that
-    // let an unqualified id/user_id reference inside the EXISTS subquery
+    // searchRecency used to query FROM memories UNALIASED, exactly the shape
+    // that let an unqualified id/user_id reference inside the EXISTS subquery
     // silently bind to memory_edges' OWN id/user_id columns instead of the
     // outer row's — returning superseded: false for every row, with no
     // ambiguity error to catch it. limit spans the full golden set so the
@@ -373,9 +373,9 @@ describe('vector leg (searchVector)', () => {
 
   it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
     // Same regression case as the recency leg, for searchVector's identical
-    // unaliased FROM memories shape. The predecessor's OWN embedding ranks it
-    // #1 by cosine similarity (exact match), so a small limit is enough to
-    // guarantee it is in the returned set.
+    // (now-fixed) formerly-unaliased FROM memories shape. The predecessor's
+    // OWN embedding ranks it #1 by cosine similarity (exact match), so a
+    // small limit is enough to guarantee it is in the returned set.
     const predEmbedding = embeddingByGoldenId.get('g115') as number[]
     const hits = await withTenant(uid, (tx) => searchVector(tx, uid, predEmbedding, 5))
     const pred = dbIdByGoldenId.get('g115') as string
