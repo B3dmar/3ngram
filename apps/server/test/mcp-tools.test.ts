@@ -35,6 +35,7 @@ import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
 const searchDashboardPage = vi.fn()
+const searchChronological = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
 const resolveByMemoryId = vi.fn()
@@ -247,6 +248,7 @@ vi.mock('@3ngram/core', () => ({
   applyPolicyToScopeFilter,
   remember,
   searchDashboardPage,
+  searchChronological,
   getFacts,
   revise,
   resolveByMemoryId,
@@ -1003,6 +1005,134 @@ describe('search tool', () => {
     const result = await call('search', { query: 'sdk pin', bogusFilter: 'oops' }, ctx())
     expect(result.isError).toBe(true)
     expect(searchDashboardPage).not.toHaveBeenCalled()
+  })
+
+  describe('order: chronological (list mode, issue #134)', () => {
+    /** Wrap hits as core's ListPage shape (keyset cursor, no frozen pool). */
+    function listPageOf(
+      hits: Array<{ id: string; score: number }>,
+      overrides: Record<string, unknown> = {},
+    ) {
+      const last = hits[hits.length - 1]
+      return {
+        hits,
+        hasMore: false,
+        nextCursor:
+          last === undefined
+            ? undefined
+            : { recordedAt: new Date('2026-01-01T00:00:00Z'), id: last.id },
+        appliedScope: null,
+        ...overrides,
+      }
+    }
+
+    it('runs WITHOUT a configured gateway — no query, filter present', async () => {
+      searchChronological.mockResolvedValue(listPageOf([HIT]))
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(searchChronological).toHaveBeenCalledTimes(1)
+      expect(searchDashboardPage).not.toHaveBeenCalled()
+      const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+      expect(parsed.hits[0]?.id).toBe(MEMO_ID)
+    })
+
+    it('rejects a chronological call with no query AND no filter — nothing bounds the scan', async () => {
+      const result = await call('search', { order: 'chronological' }, ctx({ gateway: undefined }))
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('accepts a chronological call with a query and no filter', async () => {
+      searchChronological.mockResolvedValue(listPageOf([HIT]))
+      const result = await call(
+        'search',
+        { order: 'chronological', query: 'find it' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(searchChronological).toHaveBeenCalledTimes(1)
+    })
+
+    it('mints a v3 keyset cursor, decodable and distinct in shape from the v2 frozen cursor', async () => {
+      searchChronological.mockResolvedValue(
+        listPageOf([HIT], {
+          hasMore: true,
+          nextCursor: { recordedAt: new Date('2026-03-01T00:00:00Z'), id: MEMO_ID },
+        }),
+      )
+      const result = await call('search', { order: 'chronological', scope: 'work' }, ctx())
+      const cursor = (result.structuredContent as { nextCursor: string }).nextCursor
+      expect(cursor).toBeDefined()
+      const decoded = decodeCursor(cursor) as { v: number; recordedAt?: string; id?: string }
+      expect(decoded.v).toBe(3)
+      expect(decoded.id).toBe(MEMO_ID)
+      expect(decoded.recordedAt).toBe('2026-03-01T00:00:00.000Z')
+    })
+
+    it('rejects a v2 (relevance) cursor replayed under chronological order as invalid input', async () => {
+      // A cursor minted by relevance order carries `fp` bound to a DIFFERENT
+      // fingerprint formula (no `order` folded in, different query/filters) —
+      // decodeSearchCursor's fingerprint check fires before any shape
+      // inspection, so the mismatch is a typed invalid_input, never a crash
+      // or a silent misread of the wrong shape.
+      searchDashboardPage.mockResolvedValue(pageOf([HIT], { hasMore: true }))
+      const relevanceResult = await call('search', { query: 'sdk pin' }, ctx())
+      const v2Cursor = (relevanceResult.structuredContent as { nextCursor: string }).nextCursor
+
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work', cursor: v2Cursor },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('restarts at page 1 on a fingerprint-less v3 cursor replayed under relevance order (shape guard)', async () => {
+      // A v3 payload with NO fp (the legacy/fingerprint-less case every cursor
+      // shape must tolerate — decodeSearchCursor only verifies when `fp` is
+      // present) skips the fingerprint check entirely, so it is the shape
+      // guard (`decoded.v === 2`) alone that must stop this from being
+      // misread as a v2 frozen-pool state (`.ids`/`.scores` would be
+      // undefined on a v3 payload). Restarts at page 1 instead of crashing.
+      const fingerprintLessV3Cursor = encodeCursor({
+        v: 3,
+        recordedAt: '2026-01-01T00:00:00.000Z',
+        id: MEMO_ID,
+      })
+      searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+      const result = await call(
+        'search',
+        { query: 'sdk pin', cursor: fingerprintLessV3Cursor },
+        ctx(),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(searchDashboardPage.mock.calls[0]?.[3]).not.toHaveProperty('frozen')
+    })
+
+    it('binds the cursor fingerprint to order, so a chronological cursor is rejected under relevance order', async () => {
+      searchChronological.mockResolvedValue(
+        listPageOf([HIT], { hasMore: true, nextCursor: { recordedAt: new Date(), id: MEMO_ID } }),
+      )
+      const chronoResult = await call(
+        'search',
+        { order: 'chronological', scope: 'work' },
+        ctx({ gateway: undefined }),
+      )
+      const v3Cursor = (chronoResult.structuredContent as { nextCursor: string }).nextCursor
+
+      searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+      // SAME scope filter, but order defaults to relevance and a query is now
+      // required — the mismatched shape restarts the walk (no crash), and
+      // relevance order still needs query, which is absent here, so this is
+      // rejected as invalid input rather than silently misreading the cursor.
+      const result = await call('search', { scope: 'work', cursor: v3Cursor }, ctx())
+      expect(result.isError).toBe(true)
+    })
   })
 })
 

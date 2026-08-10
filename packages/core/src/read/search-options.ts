@@ -132,3 +132,26 @@ export function resolveDashboardPageOptions(query: string, opts: DashboardPageOp
     supersessionPenalty: DEFAULT_SEARCH_SUPERSESSION_PENALTY,
   }
 }
+
+/**
+ * Options for chronological list mode. No embedding, no fusion weights, no
+ * budget: list mode never calls the gateway, so there is nothing to meter.
+ * `cursor` is the keyset position of the previous page's last row.
+ */
+export interface ListOptions {
+  limit?: number
+  cursor?: { recordedAt: Date; id: string }
+  filters?: SearchFilters
+  /** Optional read-access gate, matching search()/searchDashboardPage(). */
+  access?: AccessGate | undefined
+  retrievalPolicy?: RetrievalPolicy | undefined
+}
+
+/** Resolve the shared page size, cursor, and scope policy for list mode. */
+export function resolveListOptions(opts: ListOptions) {
+  return {
+    ...resolvePolicyFilters(opts),
+    limit: opts.limit ?? DEFAULT_LIMIT,
+    cursor: opts.cursor,
+  }
+}

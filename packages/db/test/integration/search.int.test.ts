@@ -23,6 +23,7 @@ import {
   searchRecency,
   searchVector,
 } from '../../src/search.js'
+import { type ChronologicalCursor, searchList } from '../../src/search-list.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const EMBEDDING_DIMENSIONS = 1536
@@ -618,5 +619,97 @@ describe('fusion (searchFused) — vector leg', () => {
     for (const h of inert) {
       expect(h.vectorScore).toBeUndefined()
     }
+  })
+})
+
+describe('chronological list mode (searchList) — exhaustive, filter-driven enumeration', () => {
+  it('orders by recorded_at DESC, id DESC and applies the live gate (valid_to IS NULL)', async () => {
+    const page = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    const ids = page.hits.map((h) => h.id)
+    const succ = dbIdByGoldenId.get('g116') as string
+    const pred = dbIdByGoldenId.get('g115') as string
+    // The live successor is present; the superseded predecessor (valid_to
+    // set) is EXCLUDED by the live gate — unlike ranked search's
+    // demote-not-filter, an exhaustive list has no ranking to demote with.
+    expect(ids).toContain(succ)
+    expect(ids).not.toContain(pred)
+    const succHit = page.hits.find((h) => h.id === succ)
+    expect(succHit?.superseded).toBe(false)
+    expect(page.hasMore).toBe(false)
+    // Total order cross-checked against a raw recorded_at DESC, id DESC
+    // query over the SAME live set (status='active' AND valid_to IS NULL,
+    // the same default rowEligibility applies with no explicit status
+    // filter), independent of the function under test.
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM memories WHERE user_id = $1 AND status = 'active' AND valid_to IS NULL
+       ORDER BY recorded_at DESC, id DESC`,
+      [uid],
+    )
+    expect(ids).toEqual(rows.rows.map((r) => r.id))
+  })
+
+  it('narrows by memoryType, the same filter axis ranked search applies', async () => {
+    const page = await withTenant(uid, (tx) =>
+      searchList(tx, uid, 200, { memoryType: 'commitment' }),
+    )
+    expect(page.hits.length).toBeGreaterThan(0)
+    // Every returned row really is a live commitment — cross-checked directly
+    // against the owner connection, independent of the function under test.
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM memories WHERE user_id = $1 AND memory_type = 'commitment'
+       AND status = 'active' AND valid_to IS NULL`,
+      [uid],
+    )
+    const expectedIds = new Set(rows.rows.map((r) => r.id))
+    expect(page.hits.length).toBe(expectedIds.size)
+    for (const hit of page.hits) {
+      expect(expectedIds.has(hit.id)).toBe(true)
+    }
+  })
+
+  it('continues strictly after the (recordedAt, id) cursor with no skips or repeats', async () => {
+    const all = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    expect(all.hits.length).toBeGreaterThanOrEqual(4)
+    const PAGE = Math.max(1, Math.floor(all.hits.length / 2))
+
+    const page1 = await withTenant(uid, (tx) => searchList(tx, uid, PAGE))
+    expect(page1.hits.length).toBe(PAGE)
+    expect(page1.hasMore).toBe(true)
+    const cursor = page1.cursor as ChronologicalCursor
+    expect(cursor).toBeDefined()
+
+    const page2 = await withTenant(uid, (tx) => searchList(tx, uid, PAGE, {}, cursor))
+    expect(page2.hits.length).toBeGreaterThan(0)
+
+    const page1Ids = page1.hits.map((h) => h.id)
+    const page2Ids = page2.hits.map((h) => h.id)
+    // No row appears on both pages, and the concatenation matches the
+    // unpaged order exactly (no skip, no repeat, no reorder).
+    expect(new Set(page1Ids).size + new Set(page2Ids).size).toBe(
+      new Set([...page1Ids, ...page2Ids]).size,
+    )
+    expect([...page1Ids, ...page2Ids]).toEqual(
+      all.hits.slice(0, page1Ids.length + page2Ids.length).map((h) => h.id),
+    )
+  })
+
+  it('reports hasMore: false and no cursor on the final page', async () => {
+    const all = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    const page = await withTenant(uid, (tx) => searchList(tx, uid, all.hits.length + 10))
+    expect(page.hasMore).toBe(false)
+    expect(page.hits.length).toBe(all.hits.length)
+  })
+
+  it('an asOf coordinate lifts the live gate and can surface a superseded predecessor', async () => {
+    // g115 (predecessor) is valid_from 2026-05-08, closed (valid_to) at
+    // g116's creation (2026-05-09) — see this file's beforeAll. An asOf
+    // instant strictly inside that window surfaces the historical row the
+    // default (valid_to IS NULL) live gate excludes.
+    const pred = dbIdByGoldenId.get('g115') as string
+    const page = await withTenant(uid, (tx) =>
+      searchList(tx, uid, 200, { asOf: { validAt: new Date('2026-05-08T12:00:00Z') } }),
+    )
+    const ids = page.hits.map((h) => h.id)
+    expect(ids).toContain(pred)
   })
 })

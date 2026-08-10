@@ -2999,111 +2999,232 @@
       {
         "name": "search",
         "title": "Search",
-        "description": "Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. Superseded predecessors are never filtered out, only ranked below their successor — a hit reports superseded: true when it is one, so you can tell a demoted result from a current one. To page: pass nextCursor back as cursor with the SAME query and filters; pages come from the ordering frozen on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query and filters that issued it: passing it with a changed query or filters is rejected as invalid input — omit the cursor to start a new search. The cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool), so page only when you actually need more hits. Paging stops at the frozen pool: hasMore: false means the pool is exhausted — refine the query (better filters, more specific terms) instead of paging harder. For broad scans set projection: \"compact\" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.",
+        "description": "Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Set order: \"chronological\" for an exhaustive, unranked recorded_at-descending listing instead of the fused ranking — no embedding call, no gateway required; query then becomes optional PROVIDED at least one filter narrows the set (an unfiltered chronological scan with no query and no filter is rejected — nothing would bound it). Default order \"relevance\" is the fused ranked search and still requires a query. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. Superseded predecessors are never filtered out, only ranked below their successor — a hit reports superseded: true when it is one, so you can tell a demoted result from a current one; superseded is recomputed live on every page (including continuations of a frozen relevance walk), so a hit's rank and score stay frozen across pages of one walk but its superseded flag can still flip if it is revised mid-session. To page: pass nextCursor back as cursor with the SAME query, filters, and order; pages come from the ordering frozen (relevance) or the keyset position (chronological) on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query, filters, and order that issued it: passing it with any of those changed is rejected as invalid input — omit the cursor to start a new search. The relevance cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool); the chronological cursor is tiny (a single row position) by comparison. Paging stops at the frozen pool (relevance) or the live corpus (chronological): hasMore: false means there is nothing more to page to. For broad scans set projection: \"compact\" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.",
         "inputSchema": {
           "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "minLength": 1
-            },
-            "limit": {
-              "default": 5,
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 25
-            },
-            "memoryType": {
-              "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
-              "type": "string",
-              "enum": [
-                "decision",
-                "commitment",
-                "blocker",
-                "fact",
-                "preference",
-                "pattern",
-                "note",
-                "event"
-              ]
-            },
-            "scope": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64,
-              "pattern": "^[a-z0-9][a-z0-9-]*$"
-            },
-            "project": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            },
-            "status": {
-              "type": "string",
-              "enum": ["active", "archived"]
-            },
-            "asOf": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
               "type": "object",
               "properties": {
-                "validAt": {
+                "query": {
                   "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                  "minLength": 1
                 },
-                "asKnownAt": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 25
+                },
+                "memoryType": {
+                  "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
+                  "type": "string",
+                  "enum": [
+                    "decision",
+                    "commitment",
+                    "blocker",
+                    "fact",
+                    "preference",
+                    "pattern",
+                    "note",
+                    "event"
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "project": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["active", "archived"]
+                },
+                "asOf": {
+                  "type": "object",
+                  "properties": {
+                    "validAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    "asKnownAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "memoryTypes": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "decision",
+                      "commitment",
+                      "blocker",
+                      "fact",
+                      "preference",
+                      "pattern",
+                      "note",
+                      "event"
+                    ]
+                  },
+                  "description": "OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both."
+                },
+                "recordedAfter": {
                   "type": "string",
                   "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                  "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given."
+                },
+                "recordedBefore": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                  "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given."
+                },
+                "cursor": {
+                  "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep query and filters identical across pages of one walk.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "projection": {
+                  "default": "full",
+                  "description": "Per-hit output shape: full (default) includes the content excerpt; compact omits content/contentLength/truncated for cheap broad scans — batch-fetch interesting ids with get_memories.",
+                  "type": "string",
+                  "enum": ["full", "compact"]
+                },
+                "order": {
+                  "default": "relevance",
+                  "description": "Retrieval order: 'relevance' (default) is the fused ranked search — query required.",
+                  "type": "string",
+                  "const": "relevance"
                 }
               },
+              "required": ["query"],
               "additionalProperties": false
             },
-            "memoryTypes": {
-              "minItems": 1,
-              "maxItems": 8,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "decision",
-                  "commitment",
-                  "blocker",
-                  "fact",
-                  "preference",
-                  "pattern",
-                  "note",
-                  "event"
-                ]
+            {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "description": "Optional IF at least one filter narrows the candidate set — omitting both query and every filter is rejected (nothing bounds the scan).",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 25
+                },
+                "memoryType": {
+                  "description": "Single memory type to match. Mutually exclusive with memoryTypes — pass one or the other, never both.",
+                  "type": "string",
+                  "enum": [
+                    "decision",
+                    "commitment",
+                    "blocker",
+                    "fact",
+                    "preference",
+                    "pattern",
+                    "note",
+                    "event"
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "project": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["active", "archived"]
+                },
+                "asOf": {
+                  "type": "object",
+                  "properties": {
+                    "validAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    "asKnownAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "memoryTypes": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "decision",
+                      "commitment",
+                      "blocker",
+                      "fact",
+                      "preference",
+                      "pattern",
+                      "note",
+                      "event"
+                    ]
+                  },
+                  "description": "OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both."
+                },
+                "recordedAfter": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                  "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given."
+                },
+                "recordedBefore": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                  "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given."
+                },
+                "cursor": {
+                  "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep query and filters identical across pages of one walk.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "projection": {
+                  "default": "full",
+                  "description": "Per-hit output shape: full (default) includes the content excerpt; compact omits content/contentLength/truncated for cheap broad scans — batch-fetch interesting ids with get_memories.",
+                  "type": "string",
+                  "enum": ["full", "compact"]
+                },
+                "order": {
+                  "type": "string",
+                  "const": "chronological",
+                  "description": "Retrieval order: chronological is an exhaustive, unranked recorded_at DESC listing — no embedding call, no vector/abstention signal."
+                }
               },
-              "description": "OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both."
-            },
-            "recordedAfter": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-              "description": "Inclusive lower bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be later than recordedBefore when both are given."
-            },
-            "recordedBefore": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-              "description": "Inclusive upper bound on recorded_at. Use at most 3 fractional-second digits (millisecond precision). Must not be earlier than recordedAfter when both are given."
-            },
-            "cursor": {
-              "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep query and filters identical across pages of one walk.",
-              "type": "string",
-              "minLength": 1
-            },
-            "projection": {
-              "default": "full",
-              "description": "Per-hit output shape: full (default) includes the content excerpt; compact omits content/contentLength/truncated for cheap broad scans — batch-fetch interesting ids with get_memories.",
-              "type": "string",
-              "enum": ["full", "compact"]
+              "required": ["order"],
+              "additionalProperties": false
             }
-          },
-          "required": ["query"],
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          ]
         },
         "outputSchema": {
           "type": "object",

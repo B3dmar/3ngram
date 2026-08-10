@@ -98,8 +98,13 @@ export type { CommitmentStatus } from './commitment.js'
 export { COMMITMENT_TRANSITIONS, canTransition, commitmentStatusSchema } from './commitment.js'
 export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
-export type { CursorPayload } from './cursor.js'
-export { cursorPayloadSchema, legacyCursorPayloadSchema } from './cursor.js'
+export type { CursorPayload, CursorPayloadV2, CursorPayloadV3 } from './cursor.js'
+export {
+  cursorPayloadSchema,
+  cursorPayloadV2Schema,
+  cursorPayloadV3Schema,
+  legacyCursorPayloadSchema,
+} from './cursor.js'
 // --- get_memories batched bounded-content read (MCP tool IO) ---
 export type {
   GetMemoriesArgs,
@@ -392,6 +397,20 @@ export {
   searchQueryV3Schema,
   searchToolOutputV2Schema,
 } from './search-cursor.js'
+// --- chronological list mode on `search` (issue #134) ---
+export type {
+  SearchOrder,
+  SearchQueryV4Args,
+  SearchQueryV4ChronologicalInput,
+  SearchQueryV4Input,
+  SearchQueryV4RelevanceInput,
+} from './search-list.js'
+export {
+  searchOrderSchema,
+  searchQueryV4ChronologicalSchema,
+  searchQueryV4RelevanceSchema,
+  searchQueryV4Schema,
+} from './search-list.js'
 export type {
   EdgeInput,
   FactWriteInput,

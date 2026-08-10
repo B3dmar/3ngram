@@ -80,14 +80,21 @@ async function handlePublicSearch(
 function frozenPage(input: DashboardSearchQuery, fingerprint: string) {
   if (input.cursor === undefined) return undefined
   const decoded = decodeSearchCursor(input.cursor, fingerprint)
-  return decoded === undefined
-    ? undefined
-    : {
-        ids: decoded.ids,
-        scores: decoded.scores,
-        off: decoded.off,
-        ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
-      }
+  // REST dashboard search only ever mints/consumes the v2 frozen-ordering
+  // cursor — the v3 chronological keyset cursor (list mode) is MCP-only, and
+  // this route never folds `order` into `fingerprint` above, so a v3 token
+  // CARRYING `fp` is already rejected as a typed mismatch by
+  // decodeSearchCursor before this line ever runs. This shape guard is the
+  // fallback for a fingerprint-LESS v3 token: restart at page 1, the same
+  // graceful-restart behavior a legacy/garbled cursor already gets, rather
+  // than reading `.ids`/`.scores` off the wrong shape.
+  if (decoded === undefined || decoded.v !== 2) return undefined
+  return {
+    ids: decoded.ids,
+    scores: decoded.scores,
+    off: decoded.off,
+    ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
+  }
 }
 
 function nextCursor(page: DashboardSearchPage, fingerprint: string): string | undefined {
