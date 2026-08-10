@@ -94,17 +94,18 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // review_proposals OUTPUT schema grows the fact-proposal record plus two
       // decision variants, and an output schema rides tools/list on every turn.
       // REST is unchanged — review_proposals has no REST route — and so is CLI.
-      // +?/?/? (chronological list mode, issue #134): the search tool's
-      // inputSchema grew from a single object to a 2-branch `anyOf` union
-      // (relevance | chronological order, ADR-0011 "unions grow by variant" —
-      // see packages/schema/src/search-list.ts's module comment for why a
-      // single conditionally-optional field can't express this under Zod 4's
-      // safeExtend), plus an `order` field and a longer tool description.
-      // Only MCP moves — REST/CLI are untouched by this PR (list mode is
-      // MCP-only this release). MEASURED after rebasing onto the facts-write
-      // stack above, not arithmetically summed with it (Track F's own
-      // precedent) — see the numbers themselves for the final total.
-      mcp: [0, 0, 0],
+      // +1432/+11456/+2792 (chronological list mode, issue #134): the search
+      // tool's inputSchema grew from a single object to a 2-branch `anyOf`
+      // union (relevance | chronological order, ADR-0011 "unions grow by
+      // variant" — see packages/schema/src/search-list.ts's module comment
+      // for why a single conditionally-optional field can't express this
+      // under Zod 4's safeExtend), plus an `order` field and a longer tool
+      // description. Only MCP moves — REST/CLI are untouched by this PR
+      // (list mode is MCP-only this release). MEASURED on top of the
+      // facts-write stack above (rebased, not arithmetically summed with it —
+      // Track F's own precedent), so this delta is against THIS PR's actual
+      // base, not an isolated pre-facts baseline.
+      mcp: [25772, 207992, 52071],
       cli: [333, 1236, 1236],
       rest: [2307, 3324, 3324],
     },
