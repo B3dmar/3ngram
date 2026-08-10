@@ -9,10 +9,16 @@
 // per docs/concepts/memory-model.mdx append-and-supersede — a DEDICATED path (NOT reviseMemory: there is
 // no successor memory to append), all in one withTenant tx (db proposals-apply.ts).
 import {
+  type AppliedFactProposal,
   type AppliedProposalRow,
+  applyFactProposal as applyFactProposalDb,
   applyProposal as applyProposalDb,
+  type FactProposalRow,
+  listFactProposals as listFactProposalsDb,
   listProposals as listProposalsDb,
+  ProposalNotFoundError,
   type ProposalRow,
+  rejectFactProposal as rejectFactProposalDb,
   rejectProposal as rejectProposalDb,
   withTenant,
 } from '@3ngram/db'
@@ -27,6 +33,9 @@ export {
 
 /** A consolidation-proposal record returned to a transport. */
 export type ProposalRecord = ProposalRow
+
+/** An extracted-fact proposal record returned to a transport. */
+export type FactProposalRecord = FactProposalRow
 
 /**
  * List-mode query: optional status filter + a bounded window (caller defaults
@@ -80,4 +89,116 @@ export function applyProposal(
   actorKind: ActorKind,
 ): Promise<AppliedProposalRow> {
   return withTenant(userId, (tx) => applyProposalDb(tx, userId, proposalId, actorKind))
+}
+
+/** Both proposal kinds for one tenant, each bounded by the SAME per-source limit. */
+export interface AllProposals {
+  proposals: ProposalRecord[]
+  factProposals: FactProposalRecord[]
+}
+
+/**
+ * List BOTH proposal kinds for the tenant, most-recent first within each.
+ *
+ * `limit` is PER SOURCE, not a shared budget: the two kinds are independent
+ * review queues, and splitting one budget across them would let a burst of
+ * extracted facts hide every edge proposal (or the reverse) instead of showing
+ * a bounded window of each. The caller still gets at most 2 x limit records, so
+ * the no-firehose rule holds.
+ *
+ * One withTenant transaction covers both reads, so the two lists are a
+ * consistent snapshot rather than two round-trips a decision could land between.
+ */
+export function listAllProposals(userId: string, query: ProposalsListQuery): Promise<AllProposals> {
+  const dbQuery =
+    query.status === undefined
+      ? { limit: query.limit }
+      : { status: query.status, limit: query.limit }
+  return withTenant(userId, async (tx) => ({
+    proposals: await listProposalsDb(tx, dbQuery),
+    factProposals: await listFactProposalsDb(tx, userId, dbQuery),
+  }))
+}
+
+/**
+ * The outcome of deciding a proposal whose KIND the caller did not state.
+ * `kind` tells the transport which output variant to build; `factId` is present
+ * only when applying a fact proposal materialized one.
+ */
+export type DecidedProposal =
+  | { kind: 'edge'; proposal: ProposalRecord }
+  | { kind: 'edge_applied'; proposal: AppliedProposalRow }
+  | { kind: 'fact'; proposal: FactProposalRecord }
+  | { kind: 'fact_applied'; proposal: FactProposalRecord; factId: string }
+
+/**
+ * Probe the edge table first, then the fact table, and report not-found only
+ * after BOTH miss.
+ *
+ * The id alone is enough to disambiguate: both tables key on uuidv7, so an id
+ * that exists in one cannot collide with the other and a hit is unambiguous.
+ * That is what lets accept/reject keep their shipped single-id input instead of
+ * making every caller state which kind it holds.
+ *
+ * The probe is ordered edge-first because edge proposals are the shipped,
+ * higher-volume kind; the fact lookup is only reached when the first misses.
+ * A ProposalNotFoundError from the FIRST probe is a "not this kind" signal, not
+ * a failure — only the second one propagates.
+ */
+async function decideAnyKind<T>(onEdge: () => Promise<T>, onFact: () => Promise<T>): Promise<T> {
+  try {
+    return await onEdge()
+  } catch (error) {
+    if (!(error instanceof ProposalNotFoundError)) throw error
+    return onFact()
+  }
+}
+
+/**
+ * Reject an open proposal of EITHER kind (proposed -> rejected). Missing or
+ * already-decided in both tables -> ProposalNotFoundError. Runs under
+ * withTenant/RLS, which is also what makes a cross-tenant id indistinguishable
+ * from a missing one.
+ */
+export function rejectProposalAnyKind(
+  userId: string,
+  proposalId: string,
+): Promise<DecidedProposal> {
+  return decideAnyKind<DecidedProposal>(
+    async () => ({
+      kind: 'edge',
+      proposal: await withTenant(userId, (tx) => rejectProposalDb(tx, proposalId)),
+    }),
+    async () => ({
+      kind: 'fact',
+      proposal: await withTenant(userId, (tx) => rejectFactProposalDb(tx, userId, proposalId)),
+    }),
+  )
+}
+
+/**
+ * Accept an open proposal of EITHER kind. An edge proposal materializes its
+ * typed edge (and closes the predecessor for a supersedes/updates edge); a fact
+ * proposal writes the fact it proposed and returns its id. Missing or
+ * already-decided in both tables -> ProposalNotFoundError.
+ */
+export function acceptProposalAnyKind(
+  userId: string,
+  proposalId: string,
+  actorKind: ActorKind,
+): Promise<DecidedProposal> {
+  return decideAnyKind<DecidedProposal>(
+    async () => ({
+      kind: 'edge_applied',
+      proposal: await withTenant(userId, (tx) =>
+        applyProposalDb(tx, userId, proposalId, actorKind),
+      ),
+    }),
+    async () => {
+      const applied: AppliedFactProposal = await withTenant(userId, (tx) =>
+        applyFactProposalDb(tx, userId, proposalId),
+      )
+      return { kind: 'fact_applied', proposal: applied.proposal, factId: applied.factId }
+    },
+  )
 }

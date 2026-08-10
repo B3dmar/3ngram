@@ -18,7 +18,7 @@ The MCP surface is designed from **jobs to be done** and capped at **11 tools** 
 | "Carry context to another tool/agent" | `handoff` |
 | "What is currently true about X" | `get_facts` |
 | "Organize my memory space" | `configure_scope` |
-| "Review what the consolidator proposes" | `review_proposals` |
+| "Review what was proposed for me" (consolidation edges and extracted facts) | `review_proposals` |
 | "Know what this server can do / how I'm set up" | `describe_environment` |
 
 This table is compressed into `SERVER_INSTRUCTIONS` (`apps/server/src/mcp/server.ts`), which the server advertises as `DiscoverResult.instructions` — the spec's slot for telling the model *how to use the server*, as opposed to the per-tool descriptions that only explain one tool at a time. **Change the two together**: the constant is a policy statement derived from this table, and it is prepended to model context on every client that surfaces it, so it competes with the tool descriptions for attention.
@@ -35,7 +35,7 @@ Every tool also declares [annotations](https://modelcontextprotocol.io/specifica
 6. **`handoff`** — export structured context for another provider/agent.
 7. **`get_facts`** — currently-valid facts for a subject (bi-temporal aware).
 8. **`configure_scope`** — scope CRUD + aliases + mappings.
-9. **`review_proposals`** — list/accept/reject consolidation proposals (the human-in-the-loop side of background consolidation).
+9. **`review_proposals`** — list/accept/reject proposals (the human-in-the-loop side of background work). Two kinds share the flow: consolidation proposals, where accepting materializes the proposed edge, and **extracted-fact proposals**, where accepting writes the structured fact so `get_facts` can read it. Nothing extracted becomes queryable truth without review. The input is unchanged — accept/reject take the proposal id, and ids are disjoint across the two tables, so the id alone identifies the kind. The list response only grows a `factProposals` key when there are some, and accept/reject answer with their own `applied_fact`/`rejected_fact` variants, so a client written against the edge-only surface keeps seeing exactly what it saw.
 10. **`describe_environment`** — capabilities, config, scopes, stats.
 11. **`get_memories`** — batched full-content read by id: up to `MAX_GET_MEMORIES_IDS = 20` ids, per-item content bounded at `maxContentChars` (default 10,000, ceiling `MAX_GET_CONTENT_CHARS = 65,536` — import rows reach 262,144 chars and never ride back verbatim). Unknown and cross-tenant ids land in `notFound` (data, never an error — no existence leak). The follow-up read for a `truncated: true` search/handoff line. The unbounded body is served by REST `GET /api/v1/memories/:id` and, since [resources](/concepts/mcp-resources) landed, by `threengram://memory/{id}` — which returns the full stored content and is cacheable, so a client that reads the same memory twice pays for it once.
 

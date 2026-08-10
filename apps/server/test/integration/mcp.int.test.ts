@@ -658,6 +658,119 @@ describe('/mcp D3 admin tools end-to-end (real transport, runtime role)', () => 
     return { proposalId: proposal.rows[0].id, fromId: m.rows[0].id, toId: m.rows[1].id }
   }
 
+  /**
+   * Seed an extracted-fact proposal awaiting review (owner connection — the
+   * extractor that would create them is out of scope). Mirrors seedProposal.
+   */
+  async function seedFactProposal(
+    user: string,
+    value = '98',
+  ): Promise<{ proposalId: string; memoryId: string }> {
+    const m = await ownerPool.query(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1,'fact','t','c',$2) RETURNING id`,
+      [user, `e2e-factprop-${crypto.randomUUID()}`],
+    )
+    const proposal = await ownerPool.query(
+      `INSERT INTO fact_proposals
+         (user_id, memory_id, subject, predicate, value, memory_type, confidence, status)
+       VALUES ($1,$2,'lift.back_squat','top_set.weight_kg',$3,'fact',0.82,'proposed') RETURNING id`,
+      [user, m.rows[0].id, value],
+    )
+    return { proposalId: proposal.rows[0].id, memoryId: m.rows[0].id }
+  }
+
+  it('review_proposals lists BOTH kinds, and omits factProposals when there are none', async () => {
+    const { proposalId: edgeId } = await seedProposal(userA)
+
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
+    // Edge-only tenant: the shipped response shape, with no new key at all.
+    const edgeOnly = await client.callTool({
+      name: 'review_proposals',
+      arguments: { action: 'list' },
+    })
+    expect(edgeOnly.isError).toBeFalsy()
+    expect('factProposals' in (edgeOnly.structuredContent as object)).toBe(false)
+
+    const { proposalId: factId } = await seedFactProposal(userA)
+    const both = await client.callTool({
+      name: 'review_proposals',
+      arguments: { action: 'list' },
+    })
+    expect(both.isError).toBeFalsy()
+    const listed = both.structuredContent as {
+      proposals: Array<{ id: string }>
+      factProposals: Array<{ id: string; subject: string; value: string }>
+    }
+    expect(listed.proposals.map((p) => p.id)).toContain(edgeId)
+    expect(listed.factProposals.map((p) => p.id)).toContain(factId)
+    expect(listed.factProposals[0]?.subject).toBe('lift.back_squat')
+    await client.close()
+  })
+
+  it('review_proposals rejects a FACT proposal through the same id-only input', async () => {
+    const { proposalId } = await seedFactProposal(userA)
+
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
+    const rejected = await client.callTool({
+      name: 'review_proposals',
+      arguments: { action: 'reject', proposalId },
+    })
+    expect(rejected.isError).toBeFalsy()
+    // Its own variant, so an edge-only client never sees a fact payload under
+    // the literal it matches on.
+    expect((rejected.structuredContent as { action: string }).action).toBe('rejected_fact')
+    expect((rejected.structuredContent as { proposal: { status: string } }).proposal.status).toBe(
+      'rejected',
+    )
+
+    // No fact was written by a rejection.
+    const facts = await ownerPool.query('SELECT count(*)::int AS n FROM facts WHERE user_id = $1', [
+      userA,
+    ])
+    expect(facts.rows[0].n).toBe(0)
+
+    const again = await client.callTool({
+      name: 'review_proposals',
+      arguments: { action: 'reject', proposalId },
+    })
+    expect(again.isError).toBe(true)
+    expect((again.content as Array<{ text?: string }>)[0]?.text ?? '').toContain('not_found')
+    await client.close()
+  })
+
+  it('review_proposals accept MATERIALIZES the fact and reports its id', async () => {
+    const { proposalId, memoryId } = await seedFactProposal(userA, '102')
+
+    const client = await connect(app.baseUrl, `Bearer ${tokenA}`)
+    const accepted = await client.callTool({
+      name: 'review_proposals',
+      arguments: { action: 'accept', proposalId },
+    })
+    expect(accepted.isError).toBeFalsy()
+    const applied = accepted.structuredContent as {
+      action: string
+      factId: string
+      proposal: { status: string }
+    }
+    expect(applied.action).toBe('applied_fact')
+    expect(applied.proposal.status).toBe('applied')
+
+    // The fact is real, tied to the source memory, and live.
+    const facts = await ownerPool.query(
+      'SELECT id, memory_id, subject, predicate, value, valid_from, valid_to FROM facts WHERE user_id = $1',
+      [userA],
+    )
+    expect(facts.rowCount).toBe(1)
+    expect(facts.rows[0].id).toBe(applied.factId)
+    expect(facts.rows[0].memory_id).toBe(memoryId)
+    expect(facts.rows[0].value).toBe('102')
+    // No proposal valid_from -> the facts column default fills it in.
+    expect(facts.rows[0].valid_from).not.toBeNull()
+    expect(facts.rows[0].valid_to).toBeNull()
+    await client.close()
+  })
+
   it('review_proposals lists a seeded proposal and rejects it (proposed -> rejected, the row survives)', async () => {
     const { proposalId } = await seedProposal(userA)
 

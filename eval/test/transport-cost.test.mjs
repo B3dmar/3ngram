@@ -90,7 +90,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // it rides tools/list every MCP turn and the REST request surface once.
       // CLI is unchanged — it shells the same commands and never carries the
       // schema.
-      mcp: [20710, 167496, 42201],
+      // +3630/+29040/+7078 mcp (fact proposals in the review flow): the
+      // review_proposals OUTPUT schema grows the fact-proposal record plus two
+      // decision variants, and an output schema rides tools/list on every turn.
+      // REST is unchanged — review_proposals has no REST route — and so is CLI.
+      mcp: [24340, 196536, 49279],
       cli: [333, 1236, 1236],
       rest: [2307, 3324, 3324],
     },
