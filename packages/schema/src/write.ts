@@ -70,6 +70,79 @@ export const rememberInputSchema = z
 export type RememberInput = z.infer<typeof rememberInputSchema>
 
 /**
+ * Upper bound on facts asserted by a single write. A memory states a handful of
+ * measurable things; a longer list is a sign the caller is using the write path
+ * as a bulk fact importer, which is what the import contract is for.
+ */
+export const MAX_FACTS_PER_WRITE = 16
+
+/**
+ * DB-NULL semantics for the optional validity instants: a Date or an ISO-8601
+ * string, with `null` and `undefined` both meaning ABSENT — never the 1970
+ * epoch, which on validTo would mark a live fact as already closed.
+ *
+ * Deliberately duplicated from import.ts's nullableTimestampSchema rather than
+ * imported: import.ts already depends on this module, and the reverse import
+ * would make the cycle.
+ */
+const factTimestampSchema = z
+  .union([z.date(), z.string()], { error: 'expected a Date or an ISO-8601 timestamp string' })
+  .pipe(z.coerce.date())
+  .nullish()
+  .transform((value) => value ?? undefined)
+
+/**
+ * One structured fact asserted by a write: the (subject, predicate, value)
+ * projection of what the memory says, with an optional valid-time window.
+ *
+ * Shapes mirror importFactInputSchema minus `memoryId` (the memory is being
+ * written in the same call) and `recordedAt` (knowledge time is now, by
+ * definition, on a fresh write — only an importer replays it).
+ *
+ * The validity rules mirror the DB CHECK on the proposal table
+ * (fact_proposals_validity_check) rather than the looser one on `facts`: a
+ * `validTo` REQUIRES a `validFrom`, because an interval that ends but never
+ * begins is unrepresentable downstream. Caught here, at the one validation
+ * boundary, it is a field-level error instead of a constraint violation.
+ */
+export const factWriteSchema = z
+  .object({
+    subject: z.string().trim().min(1).max(256),
+    predicate: z.string().trim().min(1).max(256),
+    value: z.string().trim().min(1).max(MAX_CONTENT_LENGTH),
+    confidence: z.number().min(0).max(1).optional(),
+    validFrom: factTimestampSchema,
+    validTo: factTimestampSchema,
+  })
+  .strict()
+  .refine((fact) => fact.validTo === undefined || fact.validFrom !== undefined, {
+    message: 'validTo requires a validFrom — a window cannot end before it begins',
+    path: ['validFrom'],
+  })
+  .refine((fact) => !(fact.validFrom && fact.validTo) || fact.validFrom <= fact.validTo, {
+    message: 'validFrom must not be after validTo',
+    path: ['validTo'],
+  })
+export type FactWriteInput = z.infer<typeof factWriteSchema>
+
+/**
+ * `remember` payload EXTENDED with the structured facts the memory asserts —
+ * composed BESIDE {@link rememberInputSchema}, never replacing it (ADR-0011).
+ *
+ * That separation is load-bearing: {@link reviseInputSchema} extends the BASE,
+ * so a `facts` key on a revise stays a strict-mode rejection. Facts belong to
+ * the assertion that introduced them; a revision appends a NEW memory, and
+ * silently carrying facts across would attribute them to the wrong row.
+ *
+ * An empty array is equivalent to omitting the key — the write path returns no
+ * `factIds` for either.
+ */
+export const rememberWithFactsInputSchema = rememberInputSchema.safeExtend({
+  facts: z.array(factWriteSchema).max(MAX_FACTS_PER_WRITE).optional(),
+})
+export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema>
+
+/**
  * `revise` appends a successor and links it to its predecessor with a typed
  * edge — never an in-place content UPDATE (docs/concepts/memory-model.mdx append-and-supersede, hard
  * rule 1). The edge intent is constrained to the supersession family: a revise

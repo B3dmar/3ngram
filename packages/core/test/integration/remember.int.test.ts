@@ -209,3 +209,70 @@ describe('remember (commitment-type auto-create, issue #117)', () => {
     expect(Number(seenByB.rows[0].n)).toBe(0)
   })
 })
+
+describe('remember with structured facts (runtime role, real withTenant)', () => {
+  const factInput = () => ({
+    ...baseInput(),
+    facts: [
+      { subject: 'release.cadence', predicate: 'soak.hours', value: '24' },
+      { subject: 'release.cadence', predicate: 'cut.branch', value: 'main' },
+    ],
+  })
+
+  it('lands the memory and its facts in ONE transaction, tied to the source memory', async () => {
+    const { id, factIds } = await remember(userA, factInput(), ACTOR)
+
+    expect(factIds).toHaveLength(2)
+    const rows = await ownerPool.query(
+      'SELECT id, user_id, memory_id, subject, predicate, value, valid_to FROM facts WHERE user_id = $1 ORDER BY predicate',
+      [userA],
+    )
+    expect(rows.rowCount).toBe(2)
+    for (const row of rows.rows) {
+      expect(row.memory_id).toBe(id)
+      expect(row.user_id).toBe(userA)
+      // A freshly asserted fact is live: open-ended valid window.
+      expect(row.valid_to).toBeNull()
+    }
+    expect(rows.rows.map((r) => r.predicate)).toEqual(['cut.branch', 'soak.hours'])
+    expect(new Set(factIds)).toEqual(new Set(rows.rows.map((r) => r.id)))
+  })
+
+  it('returns no factIds and writes no facts when none are supplied', async () => {
+    // The no-facts result must stay byte-identical to the shipped shape.
+    const written = await remember(userA, baseInput(), ACTOR)
+
+    expect(written.factIds).toBeUndefined()
+    const rows = await ownerPool.query('SELECT count(*) AS n FROM facts WHERE user_id = $1', [
+      userA,
+    ])
+    expect(Number(rows.rows[0].n)).toBe(0)
+  })
+
+  it("does not insert the duplicate write's facts", async () => {
+    await remember(userA, factInput(), ACTOR)
+    // Same content hash -> DuplicateMemoryError before anything else lands.
+    await expect(remember(userA, factInput(), ACTOR)).rejects.toBeInstanceOf(DuplicateMemoryError)
+
+    const memories = await ownerPool.query(
+      'SELECT count(*) AS n FROM memories WHERE user_id = $1',
+      [userA],
+    )
+    const facts = await ownerPool.query('SELECT count(*) AS n FROM facts WHERE user_id = $1', [
+      userA,
+    ])
+    // One memory and its two facts — the FIRST write's. The rejected duplicate
+    // contributed nothing, so the counts are unchanged by it.
+    expect(Number(memories.rows[0].n)).toBe(1)
+    expect(Number(facts.rows[0].n)).toBe(2)
+  })
+
+  it('isolates written facts by tenant (RLS)', async () => {
+    await remember(userA, factInput(), ACTOR)
+
+    const seenByB = await ownerPool.query('SELECT count(*) AS n FROM facts WHERE user_id = $1', [
+      userB,
+    ])
+    expect(Number(seenByB.rows[0].n)).toBe(0)
+  })
+})
