@@ -327,6 +327,11 @@ export {
   searchVector,
 } from './search.js'
 export {
+  type ChronologicalCursor,
+  type ChronologicalPage,
+  searchList,
+} from './search-list.js'
+export {
   getUserProfileAttributes,
   upsertUserProfileAttributes,
 } from './user-profile-attributes.js'

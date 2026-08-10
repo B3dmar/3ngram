@@ -11,7 +11,7 @@ The MCP surface is designed from **jobs to be done** and capped at **11 tools** 
 | JTBD | Tool(s) |
 |---|---|
 | "Persist something worth keeping" (with the measurable claims it states) | `remember` |
-| "Find what I know" (memories + facts, supersession-aware, time-travel) | `search` |
+| "Find what I know" (memories + facts, supersession-aware, time-travel) — ranked relevance, or an exhaustive chronological listing | `search` |
 | "Read what I found" (full content for ids a search/handoff surfaced truncated) | `get_memories` |
 | "Correct the record" (supersede, extend, resolve, archive) | `revise`, `resolve` |
 | "Start my session oriented" | `briefing` |
@@ -28,7 +28,7 @@ Every tool also declares [annotations](https://modelcontextprotocol.io/specifica
 ## Tools (11)
 
 1. **`remember`** — append a memory (type, scope, project). Never merges. Returns the created memory + any consolidation proposals it triggered (advisory). Optionally carries `facts`: the measurable claims the memory states, as subject/predicate/value triples written in the same transaction and read back by `get_facts` without re-parsing the prose. Fact values are text, so the **unit belongs in the predicate and each fact holds one measure** — subject `lift.back_squat`, predicate `top_set.weight_kg`, value `98`, not a predicate `top_set` with value `98kg x 3`. That convention is what keeps a later range read comparable across entries.
-2. **`search`** — unified retrieval: semantic + FTS + recency fusion; filters (type/scope/project/status); `as_of` for bi-temporal time travel; returns coverage envelope. One unified retrieval tool in place of several specialist search tools. Hit content is a bounded excerpt (`MAX_EXCERPT_LENGTH`); a hit with `truncated: true` is read in full via `get_memories`. The web UI exposes a user-selectable result limit (5 / 10 / 25, defaulting to 5); the hard ceiling is `MAX_SEARCH_LIMIT = 25` (packages/schema `mcp.ts`).
+2. **`search`** — unified retrieval: semantic + FTS + recency fusion; filters (type/scope/project/status); `as_of` for bi-temporal time travel; returns coverage envelope. One unified retrieval tool in place of several specialist search tools. `order: "chronological"` switches from the fused ranking to an exhaustive, unranked `recorded_at`-descending listing narrowed by the same filters — no embedding call, and `query` becomes optional as long as at least one filter is present (an unfiltered scan with neither is rejected). Hit content is a bounded excerpt (`MAX_EXCERPT_LENGTH`); a hit with `truncated: true` is read in full via `get_memories`. The web UI exposes a user-selectable result limit (5 / 10 / 25, defaulting to 5); the hard ceiling is `MAX_SEARCH_LIMIT = 25` (packages/schema `mcp.ts`).
 3. **`revise`** — the correction surface: create a `supersedes`/`updates`/`extends` edge with new content, or archive. Unifies update and supersession logic in one tool. Never edits in place destructively.
 4. **`resolve`** / unresolve (flag) — commitment/blocker FSM transitions.
 5. **`briefing`** — structured: commitments, blockers, overdue, stale, recent decisions, preferences. Requires explicit selector (scope/project/all) — carry forward the no-firehose rule. `brief` mode default.

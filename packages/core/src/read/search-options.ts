@@ -2,7 +2,12 @@
 // Shared option contracts and resolution for core search surfaces. Keeping
 // policy application here makes search() and dashboard pagination enforce the
 // same scope semantics before either path performs metered or database work.
-import { DEFAULT_SUPERSESSION_PENALTY, type FusionWeights, type SearchFilters } from '@3ngram/db'
+import {
+  type ChronologicalCursor,
+  DEFAULT_SUPERSESSION_PENALTY,
+  type FusionWeights,
+  type SearchFilters,
+} from '@3ngram/db'
 import type { AccessGate, BudgetEnforcement } from '../budget/index.js'
 import { applyPolicyToScopeFilter, type RetrievalPolicy } from './retrieval-policy.js'
 
@@ -130,5 +135,28 @@ export function resolveDashboardPageOptions(query: string, opts: DashboardPageOp
     limit: opts.limit ?? DEFAULT_LIMIT,
     weights: resolveWeights(query, DEFAULT_SEARCH_WEIGHTS),
     supersessionPenalty: DEFAULT_SEARCH_SUPERSESSION_PENALTY,
+  }
+}
+
+/**
+ * Options for chronological list mode. No embedding, no fusion weights, no
+ * budget: list mode never calls the gateway, so there is nothing to meter.
+ * `cursor` is the keyset position of the previous page's last row.
+ */
+export interface ListOptions {
+  limit?: number
+  cursor?: ChronologicalCursor
+  filters?: SearchFilters
+  /** Optional read-access gate, matching search()/searchDashboardPage(). */
+  access?: AccessGate | undefined
+  retrievalPolicy?: RetrievalPolicy | undefined
+}
+
+/** Resolve the shared page size, cursor, and scope policy for list mode. */
+export function resolveListOptions(opts: ListOptions) {
+  return {
+    ...resolvePolicyFilters(opts),
+    limit: opts.limit ?? DEFAULT_LIMIT,
+    cursor: opts.cursor,
   }
 }

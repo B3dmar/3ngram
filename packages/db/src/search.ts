@@ -586,8 +586,14 @@ function recordedRangePredicates(
  * condition (defense in depth, module header): splicing it into the shared
  * eligibility fragment binds EVERY leg, pool, and the candidates clause to the
  * caller's rows without touching each splice site individually.
+ *
+ * EXPORTED so search-list.ts's chronological list mode reuses the SAME
+ * candidate-narrowing filter predicates ranked search applies — the two modes
+ * can never drift on what a filter means, only on ranking-vs-ordering and the
+ * live gate (search-list.ts applies its OWN valid_to IS NULL gate on top; this
+ * function stays demote-not-filter, unaware of any caller's live-gate policy).
  */
-function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilters): SQL {
+export function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilters): SQL {
   const col = (name: string): SQL => sql.raw(`${prefix}${name}`)
   // Caller-bound tenant predicate first: matches exactly the rows RLS admits
   // when RLS is functioning, and stays correct independently of it.
@@ -674,8 +680,9 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
  * `commitments` join's `c.user_id = m.user_id`) rather than resting on RLS
  * alone. EXPORTED and reused verbatim by every call site that computes the
  * `superseded` flag or the tier-penalty (searchFused's candidates CTE, the
- * standalone legs below, {@link fetchHitsByIds}) so the two-edge-type
- * definition and the tenant bind can never drift between them.
+ * standalone legs below, {@link fetchHitsByIds}, search-list.ts's
+ * chronological mode) so the two-edge-type definition and the tenant bind can
+ * never drift between them.
  *
  * WARNING — the caller's `FROM memories` MUST be ALIASED and the alias MUST
  * be passed here, even for a single-table query with no other table in scope.

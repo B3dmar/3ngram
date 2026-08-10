@@ -94,7 +94,18 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // review_proposals OUTPUT schema grows the fact-proposal record plus two
       // decision variants, and an output schema rides tools/list on every turn.
       // REST is unchanged — review_proposals has no REST route — and so is CLI.
-      mcp: [24340, 196536, 49279],
+      // +1432/+11456/+2792 (chronological list mode, issue #134): the search
+      // tool's inputSchema grew from a single object to a 2-branch `anyOf`
+      // union (relevance | chronological order, ADR-0011 "unions grow by
+      // variant" — see packages/schema/src/search-list.ts's module comment
+      // for why a single conditionally-optional field can't express this
+      // under Zod 4's safeExtend), plus an `order` field and a longer tool
+      // description. Only MCP moves — REST/CLI are untouched by this PR
+      // (list mode is MCP-only this release). MEASURED on top of the
+      // facts-write stack above (rebased, not arithmetically summed with it —
+      // Track F's own precedent), so this delta is against THIS PR's actual
+      // base, not an isolated pre-facts baseline.
+      mcp: [25772, 207992, 52071],
       cli: [333, 1236, 1236],
       rest: [2307, 3324, 3324],
     },
@@ -311,26 +322,42 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
   for (const field of widerFields) {
     assert.ok(field in props, `REST search request schema must carry the ${field} field`)
   }
-  // The MCP search tool registers searchQueryV3Schema — a strict SUPERSET
+  // The MCP search tool registers searchQueryV4Schema — a strict SUPERSET
   // composition over the same wider searchQuerySchema (V2 added memoryTypes[]
-  // and the recordedAfter/recordedBefore range; V3 adds the continuation pair
-  // cursor + projection, issue #49; ONE validation boundary, hard rule 2).
-  // REST stays on searchQuerySchema until its own stacked slices land, so MCP
-  // must carry every wider field plus exactly the V2 axes + the V3 pair.
-  const v3Fields = [
+  // and the recordedAfter/recordedBefore range; V3 added the continuation
+  // pair cursor + projection, issue #49; V4 adds `order`, issue #134). REST
+  // stays on searchQuerySchema until its own stacked slices land, so MCP must
+  // carry every wider field plus exactly the V2 axes + the V3 pair + order.
+  const v4Fields = [
     ...widerFields,
     'memoryTypes',
     'recordedAfter',
     'recordedBefore',
     'cursor',
     'projection',
+    'order',
   ].sort()
   const searchTool = surfaces.mcp.tools.find((t) => t.name === 'search')
-  assert.deepEqual(
-    Object.keys(searchTool.inputSchema.properties).sort(),
-    v3Fields,
-    'the MCP search tool surface is searchQueryV3Schema (wider set + V2 axes + cursor/projection)',
+  // V4 composes as a UNION (relevance | chronological — ADR-0011 "unions grow
+  // by variant"; `query`'s conditional optionality can't be expressed as a
+  // single-object override under Zod 4's safeExtend assignability guard, see
+  // packages/schema/src/search-list.ts), so inputSchema serializes as
+  // {anyOf: [...]} rather than a flat {properties: ...}. Both branches carry
+  // the IDENTICAL property set (only query's requiredness and order's literal
+  // value differ between them, never the key set) — assert both to prove that
+  // invariant, not just pick one.
+  assert.ok(
+    Array.isArray(searchTool.inputSchema.anyOf),
+    'V4 input is a union of two order variants',
   )
+  assert.equal(searchTool.inputSchema.anyOf.length, 2)
+  for (const variant of searchTool.inputSchema.anyOf) {
+    assert.deepEqual(
+      Object.keys(variant.properties).sort(),
+      v4Fields,
+      'each order variant of the MCP search tool surface carries the wider set + V2 axes + cursor/projection + order',
+    )
+  }
 })
 
 test('generated MCP and REST contracts advertise the recorded-bound precision limit', () => {
@@ -339,12 +366,17 @@ test('generated MCP and REST contracts advertise the recorded-bound precision li
     readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
   )
   const searchTool = surfaces.mcp.tools.find((tool) => tool.name === 'search')
-  for (const field of ['recordedAfter', 'recordedBefore']) {
-    assert.match(
-      searchTool.inputSchema.properties[field].description,
-      precision,
-      `MCP tools/list must advertise ${field} precision`,
-    )
+  // V4's inputSchema is a union (anyOf) of the relevance/chronological order
+  // variants (see the previous test) — assert BOTH branches, not just one,
+  // so a future edit that only updates one variant's description is caught.
+  for (const variant of searchTool.inputSchema.anyOf) {
+    for (const field of ['recordedAfter', 'recordedBefore']) {
+      assert.match(
+        variant.properties[field].description,
+        precision,
+        `MCP tools/list must advertise ${field} precision on every order variant`,
+      )
+    }
   }
 
   const openapi = JSON.parse(
