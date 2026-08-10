@@ -237,12 +237,13 @@ describe('revise (runtime role, real withTenant)', () => {
     ).rejects.toBeInstanceOf(EdgeConflictError)
   })
 
-  it('does NOT tier-demote the predecessor when edgeIntent is updates (debt: slice-4 review)', async () => {
-    // search.ts penalizes ONLY edge_type='supersedes' (e.to_id = predecessor).
-    // An 'updates' revise links the memories but is NOT a supersession, so the
-    // predecessor must NOT be tier-demoted. Both rows match the term; the
-    // predecessor keeps a competitive score and is NOT forced below its successor
-    // by the penalty (the negative companion to the supersedes test below).
+  it('tier-demotes the predecessor when edgeIntent is updates, exactly like supersedes', async () => {
+    // search.ts now penalizes an incoming edge_type IN ('supersedes', 'updates')
+    // (e.to_id = predecessor) — CLOSES_PREDECESSOR (proposals-apply.ts). An
+    // 'updates' revise closes the predecessor's validity exactly like a
+    // 'supersedes' revise does, so it must tier-demote identically (closing the
+    // gap this test used to pin — the positive companion to the supersedes test
+    // below).
     const { id: predId } = await remember(
       userA,
       { ...baseMemory(), content: 'terraform module pins the aws provider version' },
@@ -259,16 +260,22 @@ describe('revise (runtime role, real withTenant)', () => {
     )
 
     const hits = await withTenant(userA, (tx) => searchFused(tx, userA, 'terraform provider', 10))
+    const ids = hits.map((h) => h.id)
     const predHit = hits.find((h) => h.id === predId)
     const succHit = hits.find((h) => h.id === succId)
 
-    // Both retrievable...
+    // Both retrievable (ranking, not filtering)...
     expect(predHit).toBeDefined()
     expect(succHit).toBeDefined()
-    // ...and the predecessor is NOT tier-demoted: its score is NOT pushed below
-    // zero by a supersession penalty (which would be score < 0 given the default
-    // penalty of 2 exceeds the max base score). An 'updates' edge applies none.
-    expect(predHit?.score ?? -1).toBeGreaterThanOrEqual(0)
+    // ...but the live successor ranks ABOVE the superseded predecessor, and the
+    // predecessor's score is pushed below zero by the tier penalty (default
+    // penalty 2 exceeds the max base score) exactly as a 'supersedes' revise does.
+    expect(ids.indexOf(succId)).toBeLessThan(ids.indexOf(predId))
+    expect(succHit?.score).toBeGreaterThan(predHit?.score ?? Number.POSITIVE_INFINITY)
+    expect(predHit?.score ?? 0).toBeLessThan(0)
+    // The hits are LABELED, not just ranked: superseded rides the flag.
+    expect(predHit?.superseded).toBe(true)
+    expect(succHit?.superseded).toBe(false)
     // The edge that was written is 'updates', never 'supersedes'.
     const edge = await ownerPool.query(
       'SELECT edge_type FROM memory_edges WHERE user_id = $1 AND from_id = $2 AND to_id = $3',
@@ -279,8 +286,10 @@ describe('revise (runtime role, real withTenant)', () => {
 
   it('tier-penalizes the superseded predecessor in searchFused (supersedes intent)', async () => {
     // Both memories share the searched term so both match FTS; supersession
-    // ranking (search.ts: e.to_id = predecessor, edge_type='supersedes') must
-    // sink the predecessor BELOW its successor, NOT filter it out (docs/concepts/memory-model.mdx).
+    // ranking (search.ts: e.to_id = predecessor, edge_type IN ('supersedes',
+    // 'updates') — this test exercises the 'supersedes' case specifically, the
+    // sibling 'updates intent' test above exercises the other) must sink the
+    // predecessor BELOW its successor, NOT filter it out (docs/concepts/memory-model.mdx).
     const { id: predId } = await remember(
       userA,
       { ...baseMemory(), content: 'kubernetes rollout uses a blue-green strategy' },
@@ -306,6 +315,8 @@ describe('revise (runtime role, real withTenant)', () => {
     const succHit = hits.find((h) => h.id === succId)
     const predHit = hits.find((h) => h.id === predId)
     expect(succHit?.score).toBeGreaterThan(predHit?.score ?? Number.POSITIVE_INFINITY)
+    expect(predHit?.superseded).toBe(true)
+    expect(succHit?.superseded).toBe(false)
   })
 })
 

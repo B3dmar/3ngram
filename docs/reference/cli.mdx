@@ -316,6 +316,9 @@ Search memories with optional filters before result fusion.
           },
           "score": {
             "type": "number"
+          },
+          "superseded": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -325,7 +328,8 @@ Search memories with optional filters before result fusion.
           "content",
           "contentLength",
           "truncated",
-          "score"
+          "score",
+          "superseded"
         ],
         "additionalProperties": false
       }

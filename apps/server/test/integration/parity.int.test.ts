@@ -267,6 +267,7 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'id',
       'memoryType',
       'score',
+      'superseded',
       'topic',
       'truncated',
     ])
@@ -276,6 +277,7 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'id',
       'memoryType',
       'score',
+      'superseded',
       'topic',
       'truncated',
     ])

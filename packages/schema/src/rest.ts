@@ -81,7 +81,9 @@ export type DashboardSearchQuery = z.infer<typeof dashboardSearchQuerySchema>
 /**
  * One dashboard search hit. Identity + ranking/status metadata only: no memory
  * content, no excerpt, no hash, no embedding. `commitmentStatus` is present only
- * when a commitment FSM row rides the memory.
+ * when a commitment FSM row rides the memory. `superseded` marks a demoted
+ * predecessor row (docs/concepts/memory-model.mdx: ranked below its successor,
+ * never filtered).
  */
 export const dashboardSearchHitSchema = z
   .object({
@@ -89,6 +91,7 @@ export const dashboardSearchHitSchema = z
     memoryType: memoryTypeSchema,
     topic: z.string(),
     score: z.number(),
+    superseded: z.boolean(),
     commitmentStatus: commitmentStatusSchema.optional(),
   })
   .strict()

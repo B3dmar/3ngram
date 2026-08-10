@@ -102,6 +102,19 @@ export interface SearchHit {
   vectorScore?: number
   /** Commitment FSM status when this memory carries a commitment row. */
   commitmentStatus?: CommitmentStatus
+  /**
+   * True when this row is a superseded predecessor — it has an INCOMING
+   * `supersedes` or `updates` edge (a CLOSES_PREDECESSOR edge type, matching
+   * `proposals-apply.ts`'s `CLOSES_PREDECESSOR` set). Ranking is
+   * supersession-AWARE, never supersession-FILTERED (docs/concepts/memory-model.mdx):
+   * this flag lets a caller distinguish/label a demoted row rather than
+   * silently receiving it unmarked. Always present and always COMPUTED (never
+   * a stubbed default): every leg (searchFts, searchRecency, searchVector,
+   * searchFused, fetchHitsByIds) selects it via the shared
+   * {@link supersededExists} predicate, so a superseded row is correctly
+   * labeled on every retrieval path, not only the fused one.
+   */
+  superseded: boolean
 }
 
 /** Tunable fusion weights. Vector defaults to 0 until the vector leg lands. */
@@ -187,9 +200,10 @@ export const DEFAULT_FUSION_WEIGHTS: FusionWeights = { fts: 1, recency: 0.3, vec
 
 /**
  * Penalty subtracted from a row's fused score when it has an INCOMING
- * supersedes edge (it is the `to_id` of a supersedes edge — i.e. a superseded
- * predecessor). This RANKS predecessors below their successors; it does NOT
- * filter them (docs/concepts/memory-model.mdx: superseded rows stay retrievable).
+ * supersedes/updates edge (it is the `to_id` of a CLOSES_PREDECESSOR edge —
+ * i.e. a superseded predecessor, either revise kind). This RANKS predecessors
+ * below their successors; it does NOT filter them (docs/concepts/memory-model.mdx:
+ * superseded rows stay retrievable).
  *
  * The default exceeds the maximum positive base score a row can earn from the
  * other legs (fts + recency are each <= 1, default weights sum to 1.3), so a
@@ -234,13 +248,14 @@ export async function searchFts(
     WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS tsq),
     ranked AS (
       SELECT m.id, m.memory_type, m.topic, m.content,
+             ${supersededExists('m')} AS superseded,
              ts_rank(m.search_tsv, q.tsq) AS rank
       FROM memories m, q
       WHERE m.user_id = ${userId}::uuid AND m.status = 'active' AND m.search_tsv @@ q.tsq
       ORDER BY rank DESC
       LIMIT ${limit}
     )
-    SELECT id, memory_type, topic, content,
+    SELECT id, memory_type, topic, content, superseded,
            CASE WHEN max(rank) OVER () = min(rank) OVER () THEN 1.0
                 ELSE (rank - min(rank) OVER ()) / (max(rank) OVER () - min(rank) OVER ())
            END AS score
@@ -262,9 +277,10 @@ export async function searchRecency(
 ): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
+           ${supersededExists('m')} AS superseded,
            power(0.5, EXTRACT(EPOCH FROM (now() - recorded_at)) / 86400.0
                       / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS score
-    FROM memories
+    FROM memories m
     WHERE user_id = ${userId}::uuid AND status = 'active'
     ORDER BY recorded_at DESC
     LIMIT ${limit}
@@ -302,8 +318,9 @@ export async function searchVector(
   const vec = toVectorLiteral(queryEmbedding)
   const rows = await tx.execute(sql`
     SELECT id, memory_type, topic, content,
+           ${supersededExists('m')} AS superseded,
            GREATEST(0, 1 - (embedding <=> ${vec}::vector)) AS score
-    FROM memories
+    FROM memories m
     WHERE user_id = ${userId}::uuid AND status = 'active' AND embedding IS NOT NULL
     ORDER BY embedding <=> ${vec}::vector
     LIMIT ${limit}
@@ -621,8 +638,9 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
 
 /**
  * Fusion: weighted sum of the FTS, recency, and vector legs, minus the
- * supersession penalty for rows with an incoming supersedes edge. Ranking is
- * supersession-AWARE, never supersession-FILTERED.
+ * supersession penalty for rows with an incoming supersedes/updates edge
+ * (CLOSES_PREDECESSOR, proposals-apply.ts). Ranking is supersession-AWARE,
+ * never supersession-FILTERED.
  *
  * The vector leg is purely additive and weight-gated: it contributes
  * candidates and a score ONLY when weights.vector > 0 AND a queryEmbedding is
@@ -644,6 +662,43 @@ function rowEligibility(prefix: '' | 'm.', userId: string, filters: SearchFilter
  * embedding cast `::vector` at EVERY occurrence and validated 1536-dim first
  * (throws {@link InvalidEmbeddingError}) so the DB never sees a malformed vector.
  */
+/**
+ * EXISTS predicate for the CLOSES_PREDECESSOR incoming-edge check
+ * (proposals-apply.ts): true when the row at `${prefix}id` has an incoming
+ * `supersedes` or `updates` edge, i.e. it is a superseded predecessor (either
+ * revise kind). `${prefix}user_id = e.user_id` is defense in depth (module
+ * header: TENANT ISOLATION IS TWO-LAYER) — RLS already scopes `memory_edges`
+ * to the caller inside withTenant(), and this predicate ADDITIONALLY binds the
+ * edge to the SAME tenant as the row it labels, matching the explicit
+ * caller-bound pattern every other join/subquery in this file uses (e.g. the
+ * `commitments` join's `c.user_id = m.user_id`) rather than resting on RLS
+ * alone. EXPORTED and reused verbatim by every call site that computes the
+ * `superseded` flag or the tier-penalty (searchFused's candidates CTE, the
+ * standalone legs below, {@link fetchHitsByIds}) so the two-edge-type
+ * definition and the tenant bind can never drift between them.
+ *
+ * WARNING — the caller's `FROM memories` MUST be ALIASED and the alias MUST
+ * be passed here, even for a single-table query with no other table in scope.
+ * `memory_edges` (aliased `e` inside this EXISTS) has its OWN `id` and
+ * `user_id` columns, so an UNQUALIFIED `id`/`user_id` reference inside the
+ * subquery resolves to the subquery's OWN innermost scope (`e.id`/`e.user_id`)
+ * per standard SQL name resolution — NOT to the outer `memories` row, even
+ * with no alias collision error to catch it. That silently turned this into
+ * `e.to_id = e.id` (effectively never true) wherever a caller queried
+ * `FROM memories` unaliased. The signature therefore takes a MANDATORY alias
+ * (no bare/empty option), making the unqualified-reference mistake
+ * unrepresentable rather than merely documented.
+ */
+export function supersededExists(alias: string): SQL {
+  const idCol = sql.raw(`${alias}.id`)
+  const userIdCol = sql.raw(`${alias}.user_id`)
+  return sql`EXISTS (
+    SELECT 1 FROM memory_edges e
+    WHERE e.to_id = ${idCol} AND e.user_id = ${userIdCol}
+      AND e.edge_type IN ('supersedes', 'updates')
+  )`
+}
+
 /**
  * Keyset continuation predicate over the fused `score` total order
  * (`score DESC, id ASC`). First page (no cursor) → `true`; a continuation page
@@ -784,10 +839,11 @@ export async function searchFused(
              -- topic_match_score: additive bonus when the memory's topic contains
              -- the query string (issue #339). Inert path emits literal 0::float8.
              ${topicMatchScoreExpr} AS topic_match_score,
-             EXISTS (
-               SELECT 1 FROM memory_edges e
-               WHERE e.to_id = m.id AND e.edge_type = 'supersedes'
-             ) AS superseded
+             -- CLOSES_PREDECESSOR (proposals-apply.ts): both revise kinds close
+             -- the predecessor's validity, so both demote it here — an
+             -- 'updates' revise must rank its predecessor down exactly like a
+             -- 'supersedes' revise does, not escape demotion silently.
+             ${supersededExists('m')} AS superseded
       FROM memories m
       LEFT JOIN fts_norm f ON f.id = m.id
       LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
@@ -803,6 +859,9 @@ export async function searchFused(
              -- top hit and compares to the frozen tau). On the inert path it is the
              -- literal 0::float8 (no vector param exists) and mapHits drops it.
              vector_score,
+             -- Carried through so the caller can label a demoted row rather
+             -- than receive it unmarked (superseded: boolean on SearchHit).
+             superseded,
              (${weights.fts}::float8 * fts_score
               + ${weights.recency}::float8 * recency_score
               + ${weights.vector}::float8 * vector_score
@@ -810,7 +869,7 @@ export async function searchFused(
               - CASE WHEN superseded THEN ${supersessionPenalty}::float8 ELSE 0 END) AS score
       FROM candidates
     )
-    SELECT id, memory_type, topic, content, commitment_status, vector_score, score
+    SELECT id, memory_type, topic, content, commitment_status, vector_score, superseded, score
     FROM scored
     WHERE ${buildCursorPredicate(cursor)}
     ORDER BY score DESC, id ASC
@@ -845,7 +904,9 @@ export async function fetchHitsByIds(
     sql`, `,
   )
   const rows = await tx.execute(sql`
-    SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status, 0::float8 AS score
+    SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
+           ${supersededExists('m')} AS superseded,
+           0::float8 AS score
     FROM memories m
     LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
     WHERE ${eligibility} AND m.id IN (${idList})
@@ -861,6 +922,7 @@ interface RawRow {
   score: string | number
   vector_score?: string | number
   commitment_status?: string | null
+  superseded?: boolean
 }
 
 /**
@@ -876,6 +938,11 @@ function mapHits(result: { rows: unknown[] }, withVectorScore = false): SearchHi
     topic: r.topic,
     content: r.content,
     score: Number(r.score),
+    // Always present (required on SearchHit) and always genuinely computed —
+    // every caller of mapHits selects `superseded` via supersededExists, so
+    // Boolean(...) here is a type coercion (raw driver value), never a
+    // stubbed default for a query that skipped the column.
+    superseded: Boolean(r.superseded),
     ...(withVectorScore && r.vector_score !== undefined
       ? { vectorScore: Number(r.vector_score) }
       : {}),

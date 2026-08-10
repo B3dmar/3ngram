@@ -164,6 +164,22 @@ describe('recency leg (searchRecency)', () => {
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
   })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // A DIRECT regression case for a scoping bug in supersededExists:
+    // searchRecency used to query FROM memories UNALIASED, exactly the shape
+    // that let an unqualified id/user_id reference inside the EXISTS subquery
+    // silently bind to memory_edges' OWN id/user_id columns instead of the
+    // outer row's — returning superseded: false for every row, with no
+    // ambiguity error to catch it. limit spans the full golden set so the
+    // known g115/g116 supersession pair is guaranteed present regardless of
+    // recency order.
+    const hits = await withTenant(uid, (tx) => searchRecency(tx, uid, 200))
+    const succ = dbIdByGoldenId.get('g116') as string
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
 })
 
 describe('fusion (searchFused) — supersession-aware ranking', () => {
@@ -184,6 +200,46 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     const succScore = hits.find((h) => h.id === succ)?.score as number
     const predScore = hits.find((h) => h.id === pred)?.score as number
     expect(succScore).toBeGreaterThan(predScore)
+    // The demoted predecessor is also LABELED, not just ranked down.
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
+
+  it('an "updates" revise demotes its predecessor exactly like "supersedes" does', async () => {
+    // A fresh pair OUTSIDE the golden-set fixture (which only wires 'supersedes'
+    // edges): mirrors memory-revise.ts's 'updates' edge kind directly via SQL,
+    // proving the demotion predicate now keys on BOTH CLOSES_PREDECESSOR edge
+    // types (search.ts), closing the previously-documented gap
+    // (memory-revise.ts) where an 'updates' revise linked the memories but did
+    // not tier-demote the predecessor. Also asserts the new `superseded` flag
+    // on the returned hits.
+    const marker = 'zzzupdatesdemotion'
+    const pred = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-pred') RETURNING id`,
+      [uid, `${marker} predecessor content`],
+    )
+    const predId = pred.rows[0]?.id as string
+    const succ = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-succ') RETURNING id`,
+      [uid, `${marker} successor content`],
+    )
+    const succId = succ.rows[0]?.id as string
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'importer')`,
+      [uid, succId, predId],
+    )
+    await ownerPool.query('UPDATE memories SET valid_to = now() WHERE id = $1', [predId])
+
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, marker, 200))
+    const ids = hits.map((h) => h.id)
+    expect(ids).toContain(succId)
+    expect(ids).toContain(predId)
+    expect(ids.indexOf(succId)).toBeLessThan(ids.indexOf(predId))
+    expect(hits.find((h) => h.id === predId)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succId)?.superseded).toBe(false)
   })
 
   it('the supersession penalty is what demotes the predecessor (penalty=0 can reorder)', async () => {
@@ -313,6 +369,18 @@ describe('vector leg (searchVector)', () => {
     }
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
+  })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // Same regression case as the recency leg, for searchVector's identical
+    // (now-fixed) formerly-unaliased FROM memories shape. The predecessor's
+    // OWN embedding ranks it #1 by cosine similarity (exact match), so a
+    // small limit is enough to guarantee it is in the returned set.
+    const predEmbedding = embeddingByGoldenId.get('g115') as number[]
+    const hits = await withTenant(uid, (tx) => searchVector(tx, uid, predEmbedding, 5))
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits[0]?.id).toBe(pred)
+    expect(hits[0]?.superseded).toBe(true)
   })
 })
 

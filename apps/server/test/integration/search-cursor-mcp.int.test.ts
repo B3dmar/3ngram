@@ -174,8 +174,14 @@ describe('MCP search cursor pagination (#49, real transport)', () => {
     expect(page.count).toBeGreaterThanOrEqual(1)
     const hit = page.hits.find((h) => h.id === id)
     expect(hit).toBeDefined()
-    // The compact wire shape: id/type/topic/score ONLY — no excerpt triple.
-    expect(Object.keys(hit as object).sort()).toEqual(['id', 'memoryType', 'score', 'topic'])
+    // The compact wire shape: id/type/topic/score/superseded ONLY — no excerpt triple.
+    expect(Object.keys(hit as object).sort()).toEqual([
+      'id',
+      'memoryType',
+      'score',
+      'superseded',
+      'topic',
+    ])
 
     // The workflow compact enables: batch-fetch the interesting id.
     const fetched = await client.callTool({ name: 'get_memories', arguments: { ids: [id] } })

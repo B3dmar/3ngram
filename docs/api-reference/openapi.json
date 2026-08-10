@@ -1072,6 +1072,9 @@
                           "score": {
                             "type": "number"
                           },
+                          "superseded": {
+                            "type": "boolean"
+                          },
                           "topic": {
                             "type": "string"
                           }
@@ -1080,7 +1083,8 @@
                           "id",
                           "memoryType",
                           "topic",
-                          "score"
+                          "score",
+                          "superseded"
                         ],
                         "type": "object"
                       },
@@ -4320,6 +4324,9 @@
                           "score": {
                             "type": "number"
                           },
+                          "superseded": {
+                            "type": "boolean"
+                          },
                           "topic": {
                             "type": "string"
                           },
@@ -4334,7 +4341,8 @@
                           "content",
                           "contentLength",
                           "truncated",
-                          "score"
+                          "score",
+                          "superseded"
                         ],
                         "type": "object"
                       },

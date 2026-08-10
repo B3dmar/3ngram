@@ -25,8 +25,9 @@ const FULL_HIT = {
   contentLength: 7,
   truncated: false,
   score: 0.5,
+  superseded: false,
 }
-const COMPACT_HIT = { id: ID, memoryType: 'note', topic: 'topic', score: 0.5 }
+const COMPACT_HIT = { id: ID, memoryType: 'note', topic: 'topic', score: 0.5, superseded: false }
 
 describe('searchQueryV3Schema — cursor + projection composition', () => {
   it('defaults projection to full and limit to the shipped default', () => {
