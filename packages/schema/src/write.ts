@@ -124,10 +124,21 @@ export const factWriteSchema = z
     message: 'validTo requires a validFrom — a window cannot end before it begins',
     path: ['validFrom'],
   })
-  .refine((fact) => !(fact.validFrom && fact.validTo) || fact.validFrom <= fact.validTo, {
-    message: 'validFrom must not be after validTo',
-    path: ['validTo'],
-  })
+  // COMPARE INSTANTS, NOT STRINGS. The refine runs on the parsed ISO strings,
+  // and `<=` on strings is LEXICOGRAPHIC: '.' (0x2E) sorts before 'Z' (0x5A),
+  // so '2026-01-01T00:00:00Z' <= '2026-01-01T00:00:00.001Z' is false — a valid
+  // 1ms window would be rejected, and the inverted pair accepted. Two
+  // timestamps that differ only in precision are exactly what a model-written
+  // call produces. z.iso.datetime() has already validated both, so Date.parse
+  // cannot return NaN here.
+  .refine(
+    (fact) =>
+      !(fact.validFrom && fact.validTo) || Date.parse(fact.validFrom) <= Date.parse(fact.validTo),
+    {
+      message: 'validFrom must not be after validTo',
+      path: ['validTo'],
+    },
+  )
 export type FactWriteInput = z.infer<typeof factWriteSchema>
 
 /**

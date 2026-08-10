@@ -200,6 +200,38 @@ describe('factWrite', () => {
     ).toBe(false)
   })
 
+  it('orders MIXED-PRECISION instants by time, not lexicographically', () => {
+    // Regression: the refine compares parsed ISO strings, and string `<=` is
+    // lexicographic — '.' (0x2E) sorts before 'Z' (0x5A). Same-length pairs
+    // (every other case here) mask it; these differ in precision, which is
+    // exactly what a model-written call produces.
+    // A REAL 1ms window must be accepted:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.001Z',
+      }).success,
+    ).toBe(true)
+    // and the inverted pair rejected, though it sorts as "ascending" as text:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.001Z',
+        validTo: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(false)
+    // Equal instants written at different precisions are a zero-length window,
+    // which the DB CHECK admits (valid_from <= valid_to), so the schema must too.
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.000Z',
+      }).success,
+    ).toBe(true)
+  })
+
   it('bounds the triple and the confidence', () => {
     expect(factWriteSchema.safeParse({ ...validFact, subject: '' }).success).toBe(false)
     expect(factWriteSchema.safeParse({ ...validFact, subject: 'x'.repeat(257) }).success).toBe(
