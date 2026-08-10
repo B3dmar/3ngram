@@ -377,20 +377,25 @@ export {
 } from './search-cursor.js'
 export type {
   EdgeInput,
+  FactWriteInput,
   Project,
   RememberInput,
+  RememberWithFactsInput,
   ReviseEdgeIntent,
   ReviseInput,
   Tag,
 } from './write.js'
 export {
   edgeInputSchema,
+  factWriteSchema,
   MAX_CONTENT_LENGTH,
+  MAX_FACTS_PER_WRITE,
   MAX_TAG_LENGTH,
   MAX_TAGS,
   MAX_TOPIC_LENGTH,
   projectSchema,
   rememberInputSchema,
+  rememberWithFactsInputSchema,
   reviseEdgeIntentSchema,
   reviseInputSchema,
   tagSchema,
