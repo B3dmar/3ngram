@@ -25,14 +25,20 @@ export {
   garbageCollectClients,
 } from './gc-clients.js'
 export {
+  type AllProposals,
   type AppliedProposalRow,
+  acceptProposalAnyKind,
   applyProposal,
+  type DecidedProposal,
   EpisodicSupersessionError,
+  type FactProposalRecord,
+  listAllProposals,
   listProposals,
   ProposalNotFoundError,
   type ProposalRecord,
   type ProposalsListQuery,
   rejectProposal,
+  rejectProposalAnyKind,
   SuccessorNotLiveError,
 } from './proposals.js'
 export {

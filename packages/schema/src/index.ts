@@ -366,6 +366,16 @@ export {
   searchToolOutputV3Schema,
   setRetrievalDefaultInputSchema,
 } from './retrieval-scope.js'
+// --- review_proposals V2: extracted-fact proposals in the review flow ---
+export type {
+  FactProposalRecordOutput,
+  ReviewProposalsOutputV2,
+} from './review-fact-proposals.js'
+export {
+  factProposalRecordSchema,
+  reviewProposalsOutputV2Schema,
+  reviewProposalsRegisterOutputShapeV2,
+} from './review-fact-proposals.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---
