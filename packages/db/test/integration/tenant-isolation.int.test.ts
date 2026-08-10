@@ -138,6 +138,7 @@ const SEEDED_FORCED_TABLES = [
   'facts',
   'commitments',
   'consolidation_proposals',
+  'fact_proposals',
   'memory_events',
   'llm_usage',
 ] as const
@@ -166,6 +167,10 @@ async function seedTenantAAllForced(): Promise<void> {
     await tx.execute(
       sql`INSERT INTO consolidation_proposals (user_id, from_id, to_id, edge_type, memory_type, similarity)
           VALUES (${a}, ${id2}, ${id1}, 'extends', 'fact', 0.93)`,
+    )
+    await tx.execute(
+      sql`INSERT INTO fact_proposals (user_id, memory_id, subject, predicate, value, memory_type)
+          VALUES (${a}, ${id1}, 's', 'p', 'v', 'fact')`,
     )
     await tx.execute(
       sql`INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind)
@@ -207,6 +212,7 @@ describe('FORCE RLS behavioral isolation (runtime role, real withTenant)', () =>
       facts: 1,
       commitments: 1,
       consolidation_proposals: 1,
+      fact_proposals: 1,
       memory_events: 1,
       llm_usage: 1,
     })
@@ -224,9 +230,12 @@ describe('assertRlsInForce runtime guard', () => {
     for (const t of SEEDED_FORCED_TABLES) {
       expect(forced, `${t} missing from migration-derived forced set`).toContain(t)
     }
-    // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy.
-    expect(forced.length).toBe(13)
+    // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy;
+    // 0031 adds fact_proposals. The names are asserted individually because a
+    // count alone would let a swap (one table gained, another dropped) pass.
+    expect(forced.length).toBe(14)
     expect(forced).toContain('user_retrieval_policy')
+    expect(forced).toContain('fact_proposals')
   })
 
   it('FAILS CLOSED against a bypass-capable / owner connection', async () => {
