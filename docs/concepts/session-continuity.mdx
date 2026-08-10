@@ -88,19 +88,57 @@ The design is constrained by what the harness actually permits.
 |---|---|---|
 | Fires | after each turn | session already terminating |
 | Receives | `last_assistant_message`, `stop_hook_active`, `session_id`, `cwd` | `session_id`, `transcript_path`, `cwd`, `reason` |
-| Inject context | **yes** — `hookSpecificOutput.additionalContext` | no — there is no model call left |
+| Inject context | **yes** | no — there is no model call left |
 | Make the agent work | **yes** — `decision: "block"` continues the turn | no |
-| Budget | normal timeout | **1.5 s shared** across all SessionEnd hooks |
+| Budget | normal timeout | 1.5 s shared (Claude) / 1 s default, 3 s max (Codex) |
 
 Two consequences:
 
 1. **A debrief cannot run at `SessionEnd`.** By then there is nobody to instruct. This is
    why `3ngram-hook sync` sits at that event and is a deliberate no-op
    (`cmd/3ngram-hook/sync.go:38`) — pushing files needs no model, and that slot cannot be
-   upgraded into a triage.
-2. **`Stop` is the only hook that can make an agent reconcile its own work**, via
-   `decision: "block"` plus `additionalContext`. It fires **once per turn**, not once per
-   session, which makes gating the central design problem rather than a detail.
+   upgraded into a triage. Codex states this structurally: `SessionEnd` is the **only**
+   event with no output schema generated for it at all, and the docs say its output
+   "won't steer Codex or keep the thread open."
+2. **`Stop` is the only hook that can make an agent reconcile its own work.** It fires
+   **once per turn**, not once per session, which makes gating the central design problem
+   rather than a detail.
+
+### Both harnesses support this, with different wire shapes
+
+Verified against Claude Code's hook reference and `openai/codex` at `rust-v0.147.0`
+(generated schemas under `codex-rs/hooks/schema/generated/`, plus
+`hooks/src/events/stop.rs` and `core/src/session/turn.rs`).
+
+| | Claude Code | Codex CLI |
+|---|---|---|
+| Blocking `Stop` | yes | **yes** |
+| Gets final message | `last_assistant_message` | `last_assistant_message` |
+| Where injected text goes | `hookSpecificOutput.additionalContext` | **`reason`** — no `hookSpecificOutput` on `Stop` |
+| Continue semantics | block → agent keeps working | block → `reason` becomes a **new user prompt** |
+| Loop guard | `stop_hook_active` | `stop_hook_active` only — **no built-in cap** |
+| Alternate path | exit 2, stderr to agent | exit 2, stderr carries the text |
+
+Codex hooks are **stable and enabled by default** (`Stage::Stable`, `default_enabled: true`
+in `codex-rs/features/src/lib.rs`); the `codex_hooks` feature flag is a deprecated alias
+and is no longer required. This supersedes the 2026-05-07 reading that treated hooks as
+flag-gated.
+
+<Note>
+**The payload is not portable — the trigger logic is.** Codex's `Stop` output schema has no
+`hookSpecificOutput` and no `additionalContext`; the continuation text rides in `reason`,
+and `decision: "block"` with a blank `reason` is a hook *failure* that produces no
+continuation. So `3ngram-hook` must emit a different envelope per harness while the
+decision of *whether* to fire, and the text itself, stay shared. That is precisely the
+split this design already assumes: 3ngram owns the words, the hook owns the trigger.
+</Note>
+
+**Codex has no continuation cap.** The turn loop sets `stop_hook_active` and continues with
+no counter bounding how many times a `Stop` hook may re-block. The hook must self-terminate.
+That promotes the gate below from an ergonomic concern to a **safety requirement** — an
+ungated triage is an infinite turn loop on Codex, not merely an annoying one. Note also that
+matching hooks launch concurrently with no ordering guarantee, and multiple blocking `Stop`
+reasons are joined with `\n\n`.
 
 ## Recommendation
 
@@ -114,9 +152,9 @@ Three layers, in dependency order. None writes to the corpus and none consumes a
 ```sql
 CREATE TABLE "memory_events" (
   "memory_id"  uuid NOT NULL,
-  "event_kind" text NOT NULL,  -- create|revise|supersede|resolve|unresolve|archive|import
-  "actor_kind" text NOT NULL,  -- …|capture_hook|worker|importer|system
-  "payload"    jsonb,          -- already present, nullable, unconstrained
+  "event_kind" text NOT NULL,  -- create|revise|supersede|resolve|unresolve|archive|import|embed_failed
+  "actor_kind" text NOT NULL,  -- user_dashboard|user_api|user_mcp|worker|importer|system
+  "payload"    jsonb,          -- nullable, and unconstrained on the native write path
   "created_at" timestamptz NOT NULL
 );
 ```
@@ -124,37 +162,57 @@ CREATE TABLE "memory_events" (
 Write `{ session_id, agent, project }` into `payload` on the `create` event — and on
 `revise` and `resolve` too.
 
+The hook authenticates with the user's API key, so it writes as `actor_kind: 'user_api'`.
+No new actor kind, and therefore no constraint migration — which matters, because
+`0010_drop_capture_hook_actor_kind.sql` deliberately *removed* `capture_hook` from this
+constraint as the final step of the 2026-06-11 removal. Reintroducing a hook-shaped actor
+would reverse that; `user_api` is both accurate and uncontentious.
+
 <Note>
 **This is the architectural line between this design and the system that was removed.**
 The old hook wrote rows in `memories`: new retrievable objects competing in search,
 clustering into source-shape bubbles, needing dampening to suppress. Provenance writes
-rows in `memory_events`, which is **not in the retrieval path**. Corpus size, embedding
-count and cluster geometry are all unchanged. The 2026-06-11 decision rejected
-auto-scraping *into the corpus*; it says nothing against metadata on writes the agent
-already chose to make.
+rows in `memory_events`, which is **not in the retrieval path**: no reference in
+`packages/db/src/search.ts`, `briefing-read.ts`, `packages/core/src`, or the consolidation
+worker. Corpus size, embedding count and cluster geometry are all unchanged. The
+2026-06-11 decision rejected auto-scraping *into the corpus*; it says nothing against
+metadata on writes the agent already chose to make.
+
+The one read outside the dashboard and GDPR export is an embedding-repair selector
+(`memory-embedding.ts:122-127`) filtered on `event_kind = 'embed_failed'`, which a
+provenance event cannot match.
 </Note>
 
-Annotating revisions is safe, and for two independent reasons rather than one. `revise`
-never mutates a row — it appends a successor plus a `memory_edges` row, so the original
-stays byte-identical (the append-and-supersede guarantee). And provenance lands in
-`memory_events` regardless, never on the memory. Revisions are in fact the *interesting*
-case: "which session corrected this, and was it Claude or Codex" is the cross-harness
-question.
+Annotating revisions is safe, though for a narrower reason than "nothing is touched."
+`reviseMemory` **does** update the predecessor row — it stamps `valid_to` and `updated_at`
+(`packages/db/src/memory-revise.ts:227-237`). What it never touches is **content, topic or
+tags**; the append-and-supersede guarantee is a content guarantee, not row immutability.
+Provenance lands in `memory_events` regardless, never on the memory. Revisions are in fact
+the *interesting* case: "which session corrected this, and was it Claude or Codex" is the
+cross-harness question.
 
 **Keep the payload minimal — `session_id`, `agent`, `project`.** Not `transcript_path` or
 `cwd`: both embed the local home directory and machine layout, and memories are shareable.
 
 ### 2. A gated `Stop` triage
 
-3ngram already serves the words. `apps/server/src/mcp/prompts.ts:153` registers a
+3ngram already serves the words. `apps/server/src/mcp/prompts.ts:170` registers a
 `debrief` prompt instructing the agent to extract decisions, commitments, follow-ups and
 preferences, persist each via `remember`, and *"for any commitment COMPLETED this session,
 call the `resolve` TOOL on its memory id."*
 
-MCP prompts are user-invoked; a server cannot push one. So the hook fetches the text over
-REST and injects it as `additionalContext` with `decision: "block"`. **3ngram owns the
-words, the hook owns the trigger** — which is what buys cross-harness parity, since both
-harnesses then read identical instructions from one source.
+MCP prompts are user-invoked; a server cannot push one. So the hook must fetch that text
+and inject it with `decision: "block"`. **3ngram owns the words, the hook owns the
+trigger** — which is what buys cross-harness parity, since both harnesses then read
+identical instructions from one source.
+
+<Warning>
+**The prompt text is not reachable over REST today.** `debrief` is served only through MCP
+`prompts/get` on `/mcp`; no REST route exposes prompt text, and the hook binary has no MCP
+client. Either a REST route for prompt text is added, or the text is duplicated into the
+hook — and duplicating it forfeits the single-source property that makes cross-harness
+parity work. This is new surface, not existing surface.
+</Warning>
 
 Two things the shipped prompt does not do, and they are the useful additions:
 
@@ -172,23 +230,54 @@ With provenance the gate is a query rather than a heuristic:
 | no triage event already recorded for this session | `memory_events` |
 
 Fires once per session, on real signal, provably not twice. Without provenance this
-degrades into guessing from turn counts and file mtimes.
+degrades into guessing from turn counts and file mtimes — and on Codex, which has no
+continuation cap, a mis-gated triage is an infinite turn loop.
+
+<Warning>
+**The gate depends on a read that the codebase deliberately prevents.** The only reader of
+`memory_events` redacts payload by construction: `memory-history-queries.ts:196-199`
+selects `payload IS NOT NULL`, `jsonb_typeof` and `octet_length` but never values, and
+`packages/schema/src/rest.ts:311-322` documents that as intentional — *"never raw payload
+values or arbitrary payload keys."* Reading `session_id` back out is exactly the shape that
+rule forbids.
+
+That rule exists because payload is untyped and could carry anything. The resolution is a
+**typed provenance read** that projects only a known-safe key set (`session_id`, `agent`,
+`project`) rather than relaxing the general rule — but it is a real design decision, not
+plumbing, and it should be settled before step 2 is built.
+</Warning>
 
 ### 3. A `SessionEnd` seal
 
-Side effects are unrestricted at `SessionEnd`; only model interaction is barred, and one
-POST fits the 1.5 s budget. Its job is **not** capture — `remember` already wrote the
-memories. It marks the session closed with a cursor, which is what makes *"what changed
-since you last looked"* computable at the next `SessionStart`, in any harness. Read-side
-enablement, not capture.
+Side effects are unrestricted at `SessionEnd`; only model interaction is barred. The
+budget is tight in both harnesses — 1.5 s shared on Claude, 1 s default and 3 s hard max on
+Codex — so this must be a single fire-and-forget POST. Its job is **not** capture:
+`remember` already wrote the memories. It marks the session closed with a cursor, which is
+what makes *"what changed since you last looked"* computable at the next `SessionStart`, in
+any harness. Read-side enablement, not capture.
 
-## Cost to the tool budget: zero
+Prior art: engram issue **#4774** specified *"a provenance-rich, cursor-based change feed
+(replayable since cursor X)"* for external ingest. That is substantially this layer, reasoned
+through once already. It was never built here and has no equivalent issue in this repo, but
+the cursor semantics should be taken from it rather than re-derived.
 
-Eleven tools are registered with one slot left and no reservation on it, and
-[threads](/concepts/threads) is the leading claimant. Per
-[MCP surface budget](/concepts/mcp-surface), prompts and resources cost no slot. This
-design uses an existing prompt, an existing REST surface, and an existing table. **It must
-not need a tool, and it does not.**
+## Cost to the tool budget: zero tools, but not zero surface
+
+Eleven tools are registered (`MAX_TOOLS = 12`) with one slot left and no reservation on it,
+and [threads](/concepts/threads) is the leading claimant. Per
+[MCP surface budget](/concepts/mcp-surface), prompts and resources cost no slot. **This
+design must not need a tool, and it does not.**
+
+It does need new surface, and the earlier claim that it rides entirely on existing routes
+was wrong. Nothing here requires a migration; all of it requires code:
+
+| Needed | Why it does not exist today |
+|---|---|
+| Provenance on the write contracts | `rememberInputSchema` is `.strict()`, so nothing can ride along as an extra field |
+| `payload` plumbed through `writeMemory` | It hardcodes `payload: undefined` (`memory-write.ts:220`) |
+| A `payload` parameter on commitment transitions | `transitionCommitment` has none (`commitments.ts:276-284`) |
+| A typed provenance read | The sole reader strips payload values by design |
+| A REST route serving prompt text | Prompts are MCP-only; the hook has no MCP client |
 
 ## Relation to threads
 
@@ -210,7 +299,7 @@ not be modelled as threads.
 |---|---|
 | Test/exit-code evidence capture | The one documented green-that-wasn't is the case it certifies wrongly. Belongs in the sub-agent prompt as a clean-checkout verification step |
 | Reviving mechanical event capture | Settled 2026-06-11; the corpus damage is measured above |
-| Sharing raw transcripts between harnesses | Codex does not guarantee its transcript format; replaying a full session carries dead ends and stale assumptions at high token cost |
+| Sharing raw transcripts between harnesses | Codex states it outright: *"the transcript format isn't a stable interface for hooks and may change over time."* Replaying a full session also carries dead ends and stale assumptions at high token cost |
 | New MCP tools for work state | `briefing`, `search`, `remember`, `resolve` and `handoff` already cover the jobs; the slot is spoken for |
 | A SQLite/JSONL side store | A second system of record with a migration nobody needs |
 
@@ -220,24 +309,31 @@ Sequenced so each step is independently useful and under the PR size guidance.
 
 | # | Step | Validates |
 |---|---|---|
-| 1 | Verify Codex exposes a blocking `Stop` equivalent | **Gates 2–4.** If it does not, this is Claude-only and the cross-harness case weakens sharply |
-| 2 | Provenance in `memory_events.payload` on create/revise/resolve | Attribution queryable; no migration; independently useful |
-| 3 | `Stop` triage behind the gate, one project, `additionalContext` only | Recall against the 26% / 0% baseline |
+| 0 | ~~Verify Codex exposes a blocking `Stop`~~ | **Done — it does.** Both harnesses support the design |
+| 1 | Settle the typed provenance read (what a caller may project from `payload`) | Unblocks step 2; a policy call, not plumbing |
+| 2 | Provenance on create/revise/resolve + the typed read | Attribution queryable; no migration |
+| 3 | `Stop` triage behind the gate, one project, one harness | Recall against the 26% / 0% baseline |
 | 4 | `SessionEnd` seal + delta cursor on `briefing` | Second session receives a delta, not a re-briefing |
 
 **Validation bar.** Step 3 has a real baseline: 26% overall recall and 0% for commitments,
-measured over 10 sessions. A re-run of that audit method is the pass/fail test. Step 1 is
-cheap and gates the rest, so it goes first.
+measured over 10 sessions. A re-run of that audit method is the pass/fail test.
+
+**Do not ship step 3 ungated on Codex.** Codex's turn loop has no continuation cap, so the
+gate is the only thing standing between this feature and an infinite loop.
 
 ## Open questions
 
-- **Codex `Stop` parity.** A 2026-05-07 decision noted Codex `SessionStart` hooks and that
-  "Stop/PostToolUse hooks can handle debrief," but a *blocking* Stop has not been
-  confirmed. Unverified, and it decides the scope of the whole design.
+- **The typed provenance read.** `rest.ts:311-322` forbids returning raw payload values.
+  A projection limited to `session_id`/`agent`/`project` is the proposed resolution, but
+  whether that is an exception to the rule or a narrowing of it needs deciding.
 - **Gate tuning.** "Memories created > 0" may fire on sessions with nothing worth
   reconciling. Turn count or elapsed time may need to join the predicate.
 - **Cost.** Every trigger is extra model turns plus tool calls on a session the user
   believed was finished. Worth measuring before it defaults to on.
+- **Harnesses beyond Claude and Codex.** Unresearched. Cursor, Gemini CLI, Copilot, Amp,
+  opencode and the VS Code agents were not surveyed, so it is unknown how many expose a
+  blocking turn-completion hook at all. If most do not, MCP plus `SessionStart` injection
+  is the fallback and the triage stays a two-harness feature.
 - **Evidence provenance.** The corpus-damage measurements above come from the engram-era
   Python implementation, migrated into this corpus. The mechanism is gone from this
   codebase; the numbers describe the corpus it left behind.
