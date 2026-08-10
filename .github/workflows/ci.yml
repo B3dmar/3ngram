@@ -570,6 +570,7 @@ jobs:
             test_files: >-
               test/integration/briefing-read.int.test.ts
               test/integration/commitments.int.test.ts
+              test/integration/fact-proposals.int.test.ts
               test/integration/facts-read.int.test.ts
               test/integration/facts-write.int.test.ts
               test/integration/memory-read.int.test.ts

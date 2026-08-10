@@ -159,6 +159,20 @@ export {
   readUserDataExport,
   type UserDataExport,
 } from './data-export.js'
+export {
+  FACT_PROPOSAL_COLUMNS,
+  type FactProposalRow,
+  type FactProposalsQuery,
+  type FactProposalWrite,
+  insertFactProposals,
+  listFactProposals,
+  rejectFactProposal,
+} from './fact-proposals.js'
+// --- fact proposals: staged extraction awaiting human review ---
+export {
+  type AppliedFactProposal,
+  applyFactProposal,
+} from './fact-proposals-apply.js'
 // --- bi-temporal facts read (slice 2) — appended as its own block ---
 export {
   type AsOf,
