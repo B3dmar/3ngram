@@ -67,8 +67,9 @@ export type SearchQueryV3Args = z.input<typeof searchQueryV3Schema>
 
 /**
  * A compact-projection hit: the shipped {@link searchHitSchema} MINUS the
- * excerpt triple (`content`/`contentLength`/`truncated`). id/type/topic/score
- * are enough to decide what to read; get_memories fetches the bodies.
+ * excerpt triple (`content`/`contentLength`/`truncated`). id/type/topic/score/
+ * superseded are enough to decide what to read (and whether a hit is a
+ * demoted predecessor); get_memories fetches the bodies.
  */
 export const searchHitCompactSchema = searchHitSchema.omit({
   content: true,

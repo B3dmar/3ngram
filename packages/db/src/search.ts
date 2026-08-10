@@ -102,6 +102,17 @@ export interface SearchHit {
   vectorScore?: number
   /** Commitment FSM status when this memory carries a commitment row. */
   commitmentStatus?: CommitmentStatus
+  /**
+   * True when this row is a superseded predecessor — it has an INCOMING
+   * `supersedes` or `updates` edge (a CLOSES_PREDECESSOR edge type, matching
+   * `proposals-apply.ts`'s `CLOSES_PREDECESSOR` set). Ranking is
+   * supersession-AWARE, never supersession-FILTERED (docs/concepts/memory-model.mdx):
+   * this flag lets a caller distinguish/label a demoted row rather than
+   * silently receiving it unmarked. Always present (defaults `false` on the
+   * leg-only queries that do not compute it — searchFts/searchRecency/
+   * searchVector — since none of those legs' callers key off it).
+   */
+  superseded: boolean
 }
 
 /** Tunable fusion weights. Vector defaults to 0 until the vector leg lands. */
@@ -187,9 +198,10 @@ export const DEFAULT_FUSION_WEIGHTS: FusionWeights = { fts: 1, recency: 0.3, vec
 
 /**
  * Penalty subtracted from a row's fused score when it has an INCOMING
- * supersedes edge (it is the `to_id` of a supersedes edge — i.e. a superseded
- * predecessor). This RANKS predecessors below their successors; it does NOT
- * filter them (docs/concepts/memory-model.mdx: superseded rows stay retrievable).
+ * supersedes/updates edge (it is the `to_id` of a CLOSES_PREDECESSOR edge —
+ * i.e. a superseded predecessor, either revise kind). This RANKS predecessors
+ * below their successors; it does NOT filter them (docs/concepts/memory-model.mdx:
+ * superseded rows stay retrievable).
  *
  * The default exceeds the maximum positive base score a row can earn from the
  * other legs (fts + recency are each <= 1, default weights sum to 1.3), so a
@@ -784,9 +796,13 @@ export async function searchFused(
              -- topic_match_score: additive bonus when the memory's topic contains
              -- the query string (issue #339). Inert path emits literal 0::float8.
              ${topicMatchScoreExpr} AS topic_match_score,
+             -- CLOSES_PREDECESSOR (proposals-apply.ts): both revise kinds close
+             -- the predecessor's validity, so both demote it here — an
+             -- 'updates' revise must rank its predecessor down exactly like a
+             -- 'supersedes' revise does, not escape demotion silently.
              EXISTS (
                SELECT 1 FROM memory_edges e
-               WHERE e.to_id = m.id AND e.edge_type = 'supersedes'
+               WHERE e.to_id = m.id AND e.edge_type IN ('supersedes', 'updates')
              ) AS superseded
       FROM memories m
       LEFT JOIN fts_norm f ON f.id = m.id
@@ -803,6 +819,9 @@ export async function searchFused(
              -- top hit and compares to the frozen tau). On the inert path it is the
              -- literal 0::float8 (no vector param exists) and mapHits drops it.
              vector_score,
+             -- Carried through so the caller can label a demoted row rather
+             -- than receive it unmarked (superseded: boolean on SearchHit).
+             superseded,
              (${weights.fts}::float8 * fts_score
               + ${weights.recency}::float8 * recency_score
               + ${weights.vector}::float8 * vector_score
@@ -810,7 +829,7 @@ export async function searchFused(
               - CASE WHEN superseded THEN ${supersessionPenalty}::float8 ELSE 0 END) AS score
       FROM candidates
     )
-    SELECT id, memory_type, topic, content, commitment_status, vector_score, score
+    SELECT id, memory_type, topic, content, commitment_status, vector_score, superseded, score
     FROM scored
     WHERE ${buildCursorPredicate(cursor)}
     ORDER BY score DESC, id ASC
@@ -845,7 +864,12 @@ export async function fetchHitsByIds(
     sql`, `,
   )
   const rows = await tx.execute(sql`
-    SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status, 0::float8 AS score
+    SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
+           EXISTS (
+             SELECT 1 FROM memory_edges e
+             WHERE e.to_id = m.id AND e.edge_type IN ('supersedes', 'updates')
+           ) AS superseded,
+           0::float8 AS score
     FROM memories m
     LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
     WHERE ${eligibility} AND m.id IN (${idList})
@@ -861,6 +885,7 @@ interface RawRow {
   score: string | number
   vector_score?: string | number
   commitment_status?: string | null
+  superseded?: boolean
 }
 
 /**
@@ -876,6 +901,9 @@ function mapHits(result: { rows: unknown[] }, withVectorScore = false): SearchHi
     topic: r.topic,
     content: r.content,
     score: Number(r.score),
+    // Always present (required on SearchHit): defaults false on the leg-only
+    // queries (searchFts/searchRecency/searchVector) that never select it.
+    superseded: Boolean(r.superseded),
     ...(withVectorScore && r.vector_score !== undefined
       ? { vectorScore: Number(r.vector_score) }
       : {}),

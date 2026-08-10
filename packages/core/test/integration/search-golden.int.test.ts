@@ -10,10 +10,10 @@
 //
 // Seeding mirrors hnsw-parity.int.test.ts: the full 158-memory golden set with
 // real embeddings under ONE tenant, supersedes edges wired (the production
-// penalty keys on the INCOMING supersedes edge, not valid_to), superseded rows
-// bi-temporally closed (valid_to set) for fidelity. Owner connection for seed
-// speed; the SCORED reads run through core.search() on the runtime role with
-// RLS, exactly as production serves them.
+// penalty keys on an INCOMING supersedes/updates edge, not valid_to),
+// superseded rows bi-temporally closed (valid_to set) for fidelity. Owner
+// connection for seed speed; the SCORED reads run through core.search() on the
+// runtime role with RLS, exactly as production serves them.
 //
 // METRIC RECONCILIATION (mirror run.mjs's per-slice semantics EXACTLY):
 //   - recall@5 / mrr@5: run.mjs retrieves with includeSuperseded:false, i.e. it
@@ -130,8 +130,10 @@ beforeAll(async () => {
     fixtureIdByDbId.set(r.rows[0].id, m.id)
   }
   // Wire supersedes edges (from successor -> superseded predecessor). The
-  // production penalty keys on the INCOMING edge, so these must exist for the
-  // supersession-aware ranking to engage.
+  // production penalty keys on an INCOMING supersedes/updates edge, so these
+  // must exist for the supersession-aware ranking to engage. (The golden set
+  // only exercises the 'supersedes' kind here; 'updates' demotion parity is
+  // covered by packages/db/test/integration/search.int.test.ts.)
   for (const m of memories) {
     if (!m.replaces) continue
     const fromId = dbIdByFixtureId.get(m.id)

@@ -318,6 +318,9 @@ await client.search('oauth refresh token', {
           },
           "score": {
             "type": "number"
+          },
+          "superseded": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -327,7 +330,8 @@ await client.search('oauth refresh token', {
           "content",
           "contentLength",
           "truncated",
-          "score"
+          "score",
+          "superseded"
         ],
         "additionalProperties": false
       }

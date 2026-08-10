@@ -258,7 +258,10 @@ export type SearchInput = z.infer<typeof searchInputSchema>
  * core-produced bounded EXCERPT ({@link MAX_EXCERPT_LENGTH}):
  * `contentLength` is the FULL stored length and `truncated` flags whether the
  * excerpt was cut (the text then ends with {@link EXCERPT_MARKER}), so a caller
- * can fetch the full memory by id when it needs the body.
+ * can fetch the full memory by id when it needs the body. `superseded` marks a
+ * demoted predecessor row (docs/concepts/memory-model.mdx: ranked below its
+ * successor, never filtered) so a caller can label it rather than receive it
+ * unmarked.
  */
 export const searchHitSchema = z
   .object({
@@ -269,6 +272,7 @@ export const searchHitSchema = z
     contentLength: z.number().int().min(0),
     truncated: z.boolean(),
     score: z.number(),
+    superseded: z.boolean(),
   })
   .strict()
 export type SearchHitOutput = z.infer<typeof searchHitSchema>

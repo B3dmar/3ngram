@@ -184,6 +184,46 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     const succScore = hits.find((h) => h.id === succ)?.score as number
     const predScore = hits.find((h) => h.id === pred)?.score as number
     expect(succScore).toBeGreaterThan(predScore)
+    // The demoted predecessor is also LABELED, not just ranked down.
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
+
+  it('an "updates" revise demotes its predecessor exactly like "supersedes" does', async () => {
+    // A fresh pair OUTSIDE the golden-set fixture (which only wires 'supersedes'
+    // edges): mirrors memory-revise.ts's 'updates' edge kind directly via SQL,
+    // proving the demotion predicate now keys on BOTH CLOSES_PREDECESSOR edge
+    // types (search.ts), closing the previously-documented gap
+    // (memory-revise.ts) where an 'updates' revise linked the memories but did
+    // not tier-demote the predecessor. Also asserts the new `superseded` flag
+    // on the returned hits.
+    const marker = 'zzzupdatesdemotion'
+    const pred = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-pred') RETURNING id`,
+      [uid, `${marker} predecessor content`],
+    )
+    const predId = pred.rows[0]?.id as string
+    const succ = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-succ') RETURNING id`,
+      [uid, `${marker} successor content`],
+    )
+    const succId = succ.rows[0]?.id as string
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'importer')`,
+      [uid, succId, predId],
+    )
+    await ownerPool.query('UPDATE memories SET valid_to = now() WHERE id = $1', [predId])
+
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, marker, 200))
+    const ids = hits.map((h) => h.id)
+    expect(ids).toContain(succId)
+    expect(ids).toContain(predId)
+    expect(ids.indexOf(succId)).toBeLessThan(ids.indexOf(predId))
+    expect(hits.find((h) => h.id === predId)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succId)?.superseded).toBe(false)
   })
 
   it('the supersession penalty is what demotes the predecessor (penalty=0 can reorder)', async () => {

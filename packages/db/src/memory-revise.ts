@@ -10,11 +10,12 @@
 // the predecessor. All four land or roll back together (hard rule 3); RLS scopes
 // every statement to the tenant.
 //
-// EDGE DIRECTION IS LOAD-BEARING (search.ts:312): supersession ranking keys on
-// EXISTS(edge WHERE e.to_id = predecessor AND edge_type='supersedes'). The edge
-// MUST therefore be from_id = successor, to_id = predecessor. The tier-penalty
-// in search fires ONLY for edge_type='supersedes' (not 'updates'), so an
-// 'updates' revise links the memories but does NOT tier-demote the predecessor.
+// EDGE DIRECTION IS LOAD-BEARING (search.ts): supersession ranking keys on
+// EXISTS(edge WHERE e.to_id = predecessor AND edge_type IN ('supersedes',
+// 'updates')). The edge MUST therefore be from_id = successor, to_id =
+// predecessor. The tier-penalty in search fires for BOTH revise kinds —
+// matching CLOSES_PREDECESSOR (proposals-apply.ts) — so an 'updates' revise
+// tier-demotes its predecessor exactly like a 'supersedes' revise does.
 //
 // Closing the predecessor (valid_to set) frees its live-hash slot in the partial
 // unique index, so re-asserting the predecessor's EXACT content as the successor

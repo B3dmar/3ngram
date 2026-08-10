@@ -137,6 +137,7 @@ describe('dashboardSearchQuerySchema — REST continuation contract', () => {
           memoryType: 'commitment',
           topic: 'follow up',
           score: 1.02,
+          superseded: false,
           commitmentStatus: 'waiting',
         },
       ],
@@ -198,6 +199,7 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     contentLength: content.length,
     truncated: false,
     score: 0.9,
+    superseded: false,
   })
 
   it('accepts a hit with content at the excerpt cap', () => {
@@ -220,6 +222,12 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     const { truncated: _t, ...noFlag } = hit('c')
     expect(searchHitSchema.safeParse(noLength).success).toBe(false)
     expect(searchHitSchema.safeParse(noFlag).success).toBe(false)
+  })
+
+  it('REQUIRES superseded on every hit — a demoted row must never ship unmarked', () => {
+    const { superseded: _s, ...noSuperseded } = hit('c')
+    expect(searchHitSchema.safeParse(noSuperseded).success).toBe(false)
+    expect(searchHitSchema.safeParse({ ...hit('c'), superseded: true }).success).toBe(true)
   })
 
   it('handoff lines share the SAME excerpt bound and metadata (the #238 sweep)', () => {

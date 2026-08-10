@@ -578,6 +578,7 @@ describe('search tool', () => {
     contentLength: 'pinned'.length,
     truncated: false,
     score: 0.9,
+    superseded: false,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -594,6 +595,14 @@ describe('search tool', () => {
     expect(parsed.nextCursor).toBeUndefined()
   })
 
+  it('surfaces a demoted predecessor as superseded: true on the full-projection hit', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([{ ...HIT, superseded: true }]))
+    const result = await call('search', { query: 'sdk pin' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hits[0]).toMatchObject({ superseded: true })
+  })
+
   it('compact projection omits the excerpt triple per hit (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT]))
     const result = await call('search', { query: 'sdk pin', projection: 'compact' }, ctx())
@@ -604,6 +613,7 @@ describe('search tool', () => {
       memoryType: 'decision',
       topic: 'pin',
       score: 0.9,
+      superseded: false,
     })
   })
 
