@@ -167,8 +167,10 @@ describe('remember (structured facts)', () => {
 
     mockWrite.mockResolvedValue({ id: 'mem-8' })
     const empty = await remember(USER, { ...validInput(), facts: [] }, ACTOR)
-    // The db layer omits factIds for an empty list, so an empty array is
-    // indistinguishable from absent in the result.
+    // The empty list is threaded through as an empty list (core does not
+    // normalize it away); the db layer is what collapses it to "no factIds",
+    // so both halves are pinned.
+    expect(mockWrite.mock.calls[1]?.[2]).toEqual([])
     expect(empty.factIds).toBeUndefined()
   })
 

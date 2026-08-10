@@ -249,7 +249,7 @@ describe('remember with structured facts (runtime role, real withTenant)', () =>
     expect(Number(rows.rows[0].n)).toBe(0)
   })
 
-  it('rolls back the memory when the write is a duplicate, leaving no facts behind', async () => {
+  it("does not insert the duplicate write's facts", async () => {
     await remember(userA, factInput(), ACTOR)
     // Same content hash -> DuplicateMemoryError before anything else lands.
     await expect(remember(userA, factInput(), ACTOR)).rejects.toBeInstanceOf(DuplicateMemoryError)
@@ -261,6 +261,8 @@ describe('remember with structured facts (runtime role, real withTenant)', () =>
     const facts = await ownerPool.query('SELECT count(*) AS n FROM facts WHERE user_id = $1', [
       userA,
     ])
+    // One memory and its two facts — the FIRST write's. The rejected duplicate
+    // contributed nothing, so the counts are unchanged by it.
     expect(Number(memories.rows[0].n)).toBe(1)
     expect(Number(facts.rows[0].n)).toBe(2)
   })
