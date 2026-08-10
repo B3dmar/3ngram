@@ -9,7 +9,7 @@
 // No network, no embeddings fixture required: every vector here is hand-written.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -185,6 +185,21 @@ test('a missing embeddings fixture is reported, never an error', () => {
 })
 
 /**
+ * Move `from` to `to`, treating "there was nothing to move" as a normal outcome.
+ * ACT, do not check-then-act: an existsSync probe followed by a rename is a
+ * file-system race (CodeQL js/file-system-race), and the probe buys nothing here
+ * because the rename itself already reports absence as ENOENT. Any OTHER errno
+ * still throws — a permission or cross-device failure must not pass silently.
+ */
+function moveIfPresent(from, to) {
+  try {
+    renameSync(from, to)
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
+  }
+}
+
+/**
  * Run `fn` with a deliberately CORRUPT embeddings fixture in place, restoring
  * whatever was there before (nothing today; the real fixture once it lands — this
  * must never delete it). Truncated JSON is the realistic corruption: a killed
@@ -193,14 +208,13 @@ test('a missing embeddings fixture is reported, never an error', () => {
 function withCorruptFixture(fn) {
   const target = join(fixturesDir, embeddingsFixtureName('openai-large-1536'))
   const backup = `${target}.test-backup`
-  const hadReal = existsSync(target)
-  if (hadReal) renameSync(target, backup)
+  moveIfPresent(target, backup)
   try {
     writeFileSync(target, '{"model":"openai-large-1536","dims":1536,"tools":{"remember":')
     return fn()
   } finally {
     rmSync(target, { force: true })
-    if (hadReal) renameSync(backup, target)
+    moveIfPresent(backup, target)
   }
 }
 
