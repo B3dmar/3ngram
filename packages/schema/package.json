@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/schema",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "The single validation boundary: every enum, constraint, and policy lives here.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",
