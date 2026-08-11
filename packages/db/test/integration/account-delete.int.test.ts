@@ -3,7 +3,8 @@
 // through the RUNTIME role (app_user, NOBYPASSRLS) — the real RLS + grant path.
 //
 // Proves the append-only reconciliation END TO END:
-//   - PII columns are redacted in place (memories/facts/commitments/users)
+//   - PII columns are redacted in place (memories/facts/fact_proposals/
+//     commitments/users)
 //   - NO memory-domain row is physically deleted (row counts unchanged) — the
 //     runtime grant has no DELETE on memory data, so erasure CANNOT delete it
 //   - sessions are deleted; api keys + oauth tokens are revoked (revoked_at)
@@ -43,6 +44,17 @@ async function seedFact(userId: string, memoryId: string, value: string): Promis
   await ownerPool.query(
     `INSERT INTO facts (user_id, memory_id, subject, predicate, value)
      VALUES ($1, $2, 'subj', 'pred', $3)`,
+    [userId, memoryId, value],
+  )
+}
+
+// A staged fact proposal: user content that is NOT a `facts` row. The users row
+// is tombstoned rather than deleted, so the FK's ON DELETE CASCADE never fires
+// and this survives erasure unless it is redacted explicitly.
+async function seedFactProposal(userId: string, memoryId: string, value: string): Promise<void> {
+  await ownerPool.query(
+    `INSERT INTO fact_proposals (user_id, memory_id, subject, predicate, value, memory_type, rationale)
+     VALUES ($1, $2, 'proposed-subj', 'proposed-pred', $3, 'note', 'extracted by the model')`,
     [userId, memoryId, value],
   )
 }
@@ -92,6 +104,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     const m1 = await seedMemory(userA, 'secret topic', 'secret body one')
     await seedMemory(userA, 'second', 'secret body two')
     await seedFact(userA, m1, 'secret value')
+    await seedFactProposal(userA, m1, 'secret proposed value')
     await ownerPool.query(
       `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
        VALUES ($1, 'default', 'private')`,
@@ -150,6 +163,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(result?.alreadyErased).toBe(false)
     expect(result?.memories).toBe(2)
     expect(result?.facts).toBe(1)
+    expect(result?.factProposals).toBe(1)
     expect(result?.sessionsDeleted).toBe(1)
     expect(result?.apiKeysRevoked).toBe(1)
     expect(result?.oauthTokensRevoked).toBe(1)
@@ -160,6 +174,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     // NO memory-domain row was physically deleted — append-only intact.
     expect(await countRows('memories', userA)).toBe(memoriesBefore)
     expect(await countRows('facts', userA)).toBe(1)
+    expect(await countRows('fact_proposals', userA)).toBe(1)
 
     // PII is redacted in place.
     const mem = await ownerPool.query(
@@ -176,6 +191,16 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     ])
     expect(fact.rows[0].subject).toBe(ERASED_PII)
     expect(fact.rows[0].value).toBe(ERASED_PII)
+    // A staged proposal carries the same content shape as a fact plus a
+    // rationale; none of it may survive an erasure.
+    const proposal = await ownerPool.query(
+      'SELECT subject, predicate, value, rationale FROM fact_proposals WHERE user_id = $1',
+      [userA],
+    )
+    expect(proposal.rows[0].subject).toBe(ERASED_PII)
+    expect(proposal.rows[0].predicate).toBe(ERASED_PII)
+    expect(proposal.rows[0].value).toBe(ERASED_PII)
+    expect(proposal.rows[0].rationale).toBeNull()
 
     // Identity erased; the email becomes the deletion marker.
     const user = await ownerPool.query('SELECT email, password_hash FROM users WHERE id = $1', [
