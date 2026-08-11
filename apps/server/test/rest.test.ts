@@ -2025,6 +2025,23 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ],
+    factProposals: [
+      {
+        id: COMMIT_ID,
+        memoryId: NEW_ID,
+        subject: 'deploy target',
+        predicate: 'is',
+        value: 'fly.io',
+        confidence: 0.8,
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        memoryType: 'note',
+        rationale: 'extracted from the memory body',
+        status: 'proposed',
+        decidedAt: null,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ],
     userBudgets: [
       {
         id: COMMIT_ID,
@@ -2071,6 +2088,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       edges: Array<{ edgeType: string }>
       memoryEvents: Array<{ payload: unknown }>
       proposals: Array<{ rationale: string | null }>
+      factProposals: Array<{ subject: string; value: string; rationale: string | null }>
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
       retrievalPolicy: {
@@ -2086,6 +2104,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         edges: number
         memoryEvents: number
         proposals: number
+        factProposals: number
         userBudgets: number
         llmUsage: number
       }
@@ -2104,6 +2123,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     expect(body.edges[0]?.edgeType).toBe('supersedes')
     expect(body.memoryEvents[0]?.payload).toEqual({ note: 'imported' })
     expect(body.proposals[0]?.rationale).toBe('near-duplicate')
+    // Staged fact proposals are user content too — they are NOT `facts` rows,
+    // so the facts section above does not cover them.
+    expect(body.factProposals[0]?.subject).toBe('deploy target')
+    expect(body.factProposals[0]?.value).toBe('fly.io')
+    expect(body.factProposals[0]?.rationale).toBe('extracted from the memory body')
     // Cost/usage rows are present — user-owned, RLS-scoped like the rest.
     expect(body.userBudgets[0]?.capUsdOverride).toBe('5.000000000000')
     expect(body.llmUsage[0]?.operation).toBe('memory.embed')
@@ -2121,6 +2145,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       edges: 1,
       memoryEvents: 1,
       proposals: 1,
+      factProposals: 1,
       userBudgets: 1,
       llmUsage: 1,
     })
