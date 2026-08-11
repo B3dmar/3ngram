@@ -269,7 +269,12 @@ async function handleChronologicalSearch(
   ctx: ToolContext,
 ): Promise<CallToolResult> {
   const fingerprint = searchFingerprint(
-    input.query ?? '',
+    // PINNED EMPTY, not `input.query ?? ''`: the V4 chronological variant
+    // REJECTS a present `query` at the schema boundary, so nothing can reach
+    // here with one. Reading the field would imply a query leg this ordering
+    // does not have and would let a fingerprint vary on an input that cannot
+    // exist — the constant keeps the hashed identity exactly the filter set.
+    '',
     { ...filters, order: 'chronological' },
     policyScope.scope,
     policyScope.appliedScope !== null,
@@ -342,8 +347,9 @@ async function handleChronologicalSearch(
  *
  * `order: 'relevance'` (default) requires a gateway-configured embedding
  * source and a `query`; `order: 'chronological'` requires NEITHER — it never
- * calls the gateway, and `query` is optional as long as >=1 filter narrows
- * the scan. The two orders mint DIFFERENT cursor shapes (see
+ * calls the gateway, and it REJECTS a `query` outright (this path ranks
+ * nothing, so a query could only be ignored) while requiring >=1 filter to
+ * bound the scan. The two orders mint DIFFERENT cursor shapes (see
  * {@link handleRelevanceSearch} / {@link handleChronologicalSearch}); each
  * rejects/restarts on the other's cursor rather than misreading it.
  */
@@ -353,7 +359,7 @@ const searchTool: ToolDefinition = {
   config: {
     title: 'Search',
     description:
-      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Set order: "chronological" for an exhaustive, unranked recorded_at-descending listing instead of the fused ranking — no embedding call, no gateway required; query then becomes optional PROVIDED at least one filter narrows the set (an unfiltered chronological scan with no query and no filter is rejected — nothing would bound it). Default order "relevance" is the fused ranked search and still requires a query. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. Superseded predecessors are never filtered out, only ranked below their successor — a hit reports superseded: true when it is one, so you can tell a demoted result from a current one; superseded is recomputed live on every page (including continuations of a frozen relevance walk), so a hit\'s rank and score stay frozen across pages of one walk but its superseded flag can still flip if it is revised mid-session. To page: pass nextCursor back as cursor with the SAME query, filters, and order; pages come from the ordering frozen (relevance) or the keyset position (chronological) on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query, filters, and order that issued it: passing it with any of those changed is rejected as invalid input — omit the cursor to start a new search. The relevance cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool); the chronological cursor is tiny (a single row position) by comparison. Paging stops at the frozen pool (relevance) or the live corpus (chronological): hasMore: false means there is nothing more to page to. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.',
+      'Unified semantic + keyword retrieval over your memories, supersession-aware. Accepts a query and an optional result limit, plus optional filters that narrow the candidate set BEFORE fusion (no change to ranking weights): memoryType OR memoryTypes (a list of types, mutually exclusive with memoryType), scope, project, status, asOf (bi-temporal time travel with validAt/asKnownAt), and recordedAfter/recordedBefore (an inclusive recorded-at range over the live view — not time travel). Omit a filter to leave that axis unconstrained. Set order: "chronological" for an exhaustive, unranked recorded_at-descending listing instead of the fused ranking — no embedding call, no gateway required; query is RELEVANCE-ONLY and is rejected in chronological order (that mode ranks nothing, so a query could only be ignored), and chronological instead REQUIRES at least one filter to bound the scan. Default order "relevance" is the fused ranked search and still requires a query. If a retrieval-scope policy is set (configure_scope set_retrieval_default), an unscoped search may be narrowed to your default scope (the result then reports appliedScope) or rejected until you pass a scope filter. Hit content is a bounded excerpt — when a hit reports truncated: true, call get_memories with its id to read the full content. Superseded predecessors are never filtered out, only ranked below their successor — a hit reports superseded: true when it is one, so you can tell a demoted result from a current one; superseded is recomputed live on every page (including continuations of a frozen relevance walk), so a hit\'s rank and score stay frozen across pages of one walk but its superseded flag can still flip if it is revised mid-session. To page: pass nextCursor back as cursor with the SAME query, filters, and order; pages come from the ordering frozen (relevance) or the keyset position (chronological) on the first page, so a mid-walk write or archive can never duplicate or skip a hit. The cursor is bound to the query, filters, and order that issued it: passing it with any of those changed is rejected as invalid input — omit the cursor to start a new search. The relevance cursor token is a real context cost (~4-6 KB — it carries the frozen ids+scores of the candidate pool); the chronological cursor is tiny (a single row position) by comparison. Paging stops at the frozen pool (relevance) or the live corpus (chronological): hasMore: false means there is nothing more to page to. For broad scans set projection: "compact" to omit content/contentLength/truncated per hit (~5x fewer tokens), then batch-fetch the interesting ids with get_memories.',
     inputSchema: searchQueryV4Schema,
     outputSchema: searchToolOutputV3Schema,
     annotations: READ_ONLY_ANNOTATIONS,

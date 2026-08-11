@@ -1046,15 +1046,27 @@ describe('search tool', () => {
       expect(searchChronological).not.toHaveBeenCalled()
     })
 
-    it('accepts a chronological call with a query and no filter', async () => {
-      searchChronological.mockResolvedValue(listPageOf([HIT]))
+    // The chronological core path takes no query argument at all, so a query
+    // that reached it was silently discarded and the caller got the whole live
+    // corpus back. It must never reach core.
+    it('rejects a chronological call carrying a query, even with a filter', async () => {
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work', query: 'find it' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('rejects a chronological call with a query and no filter', async () => {
       const result = await call(
         'search',
         { order: 'chronological', query: 'find it' },
         ctx({ gateway: undefined }),
       )
-      expect(result.isError).toBeFalsy()
-      expect(searchChronological).toHaveBeenCalledTimes(1)
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
     })
 
     it('mints a v3 keyset cursor, decodable, distinct in shape from the v2 frozen cursor, at full microsecond precision', async () => {

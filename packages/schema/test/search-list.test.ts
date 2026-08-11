@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Unit — the V4 search query contract: chronological list mode (order axis +
-// conditionally-optional query, issue #134). Pins (1) relevance stays
+// a relevance-only query, issue #134). Pins (1) relevance stays
 // query-required and byte-compatible with V3's fields (cursor/projection
-// carry through), (2) chronological relaxes query only when >=1 filter is
-// present, (3) V2's refinements (memoryType/memoryTypes exclusion,
+// carry through), (2) chronological REJECTS a query (that mode ranks nothing,
+// so a query could only be silently ignored) and requires >=1 filter in its
+// place, (3) V2's refinements (memoryType/memoryTypes exclusion,
 // recorded-range sanity) still apply on the chronological variant even
 // though it is built independently of V3 (not via extend/omit — see
 // search-list.ts's module comment for why).
@@ -40,24 +41,50 @@ describe('searchQueryV4Schema — relevance order (default, byte-compatible with
   })
 })
 
-describe('searchQueryV4Schema — chronological order (query conditionally optional)', () => {
+describe('searchQueryV4Schema — chronological order (query rejected, >=1 filter required)', () => {
   it('accepts a missing query when at least one filter is present', () => {
     const parsed = searchQueryV4Schema.parse({ order: 'chronological', scope: 'work' })
     expect(parsed.query).toBeUndefined()
     expect(parsed.order).toBe('chronological')
   })
 
-  it('accepts a present query even with no filter', () => {
-    const parsed = searchQueryV4Schema.parse({ order: 'chronological', query: 'find it' })
-    expect(parsed.query).toBe('find it')
+  // The core chronological path takes no query at all, so accepting one meant
+  // silently returning the whole live corpus as if it had been searched.
+  it('rejects a present query even when a filter narrows the scan', () => {
+    const result = searchQueryV4Schema.safeParse({
+      order: 'chronological',
+      scope: 'work',
+      query: 'find it',
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.some((issue) => issue.path[0] === 'query')).toBe(true)
   })
 
-  it('rejects a missing query with no filter present — nothing bounds the scan', () => {
+  it('names the relevance escape hatch when it rejects a chronological query', () => {
+    const result = searchQueryV4Schema.safeParse({
+      order: 'chronological',
+      scope: 'work',
+      query: 'find it',
+    })
+    const message = result.error?.issues.find((issue) => issue.path[0] === 'query')?.message ?? ''
+    expect(message).toContain('not used in chronological order')
+    expect(message).toContain("order:'relevance'")
+  })
+
+  it('rejects a query with no filter present too — both rules fire independently', () => {
+    const result = searchQueryV4Schema.safeParse({ order: 'chronological', query: 'find it' })
+    expect(result.success).toBe(false)
+    const paths = result.error?.issues.map((issue) => issue.path[0]) ?? []
+    expect(paths).toContain('query')
+    expect(paths).toContain('order')
+  })
+
+  it('rejects a filter-less chronological call — nothing bounds the scan', () => {
     const result = searchQueryV4Schema.safeParse({ order: 'chronological' })
     expect(result.success).toBe(false)
   })
 
-  it('recognizes every V1+V2 filter axis as satisfying the query-optional condition', () => {
+  it('recognizes every V1+V2 filter axis as satisfying the >=1 filter requirement', () => {
     const axes: Record<string, unknown> = {
       memoryType: 'note',
       scope: 'work',
@@ -72,7 +99,7 @@ describe('searchQueryV4Schema — chronological order (query conditionally optio
       const input = { order: 'chronological', [key]: value }
       expect(
         searchQueryV4Schema.safeParse(input).success,
-        `${key} should satisfy query-optional`,
+        `${key} should satisfy the >=1 filter requirement`,
       ).toBe(true)
     }
   })
