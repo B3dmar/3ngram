@@ -116,9 +116,23 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // post-chronological-list-mode), not summed on top of the prior delta
       // comments above — same "measured, not arithmetically summed"
       // precedent those comments themselves establish.
-      mcp: [26474, 213608, 53440],
+      // MCP +136/+1088/+266, REST +112/+112/+112 (pre-release review fixes,
+      // this PR): three tool-facing descriptions changed. `search` now states
+      // that `query` is relevance-only and REJECTED under chronological order
+      // (which instead requires >=1 filter), replacing the old "query becomes
+      // optional given a filter" sentence, and the chronological branch's own
+      // `query` field description changed with it. Separately, the fact-write
+      // `validFrom`/`validTo` fields gained descriptions advertising the
+      // 3-fractional-digit precision cap (a custom refinement is invisible in
+      // emitted JSON Schema, so the limit has to be stated in prose) — those
+      // ride BOTH the MCP `remember`/`review_proposals` schemas and the REST
+      // request surface, which is why REST moves too. CLI is unchanged: it
+      // shells commands and carries no schema. MEASURED on this PR's actual
+      // base (staging post-v1.4.0), not arithmetically summed with the deltas
+      // above — the same precedent those comments establish.
+      mcp: [26610, 214696, 53706],
       cli: [333, 1236, 1236],
-      rest: [2769, 3786, 3786],
+      rest: [2881, 3898, 3898],
     },
   )
 })

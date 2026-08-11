@@ -224,6 +224,27 @@ const exportProposal = z
     createdAt: z.string().datetime(),
   })
   .strict()
+// Staged fact proposals awaiting review: the extractor's candidate
+// subject/predicate/value plus its rationale. No recordedAt (a proposal is not
+// yet an assertion) and a nullable validity window (the reviewer supplies it on
+// accept), unlike exportFact above.
+const exportFactProposal = z
+  .object({
+    id: z.uuid(),
+    memoryId: z.uuid(),
+    subject: z.string(),
+    predicate: z.string(),
+    value: z.string(),
+    confidence: z.number().nullable(),
+    validFrom: z.string().datetime().nullable(),
+    validTo: z.string().datetime().nullable(),
+    memoryType: z.string(),
+    rationale: z.string().nullable(),
+    status: z.string(),
+    decidedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  })
+  .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like
 // the rest of the archive. Numeric USD columns surface as decimal strings (drizzle
 // numeric); usage rows carry no content (hard rule 6).
@@ -282,6 +303,7 @@ const accountExport = z
     edges: z.array(exportEdge),
     memoryEvents: z.array(exportMemoryEvent),
     proposals: z.array(exportProposal),
+    factProposals: z.array(exportFactProposal),
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
@@ -295,6 +317,7 @@ const accountExport = z
         edges: z.number().int().min(0),
         memoryEvents: z.number().int().min(0),
         proposals: z.number().int().min(0),
+        factProposals: z.number().int().min(0),
         userBudgets: z.number().int().min(0),
         llmUsage: z.number().int().min(0),
       })
@@ -315,6 +338,7 @@ const accountDeletion = z
         facts: z.number().int().min(0),
         commitments: z.number().int().min(0),
         proposals: z.number().int().min(0),
+        factProposals: z.number().int().min(0),
         sessionsDeleted: z.number().int().min(0),
         apiKeysRevoked: z.number().int().min(0),
         oauthTokensRevoked: z.number().int().min(0),
