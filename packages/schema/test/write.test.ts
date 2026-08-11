@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   EDGE_TYPES,
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,
+  MAX_FACT_WRITE_FRACTION_DIGITS,
   MAX_FACTS_PER_WRITE,
   MAX_TAGS,
   rememberInputSchema,
@@ -230,6 +232,47 @@ describe('factWrite', () => {
         validTo: '2026-01-01T00:00:00.000Z',
       }).success,
     ).toBe(true)
+  })
+
+  // Core's toFactWrite converts each instant via `new Date(iso)` (millisecond
+  // precision) on the way to a MICROSECOND-precision Postgres column, so a
+  // finer instant would land silently moved. Rejected, never truncated.
+  it('rejects a validity instant finer than millisecond precision', () => {
+    expect(
+      factWriteSchema.safeParse({ ...validFact, validFrom: '2026-01-01T00:00:00.1234Z' }).success,
+    ).toBe(false)
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validTo: '2026-01-02T00:00:00.1234567Z',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts millisecond precision and coarser', () => {
+    expect(
+      factWriteSchema.safeParse({ ...validFact, validFrom: '2026-01-01T00:00:00.123Z' }).success,
+    ).toBe(true)
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.12Z',
+        validTo: '2026-01-02T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('advertises the precision cap in the field descriptions (refinements vanish from JSON Schema)', () => {
+    const shape = z.toJSONSchema(factWriteSchema, { io: 'input' }) as {
+      properties: Record<string, { description?: string }>
+    }
+    expect(shape.properties.validFrom?.description).toContain(
+      `at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits`,
+    )
+    expect(shape.properties.validTo?.description).toContain(
+      `at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits`,
+    )
   })
 
   it('bounds the triple and the confidence', () => {

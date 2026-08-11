@@ -428,6 +428,7 @@ export {
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,
+  MAX_FACT_WRITE_FRACTION_DIGITS,
   MAX_FACTS_PER_WRITE,
   MAX_TAG_LENGTH,
   MAX_TAGS,

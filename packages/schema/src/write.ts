@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod'
 import { actorKindSchema, edgeTypeSchema, memoryTypeSchema } from './memory.js'
+import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 
 /**
@@ -77,9 +78,38 @@ export type RememberInput = z.infer<typeof rememberInputSchema>
 export const MAX_FACTS_PER_WRITE = 16
 
 /**
+ * Maximum fractional-second digits a fact's validity instant may carry.
+ *
+ * WHY 3 (the same ceiling, for the same reason, as
+ * MAX_RECORDED_BOUND_FRACTION_DIGITS on the facts-range READ bounds —
+ * recorded-range.ts):
+ * core's `toFactWrite` converts each instant with `new Date(iso)` on the way to
+ * the db, and a JS Date holds MILLISECOND precision — while Postgres stores
+ * `facts.valid_from`/`valid_to` at MICROSECOND precision. `...T00:00:00.1234567Z`
+ * would therefore land as `.123`, silently moving the boundary of a bi-temporal
+ * window: a generation would appear to open or close at an instant the caller
+ * never asked for, and a subsequent range read against the true instant would
+ * disagree with what was written. Rejected loudly at the one validation
+ * boundary (hard rule 2) rather than truncated, so the write surface and the
+ * read bounds enforce ONE precision contract.
+ */
+export const MAX_FACT_WRITE_FRACTION_DIGITS = 3
+
+/** Schema-visible bound description — refinements vanish from emitted JSON Schema, so the limit must be advertised in prose too. */
+function factBoundDescription(bound: 'start' | 'end'): string {
+  const role =
+    bound === 'start'
+      ? 'Inclusive START of the fact’s valid-time window'
+      : 'Exclusive END of the fact’s valid-time window (requires validFrom)'
+  return `${role}, as an ISO-8601 instant. Use at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits (millisecond precision) — a finer instant is rejected, never truncated. Omit (or null) to leave it unset.`
+}
+
+/**
  * DB-NULL semantics for the optional validity instants: an ISO-8601 string,
  * with `null` and `undefined` both meaning ABSENT — never the 1970 epoch, which
  * on validTo would mark a live fact as already closed.
+ *
+ * PRECISION IS CAPPED, NOT TRUNCATED: see {@link MAX_FACT_WRITE_FRACTION_DIGITS}.
  *
  * ISO STRING, NOT `z.date()`: this contract is aliased onto the `remember` MCP
  * tool, and an MCP server publishes its input schema as JSON Schema in
@@ -93,6 +123,9 @@ export const MAX_FACTS_PER_WRITE = 16
  */
 const factTimestampSchema = z.iso
   .datetime()
+  .refine((value) => !exceedsFractionalSecondPrecision(value, MAX_FACT_WRITE_FRACTION_DIGITS), {
+    message: `use at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits (millisecond precision) — a finer instant would be silently truncated`,
+  })
   .nullish()
   .transform((value) => value ?? undefined)
 
@@ -116,8 +149,8 @@ export const factWriteSchema = z
     predicate: z.string().trim().min(1).max(256),
     value: z.string().trim().min(1).max(MAX_CONTENT_LENGTH),
     confidence: z.number().min(0).max(1).optional(),
-    validFrom: factTimestampSchema,
-    validTo: factTimestampSchema,
+    validFrom: factTimestampSchema.describe(factBoundDescription('start')),
+    validTo: factTimestampSchema.describe(factBoundDescription('end')),
   })
   .strict()
   .refine((fact) => fact.validTo === undefined || fact.validFrom !== undefined, {
