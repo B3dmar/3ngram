@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import {
   DEFAULT_FUSION_WEIGHTS,
+  DEFAULT_SUPERSESSION_PENALTY,
   searchFts,
   searchFused,
   searchRecency,
@@ -241,6 +242,59 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     expect(ids.indexOf(succId)).toBeLessThan(ids.indexOf(predId))
     expect(hits.find((h) => h.id === predId)?.superseded).toBe(true)
     expect(hits.find((h) => h.id === succId)?.superseded).toBe(false)
+  })
+
+  it('an IMPORTED "updates" edge with OPEN validity neither flags nor demotes its target', async () => {
+    // The import contract FORBIDS closePredecessorAt on an 'updates' edge
+    // (packages/schema/src/import.ts: "closing the predecessor requires a
+    // supersedes edge"), so every imported updates-edge target stays LIVE —
+    // valid_to IS NULL. Under the old edge-only predicate such a row still read
+    // superseded: true and took the tier-penalty, so importing a graph silently
+    // demoted memories the import itself declares current. supersededExists now
+    // requires closed validity AND a revision edge (the same definition
+    // memory_history's lifecycleState applies), so this row is neither.
+    //
+    // The ONLY difference from the demotion case above is the absent valid_to
+    // close — deliberately, so this pins the validity half specifically.
+    const marker = 'zzzimportedupdatesopen'
+    const target = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'imported-updates', $2, 'imported-updates-target') RETURNING id`,
+      [uid, `${marker} target content`],
+    )
+    const targetId = target.rows[0]?.id as string
+    const source = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'imported-updates', $2, 'imported-updates-source') RETURNING id`,
+      [uid, `${marker} source content`],
+    )
+    const sourceId = source.rows[0]?.id as string
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'importer')`,
+      [uid, sourceId, targetId],
+    )
+    // NO valid_to close — exactly what importMemories produces for an
+    // 'updates' edge. Guard the premise so a contract change cannot let this
+    // test pass vacuously.
+    const validity = await ownerPool.query<{ valid_to: Date | null }>(
+      'SELECT valid_to FROM memories WHERE id = $1',
+      [targetId],
+    )
+    expect(validity.rows[0]?.valid_to).toBeNull()
+
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, marker, 200))
+    const ids = hits.map((h) => h.id)
+    expect(ids).toContain(targetId)
+    expect(ids).toContain(sourceId)
+    // NOT flagged: the row is live, so it is not a superseded predecessor.
+    expect(hits.find((h) => h.id === targetId)?.superseded).toBe(false)
+    expect(hits.find((h) => h.id === sourceId)?.superseded).toBe(false)
+    // NOT demoted: with no penalty applied, the target is not forced below the
+    // source the way a genuinely superseded predecessor is.
+    const targetScore = hits.find((h) => h.id === targetId)?.score as number
+    const sourceScore = hits.find((h) => h.id === sourceId)?.score as number
+    expect(Math.abs(targetScore - sourceScore)).toBeLessThan(DEFAULT_SUPERSESSION_PENALTY)
   })
 
   it('the supersession penalty is what demotes the predecessor (penalty=0 can reorder)', async () => {
