@@ -118,6 +118,7 @@ export {
   type ExportCommitmentRow,
   type ExportEdgeRow,
   type ExportEnricher,
+  type ExportFactProposalRow,
   type ExportFactRow,
   type ExportLlmUsageRow,
   type ExportMemoryEventRow,
