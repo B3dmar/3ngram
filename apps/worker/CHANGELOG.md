@@ -1,5 +1,15 @@
 # @3ngram/worker
 
+## 1.4.0
+
+### Patch Changes
+
+- Updated dependencies [4ed7e25]
+- Updated dependencies [4cd03d4]
+- Updated dependencies [1d9a420]
+- Updated dependencies [318025a]
+  - @3ngram/core@0.9.0
+
 ## 1.3.0
 
 ### Patch Changes

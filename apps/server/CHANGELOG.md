@@ -1,5 +1,88 @@
 # @3ngram/server
 
+## 1.4.0
+
+### Minor Changes
+
+- c6a819c: `get_facts` gains a `range: {from?, to?}` window for chronological time-series reads over the bi-temporal facts table, on both the MCP tool and REST `GET /api/v1/facts`.
+
+  `range` replaces (never appends to) the default live-only predicate with a half-open `[from, to)` valid-time overlap: a fact whose validity window overlaps the requested range is returned, including generations superseded inside it — the point of a time-series read over "what's currently true." Ordering flips to `valid_from ASC` (chronological) instead of the default `recorded_at DESC` (recency); `range` and `asOf` are mutually exclusive point-in-time vs. window modes, enforced at the schema boundary (empty range object rejected, mirroring `asOfSchema`; an inverted `from`/`to` range rejected rather than silently returning empty, per issue #58's REST/MCP parity precedent). Each bound is also capped at millisecond precision (issue #58 item 2's fix, applied here too): `valid_from`/`valid_to` are microsecond-precise in Postgres, so a sub-millisecond bound would silently truncate up to the next whole millisecond and let an already-ended generation leak into the window. The existing `DEFAULT_FACTS_LIMIT`/`MAX_FACTS_LIMIT` bounds still apply in range mode.
+
+  Every returned fact now also carries `recordedAt` (transaction time) — an additive, output-only widening useful for telling apart same-window generations recorded at different instants.
+
+  Deliberately out of scope: a `valid_from` index (the sort is accepted at current volumes) and a scope axis on `get_facts` (the facts table has no scope column — continuing issue #47's open item). The SDK `getFacts` client and the CLI `facts` command do not yet expose the `from`/`to` range axis (REST/MCP only for now); follow-up planned.
+
+- 88ee7d4: mcp/rest: expose structured facts on remember
+
+  `remember` now accepts the measurable claims a memory states, on both
+  transports. Pass `facts` as subject/predicate/value triples and the response
+  returns a `factIds` array; `get_facts` can then read those claims back directly
+  instead of re-parsing prose.
+
+  Fact values are text, so the unit belongs in the predicate and each fact holds
+  one measure — subject `lift.back_squat`, predicate `top_set.weight_kg`, value
+  `98`, not a predicate `top_set` carrying `98kg x 3`. A later range read is only
+  comparable across entries if every writer follows that convention, so it is
+  stated in the tool description, the server instructions, and the data model doc.
+
+  Validity instants are ISO-8601 strings: an MCP server publishes its input schema
+  as JSON Schema, which has no date type. A `validTo` requires a `validFrom`, and
+  at most 16 facts ride one write.
+
+  `factIds` is present only when facts were written, so every existing response is
+  byte-identical and the V1 output schema still parses it. The V2 contracts are
+  composed beside the shipped ones rather than replacing them.
+
+- 4cd03d4: mcp: review extracted fact proposals alongside edge proposals
+
+  `review_proposals` now covers both kinds of proposal. Listing returns extracted
+  fact proposals next to consolidation ones, and accepting a fact proposal writes
+  the structured fact so `get_facts` can read it — nothing an extractor produced
+  becomes queryable truth without a person accepting it.
+
+  The input is unchanged: accept and reject still take just the proposal id.
+  Proposal ids are disjoint across the two tables, so the id alone identifies
+  which kind it is, and core probes the edge table first and the fact table only
+  when that reports not-found — a not-found reaches the caller only after both
+  miss. Any other failure propagates instead of being retried against the wrong
+  table.
+
+  Existing responses are untouched. The list result only grows a `factProposals`
+  key when there are some, so a tenant with only edge proposals sees the response
+  it always saw; decisions on a fact proposal answer with their own
+  `applied_fact` / `rejected_fact` variants rather than changing the payload under
+  the shipped `applied` / `rejected` literals. Accepting a fact proposal also
+  returns the id of the fact it wrote, so a reviewer does not need a second call
+  to find out what landed.
+
+  Listing bounds each kind by the same limit rather than splitting one budget, so
+  a burst of extracted facts cannot push edge proposals out of the review window.
+
+- 1d9a420: Add an exhaustive chronological list mode to `search`.
+
+  Retrieving everything of a given shape (every decision from a project, every commitment recorded last week) previously meant issuing a ranked search and hoping the relevance ordering happened to surface it all within the result window — there was no way to ask for a complete, chronological listing.
+
+  `search` now accepts `order: "chronological"` alongside the default `"relevance"`. Chronological mode returns a most-recent-first, unranked enumeration of live memories narrowed by the same candidate filters ranked search already supports (memoryType, scope, project, status, asOf, recordedAfter/recordedBefore). It never calls the embedding gateway — no query is required as long as at least one filter narrows the set — and pages through a small, drift-free keyset cursor instead of the ranked path's larger frozen-ordering token.
+
+  Superseded predecessors are excluded from chronological listings by default (an exhaustive list has no ranking to demote a superseded row with, so it drops instead — the same live-only default the dashboard memory list already uses), unless an `asOf` coordinate explicitly asks for a historical view.
+
+- 318025a: Fix `search` to demote every superseded predecessor, and label demoted hits.
+
+  The supersession tier-penalty in `search` only fired for a `supersedes` edge — a revision recorded with the `updates` edge kind closed its predecessor's validity exactly the same way, but escaped the ranking demotion entirely, so a superseded row could still outrank its live successor. The penalty now applies whenever a row has an incoming `supersedes` or `updates` edge, matching the existing `CLOSES_PREDECESSOR` convention used elsewhere for the same two edge kinds.
+
+  Search hits (both MCP and REST, full and compact projections) now also carry a `superseded: boolean` flag, so a caller can tell a demoted result from a current one instead of inferring it from score alone. Ranking stays supersession-_aware_, never supersession-_filtered_: a demoted row is still returned, just ranked below its successor and now labeled as such.
+
+### Patch Changes
+
+- Updated dependencies [c6a819c]
+- Updated dependencies [88ee7d4]
+- Updated dependencies [4ed7e25]
+- Updated dependencies [4cd03d4]
+- Updated dependencies [1d9a420]
+- Updated dependencies [318025a]
+  - @3ngram/schema@0.7.0
+  - @3ngram/core@0.9.0
+
 ## 1.3.0
 
 ### Minor Changes

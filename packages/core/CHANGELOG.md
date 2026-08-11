@@ -1,5 +1,87 @@
 # @3ngram/core
 
+## 0.9.0
+
+### Minor Changes
+
+- 4ed7e25: core: accept structured facts on remember
+
+  A write can now carry the facts it asserts. `remember` takes an optional
+  `facts` list of `{subject, predicate, value}` triples with an optional
+  confidence and valid-time window, and returns their ids alongside the memory's.
+  The facts are persisted in the same transaction as the memory, so a claim and
+  its source can never be half-written.
+
+  `rememberWithFactsInputSchema` is composed BESIDE the shipped
+  `rememberInputSchema` rather than replacing it. That separation is what keeps
+  `revise` rejecting a `facts` key: facts belong to the assertion that introduced
+  them, and a revision appends a new memory, so silently carrying facts across
+  would attribute them to the wrong row.
+
+  The per-fact contract mirrors the import path minus the fields a fresh write
+  already knows — no `memoryId` (the memory is being written in the same call) and
+  no `recordedAt` (knowledge time is now, by definition). Validity is stricter
+  than the `facts` table alone requires: a `validTo` demands a `validFrom`, so a
+  window that ends but never begins is a field-level error rather than a
+  constraint violation later. At most 16 facts per write; an empty list is
+  equivalent to omitting the key, and both return no fact ids.
+
+  Transports are unchanged in this release and still reject a `facts` key at
+  their own boundary — core accepts it ahead of the MCP and REST surface.
+
+- 4cd03d4: mcp: review extracted fact proposals alongside edge proposals
+
+  `review_proposals` now covers both kinds of proposal. Listing returns extracted
+  fact proposals next to consolidation ones, and accepting a fact proposal writes
+  the structured fact so `get_facts` can read it — nothing an extractor produced
+  becomes queryable truth without a person accepting it.
+
+  The input is unchanged: accept and reject still take just the proposal id.
+  Proposal ids are disjoint across the two tables, so the id alone identifies
+  which kind it is, and core probes the edge table first and the fact table only
+  when that reports not-found — a not-found reaches the caller only after both
+  miss. Any other failure propagates instead of being retried against the wrong
+  table.
+
+  Existing responses are untouched. The list result only grows a `factProposals`
+  key when there are some, so a tenant with only edge proposals sees the response
+  it always saw; decisions on a fact proposal answer with their own
+  `applied_fact` / `rejected_fact` variants rather than changing the payload under
+  the shipped `applied` / `rejected` literals. Accepting a fact proposal also
+  returns the id of the fact it wrote, so a reviewer does not need a second call
+  to find out what landed.
+
+  Listing bounds each kind by the same limit rather than splitting one budget, so
+  a burst of extracted facts cannot push edge proposals out of the review window.
+
+- 1d9a420: Add an exhaustive chronological list mode to `search`.
+
+  Retrieving everything of a given shape (every decision from a project, every commitment recorded last week) previously meant issuing a ranked search and hoping the relevance ordering happened to surface it all within the result window — there was no way to ask for a complete, chronological listing.
+
+  `search` now accepts `order: "chronological"` alongside the default `"relevance"`. Chronological mode returns a most-recent-first, unranked enumeration of live memories narrowed by the same candidate filters ranked search already supports (memoryType, scope, project, status, asOf, recordedAfter/recordedBefore). It never calls the embedding gateway — no query is required as long as at least one filter narrows the set — and pages through a small, drift-free keyset cursor instead of the ranked path's larger frozen-ordering token.
+
+  Superseded predecessors are excluded from chronological listings by default (an exhaustive list has no ranking to demote a superseded row with, so it drops instead — the same live-only default the dashboard memory list already uses), unless an `asOf` coordinate explicitly asks for a historical view.
+
+- 318025a: Fix `search` to demote every superseded predecessor, and label demoted hits.
+
+  The supersession tier-penalty in `search` only fired for a `supersedes` edge — a revision recorded with the `updates` edge kind closed its predecessor's validity exactly the same way, but escaped the ranking demotion entirely, so a superseded row could still outrank its live successor. The penalty now applies whenever a row has an incoming `supersedes` or `updates` edge, matching the existing `CLOSES_PREDECESSOR` convention used elsewhere for the same two edge kinds.
+
+  Search hits (both MCP and REST, full and compact projections) now also carry a `superseded: boolean` flag, so a caller can tell a demoted result from a current one instead of inferring it from score alone. Ranking stays supersession-_aware_, never supersession-_filtered_: a demoted row is still returned, just ranked below its successor and now labeled as such.
+
+### Patch Changes
+
+- Updated dependencies [eb68c04]
+- Updated dependencies [d18e749]
+- Updated dependencies [c6a819c]
+- Updated dependencies [91f1d39]
+- Updated dependencies [88ee7d4]
+- Updated dependencies [4ed7e25]
+- Updated dependencies [4cd03d4]
+- Updated dependencies [1d9a420]
+- Updated dependencies [318025a]
+  - @3ngram/db@0.8.0
+  - @3ngram/schema@0.7.0
+
 ## 0.8.6
 
 ### Patch Changes
