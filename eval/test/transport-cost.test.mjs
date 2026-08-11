@@ -105,9 +105,20 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // facts-write stack above (rebased, not arithmetically summed with it —
       // Track F's own precedent), so this delta is against THIS PR's actual
       // base, not an isolated pre-facts baseline.
-      mcp: [25772, 207992, 52071],
+      // MCP +702/+5616/+1369, REST +462/+462/+462 (get_facts range read, this
+      // PR): get_facts gained the `range: {from?, to?}` input axis (a
+      // half-open valid-time window superRefine-checked against asOf, plus
+      // the same sub-millisecond precision bound the search recorded-range
+      // fix applies to recordedAfter/recordedBefore) and `recordedAt` on
+      // every returned fact — both transports' schemas widened, so both
+      // surfaces grew. CLI is unaffected (the CLI facts command has no
+      // --from/--to flags). MEASURED on the rebased tip (staging
+      // post-chronological-list-mode), not summed on top of the prior delta
+      // comments above — same "measured, not arithmetically summed"
+      // precedent those comments themselves establish.
+      mcp: [26474, 213608, 53440],
       cli: [333, 1236, 1236],
-      rest: [2307, 3324, 3324],
+      rest: [2769, 3786, 3786],
     },
   )
 })

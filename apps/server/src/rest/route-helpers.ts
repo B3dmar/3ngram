@@ -3,7 +3,7 @@
 // authenticated tenant access, temporal coercion, and uniform error mapping.
 import { log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
-import type { AsOfInput } from '@3ngram/schema'
+import type { AsOfInput, FactsRangeInput } from '@3ngram/schema'
 import type { Request, Response } from 'express'
 import { mapRestError } from './errors.js'
 
@@ -24,6 +24,17 @@ export function toAsOf(
   return defined({
     validAt: asOf.validAt === undefined ? undefined : new Date(asOf.validAt),
     asKnownAt: asOf.asKnownAt === undefined ? undefined : new Date(asOf.asKnownAt),
+  })
+}
+
+/** Map an optional {from,to} range's ISO bounds to core Date values (range read). */
+export function toRange(
+  range: FactsRangeInput | undefined,
+): { from?: Date; to?: Date } | undefined {
+  if (range === undefined) return undefined
+  return defined({
+    from: range.from === undefined ? undefined : new Date(range.from),
+    to: range.to === undefined ? undefined : new Date(range.to),
   })
 }
 

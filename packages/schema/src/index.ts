@@ -105,6 +105,9 @@ export {
   cursorPayloadV3Schema,
   legacyCursorPayloadSchema,
 } from './cursor.js'
+// --- get_facts range read: time-series reads over bi-temporal facts ---
+export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'
+export { factsQueryInputV2Schema, factsRangeSchema } from './facts-range.js'
 // --- get_memories batched bounded-content read (MCP tool IO) ---
 export type {
   GetMemoriesArgs,

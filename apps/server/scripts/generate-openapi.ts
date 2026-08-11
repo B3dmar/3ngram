@@ -28,7 +28,8 @@ import {
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseV2Schema,
-  factsQueryInputSchema,
+  factsQueryInputV2Schema,
+  factsRangeSchema,
   factsToolOutputSchema,
   invalidInputRestErrorResponseSchema,
   memoriesFacetsResponseSchema,
@@ -66,12 +67,18 @@ const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
 const SERVERS = [{ url: 'https://api.3ngram.ai', description: '3ngram platform' }]
 
-// GET /api/v1/facts flattens the nested asOf object into two flat query keys
-// (router.ts reshapes before the single parse) — compose the documented query
-// contract from the SAME exports, never redeclared.
+// GET /api/v1/facts flattens the nested asOf AND range objects into flat query
+// keys (router.ts reshapes both before the single parse) — compose the
+// documented query contract from the SAME exports, never redeclared.
+// factsQueryInputV2Schema carries a superRefine (range/asOf mutual exclusion +
+// inverted-range check), and zod rejects `.omit()` on a refined object schema,
+// so the base shape is rebuilt into a fresh (refinement-free) object first —
+// same reason briefingQueryShape below is assembled field-by-field rather than
+// derived via `.omit()` off a refined schema.
 const factsQuery = z.object({
-  ...factsQueryInputSchema.omit({ asOf: true }).shape,
+  ...z.object({ ...factsQueryInputV2Schema.shape }).omit({ asOf: true, range: true }).shape,
   ...asOfSchema.shape,
+  ...factsRangeSchema.shape,
 })
 
 // GET /api/v1/briefing flattens the selector union into flat keys: `kind` is the
