@@ -3,6 +3,7 @@
 "@3ngram/core": patch
 "@3ngram/schema": patch
 "@3ngram/server": patch
+"@3ngram/eval": patch
 ---
 
 Five correctness fixes to the facts, portability, and retrieval surfaces.

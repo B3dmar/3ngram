@@ -2215,6 +2215,7 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     facts: 1,
     commitments: 0,
     proposals: 0,
+    factProposals: 3,
     sessionsDeleted: 1,
     apiKeysRevoked: 1,
     oauthTokensRevoked: 0,
@@ -2239,12 +2240,15 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     const body = (await res.json()) as {
       deleted: boolean
       alreadyDeleted: boolean
-      erased: { memories: number; sessionsDeleted: number }
+      erased: { memories: number; factProposals: number; sessionsDeleted: number }
     }
     expect(body.deleted).toBe(true)
     expect(body.alreadyDeleted).toBe(false)
     expect(body.erased.memories).toBe(2)
     expect(body.erased.sessionsDeleted).toBe(1)
+    // Staged fact proposals are erased too, and the receipt must report them —
+    // the count is echoed, not dropped on the way through the transport.
+    expect(body.erased.factProposals).toBe(3)
   })
 
   it('400s without an explicit { confirm: true } (no silent destructive call)', async () => {

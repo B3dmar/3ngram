@@ -776,7 +776,7 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.counts.factProposals).toBe(body.factProposals.length)
   })
 
-  it('TENANT ISOLATION: A export never contains B-owned memories, edges, events, or proposals (RLS)', async () => {
+  it('TENANT ISOLATION: A export never contains B-owned memories, edges, events, proposals, or fact proposals (RLS)', async () => {
     const bContent = `rest-export-b-${crypto.randomUUID()}`
     const bFirst = await api('/api/v1/memories', {
       method: 'POST',
@@ -794,6 +794,9 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     const bPayload = `b-evt-${crypto.randomUUID()}`
     const bRationale = `b-rat-${crypto.randomUUID()}`
     await seedGraph(await userIdFor(emailB), bMemoryId, bMemoryId2, bPayload, bRationale)
+    const bProposedValue = `b-fp-val-${crypto.randomUUID()}`
+    const bProposedRationale = `b-fp-rat-${crypto.randomUUID()}`
+    await seedFactProposal(await userIdFor(emailB), bMemoryId, bProposedValue, bProposedRationale)
 
     const res = await api('/api/v1/export', { key: keyA })
     expect(res.status).toBe(200)
@@ -803,6 +806,7 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
       edges: Array<{ fromId: string; toId: string }>
       memoryEvents: Array<{ memoryId: string; payload: { note?: string } | null }>
       proposals: Array<{ rationale: string | null }>
+      factProposals: Array<{ memoryId: string; value: string; rationale: string | null }>
     }
     // A's export is scoped to A: every B-owned id/content/edge/payload/rationale is absent.
     expect(body.account.email).toBe(emailA)
@@ -812,6 +816,11 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.memoryEvents.some((e) => e.memoryId === bMemoryId)).toBe(false)
     expect(body.memoryEvents.some((e) => e.payload?.note === bPayload)).toBe(false)
     expect(body.proposals.some((p) => p.rationale === bRationale)).toBe(false)
+    // The new factProposals section carries the same two-layer isolation as the
+    // rest of the archive (RLS + the caller-bound user_id predicate).
+    expect(body.factProposals.some((p) => p.memoryId === bMemoryId)).toBe(false)
+    expect(body.factProposals.some((p) => p.value === bProposedValue)).toBe(false)
+    expect(body.factProposals.some((p) => p.rationale === bProposedRationale)).toBe(false)
   })
 
   it('works under a session Bearer (same identity as the key)', async () => {
