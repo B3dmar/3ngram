@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// Offline unit tests for the report-only tool-selection slice
-// (docs/concepts/mcp-surface.mdx). Two things are pinned here: the metric MATH on
+// Offline unit tests for the GATED tool-selection slice
+// (docs/concepts/mcp-surface.mdx). Three things are pinned here: the metric MATH on
 // tiny synthetic vectors (so accuracy/margin/overlap cannot drift under a
-// refactor without a test moving), and the INTEGRITY failure paths — a stale
+// refactor without a test moving), the INTEGRITY failure paths — a stale
 // description hash and a missing/extra tool must throw, because both would
-// otherwise produce a plausible-looking number for a surface nobody serves.
+// otherwise produce a plausible-looking number for a surface nobody serves — and
+// the GATE WIRING, since these metrics replaced the MCP tool cap as the surface's
+// protection and are only worth that if a broken fixture cannot pass the gate.
 //
 // No network, no embeddings fixture required: every vector here is hand-written.
 import assert from 'node:assert/strict'
@@ -291,12 +293,12 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   }
 })
 
-test('a missing embeddings fixture is reported, never an error', () => {
+test('a missing embeddings fixture is a result, not a throw', () => {
   const slice = runToolSelectionSlice({ fixturesDir, model: 'no-such-model' })
   assert.equal(slice.status, 'fixture-missing')
   assert.ok(slice.path.endsWith(embeddingsFixtureName('no-such-model')))
   const text = formatToolSelection(slice)
-  assert.match(text, /report-only \(no floor yet\)/)
+  assert.match(text, /gated \(fixtures\/floors\.json\)/)
   assert.match(text, /fixture not generated/)
 })
 
@@ -336,8 +338,9 @@ function withCorruptFixture(fn) {
 
 test('a MALFORMED embeddings fixture is an error result, never a throw', () => {
   // Regression pin (cross-audit finding): the reads and parses must sit INSIDE
-  // runToolSelectionSlice's try. A parse outside it throws uncaught, and the
-  // report-only guarantee would hold for a stale fixture but not a truncated one.
+  // runToolSelectionSlice's try, so the caller decides what to do about it. An
+  // uncaught throw would deny run.mjs the chance to print the diagnostic block
+  // (with its regenerate hint) before exiting.
   const slice = withCorruptFixture(() =>
     runToolSelectionSlice({ fixturesDir, model: 'openai-large-1536' }),
   )
@@ -347,20 +350,34 @@ test('a MALFORMED embeddings fixture is an error result, never a throw', () => {
   assert.match(formatToolSelection(slice), /ERROR: malformed fixture/)
 })
 
-test('a MALFORMED fixture leaves the blocking gate at exit 0, error line printed', () => {
-  // The end of the same finding: run.mjs must survive it. execFileSync THROWS on a
-  // non-zero exit, so reaching the assertions at all is the exit-0 proof.
-  const out = withCorruptFixture(() =>
-    execFileSync('node', [join(here, '../src/run.mjs'), '--model', 'openai-large-1536'], {
-      encoding: 'utf8',
-    }),
-  )
-  assert.match(out, /eval gate: PASS/)
-  assert.match(out, /report-only \(no floor yet\)\n {2}ERROR: malformed fixture/)
+test('a MALFORMED fixture FAILS the blocking gate at exit 2, never passes it', () => {
+  // The load-bearing property of gating this slice. While it was report-only a
+  // corrupt fixture printed an error and the gate still said PASS; now that three
+  // metrics are ratcheted against it, "did not run" must never be spendable as
+  // "did not regress" — a maintainer who truncates the fixture has to be stopped,
+  // not congratulated. Exit 2 (integrity), not 1 (regression): nothing was scored.
+  const err = withCorruptFixture(() => {
+    try {
+      execFileSync('node', [join(here, '../src/run.mjs'), '--model', 'openai-large-1536'], {
+        encoding: 'utf8',
+      })
+      return undefined
+    } catch (e) {
+      return e
+    }
+  })
+  assert.ok(err, 'a corrupt embeddings fixture must fail the gate')
+  assert.equal(err.status, 2)
+  assert.doesNotMatch(err.stdout, /eval gate: PASS/)
+  // The diagnostic still prints BEFORE the exit — the regenerate hint is the whole
+  // point of not just throwing.
+  assert.match(err.stdout, /gated \(fixtures\/floors\.json\)\n {2}ERROR: malformed fixture/)
+  assert.match(err.stdout, /regenerate embeddings/)
+  assert.match(err.stderr, /the tool-selection slice is gated and did not run/)
 })
 
 test('the standalone CLI exits 2 on the same malformed fixture', () => {
-  // The documented split: report-only inside the gate, loud non-zero standalone.
+  // Same code either way now: standalone and inside the gate both refuse to score.
   const err = withCorruptFixture(() => {
     try {
       execFileSync('node', [join(here, '../src/tool-selection.mjs')], { encoding: 'utf8' })
@@ -374,12 +391,31 @@ test('the standalone CLI exits 2 on the same malformed fixture', () => {
   assert.match(err.stdout, /ERROR: malformed fixture/)
 })
 
-test('the blocking gate stays green and prints the report-only section', () => {
-  // The load-bearing wiring property: report-only means the slice can never move
-  // run.mjs's exit code — including while its embeddings fixture does not exist.
+test('the blocking gate scores the slice into results.slices and ratchets it', () => {
+  // The wiring property: the three scalars are GATED metrics, so they have to show
+  // up in the JSON the gate prints and be covered by fixtures/floors.json. A metric
+  // that is merely printed underneath the JSON is the report-only arrangement this
+  // replaced.
   const out = execFileSync('node', [join(here, '../src/run.mjs'), '--model', 'openai-large-1536'], {
     encoding: 'utf8',
   })
   assert.match(out, /eval gate: PASS/)
-  assert.match(out, /tool-selection \+ description-overlap — report-only \(no floor yet\)/)
+  assert.match(out, /tool-selection \+ description-overlap — gated \(fixtures\/floors\.json\)/)
+
+  // The JSON block is everything up to the blank line before the human-readable
+  // section; JSON.stringify with an indent never emits a blank line of its own.
+  const slices = JSON.parse(out.slice(0, out.indexOf('\n\n'))).slices
+  const floors = JSON.parse(readFileSync(join(fixturesDir, 'floors.json'), 'utf8'))
+  for (const key of ['selection_accuracy_at_1', 'selection_margin']) {
+    assert.equal(typeof slices[key], 'number', `${key} must be a gated slice metric`)
+    assert.equal(typeof floors.recorded[key], 'number', `${key} needs a floor`)
+    assert.ok(slices[key] >= floors.recorded[key], `${key} must sit at or above its floor`)
+  }
+  // Overlap is the one metric where LOWER is better, so it is a CEILING. Pinned
+  // here because storing it under `recorded` would silently invert the comparison
+  // and gate the surface the wrong way for as long as nobody re-derived it by hand.
+  assert.equal(typeof slices.max_description_overlap, 'number')
+  assert.equal(floors.recorded.max_description_overlap, undefined)
+  assert.equal(typeof floors.ceilings.max_description_overlap, 'number')
+  assert.ok(slices.max_description_overlap <= floors.ceilings.max_description_overlap)
 })
