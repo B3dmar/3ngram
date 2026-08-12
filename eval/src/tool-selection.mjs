@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Tool-selection + description-overlap slice (docs/concepts/mcp-surface.mdx).
 //
-// REPORT-ONLY — this slice has NO floors and NEVER changes an exit code when it
-// runs inside the golden-set gate (src/run.mjs). It exists to MEASURE the thing
-// the MAX_TOOLS = 12 cap is a proxy for: "tool-selection accuracy degrades as the
-// list grows, and every description is re-sent on every tools/list. Two
-// well-separated tools cost less than one overloaded one. That is what to
-// optimise; the number is a proxy." A later PR baselines floors FROM this
-// slice's observed output — do not add floors here.
+// GATED — this slice's three scalars are ratcheted from fixtures/floors.json by
+// src/run.mjs (accuracy and margin as floors, description overlap as a ceiling),
+// so it CAN and does change the gate's exit code. It measures the thing a tool
+// count never could: "tool-selection accuracy degrades as the list grows, and
+// every description is re-sent on every tools/list. Two well-separated tools cost
+// less than one overloaded one. That is what to optimise; the number is a proxy."
+// The proxy is gone — 3ngram's self-imposed MCP tool cap was removed once this
+// slice was gated, because measuring the failure beats counting the slots.
 //
 // WHAT IT MEASURES (pure cosine over committed cached embeddings, no network):
 //   selection_accuracy_at_1  — an agent utterance's nearest tool DESCRIPTION is
@@ -38,8 +39,9 @@
 // registry text, a SCENARIO UTTERANCE edited under its cached vector (ids are
 // stable, so this is the easy one to miss), a registered tool missing from the
 // fixture or a fixture tool no longer registered, or a vector that cosine cannot
-// score. Run standalone it exits 2; wired into run.mjs the error is printed
-// prominently and the gate's exit code is left alone (report-only).
+// score. It is returned as an error RESULT rather than thrown so both callers can
+// print it before deciding; each then exits 2, standalone and inside run.mjs
+// alike. A gated slice that did not run is never a pass.
 //
 // Usage: node eval/src/tool-selection.mjs [--model openai-large-1536] [--json]
 import { createHash } from 'node:crypto'
@@ -359,7 +361,7 @@ export function runToolSelectionSlice({ fixturesDir, model }) {
 
 /** Human-readable block, shared by the standalone CLI and run.mjs. */
 export function formatToolSelection(slice) {
-  const head = 'tool-selection + description-overlap — report-only (no floor yet)'
+  const head = 'tool-selection + description-overlap — gated (fixtures/floors.json)'
   if (slice.status === 'fixture-missing') {
     return `${head}\n  fixture not generated: ${slice.path}\n  ${REGENERATE_HINT}`
   }
@@ -384,8 +386,15 @@ export function formatToolSelection(slice) {
   return lines.join('\n')
 }
 
-// Standalone CLI. Here — and ONLY here — an integrity failure exits non-zero; the
-// run.mjs wiring stays report-only.
+// Standalone CLI. EVERY non-ok status exits 2 here, exactly as it does through the
+// run.mjs wiring — the slice is gated, so there is no longer a caller that scores
+// it leniently. Running this directly is the fast loop while editing a
+// description; the gate is the same verdict.
+//
+// `!== 'ok'` and not a list of statuses: this checked `=== 'error'` alone, so a
+// MISSING fixture printed "fixture not generated" and exited 0 while run.mjs
+// exited 2 on the same input — the two callers disagreeing about the same slice
+// is the divergence the wording above promises is gone.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2)
   const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../fixtures')
@@ -398,5 +407,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else {
     process.stdout.write(`${formatToolSelection(slice)}\n`)
   }
-  if (slice.status === 'error') process.exit(2)
+  if (slice.status !== 'ok') process.exit(2)
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// MCP PROMPTS — code-defined templates: start with 2 (briefing, debrief).
+// MCP PROMPTS — code-defined templates: 2 today (briefing, debrief).
 //
 // A PROMPT is a reusable, parameterised message template the client surfaces to
 // its user (a slash command, a menu entry); selecting it returns bounded text
@@ -16,9 +16,12 @@
 // of a per-prompt scope, and these templates expose no data, so transport-level
 // Bearer auth is the complete access control). Confirmed in routes/mcp.ts.
 //
-// V1 CAP (docs/concepts/mcp-design.mdx): EXACTLY 2 prompts (briefing, debrief). Resources are
-// deferred. {@link PROMPTS}.length is the auditable count; {@link MAX_PROMPTS}
-// is the ceiling.
+// SURFACE (docs/concepts/mcp-design.mdx): 2 prompts today (briefing, debrief).
+// {@link PROMPTS}.length is the auditable count — there is no numeric ceiling.
+// A prompt earns its place the same way a tool does: a JTBD no existing surface
+// covers, plus scenarios in eval/fixtures/tool-selection.json, whose surface
+// slice measures how hard the TOOL descriptions pull on a need that a prompt
+// should serve.
 //
 // ARG TYPING: MCP delivers prompt arguments as STRINGS over the wire, so every
 // arg shape is string-valued — z.enum for the bounded selectors/modes. The
@@ -223,15 +226,13 @@ const debriefPrompt = definePrompt({
 })
 
 /**
- * THE code-defined prompt surface. Length === registered count; the v1 cap
- * (EXACTLY 2 — briefing, debrief; docs/concepts/mcp-design.mdx) is auditable from this one
- * array. Each entry carries its name (auditable) and a server-bound registrar,
- * so the registry stays type-safe over heterogeneous arg shapes without an `any`.
+ * THE code-defined prompt surface — 2 today (briefing, debrief;
+ * docs/concepts/mcp-design.mdx). Length === registered count, auditable from this
+ * one array. Each entry carries its name (auditable) and a server-bound
+ * registrar, so the registry stays type-safe over heterogeneous arg shapes
+ * without an `any`.
  */
 export const PROMPTS: readonly RegisterablePrompt[] = [briefingPrompt, debriefPrompt]
-
-/** Hard ceiling per docs/concepts/mcp-design.mdx (v1: exactly 2; resources deferred). */
-export const MAX_PROMPTS = 2
 
 /**
  * Register every code-defined prompt on the McpServer. Called from

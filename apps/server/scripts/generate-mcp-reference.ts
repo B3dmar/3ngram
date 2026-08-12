@@ -6,18 +6,24 @@
 // regenerates + diffs them (freshness gate).
 //
 // INCLUSION DECISION: the full registered surface is documented — the 5 core
-// tools, the 2 orientation tools (briefing/handoff), and the 3 admin tools
-// (configure_scope/describe_environment/review_proposals). All ten are served to
-// every authenticated MCP client (scope floors gate handlers, not visibility),
-// so all ten are public reference. One page per surface (tools.mdx,
-// prompts.mdx) keeps docs.json navigation static.
+// tools, the 2 orientation tools (briefing/handoff), get_memories (inspect), and
+// the 3 admin tools (configure_scope/describe_environment/review_proposals). All
+// eleven are served to every authenticated MCP client (scope floors gate
+// handlers, not visibility), so all eleven are public reference. One page per
+// surface (tools.mdx, prompts.mdx) keeps docs.json navigation static.
+//
+// NO COUNT ASSERTION HERE. This generator used to throw above a fixed tool and
+// prompt ceiling. The surface is now gated on what those numbers proxied for —
+// selection accuracy and description overlap, measured by
+// eval/src/tool-selection.mjs against eval/fixtures/floors.json — so a docs build
+// is the wrong place to relitigate a count it cannot measure.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
-import { MAX_PROMPTS, PROMPTS } from '../src/mcp/prompts.js'
-import { MAX_TOOLS, TOOLS } from '../src/mcp/tools.js'
+import { PROMPTS } from '../src/mcp/prompts.js'
+import { TOOLS } from '../src/mcp/tools.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = resolve(HERE, '../../../docs/reference')
@@ -76,7 +82,7 @@ function renderTools(): string {
       `The ${TOOLS.length} registered MCP tools, generated from the typed TOOLS registry.`,
     ),
     '',
-    `The 3ngram MCP server registers ${TOOLS.length} tools (hard ceiling: ${MAX_TOOLS}). Every tool validates against the schemas below; scope floors are enforced per call.`,
+    `The 3ngram MCP server registers ${TOOLS.length} tools. The surface is kept small by measurement rather than a fixed ceiling: a blocking eval gates tool-selection accuracy and description overlap, so a new tool has to route cleanly against the existing ones. Every tool validates against the schemas below; scope floors are enforced per call.`,
     '',
     sections.join('\n\n'),
     '',
@@ -128,7 +134,7 @@ function renderPrompts(prompts: CapturedPrompt[]): string {
       `The ${prompts.length} code-defined MCP prompts, generated from the PROMPTS registry.`,
     ),
     '',
-    `The server ships ${prompts.length} code-defined prompts (v1 cap: ${MAX_PROMPTS}). A prompt only orients the agent — it never queries or persists; arguments arrive as strings over the MCP wire.`,
+    `The server ships ${prompts.length} code-defined prompts. A prompt only orients the agent — it never queries or persists; arguments arrive as strings over the MCP wire.`,
     '',
     sections.join('\n\n'),
     '',
@@ -136,13 +142,7 @@ function renderPrompts(prompts: CapturedPrompt[]): string {
 }
 
 function main(): void {
-  if (TOOLS.length > MAX_TOOLS) {
-    throw new Error(`tool registry exceeds hard rule 8 ceiling: ${TOOLS.length} > ${MAX_TOOLS}`)
-  }
   const prompts = capturePrompts()
-  if (prompts.length > MAX_PROMPTS) {
-    throw new Error(`prompt registry exceeds v1 cap: ${prompts.length} > ${MAX_PROMPTS}`)
-  }
   mkdirSync(OUT_DIR, { recursive: true })
   writeFileSync(resolve(OUT_DIR, 'tools.mdx'), renderTools())
   writeFileSync(resolve(OUT_DIR, 'prompts.mdx'), renderPrompts(prompts))

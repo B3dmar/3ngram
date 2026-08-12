@@ -16,9 +16,11 @@
 | supersession | 19 | successor ranks above its superseded predecessor with superseded rows *included* — proves ranking, not just filtering (real `replaces` pairs from anonymized production memories) |
 | abstention | 10 | top-1 similarity below calibrated τ for verifiably-absent topics |
 
-## Floors (fixtures/floors.json)
+## Floors and ceilings (fixtures/floors.json)
 
 Recorded from the first run as an empirical ratchet: floors only move up (`record-floors` in a PR, with a week of stability). A run below any floor exits 1 → `eval-gate` fails → no merge.
+
+`recorded` holds the floors (higher is better, compared with `<`). `ceilings` holds the metrics where **lower** is better, compared with `>` — today just `max_description_overlap`, a cosine *between* two tool descriptions that must not grow. The direction lives in the fixture's shape rather than in an inverted value, so a floor can never be read as a ceiling by mistake. A metric named in either block that the run did not produce fails the gate too: "not measured" is never "not regressed".
 
 ## Embedding model
 
@@ -70,21 +72,30 @@ Opt-in `--download` slice: streams the **official MIT-licensed** upstream subset
 
 > **Deferred (no dependency added this batch):** parquet **decoding** of the downloaded subsets. The single lockfile slot was owned by another track, so no parquet-reader dependency was added. The `--download` lane therefore verifies pinned integrity (url/sha256/bytes) and reports a content-free result, but does **not** yet run the oracle over the decoded official rows — the default offline lane uses the synthetic fixture. Wiring the decode (vendored or zero-dep reader) is a follow-up.
 
-## Tool-selection + description overlap (report-only, inside the gate)
+## Tool-selection + description overlap (gated)
 
-`src/tool-selection.mjs` measures what the MCP tool cap is a *proxy* for
+`src/tool-selection.mjs` measures what 3ngram's former MCP tool cap was only a *proxy* for
 (`docs/concepts/mcp-surface.mdx`): whether an agent utterance routes to the right tool,
-and how much the tool descriptions overlap each other. It runs **inside** `run.mjs` and
-prints alongside the gated metrics, but it is **report-only — no floors, and it can never
-move the exit code**. Floors are deliberately deferred to a later PR that baselines them
-from this slice's observed output.
+and how much the tool descriptions overlap each other. It runs **inside** `run.mjs`, and
+its three scalars are **gated** — accuracy and margin as floors, overlap as a ceiling. The
+cap is gone; this slice replaced it, so a tool whose description blurs into a neighbour's
+fails the gate rather than a code review. A missing or corrupt embeddings fixture exits 2:
+a gated slice that did not run is not a pass.
 
-| Metric | Meaning |
-|---|---|
-| `selection_accuracy_at_1` | the nearest tool **description** (cosine) is the tool the utterance should reach |
-| `selection_margin` | mean top1−top2 cosine gap — how *decisively* the right tool wins |
-| `max_description_overlap` | largest pairwise cosine between two tool descriptions, reported with the offending pair |
-| `surface_slice` | the non-tool scenarios (memory resource / `briefing`+`debrief` prompts): how hard the tool descriptions pull on a need that is not a tool's |
+Regenerating the fixture (`scripts/gen-tool-selection-embeddings.mjs`) is required whenever
+a tool description changes — the descriptions are hashed into it — and invalidates these
+three values, so re-record and justify them in the same PR.
+
+| Metric | Gated as | Meaning |
+|---|---|---|
+| `selection_accuracy_at_1` | floor | the nearest tool **description** (cosine) is the tool the utterance should reach |
+| `selection_margin` | floor | mean top1−top2 cosine gap — how *decisively* the right tool wins |
+| `max_description_overlap` | **ceiling** | largest pairwise cosine between two tool descriptions, reported with the offending pair |
+| `surface_slice` | diagnostic | the non-tool scenarios (memory resource / `briefing`+`debrief` prompts): how hard the tool descriptions pull on a need that is not a tool's |
+
+`by_tool`, `confusions` and `max_overlap_pair` stay diagnostics as well: they name *which*
+tool or pair regressed, which is what makes a gate failure actionable, but only scalars can
+be ratcheted.
 
 Nearest-description-by-cosine is a deterministic **proxy** for a model's tool choice, not
 a model run — the same substitution the blocking gate makes for the product retriever.
@@ -100,8 +111,10 @@ a model run — the same substitution the blocking gate makes for the product re
   instead of scoring a stale vector. Vectors are also rejected at both ends — generation
   and load — if any element is non-finite or the L2 norm is zero, since cosine against a
   zero vector is NaN and NaN would report as a metric rather than fail.
-- **Absence of the embeddings fixture is not a failure**: the gate prints
-  `fixture not generated` and stays green.
+- **Absence of the embeddings fixture IS a failure**: the fixture is committed and
+  required, so the gate prints `fixture not generated` with the regenerate hint and exits
+  2. Every non-ok status does — a gated slice that did not run is not a pass, and exit 2
+  (integrity) is kept distinct from exit 1 (a real regression against a floor).
 
 Regenerate (needs an embedding credential; one command):
 
@@ -114,7 +127,8 @@ generator additionally cross-checks the committed capture against the **live** r
 refusing to generate from a stale one. Without the build it prints that the cross-check
 was skipped.
 
-Standalone (exits 2 on an integrity failure — the gate wiring does not):
+Standalone (exits 2 on any integrity failure, the same verdict the gate reaches — this is
+just the faster loop while editing a description):
 
 ```bash
 pnpm --filter @3ngram/eval run tool-selection [-- --json]

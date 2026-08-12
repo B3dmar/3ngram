@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // MCP ADMIN tools: configure_scope, describe_environment,
-// review_proposals — completing the 10-tool v1 surface. THIN
+// review_proposals — the D3 slice of the registered surface. THIN
 // adapters: each validates at the ONE schema boundary
 // (packages/schema), calls the COMPLETE core service, shapes the structured
 // result, and holds zero business logic.

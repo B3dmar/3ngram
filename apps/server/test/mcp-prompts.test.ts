@@ -5,13 +5,13 @@
 // args. Asserted through an in-memory linked-pair transport (the SDK's real
 // prompt handlers), so the contract is the SDK's, not a hand-rolled mirror.
 //
-// The PROMPTS registry IS the auditable v1 surface: EXACTLY 2 (docs/concepts/mcp-design.mdx),
-// under MAX_PROMPTS. A prompt orients only — it carries no tenant data and reads
-// no DB, so no context/mock is needed.
+// The PROMPTS registry IS the auditable surface: 2 today
+// (docs/concepts/mcp-design.mdx), no numeric cap. A prompt orients only — it
+// carries no tenant data and reads no DB, so no context/mock is needed.
 import { Client as McpClient } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { MAX_PROMPTS, PROMPTS, registerPrompts } from '../src/mcp/prompts.js'
+import { PROMPTS, registerPrompts } from '../src/mcp/prompts.js'
 
 /** A connected SDK client wired to a server with only the prompts registered. */
 async function connectPromptsClient(): Promise<McpClient> {
@@ -30,11 +30,11 @@ beforeEach(async () => {
 })
 
 describe('MCP prompt registry discipline', () => {
-  it('registers EXACTLY 2 prompts (briefing, debrief), under the cap', () => {
+  it('registers exactly 2 prompts (briefing, debrief)', () => {
+    // A SNAPSHOT of the registered surface, not a ceiling — the self-imposed
+    // prompt cap is gone (docs/concepts/mcp-design.mdx / hard rule 8).
     expect(PROMPTS).toHaveLength(2)
     expect(PROMPTS.map((p) => p.name)).toEqual(['briefing', 'debrief'])
-    expect(PROMPTS.length).toBeLessThanOrEqual(MAX_PROMPTS)
-    expect(MAX_PROMPTS).toBe(2)
   })
 })
 

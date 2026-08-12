@@ -161,11 +161,13 @@ Absent invalidation is acceptable precisely because the cached body cannot go st
 ## Resources are not a substitute for a tool
 
 [Issue #109](https://github.com/B3dmar/3ngram/issues/109) asks whether thread curation
-could ship as resources instead of `configure_thread`, because
-[threads](/concepts/threads) take the MCP tool count to 12 of 12 and exhaust the cap in
-`AGENTS.md` rule 8.
+could ship as resources instead of `configure_thread`, because at the time
+[threads](/concepts/threads) would have taken the MCP tool count to 12 of 12 and exhausted
+the numeric cap then in `AGENTS.md` rule 8. (That cap is gone — rule 8 is now the
+tool-selection eval — but the question is worth keeping, because the answer never depended
+on the count.)
 
-**It cannot.** The premise holds — resources genuinely do not consume a tool slot — but
+**It cannot.** The premise holds — resources genuinely add no tool description — but
 the primitive is **read-only**. MCP offers `resources/list`,
 `resources/templates/list`, and `resources/read`, and no write verb. Thread curation
 (create, rename, pin, unpin, accept or reject a membership proposal) is a write, and
