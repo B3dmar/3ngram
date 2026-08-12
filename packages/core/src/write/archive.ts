@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // archiveMemory(): the generic ARCHIVE lifecycle write path (adoption-gate
-// Decision D — REST-only: NO MCP tool mirrors this surface, hard rule 8).
+// Decision D — REST-only: NO MCP tool mirrors this surface. Archiving is an
+// operator action, not an agent JTBD, so it never met hard rule 8's bar for a
+// tool description competing in `tools/list`).
 //
 // apps -> core -> db layering (hard rule 5): a THIN orchestration over the db
 // status flip (which runs withTenant internally, hard rule 3). The only policy

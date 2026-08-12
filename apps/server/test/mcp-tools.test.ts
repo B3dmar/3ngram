@@ -3,7 +3,7 @@
 // input (rejecting bad payloads) and produces schema-valid structured output.
 // The tools call the COMPLETE core through a stubbed module so the contract is
 // exercised without a database; the schema boundary (packages/schema/mcp.ts) is
-// the assertion target, plus the tool-count discipline (hard rule 8).
+// the assertion target, plus the registered-surface discipline (hard rule 8).
 //
 // Mocking @3ngram/core lets us assert the THIN-ADAPTER contract: the tool passes
 // the validated args to core, shapes the result against outputSchema, and maps
@@ -292,7 +292,7 @@ vi.mock('@3ngram/core', () => ({
   SuccessorNotLiveError,
 }))
 
-const { TOOLS, MAX_TOOLS, runTool } = await import('../src/mcp/tools.js')
+const { TOOLS, runTool } = await import('../src/mcp/tools.js')
 type ToolContext = import('../src/mcp/tools.js').ToolContext
 
 const UID = crypto.randomUUID()
@@ -329,13 +329,17 @@ async function call(name: string, args: unknown, context: ToolContext) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('MCP tool registry discipline', () => {
-  it('registers exactly 11 tools (D1 5 + D2 orient 2 + inspect 1 + D3 admin 3), under the cap', () => {
+  it('registers exactly 11 tools (D1 5 + D2 orient 2 + inspect 1 + D3 admin 3)', () => {
     // MERGED truth: the 5 existing tools (remember, search, get_facts, revise,
     // resolve) + D2 orientation (briefing, handoff) + the inspect follow-up read
     // (get_memories) + D3 admin (configure_scope, describe_environment,
-    // review_proposals) -> the 11-tool surface. The cap (<=12,
-    // docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling; the last
-    // slot is UNRESERVED — it goes to whichever tool next earns it.
+    // review_proposals) -> the 11-tool surface.
+    //
+    // This is a SNAPSHOT of the registered surface, not a ceiling. There is no
+    // numeric cap any more (docs/concepts/mcp-design.mdx / hard rule 8): what a
+    // count proxied for is selection accuracy and description overlap, gated by
+    // the eval (eval/src/tool-selection.mjs). Adding a tool updates this list AND
+    // needs its eval scenarios — the failing assertion is the reminder.
     expect(TOOLS).toHaveLength(11)
     expect(TOOLS.map((t) => t.name)).toEqual([
       'remember',
@@ -350,7 +354,6 @@ describe('MCP tool registry discipline', () => {
       'describe_environment',
       'review_proposals',
     ])
-    expect(TOOLS.length).toBeLessThanOrEqual(MAX_TOOLS)
   })
 
   it('every tool declares input + output schema shapes (input may be empty for a no-arg tool)', () => {

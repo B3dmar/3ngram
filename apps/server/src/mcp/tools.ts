@@ -6,10 +6,14 @@
 // every core call (which runs withTenant internally) — a tool can only ever
 // touch the caller's own rows (hard rule 3).
 //
-// TOOL-COUNT DISCIPLINE (docs/concepts/mcp-design.mdx, hard rule 8: <=12): the single {@link
-// TOOLS} array is the auditable surface — its length IS the registered tool
-// count. D0 ships exactly THREE (remember/search/get_facts); the other seven
-// JTBD tools land in later slices.
+// TOOL-SURFACE DISCIPLINE (docs/concepts/mcp-design.mdx, hard rule 8): the single
+// {@link TOOLS} array is the auditable surface — its length IS the registered
+// tool count. There is no numeric ceiling: what a count was ever a proxy for is
+// selection accuracy and description overlap, and those are now MEASURED and
+// gated by eval/src/tool-selection.mjs against eval/fixtures/floors.json. Adding
+// a tool requires a JTBD no existing tool covers, a regenerated surface snapshot,
+// and scenarios in eval/fixtures/tool-selection.json that cover it — a tool whose
+// description blurs into a neighbour's fails the gate.
 //
 // Observability (hard rule 6): no memory content, query text, subject/value, or
 // credential enters a log. A tool error returns a typed isError result to the
@@ -459,10 +463,10 @@ const resolveTool: ToolDefinition = {
 }
 
 /**
- * THE registered tool surface. Length === registered count; the <=12 cap (hard
- * rule 8) is auditable from this one array. D0: 3; D1 adds revise + resolve -> 5;
- * D2 orient (briefing, handoff) -> 7; D3 admin (configure_scope,
- * describe_environment, review_proposals) -> 10; get_memories (inspect) -> 11.
+ * THE registered tool surface. Length === registered count, auditable from this
+ * one array (hard rule 8). D0: 3; D1 adds revise + resolve -> 5; D2 orient
+ * (briefing, handoff) -> 7; D3 admin (configure_scope, describe_environment,
+ * review_proposals) -> 10; get_memories (inspect) -> 11.
  *
  * The admin tools are created via a FACTORY given a thunk over {@link TOOLS}, so
  * describe_environment can report the FULL surface (itself included) without a
@@ -486,18 +490,6 @@ export const TOOLS: readonly ToolDefinition[] = [
   // surface (itself included) without a circular import.
   ...createAdminTools(() => TOOLS.map((t) => t.name)),
 ]
-
-/**
- * Working ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12
- * registered, and the twelfth is UNRESERVED — it goes to whichever tool next
- * earns it on the JTBD + evidence test.
- *
- * The number is 3ngram's own, not the protocol's: the 2026-07-28 specification
- * defines no maximum tool count and paginates `tools/list`. What it proxies for
- * is description overlap and model selection accuracy, which is what to argue
- * about when this binds. See docs/concepts/mcp-surface.mdx.
- */
-export const MAX_TOOLS = 12
 
 /**
  * Run a tool handler with uniform metrics + typed-error mapping. A KNOWN typed
