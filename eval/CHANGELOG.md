@@ -1,5 +1,15 @@
 # @3ngram/eval
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [851fa53]
+- Updated dependencies [1ebd82c]
+  - @3ngram/schema@0.7.2
+  - @3ngram/core@0.9.2
+  - @3ngram/db@0.8.2
+
 ## 0.1.1
 
 ### Patch Changes
