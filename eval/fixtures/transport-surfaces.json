@@ -137,7 +137,7 @@
                     }
                   },
                   "required": ["kind"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -154,7 +154,7 @@
                     }
                   },
                   "required": ["kind", "scope"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -170,7 +170,7 @@
                     }
                   },
                   "required": ["kind", "project"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -197,7 +197,7 @@
                     }
                   },
                   "required": ["kind", "scope", "project", "includeUnscoped"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               ]
             },
@@ -258,7 +258,7 @@
                       }
                     },
                     "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -266,7 +266,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "overdue": {
               "type": "object",
@@ -316,7 +316,7 @@
                       }
                     },
                     "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -324,7 +324,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "blockers": {
               "type": "object",
@@ -399,7 +399,7 @@
                       "recordedAt",
                       "updatedAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -407,7 +407,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "staleCandidates": {
               "type": "object",
@@ -482,7 +482,7 @@
                       "recordedAt",
                       "updatedAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -490,7 +490,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "recentDecisions": {
               "type": "object",
@@ -565,7 +565,7 @@
                       "recordedAt",
                       "updatedAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -573,7 +573,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "preferences": {
               "type": "object",
@@ -648,7 +648,7 @@
                       "recordedAt",
                       "updatedAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "hasMore": {
@@ -656,7 +656,7 @@
                 }
               },
               "required": ["count", "items", "hasMore"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "appliedScope": {
               "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -668,7 +668,7 @@
           },
           "required": ["selector", "mode", "generatedAt"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,
@@ -864,7 +864,7 @@
                       }
                     },
                     "required": ["id", "name", "aliases", "createdAt"],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "count": {
@@ -874,7 +874,7 @@
                 }
               },
               "required": ["action", "scopes", "count"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -914,11 +914,11 @@
                     }
                   },
                   "required": ["id", "name", "aliases", "createdAt"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
               "required": ["action", "scope"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -935,7 +935,7 @@
                 }
               },
               "required": ["action", "name"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -966,11 +966,11 @@
                     }
                   },
                   "required": ["mode", "scope"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
               "required": ["action", "policy"],
-              "additionalProperties": false
+              "additionalProperties": true
             }
           ]
         },
@@ -1013,7 +1013,7 @@
                 }
               },
               "required": ["tools", "toolCount", "version"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "scopes": {
               "type": "array",
@@ -1048,7 +1048,7 @@
                   }
                 },
                 "required": ["id", "name", "aliases", "createdAt"],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "stats": {
@@ -1099,7 +1099,7 @@
                 "archivedMemories",
                 "commitmentsByStatus"
               ],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "retrievalScopePolicy": {
               "type": "object",
@@ -1123,12 +1123,12 @@
                 }
               },
               "required": ["mode", "scope"],
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
           "required": ["capabilities", "scopes", "stats", "retrievalScopePolicy"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,
@@ -1260,7 +1260,7 @@
                   "validTo",
                   "recordedAt"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "count": {
@@ -1271,7 +1271,7 @@
           },
           "required": ["facts", "count"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,
@@ -1419,7 +1419,7 @@
                   "validTo",
                   "recordedAt"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "count": {
@@ -1439,7 +1439,7 @@
           },
           "required": ["memories", "count", "notFound"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,
@@ -1559,7 +1559,7 @@
                     }
                   },
                   "required": ["kind"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -1576,7 +1576,7 @@
                     }
                   },
                   "required": ["kind", "scope"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -1592,7 +1592,7 @@
                     }
                   },
                   "required": ["kind", "project"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
                   "type": "object",
@@ -1619,7 +1619,7 @@
                     }
                   },
                   "required": ["kind", "scope", "project", "includeUnscoped"],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               ]
             },
@@ -1706,7 +1706,7 @@
                   "scope",
                   "project"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "commitments": {
@@ -1746,7 +1746,7 @@
                   }
                 },
                 "required": ["id", "memoryId", "topic", "status", "dueAt"],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "preferences": {
@@ -1817,7 +1817,7 @@
                   "scope",
                   "project"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "notes": {
@@ -1846,7 +1846,7 @@
                 }
               },
               "required": ["decisions", "commitments", "preferences"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "truncated": {
               "type": "object",
@@ -1862,7 +1862,7 @@
                 }
               },
               "required": ["decisions", "commitments", "preferences"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "appliedScope": {
               "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -1884,7 +1884,7 @@
             "truncated"
           ],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,
@@ -2053,7 +2053,7 @@
                 }
               },
               "required": ["id", "memoryType", "topic", "scope", "project"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "embedded": {
               "type": "string",
@@ -2075,7 +2075,7 @@
           },
           "required": ["memory", "embedded"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": false,
@@ -2128,7 +2128,7 @@
           },
           "required": ["commitmentId", "status"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": false,
@@ -2295,7 +2295,7 @@
                       "decidedAt",
                       "createdAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 },
                 "count": {
@@ -2421,12 +2421,12 @@
                       "decidedAt",
                       "createdAt"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 }
               },
               "required": ["action", "proposals", "count"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -2517,11 +2517,11 @@
                     "decidedAt",
                     "createdAt"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
               "required": ["action", "proposal"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -2612,11 +2612,11 @@
                     "decidedAt",
                     "createdAt"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
               "required": ["action", "proposal"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -2741,11 +2741,11 @@
                     "decidedAt",
                     "createdAt"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 }
               },
               "required": ["action", "proposal"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             {
               "type": "object",
@@ -2870,7 +2870,7 @@
                     "decidedAt",
                     "createdAt"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 "factId": {
                   "type": "string",
@@ -2879,7 +2879,7 @@
                 }
               },
               "required": ["action", "proposal", "factId"],
-              "additionalProperties": false
+              "additionalProperties": true
             }
           ]
         },
@@ -3004,7 +3004,7 @@
                 }
               },
               "required": ["id", "memoryType", "topic", "scope", "project"],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "embedded": {
               "type": "string",
@@ -3013,7 +3013,7 @@
           },
           "required": ["memory", "embedded"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": false,
@@ -3303,7 +3303,7 @@
                       "score",
                       "superseded"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   },
                   {
                     "type": "object",
@@ -3327,7 +3327,7 @@
                       }
                     },
                     "required": ["id", "memoryType", "topic", "score", "superseded"],
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 ]
               }
@@ -3354,7 +3354,7 @@
           },
           "required": ["hits", "count", "hasMore"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "annotations": {
           "readOnlyHint": true,

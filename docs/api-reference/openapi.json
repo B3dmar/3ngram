@@ -233,7 +233,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "appliedScope": {
                       "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -243,7 +243,7 @@
                       "type": "string"
                     },
                     "blockers": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -255,7 +255,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "id": {
                                 "format": "uuid",
@@ -330,7 +330,7 @@
                       "type": "object"
                     },
                     "commitments": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -342,7 +342,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "dueAt": {
                                 "anyOf": [
@@ -416,7 +416,7 @@
                       "type": "string"
                     },
                     "overdue": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -428,7 +428,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "dueAt": {
                                 "anyOf": [
@@ -490,7 +490,7 @@
                       "type": "object"
                     },
                     "preferences": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -502,7 +502,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "id": {
                                 "format": "uuid",
@@ -577,7 +577,7 @@
                       "type": "object"
                     },
                     "recentDecisions": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -589,7 +589,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "id": {
                                 "format": "uuid",
@@ -666,7 +666,7 @@
                     "selector": {
                       "oneOf": [
                         {
-                          "additionalProperties": false,
+                          "additionalProperties": true,
                           "properties": {
                             "kind": {
                               "const": "all",
@@ -679,7 +679,7 @@
                           "type": "object"
                         },
                         {
-                          "additionalProperties": false,
+                          "additionalProperties": true,
                           "properties": {
                             "kind": {
                               "const": "scope",
@@ -699,7 +699,7 @@
                           "type": "object"
                         },
                         {
-                          "additionalProperties": false,
+                          "additionalProperties": true,
                           "properties": {
                             "kind": {
                               "const": "project",
@@ -718,7 +718,7 @@
                           "type": "object"
                         },
                         {
-                          "additionalProperties": false,
+                          "additionalProperties": true,
                           "properties": {
                             "includeUnscoped": {
                               "default": false,
@@ -752,7 +752,7 @@
                       ]
                     },
                     "staleCandidates": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "count": {
                           "maximum": 9007199254740991,
@@ -764,7 +764,7 @@
                         },
                         "items": {
                           "items": {
-                            "additionalProperties": false,
+                            "additionalProperties": true,
                             "properties": {
                               "id": {
                                 "format": "uuid",
@@ -2175,7 +2175,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "count": {
                       "maximum": 9007199254740991,
@@ -2184,7 +2184,7 @@
                     },
                     "facts": {
                       "items": {
-                        "additionalProperties": false,
+                        "additionalProperties": true,
                         "properties": {
                           "confidence": {
                             "anyOf": [
@@ -2698,7 +2698,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "commitmentId": {
                       "format": "uuid",
@@ -2723,7 +2723,7 @@
                       "type": "array"
                     },
                     "memory": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "id": {
                           "format": "uuid",
@@ -3881,7 +3881,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "commitmentId": {
                       "format": "uuid",
@@ -4013,7 +4013,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "embedded": {
                       "enum": [
@@ -4025,7 +4025,7 @@
                       "type": "string"
                     },
                     "memory": {
-                      "additionalProperties": false,
+                      "additionalProperties": true,
                       "properties": {
                         "id": {
                           "format": "uuid",
@@ -4134,7 +4134,7 @@
                     },
                     "proposals": {
                       "items": {
-                        "additionalProperties": false,
+                        "additionalProperties": true,
                         "properties": {
                           "createdAt": {
                             "format": "date-time",
@@ -4506,7 +4506,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
+                  "additionalProperties": true,
                   "properties": {
                     "appliedScope": {
                       "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -4522,7 +4522,7 @@
                     },
                     "hits": {
                       "items": {
-                        "additionalProperties": false,
+                        "additionalProperties": true,
                         "properties": {
                           "content": {
                             "maxLength": 600,

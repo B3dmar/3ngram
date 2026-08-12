@@ -168,7 +168,7 @@ await client.remember({
         "scope",
         "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "embedded": {
       "type": "string",
@@ -189,7 +189,7 @@ await client.remember({
     "memory",
     "embedded"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -333,7 +333,7 @@ await client.search('oauth refresh token', {
           "score",
           "superseded"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "count": {
@@ -353,7 +353,7 @@ await client.search('oauth refresh token', {
     "hits",
     "count"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -483,7 +483,7 @@ await client.getFacts({
           "validTo",
           "recordedAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "count": {
@@ -496,7 +496,7 @@ await client.getFacts({
     "facts",
     "count"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -643,7 +643,7 @@ await client.revise(memoryId, {
         "scope",
         "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "embedded": {
       "type": "string",
@@ -659,7 +659,7 @@ await client.revise(memoryId, {
     "memory",
     "embedded"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -734,7 +734,7 @@ await client.resolve(memoryId, 'resolved')
     "commitmentId",
     "status"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
