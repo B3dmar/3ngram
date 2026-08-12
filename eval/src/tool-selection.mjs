@@ -386,10 +386,15 @@ export function formatToolSelection(slice) {
   return lines.join('\n')
 }
 
-// Standalone CLI. An integrity failure exits 2 here exactly as it does through the
+// Standalone CLI. EVERY non-ok status exits 2 here, exactly as it does through the
 // run.mjs wiring — the slice is gated, so there is no longer a caller that scores
 // it leniently. Running this directly is the fast loop while editing a
 // description; the gate is the same verdict.
+//
+// `!== 'ok'` and not a list of statuses: this checked `=== 'error'` alone, so a
+// MISSING fixture printed "fixture not generated" and exited 0 while run.mjs
+// exited 2 on the same input — the two callers disagreeing about the same slice
+// is the divergence the wording above promises is gone.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2)
   const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../fixtures')
@@ -402,5 +407,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else {
     process.stdout.write(`${formatToolSelection(slice)}\n`)
   }
-  if (slice.status === 'error') process.exit(2)
+  if (slice.status !== 'ok') process.exit(2)
 }

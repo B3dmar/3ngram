@@ -111,8 +111,10 @@ a model run — the same substitution the blocking gate makes for the product re
   instead of scoring a stale vector. Vectors are also rejected at both ends — generation
   and load — if any element is non-finite or the L2 norm is zero, since cosine against a
   zero vector is NaN and NaN would report as a metric rather than fail.
-- **Absence of the embeddings fixture is not a failure**: the gate prints
-  `fixture not generated` and stays green.
+- **Absence of the embeddings fixture IS a failure**: the fixture is committed and
+  required, so the gate prints `fixture not generated` with the regenerate hint and exits
+  2. Every non-ok status does — a gated slice that did not run is not a pass, and exit 2
+  (integrity) is kept distinct from exit 1 (a real regression against a floor).
 
 Regenerate (needs an embedding credential; one command):
 
@@ -125,7 +127,8 @@ generator additionally cross-checks the committed capture against the **live** r
 refusing to generate from a stale one. Without the build it prints that the cross-check
 was skipped.
 
-Standalone (exits 2 on an integrity failure — the gate wiring does not):
+Standalone (exits 2 on any integrity failure, the same verdict the gate reaches — this is
+just the faster loop while editing a description):
 
 ```bash
 pnpm --filter @3ngram/eval run tool-selection [-- --json]

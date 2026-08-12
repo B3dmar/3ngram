@@ -393,6 +393,26 @@ test('the standalone CLI exits 2 on the same malformed fixture', () => {
   assert.match(err.stdout, /ERROR: malformed fixture/)
 })
 
+test('the standalone CLI exits 2 on a MISSING fixture too, not just a corrupt one', () => {
+  // Regression pin (Codex review of PR #155): the standalone exit tested
+  // `status === 'error'` alone, so a fixture-missing run printed its message and
+  // exited 0 while run.mjs exited 2 on the identical input. Both callers gate the
+  // same slice, so "did not run" has to read the same from either entry point —
+  // every non-ok status, not an enumerated subset that the next status forgets.
+  let err
+  try {
+    execFileSync('node', [join(here, '../src/tool-selection.mjs'), '--model', 'no-such-model'], {
+      encoding: 'utf8',
+    })
+  } catch (e) {
+    err = e
+  }
+  assert.ok(err, 'a missing embeddings fixture must exit non-zero standalone')
+  assert.equal(err.status, 2)
+  assert.match(err.stdout, /fixture not generated/)
+  assert.match(err.stdout, /regenerate embeddings/)
+})
+
 test('the blocking gate scores the slice into results.slices and ratchets it', () => {
   // The wiring property: the three scalars are GATED metrics, so they have to show
   // up in the JSON the gate prints and be covered by fixtures/floors.json. A metric
