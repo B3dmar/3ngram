@@ -273,8 +273,10 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   // pass with a single surviving scenario per tool, and a per-tool accuracy over
   // n=1 is noise reported as a metric. 5 is what this fixture promises, so 5 is
   // what is asserted — an exact count also catches accidental duplication, which
-  // a >= floor would wave through. (The lifecycle rule for a FUTURE tool is >= 3;
-  // that is a different contract and belongs with the change that introduces it.)
+  // a >= floor would wave through. This is the whole contract, for existing and
+  // future tools alike (AGENTS.md hard rule 8): whoever adds tool #12 writes 5
+  // scenarios for it. There is no lower allowance for a new arrival — a tool
+  // measured over fewer utterances is the one whose routing nobody can vouch for.
   const PER_TOOL = 5
   const counts = new Map([...registered].map((name) => [name, 0]))
   for (const s of scenarios.toolScenarios)
