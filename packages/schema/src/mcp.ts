@@ -16,10 +16,17 @@
 // limited at the input boundary, so a tool result never balloons into a
 // legacy-style 50KB firehose. No schema here echoes more than the tool returns
 // by design.
+//
+// ADVERTISE OPEN, PARSE STRICT (issue #154): every OUTPUT object node carries
+// {@link OPEN_OUTPUT_META}, so the JSON Schema clients cache says
+// `additionalProperties: true` while the object keeps parsing `.strict()`.
+// Rationale and the composition rules in output-openness.ts. INPUT schemas are
+// deliberately NOT marked — an unknown arg key stays a loud rejection.
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema, rememberInputSchema, reviseInputSchema } from './write.js'
@@ -91,6 +98,7 @@ export const writtenMemorySchema = z
     project: projectSchema.nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type WrittenMemoryOutput = z.infer<typeof writtenMemorySchema>
 
 /**
@@ -128,6 +136,7 @@ export const rememberToolOutputSchema = z
     commitmentId: z.uuid().optional(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 
 // ---------------------------------------------------------------------------
@@ -162,6 +171,7 @@ export const reviseToolOutputSchema = z
     embedded: embedStatusSchema,
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type ReviseToolOutput = z.infer<typeof reviseToolOutputSchema>
 
 // ---------------------------------------------------------------------------
@@ -225,6 +235,7 @@ export const resolveToolOutputSchema = z
     status: resolveOutcomeStatusSchema,
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type ResolveToolOutput = z.infer<typeof resolveToolOutputSchema>
 
 // ---------------------------------------------------------------------------
@@ -275,6 +286,7 @@ export const searchHitSchema = z
     superseded: z.boolean(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type SearchHitOutput = z.infer<typeof searchHitSchema>
 
 /** `search` output: the bounded hit list plus the returned count (envelope). */
@@ -284,6 +296,7 @@ export const searchToolOutputSchema = z
     count: z.number().int().min(0),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type SearchToolOutput = z.infer<typeof searchToolOutputSchema>
 
 // ---------------------------------------------------------------------------
@@ -433,6 +446,7 @@ export const factSchema = z
     recordedAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type FactOutput = z.infer<typeof factSchema>
 
 /** `get_facts` output: the fact list plus the returned count (envelope). */
@@ -442,6 +456,7 @@ export const factsToolOutputSchema = z
     count: z.number().int().min(0),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type FactsToolOutput = z.infer<typeof factsToolOutputSchema>
 
 // ===========================================================================
@@ -529,6 +544,7 @@ export const scopeRecordSchema = z
     createdAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type ScopeRecordOutput = z.infer<typeof scopeRecordSchema>
 
 /**
@@ -544,9 +560,16 @@ export const configureScopeOutputSchema = z.discriminatedUnion('action', [
       scopes: z.array(scopeRecordSchema),
       count: z.number().int().min(0),
     })
-    .strict(),
-  z.object({ action: z.literal('upserted'), scope: scopeRecordSchema }).strict(),
-  z.object({ action: z.literal('deleted'), name: scopeNameSchema }).strict(),
+    .strict()
+    .meta(OPEN_OUTPUT_META),
+  z
+    .object({ action: z.literal('upserted'), scope: scopeRecordSchema })
+    .strict()
+    .meta(OPEN_OUTPUT_META),
+  z
+    .object({ action: z.literal('deleted'), name: scopeNameSchema })
+    .strict()
+    .meta(OPEN_OUTPUT_META),
 ])
 export type ConfigureScopeOutput = z.infer<typeof configureScopeOutputSchema>
 
@@ -592,7 +615,8 @@ export const describeEnvironmentOutputSchema = z
         toolCount: z.number().int().min(0),
         version: z.string(),
       })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
     scopes: z.array(scopeRecordSchema),
     stats: z
       .object({
@@ -602,9 +626,11 @@ export const describeEnvironmentOutputSchema = z
         archivedMemories: z.number().int().min(0),
         commitmentsByStatus: z.record(z.string(), z.number().int().min(0)),
       })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type DescribeEnvironmentOutput = z.infer<typeof describeEnvironmentOutputSchema>
 
 // ---------------------------------------------------------------------------
@@ -670,6 +696,7 @@ export const proposalRecordSchema = z
     createdAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type ProposalRecordOutput = z.infer<typeof proposalRecordSchema>
 
 /**
@@ -686,9 +713,16 @@ export const reviewProposalsOutputSchema = z.discriminatedUnion('action', [
       proposals: z.array(proposalRecordSchema),
       count: z.number().int().min(0),
     })
-    .strict(),
-  z.object({ action: z.literal('rejected'), proposal: proposalRecordSchema }).strict(),
-  z.object({ action: z.literal('applied'), proposal: proposalRecordSchema }).strict(),
+    .strict()
+    .meta(OPEN_OUTPUT_META),
+  z
+    .object({ action: z.literal('rejected'), proposal: proposalRecordSchema })
+    .strict()
+    .meta(OPEN_OUTPUT_META),
+  z
+    .object({ action: z.literal('applied'), proposal: proposalRecordSchema })
+    .strict()
+    .meta(OPEN_OUTPUT_META),
 ])
 export type ReviewProposalsOutput = z.infer<typeof reviewProposalsOutputSchema>
 
@@ -729,6 +763,25 @@ export const briefingSelectorSchema = z.discriminatedUnion('kind', [
 ])
 export type BriefingSelectorInput = z.infer<typeof briefingSelectorSchema>
 
+/**
+ * The OUTPUT-side selector union — the SAME three variants, marked open for the
+ * advertised JSON Schema ({@link OPEN_OUTPUT_META}, issue #154).
+ *
+ * The selector is the ONE object reachable from BOTH an input and an output
+ * tree: briefing/handoff take it as an argument AND echo it back. Marking the
+ * shipped union in place would leak open-ness into the INPUT advertisement, so
+ * the openness rides a DERIVATION — `.meta()` clones, leaving
+ * {@link briefingSelectorSchema} (the input path) byte-identical, and the two
+ * unions parse and infer identically.
+ */
+const [allSelector, scopeSelector, projectSelector] = briefingSelectorSchema.options
+export const briefingSelectorOutputSchema = z.discriminatedUnion('kind', [
+  allSelector.meta(OPEN_OUTPUT_META),
+  scopeSelector.meta(OPEN_OUTPUT_META),
+  projectSelector.meta(OPEN_OUTPUT_META),
+])
+export type BriefingSelectorOutput = z.infer<typeof briefingSelectorOutputSchema>
+
 /** Briefing detail level. `brief` (default) = counts + top items; `full` = bounded lists. */
 export const briefingModeSchema = z.enum(['brief', 'full'])
 export type BriefingModeInput = z.infer<typeof briefingModeSchema>
@@ -758,6 +811,7 @@ export const briefingCommitmentSchema = z
     overdue: z.boolean(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type BriefingCommitmentOutput = z.infer<typeof briefingCommitmentSchema>
 
 /**
@@ -777,6 +831,7 @@ export const briefingMemoryItemSchema = z
     updatedAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type BriefingMemoryItemOutput = z.infer<typeof briefingMemoryItemSchema>
 
 /** One briefing section: the total COUNT plus a bounded item slice (the envelope). */
@@ -787,6 +842,7 @@ function briefingSectionSchema<T extends z.ZodTypeAny>(item: T) {
       items: z.array(item),
     })
     .strict()
+    .meta(OPEN_OUTPUT_META)
 }
 
 /**
@@ -797,7 +853,7 @@ function briefingSectionSchema<T extends z.ZodTypeAny>(item: T) {
  */
 export const briefingToolOutputSchema = z
   .object({
-    selector: briefingSelectorSchema,
+    selector: briefingSelectorOutputSchema,
     mode: briefingModeSchema,
     generatedAt: z.iso.datetime(),
     commitments: briefingSectionSchema(briefingCommitmentSchema),
@@ -808,6 +864,7 @@ export const briefingToolOutputSchema = z
     preferences: briefingSectionSchema(briefingMemoryItemSchema),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type BriefingToolOutput = z.infer<typeof briefingToolOutputSchema>
 
 /**
@@ -845,6 +902,7 @@ export const handoffMemorySchema = z
     project: projectSchema.nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type HandoffMemoryOutput = z.infer<typeof handoffMemorySchema>
 
 /** A commitment line in a handoff (the obligation a receiving agent must carry). */
@@ -857,6 +915,7 @@ export const handoffCommitmentSchema = z
     dueAt: z.iso.datetime().nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type HandoffCommitmentOutput = z.infer<typeof handoffCommitmentSchema>
 
 /**
@@ -868,7 +927,7 @@ export type HandoffCommitmentOutput = z.infer<typeof handoffCommitmentSchema>
  */
 export const handoffToolOutputSchema = z
   .object({
-    selector: briefingSelectorSchema,
+    selector: briefingSelectorOutputSchema,
     generatedFor: z.string().nullable(),
     generatedAt: z.iso.datetime(),
     decisions: z.array(handoffMemorySchema),
@@ -877,6 +936,7 @@ export const handoffToolOutputSchema = z
     notes: z.array(z.string()),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type HandoffToolOutput = z.infer<typeof handoffToolOutputSchema>
 
 // ===========================================================================

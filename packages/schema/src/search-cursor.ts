@@ -15,6 +15,7 @@
 // only carries the transport-level string field.
 import { z } from 'zod'
 import { MAX_SEARCH_LIMIT, searchHitSchema, searchQueryV2Schema } from './mcp.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 
 /**
  * Per-hit output projection. `full` (the default — byte-identical to the
@@ -70,12 +71,17 @@ export type SearchQueryV3Args = z.input<typeof searchQueryV3Schema>
  * excerpt triple (`content`/`contentLength`/`truncated`). id/type/topic/score/
  * superseded are enough to decide what to read (and whether a hit is a
  * demoted predecessor); get_memories fetches the bodies.
+ *
+ * The openness marker is REAPPLIED (issue #154): `.omit()` builds a fresh object
+ * that does not inherit the base's metadata.
  */
-export const searchHitCompactSchema = searchHitSchema.omit({
-  content: true,
-  contentLength: true,
-  truncated: true,
-})
+export const searchHitCompactSchema = searchHitSchema
+  .omit({
+    content: true,
+    contentLength: true,
+    truncated: true,
+  })
+  .meta(OPEN_OUTPUT_META)
 export type SearchHitCompactOutput = z.infer<typeof searchHitCompactSchema>
 
 /**
@@ -98,6 +104,7 @@ export const searchToolOutputV2Schema = z
     nextCursor: z.string().min(1).optional(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
   .refine((o) => o.count === o.hits.length, {
     message: 'count must equal hits.length',
     path: ['count'],
