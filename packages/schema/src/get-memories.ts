@@ -11,6 +11,7 @@ import { commitmentStatusSchema } from './commitment.js'
 import { MAX_IMPORT_CONTENT_LENGTH } from './import.js'
 import { MAX_EXCERPT_LENGTH } from './mcp.js'
 import { memoryStatusSchema, memoryTypeSchema } from './memory.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -114,6 +115,7 @@ export const getMemoriesItemSchema = z
     recordedAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type GetMemoriesItemOutput = z.infer<typeof getMemoriesItemSchema>
 
 /**
@@ -132,6 +134,7 @@ export const getMemoriesOutputSchema = z
     notFound: z.array(z.uuid()).max(MAX_GET_MEMORIES_IDS),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
   .refine((output) => output.count === output.memories.length, {
     message: 'count must equal memories.length',
     path: ['count'],

@@ -30,6 +30,7 @@ import {
   searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
@@ -326,6 +327,47 @@ async function call(name: string, args: unknown, context: ToolContext) {
   )
 }
 
+// --- advertised-schema openness helpers (issue #154) ------------------------
+// The catalog a client caches is JSON Schema, not Zod, so the invariant has to
+// be asserted on the EMITTED document — and at every depth, because the live
+// incident failed on a nested item object (`data/facts/0`), not the root.
+
+type JsonNode = Record<string, unknown>
+
+/** Every path in an emitted JSON Schema whose object node advertises `additionalProperties: false`. */
+function closedObjectPaths(node: unknown, path = '#'): string[] {
+  if (Array.isArray(node)) {
+    return node.flatMap((child, index) => closedObjectPaths(child, `${path}/${index}`))
+  }
+  if (node === null || typeof node !== 'object') return []
+  const entries = Object.entries(node as JsonNode)
+  const closedHere = (node as JsonNode).additionalProperties === false ? [path] : []
+  return entries.reduce<string[]>(
+    (found, [key, value]) =>
+      key === 'additionalProperties' && typeof value === 'boolean'
+        ? found
+        : [...found, ...closedObjectPaths(value, `${path}/${key}`)],
+    closedHere,
+  )
+}
+
+/**
+ * The ROOT object node(s) of an emitted JSON Schema: a plain object yields one,
+ * a union yields one per branch. `$ref`s are resolved through `$defs` so the
+ * assertion sees the node the client actually validates against.
+ */
+function rootObjectNodes(json: JsonNode): JsonNode[] {
+  const defs = (json.$defs ?? {}) as Record<string, JsonNode>
+  const deref = (node: JsonNode): JsonNode => {
+    const ref = node.$ref
+    if (typeof ref !== 'string' || !ref.startsWith('#/$defs/')) return node
+    return defs[ref.slice('#/$defs/'.length)] ?? node
+  }
+  const root = deref(json)
+  const branches = (root.anyOf ?? root.oneOf) as JsonNode[] | undefined
+  return branches === undefined ? [root] : branches.map(deref)
+}
+
 beforeEach(() => vi.clearAllMocks())
 
 describe('MCP tool registry discipline', () => {
@@ -410,6 +452,46 @@ describe('MCP tool registry discipline', () => {
       if (tool.config.annotations.readOnlyHint === true) continue
       const expected = tool.name === 'configure_scope'
       expect(tool.config.annotations.destructiveHint, `${tool.name}`).toBe(expected)
+    }
+  })
+
+  // ADVERTISE OPEN, PARSE STRICT (issue #154, docs/concepts/mcp-design.mdx).
+  //
+  // A client caches the tool catalog for up to an hour. When an advertised
+  // output schema says `additionalProperties: false`, any release that adds a
+  // response field makes every validating client hard-fail for that whole TTL
+  // window — and nothing prompts a refetch, because the failure is CLIENT-SIDE
+  // output validation, not a -32601/-32602 the client would treat as a stale
+  // catalog. That is exactly how a v1.3.0 session died against v1.4.1
+  // get_facts ("data/facts/0 must NOT have additional properties").
+  //
+  // A registry-wide invariant is worth more than per-schema assertions: the
+  // failure it prevents is a NEW output schema (or a new nested item object on
+  // an existing one) shipping closed, which no per-tool test would catch.
+  it('advertises every tool OUTPUT schema as open at every object node', () => {
+    for (const tool of TOOLS) {
+      const advertised = z.toJSONSchema(tool.config.outputSchema, {
+        target: 'draft-2020-12',
+        io: 'output',
+      }) as JsonNode
+      const closed = closedObjectPaths(advertised)
+      expect(closed, `${tool.name} output advertises closed object nodes`).toEqual([])
+    }
+  })
+
+  // The other half of the asymmetry, locked so a future "just open everything"
+  // edit cannot quietly widen the INPUT advertisement: an unknown arg key stays
+  // a loud rejection, not a silent drop (a silently dropped `scope` filter
+  // reads as a scope leak).
+  it('keeps every tool INPUT schema advertised closed at the root', () => {
+    for (const tool of TOOLS) {
+      const advertised = z.toJSONSchema(tool.config.inputSchema, {
+        target: 'draft-2020-12',
+        io: 'input',
+      }) as JsonNode
+      for (const [index, node] of rootObjectNodes(advertised).entries()) {
+        expect(node.additionalProperties, `${tool.name} input root branch ${index}`).toBe(false)
+      }
     }
   })
 })

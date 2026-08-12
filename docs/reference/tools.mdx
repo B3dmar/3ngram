@@ -191,7 +191,7 @@ Append a new memory (decision, fact, preference, blocker, commitment, ...). Neve
         "scope",
         "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "embedded": {
       "type": "string",
@@ -220,7 +220,7 @@ Append a new memory (decision, fact, preference, blocker, commitment, ...). Neve
     "memory",
     "embedded"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -529,7 +529,7 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
               "score",
               "superseded"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           },
           {
             "type": "object",
@@ -559,7 +559,7 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
               "score",
               "superseded"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         ]
       }
@@ -589,7 +589,7 @@ Unified semantic + keyword retrieval over your memories, supersession-aware. Acc
     "count",
     "hasMore"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -726,7 +726,7 @@ Currently-valid facts for a subject, with optional bi-temporal time travel, OR a
           "validTo",
           "recordedAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "count": {
@@ -739,7 +739,7 @@ Currently-valid facts for a subject, with optional bi-temporal time travel, OR a
     "facts",
     "count"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -880,7 +880,7 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
         "scope",
         "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "embedded": {
       "type": "string",
@@ -896,7 +896,7 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
     "memory",
     "embedded"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -970,7 +970,7 @@ Settle a memory by its id. A commitment transitions to a target status (open, wa
     "commitmentId",
     "status"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -1131,7 +1131,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1151,7 +1151,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             "kind",
             "scope"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1170,7 +1170,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             "kind",
             "project"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1202,7 +1202,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
             "project",
             "includeUnscoped"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1278,7 +1278,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "dueAt",
               "overdue"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1290,7 +1290,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "overdue": {
       "type": "object",
@@ -1352,7 +1352,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "dueAt",
               "overdue"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1364,7 +1364,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "blockers": {
       "type": "object",
@@ -1439,7 +1439,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "recordedAt",
               "updatedAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1451,7 +1451,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "staleCandidates": {
       "type": "object",
@@ -1526,7 +1526,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "recordedAt",
               "updatedAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1538,7 +1538,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "recentDecisions": {
       "type": "object",
@@ -1613,7 +1613,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "recordedAt",
               "updatedAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1625,7 +1625,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "preferences": {
       "type": "object",
@@ -1700,7 +1700,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "recordedAt",
               "updatedAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "hasMore": {
@@ -1712,7 +1712,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
         "items",
         "hasMore"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "appliedScope": {
       "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -1727,7 +1727,7 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
     "mode",
     "generatedAt"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -1868,7 +1868,7 @@ Export structured context (decisions, open commitments, preferences — with con
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1888,7 +1888,7 @@ Export structured context (decisions, open commitments, preferences — with con
             "kind",
             "scope"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1907,7 +1907,7 @@ Export structured context (decisions, open commitments, preferences — with con
             "kind",
             "project"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1939,7 +1939,7 @@ Export structured context (decisions, open commitments, preferences — with con
             "project",
             "includeUnscoped"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -2026,7 +2026,7 @@ Export structured context (decisions, open commitments, preferences — with con
           "scope",
           "project"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "commitments": {
@@ -2077,7 +2077,7 @@ Export structured context (decisions, open commitments, preferences — with con
           "status",
           "dueAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "preferences": {
@@ -2148,7 +2148,7 @@ Export structured context (decisions, open commitments, preferences — with con
           "scope",
           "project"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "notes": {
@@ -2181,7 +2181,7 @@ Export structured context (decisions, open commitments, preferences — with con
         "commitments",
         "preferences"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "truncated": {
       "type": "object",
@@ -2201,7 +2201,7 @@ Export structured context (decisions, open commitments, preferences — with con
         "commitments",
         "preferences"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "appliedScope": {
       "description": "Scope your retrieval-scope policy applied to this unscoped call (mode default). Absent when nothing was narrowed.",
@@ -2222,7 +2222,7 @@ Export structured context (decisions, open commitments, preferences — with con
     "counts",
     "truncated"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -2385,7 +2385,7 @@ Fetch the full content of memories by id — use this after search or handoff re
           "validTo",
           "recordedAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "count": {
@@ -2408,7 +2408,7 @@ Fetch the full content of memories by id — use this after search or handoff re
     "count",
     "notFound"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -2635,7 +2635,7 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
               "aliases",
               "createdAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "count": {
@@ -2649,7 +2649,7 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
         "scopes",
         "count"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -2694,14 +2694,14 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
             "aliases",
             "createdAt"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "action",
         "scope"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -2721,7 +2721,7 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
         "action",
         "name"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -2759,14 +2759,14 @@ Manage your memory scopes: list, create, rename, set aliases, or delete (registr
             "mode",
             "scope"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "action",
         "policy"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   ]
 }
@@ -2817,7 +2817,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
         "toolCount",
         "version"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "scopes": {
       "type": "array",
@@ -2857,7 +2857,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
           "aliases",
           "createdAt"
         ],
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "stats": {
@@ -2908,7 +2908,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
         "archivedMemories",
         "commitmentsByStatus"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "retrievalScopePolicy": {
       "type": "object",
@@ -2939,7 +2939,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
         "mode",
         "scope"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "required": [
@@ -2948,7 +2948,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
     "stats",
     "retrievalScopePolicy"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
 ```
 
@@ -3137,7 +3137,7 @@ List proposals awaiting review (optionally by status), reject one, or accept one
               "decidedAt",
               "createdAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
         "count": {
@@ -3267,7 +3267,7 @@ List proposals awaiting review (optionally by status), reject one, or accept one
               "decidedAt",
               "createdAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         }
       },
@@ -3276,7 +3276,7 @@ List proposals awaiting review (optionally by status), reject one, or accept one
         "proposals",
         "count"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -3376,14 +3376,14 @@ List proposals awaiting review (optionally by status), reject one, or accept one
             "decidedAt",
             "createdAt"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "action",
         "proposal"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -3483,14 +3483,14 @@ List proposals awaiting review (optionally by status), reject one, or accept one
             "decidedAt",
             "createdAt"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "action",
         "proposal"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -3619,14 +3619,14 @@ List proposals awaiting review (optionally by status), reject one, or accept one
             "decidedAt",
             "createdAt"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "action",
         "proposal"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
@@ -3755,7 +3755,7 @@ List proposals awaiting review (optionally by status), reject one, or accept one
             "decidedAt",
             "createdAt"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "factId": {
           "type": "string",
@@ -3768,7 +3768,7 @@ List proposals awaiting review (optionally by status), reject one, or accept one
         "proposal",
         "factId"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   ]
 }

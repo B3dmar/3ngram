@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { proposalStatusSchema } from './consolidation.js'
 import { reviewProposalsOutputSchema } from './mcp.js'
 import { memoryTypeSchema } from './memory.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 
 /**
  * One extracted-fact proposal in a tool result — what a REVIEWER needs to
@@ -48,6 +49,7 @@ export const factProposalRecordSchema = z
     createdAt: z.iso.datetime(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type FactProposalRecordOutput = z.infer<typeof factProposalRecordSchema>
 
 // The shipped variants, reused rather than restated: deriving them from the V1
@@ -70,19 +72,28 @@ const [listVariant, rejectedVariant, appliedVariant] = reviewProposalsOutputSche
  * call to find out what it wrote.
  */
 export const reviewProposalsOutputV2Schema = z.discriminatedUnion('action', [
-  listVariant.safeExtend({
-    factProposals: z.array(factProposalRecordSchema).optional(),
-  }),
+  // The openness marker is REAPPLIED on the extended list variant (issue #154):
+  // `.safeExtend()` builds a fresh object that does not inherit the base's
+  // metadata. The two reused variants already carry it.
+  listVariant
+    .safeExtend({
+      factProposals: z.array(factProposalRecordSchema).optional(),
+    })
+    .meta(OPEN_OUTPUT_META),
   rejectedVariant,
   appliedVariant,
-  z.object({ action: z.literal('rejected_fact'), proposal: factProposalRecordSchema }).strict(),
+  z
+    .object({ action: z.literal('rejected_fact'), proposal: factProposalRecordSchema })
+    .strict()
+    .meta(OPEN_OUTPUT_META),
   z
     .object({
       action: z.literal('applied_fact'),
       proposal: factProposalRecordSchema,
       factId: z.uuid(),
     })
-    .strict(),
+    .strict()
+    .meta(OPEN_OUTPUT_META),
 ])
 export type ReviewProposalsOutputV2 = z.infer<typeof reviewProposalsOutputV2Schema>
 
