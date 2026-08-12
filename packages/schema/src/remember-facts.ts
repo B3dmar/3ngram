@@ -9,6 +9,7 @@
 // on stay untouched and byte-identical (ADR-0011).
 import { z } from 'zod'
 import { rememberToolOutputSchema } from './mcp.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 import { rememberWithFactsInputSchema } from './write.js'
 
 /**
@@ -36,8 +37,14 @@ export type RememberToolArgsV2 = z.input<typeof rememberToolInputV2Schema>
  * write without facts returns a byte-identical V1 response. Ids only — a fact's
  * subject/predicate/value is memory content and is not echoed back through the
  * transport (hard rule 6); the caller already holds what it sent.
+ *
+ * The openness marker is REAPPLIED here (issue #154): `.safeExtend()` builds a
+ * fresh object that does not inherit the base's metadata, so the V2 envelope
+ * would otherwise advertise itself closed while its nested `memory` stayed open.
  */
-export const rememberToolOutputV2Schema = rememberToolOutputSchema.safeExtend({
-  factIds: z.array(z.uuid()).optional(),
-})
+export const rememberToolOutputV2Schema = rememberToolOutputSchema
+  .safeExtend({
+    factIds: z.array(z.uuid()).optional(),
+  })
+  .meta(OPEN_OUTPUT_META)
 export type RememberToolOutputV2 = z.infer<typeof rememberToolOutputV2Schema>

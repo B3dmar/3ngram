@@ -6,6 +6,11 @@
     "supersession_correct": 0.9474,
     "abstention_precision": 1,
     "answerable_above_tau": 0.9545,
-    "tau": 0.4663
+    "tau": 0.4663,
+    "selection_accuracy_at_1": 0.8545,
+    "selection_margin": 0.1097
+  },
+  "ceilings": {
+    "max_description_overlap": 0.6737
   }
 }

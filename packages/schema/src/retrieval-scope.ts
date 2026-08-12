@@ -23,6 +23,7 @@ import {
   scopeNameSchema,
   searchToolOutputSchema,
 } from './mcp.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 import { dashboardSearchResponseSchema } from './rest.js'
 import { searchToolOutputV2Schema } from './search-cursor.js'
 
@@ -73,6 +74,7 @@ export const retrievalScopePolicySchema = z
     scope: scopeNameSchema.nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
   .refine(hasConsistentPolicyScope, {
     message: "mode 'default' requires a scope; 'require' and 'off' take scope: null",
     path: ['scope'],
@@ -126,7 +128,8 @@ export const configureScopeOutputV2Schema = z.discriminatedUnion('action', [
       action: z.literal('retrieval_default_set'),
       policy: retrievalScopePolicySchema,
     })
-    .strict(),
+    .strict()
+    .meta(OPEN_OUTPUT_META),
 ])
 export type ConfigureScopeOutputV2 = z.infer<typeof configureScopeOutputV2Schema>
 
@@ -139,9 +142,11 @@ export type ConfigureScopeOutputV2 = z.infer<typeof configureScopeOutputV2Schema
  * enum and a registered scope NAME (a user label) — never an env value, DSN,
  * key, or base URL.
  */
-export const describeEnvironmentOutputV2Schema = describeEnvironmentOutputSchema.safeExtend({
-  retrievalScopePolicy: retrievalScopePolicySchema,
-})
+export const describeEnvironmentOutputV2Schema = describeEnvironmentOutputSchema
+  .safeExtend({
+    retrievalScopePolicy: retrievalScopePolicySchema,
+  })
+  .meta(OPEN_OUTPUT_META)
 export type DescribeEnvironmentOutputV2 = z.infer<typeof describeEnvironmentOutputV2Schema>
 
 // ---------------------------------------------------------------------------
@@ -169,7 +174,9 @@ const appliedScopeField = {
  * refinements carry through the `.safeExtend()` composition) plus the
  * {@link appliedScopeField} echo.
  */
-export const searchToolOutputV3Schema = searchToolOutputV2Schema.safeExtend(appliedScopeField)
+export const searchToolOutputV3Schema = searchToolOutputV2Schema
+  .safeExtend(appliedScopeField)
+  .meta(OPEN_OUTPUT_META)
 export type SearchToolOutputV3 = z.infer<typeof searchToolOutputV3Schema>
 
 /**
@@ -177,7 +184,9 @@ export type SearchToolOutputV3 = z.infer<typeof searchToolOutputV3Schema>
  * ({@link searchToolOutputSchema}) plus the {@link appliedScopeField} echo —
  * REST parity rides the SAME injected policy, so it carries the same echo.
  */
-export const searchRestResponseV2Schema = searchToolOutputSchema.safeExtend(appliedScopeField)
+export const searchRestResponseV2Schema = searchToolOutputSchema
+  .safeExtend(appliedScopeField)
+  .meta(OPEN_OUTPUT_META)
 export type SearchRestResponseV2 = z.infer<typeof searchRestResponseV2Schema>
 
 /**
@@ -196,12 +205,16 @@ export type DashboardSearchResponseV2 = z.infer<typeof dashboardSearchResponseV2
  * EFFECTIVE scope selector the policy substituted for the caller's
  * `kind: 'all'`.
  */
-export const briefingToolOutputV4Schema = briefingToolOutputV3Schema.safeExtend(appliedScopeField)
+export const briefingToolOutputV4Schema = briefingToolOutputV3Schema
+  .safeExtend(appliedScopeField)
+  .meta(OPEN_OUTPUT_META)
 export type BriefingToolOutputV4 = z.infer<typeof briefingToolOutputV4Schema>
 
 /**
  * `handoff` output V4: the selector-V3 envelope (`scope_project` plus the
  * counts/truncated refinements) plus the {@link appliedScopeField} echo.
  */
-export const handoffToolOutputV4Schema = handoffToolOutputV3Schema.safeExtend(appliedScopeField)
+export const handoffToolOutputV4Schema = handoffToolOutputV3Schema
+  .safeExtend(appliedScopeField)
+  .meta(OPEN_OUTPUT_META)
 export type HandoffToolOutputV4 = z.infer<typeof handoffToolOutputV4Schema>

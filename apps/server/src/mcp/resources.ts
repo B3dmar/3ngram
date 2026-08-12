@@ -7,8 +7,10 @@
 //
 // WHY A RESOURCE AT ALL: `resources/read` is CACHEABLE on 2026-07-28. A client
 // that pulled a `truncated: true` search hit can cache the full body instead of
-// re-calling get_memories every session. Resources also cost nothing against the
-// 12-tool cap (hard rule 8).
+// re-calling get_memories every session. A resource also adds no tool
+// description to `tools/list`, so it costs nothing against the selection accuracy
+// and description overlap the eval gates (hard rule 8) — the pressure a resource
+// relieves is real, but it is not a free slot: see docs/concepts/mcp-surface.mdx.
 //
 // ADDRESSING — the id, not a version. `revise` does not modify a memory: it
 // closes the predecessor's validity and APPENDS a successor with a NEW id

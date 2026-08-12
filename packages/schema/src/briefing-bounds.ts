@@ -27,11 +27,13 @@ import {
   briefingCommitmentSchema,
   briefingMemoryItemSchema,
   briefingModeSchema,
+  briefingSelectorOutputSchema,
   briefingSelectorSchema,
   briefingToolInputSchema,
   handoffToolInputSchema,
   handoffToolOutputSchema,
 } from './mcp.js'
+import { OPEN_OUTPUT_META } from './output-openness.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -75,6 +77,19 @@ export const briefingSelectorV2Schema = z.discriminatedUnion('kind', [
   scopeProjectSelectorSchema,
 ])
 export type BriefingSelectorV2Input = z.infer<typeof briefingSelectorV2Schema>
+
+/**
+ * The OUTPUT-side V2 selector union — the same four variants, marked open for
+ * the advertised JSON Schema ({@link OPEN_OUTPUT_META}, issue #154). Same
+ * reasoning as {@link briefingSelectorOutputSchema}: the selector is an
+ * argument AND an echo, so only the ECHO advertises open and the input union
+ * stays byte-identical.
+ */
+export const briefingSelectorV2OutputSchema = z.discriminatedUnion('kind', [
+  ...briefingSelectorOutputSchema.options,
+  scopeProjectSelectorSchema.meta(OPEN_OUTPUT_META),
+])
+export type BriefingSelectorV2Output = z.infer<typeof briefingSelectorV2OutputSchema>
 
 /**
  * The hard SERVER-SIDE ceiling on a caller-requested briefing `sectionLimit`.
@@ -211,6 +226,7 @@ function briefingSectionV2Schema<T extends z.ZodType>(item: T) {
       hasMore: z.boolean(),
     })
     .strict()
+    .meta(OPEN_OUTPUT_META)
     .refine((s) => s.count >= s.items.length && s.hasMore === s.count > s.items.length, {
       message: 'hasMore must equal count > items.length (and count must cover the slice)',
       path: ['hasMore'],
@@ -251,13 +267,14 @@ function briefingOutputEnvelope<S extends z.ZodType>(selector: S) {
       preferences: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
     })
     .strict()
+    .meta(OPEN_OUTPUT_META)
     .refine((v) => BRIEFING_SECTION_NAMES.some((name) => v[name] !== undefined), {
       message:
         'at least one briefing section must be present — every valid input computes one or more sections',
     })
 }
 
-export const briefingToolOutputV2Schema = briefingOutputEnvelope(briefingSelectorSchema)
+export const briefingToolOutputV2Schema = briefingOutputEnvelope(briefingSelectorOutputSchema)
 export type BriefingToolOutputV2 = z.infer<typeof briefingToolOutputV2Schema>
 
 /** The three handoff sections (fixed — a handoff has no section selection). */
@@ -271,6 +288,7 @@ export const handoffCountsSchema = z
     preferences: z.number().int().min(0),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type HandoffCountsOutput = z.infer<typeof handoffCountsSchema>
 
 /**
@@ -286,6 +304,7 @@ export const handoffTruncatedSchema = z
     preferences: z.boolean(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 export type HandoffTruncatedOutput = z.infer<typeof handoffTruncatedSchema>
 
 /**
@@ -338,6 +357,7 @@ const enforceHandoffSectionIdentities = (
 export const handoffToolOutputV2Schema = handoffToolOutputSchema
   .extend(handoffEnvelopeV2Fields)
   .strict()
+  .meta(OPEN_OUTPUT_META)
   .superRefine(enforceHandoffSectionIdentities)
 export type HandoffToolOutputV2 = z.infer<typeof handoffToolOutputV2Schema>
 
@@ -387,7 +407,7 @@ export type HandoffToolArgsV3 = z.input<typeof handoffToolInputV3Schema>
  * the V3 input (a `scope_project` briefing echoes its selector,
  * includeUnscoped included).
  */
-export const briefingToolOutputV3Schema = briefingOutputEnvelope(briefingSelectorV2Schema)
+export const briefingToolOutputV3Schema = briefingOutputEnvelope(briefingSelectorV2OutputSchema)
 export type BriefingToolOutputV3 = z.infer<typeof briefingToolOutputV3Schema>
 
 /**
@@ -396,7 +416,8 @@ export type BriefingToolOutputV3 = z.infer<typeof briefingToolOutputV3Schema>
  * ECHOED selector widened to match the V3 input.
  */
 export const handoffToolOutputV3Schema = handoffToolOutputSchema
-  .extend({ selector: briefingSelectorV2Schema, ...handoffEnvelopeV2Fields })
+  .extend({ selector: briefingSelectorV2OutputSchema, ...handoffEnvelopeV2Fields })
   .strict()
+  .meta(OPEN_OUTPUT_META)
   .superRefine(enforceHandoffSectionIdentities)
 export type HandoffToolOutputV3 = z.infer<typeof handoffToolOutputV3Schema>

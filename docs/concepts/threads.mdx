@@ -49,7 +49,7 @@ When `revise` supersedes a memory, the successor inherits the predecessor's `con
 
 ## Tool surface
 
-One new tool — **`configure_thread`** — taking the MCP count to 12, which **exhausts** the hard cap of 12 (`AGENTS.md` rule 8). That is the real cost of this design: after threads, no further tool can ship without first removing or merging an existing one. It mirrors `configure_scope` (`list` / `create` / `rename` / `set_description` / `archive` / `delete`) and adds the curation actions (`pin` / `unpin`).
+One new tool — **`configure_thread`** — taking the MCP count to 12. When this was designed that number **exhausted** a hard cap of 12; the cap is gone, and `AGENTS.md` rule 8 now asks the harder question instead: `configure_thread` has to route cleanly against the existing descriptions in the tool-selection eval, and `configure_scope` is its nearest neighbour by construction. That is the real cost of this design — not a slot, but a description that must stay distinguishable from the tool it deliberately mirrors. It mirrors `configure_scope` (`list` / `create` / `rename` / `set_description` / `archive` / `delete`) and adds the curation actions (`pin` / `unpin`).
 
 Considered and rejected: folding threads into `configure_scope`. Scopes are exclusive partitions and threads are overlapping collections; overloading one tool with both models confuses the agents reading the tool description, and renaming the shipped tool to something neutral breaks existing clients. The JTBD table gains one row:
 

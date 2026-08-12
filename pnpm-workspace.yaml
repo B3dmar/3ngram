@@ -25,14 +25,16 @@ overrides:
 saveExact: true
 engineStrict: true
 
-# Registry cooldown: reject every dependency version published less than seven days ago unless
-# its exact version is reviewed and listed in minimumReleaseAgeExclude below. Strict mode fails
+# Registry cooldown: reject every dependency version published less than seven days ago. A
+# too-new version that must resolve before it clears the cooldown can be reviewed and added to
+# a TOP-LEVEL minimumReleaseAgeExclude: list (a new key nested under allowBuilds or another
+# mapping is silently ignored by pnpm); none is currently excluded. Strict mode fails
 # resolution instead of silently falling back to a too-new version when no mature version
 # satisfies the requested range.
 #
-# Both keys are required. minimumReleaseAgeExclude on its own does nothing: pnpm defaults
-# minimumReleaseAge to 0, so an exclude list without this setting is decoration, not policy —
-# the same class of silent-no-op that closed PR #379 and that .npmrc warns about.
+# minimumReleaseAge must stay non-zero: pnpm defaults it to 0, so a 0 (or absent) value makes
+# this whole block — cooldown and any future exclude list alike — decoration, not policy, the
+# same class of silent-no-op that closed PR #379 and that .npmrc warns about.
 minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
 
@@ -51,13 +53,3 @@ allowBuilds:
   sharp: false # prebuilt @img/sharp-<platform> binaries; no build needed on supported platforms
   msgpackr-extract: false # prebuilt @msgpackr-extract/<platform> binary; pure-JS msgpackr fallback exists
   '@sentry/cli': false # postinstall downloads a prebuilt native binary; @sentry/nextjs source-map upload runs through the bundler plugin's own API uploader (auth-token gated), so the CLI binary is not needed at build
-
-minimumReleaseAgeExclude:
-  - esbuild@0.28.1
-  - '@opentelemetry/core@2.8.0'
-  - hono@4.12.34
-  - nodemailer@9.0.1
-  - js-yaml@3.15.0
-  - js-yaml@4.3.0
-  - body-parser@2.3.0
-  - ip-address@10.3.1

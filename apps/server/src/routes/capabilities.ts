@@ -2,9 +2,10 @@
 // Capability-discovery surface. A thin transport:
 // serve the precomputed capability set as a public well-known JSON document so a
 // web client can determine which hosted-only surfaces a deployment offers and
-// hide unavailable ones cleanly. NOT an MCP tool — the MCP surface is capped at
-// ≤12; hosted-only MCP tools hide via non-registration, not a
-// client-side step.
+// hide unavailable ones cleanly. NOT an MCP tool — every tool description is
+// re-sent on every `tools/list` and the eval gates selection accuracy against
+// them (hard rule 8), so discovery does not earn one; hosted-only MCP tools hide
+// via non-registration, not a client-side step.
 //
 // The merged set (base Apache ∪ injected extension capabilities) is resolved
 // ONCE at boot in app.ts and threaded in here, so the handler stays pure.

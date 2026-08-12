@@ -1,5 +1,12 @@
 # @3ngram/worker
 
+## 1.4.2
+
+### Patch Changes
+
+- Updated dependencies [1ebd82c]
+  - @3ngram/core@0.9.2
+
 ## 1.4.1
 
 ### Patch Changes

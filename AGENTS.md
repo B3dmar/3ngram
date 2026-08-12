@@ -34,14 +34,17 @@ pnpm db:migrate                  # apply Drizzle migrations
 
 ## Hard rules (lint-enforced where possible, review-enforced otherwise)
 
-1. **Never merge/delete memory data on a write path.** Append-and-supersede only (docs/concepts/memory-model.mdx). Any code that destroys memory rows is a bug by definition.
-2. **One validation boundary**: enums/constraints live in `packages/schema` (Zod). No re-validation in services; DB CHECKs are generated.
-3. **All DB access through `withTenant()`** (`packages/db`). Raw pool access is banned. Every user-owned table — including relation tables — carries `user_id`; cross-tenant FKs are composite `(user_id, …)`.
-4. **No `it.skip`/`todo` on main. No flake retries.** A failing test gets fixed or deleted-with-issue (`docs/concepts/testing.mdx`).
-5. **Layering**: `apps/*` → `packages/core` → `packages/db`. Transports (REST routes, MCP tools) contain zero business logic. 50-line functions, 500-line files.
-6. **No memory content in logs/traces/metrics** — IDs, types, lengths, hashes only.
-7. **Supply chain**: `ignore-scripts` stays on; GitHub Actions pinned by full SHA; lockfile frozen.
-8. **MCP tool count ≤ 12.** Adding a tool requires a JTBD no existing tool covers (`docs/concepts/mcp-design.mdx`).
+Each rule names its enforcement. Where that is **review**, there is no check to hide
+behind — say so in the PR description.
+
+1. **Never merge/delete memory data on a write path.** Append-and-supersede only (docs/concepts/memory-model.mdx). Any code that destroys memory rows is a bug by definition. — *Enforcement: **review**, plus the supersession suites in `packages/db` and the eval's `supersession_correct` floor.*
+2. **One validation boundary**: enums/constraints live in `packages/schema` (Zod). No re-validation in services; DB CHECKs are generated. — *Enforcement: **review**.*
+3. **All DB access through `withTenant()`** (`packages/db`). Raw pool access is banned. Every user-owned table — including relation tables — carries `user_id`; cross-tenant FKs are composite `(user_id, …)`. — *Enforcement: `no-raw-db.grit` (Biome plugin) + `scripts/check-db-access.sh` (path-scoped: no pool/drizzle handle or Postgres driver import outside `packages/db`).*
+4. **No `it.skip`/`todo` on main. No flake retries.** A failing test gets fixed or deleted-with-issue (`docs/concepts/testing.mdx`). — *Enforcement: `scripts/check-no-skip.sh` (also catches `.only` and chained modifiers); `scripts/check-db-shards.sh` catches an integration test that no shard runs.*
+5. **Layering**: `apps/*` → `packages/core` → `packages/db`. Transports (REST routes, MCP tools) contain zero business logic. 50-line functions, 500-line files. — *Enforcement: **review** (the size limits are targets, not lint rules).*
+6. **No memory content in logs/traces/metrics** — IDs, types, lengths, hashes only. — *Enforcement: **review**.*
+7. **Supply chain**: `ignore-scripts` stays on; GitHub Actions pinned by full SHA; lockfile frozen. — *Enforcement: `scripts/check-no-lifecycle-scripts.sh`, `scripts/check-action-pins.sh`, `scripts/check-workflow-safety.sh`, `scripts/check-dependency-licenses.mjs`, and `--frozen-lockfile` in CI.*
+8. **The MCP surface earns its size by evidence, not by a count.** Adding or changing a tool requires: a JTBD no existing tool covers (`docs/concepts/mcp-design.mdx`); a regenerated surface snapshot committed with the change (`pnpm run docs:generate`, plus `eval/fixtures/transport-surfaces.json` and the tool-selection embeddings when a description moves); and its scenarios in `eval/fixtures/tool-selection.json` — exactly 5 agent utterances per registered tool, pinned by a unit test, so a new tool without them fails before the gate even scores. There is no numeric ceiling — `MAX_TOOLS`/`MAX_PROMPTS` were removed once the property they proxied for could be measured, and a twelfth tool is not blocked, only a twelfth tool that reads like an existing one. — *Enforcement: the `eval-gate` required check (floors on `selection_accuracy_at_1`/`selection_margin`, ceiling on `max_description_overlap`); the `docs-reference` byte-for-byte diff for the regenerated snapshot; and `check` — the `quality (unit)` lane's `pnpm test` — for the per-tool scenario count (`eval/test/tool-selection.test.mjs`). The JTBD itself is **review**.*
 
 ## Database / env safety
 

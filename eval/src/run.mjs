@@ -112,19 +112,58 @@ results.slices = {
   answerable_above_tau: +(ansOk / top1.answerable.length).toFixed(4),
   tau: +tau.toFixed(4),
 }
+// GATED SLICE (docs/concepts/mcp-surface.mdx): tool-selection accuracy +
+// description overlap. Its three scalars join results.slices and are ratcheted
+// from floors.json like every other metric — this is what replaced the
+// self-imposed MCP tool cap as the thing protecting the surface, so a tool whose
+// description blurs into a neighbour's fails the gate instead of a code review.
+//
+// The DIAGNOSTICS (by_tool, confusions, max_overlap_pair, the surface slice) stay
+// out of results.slices deliberately: they name which pair regressed, which is
+// what makes a failure actionable, but only scalars can be ratcheted.
+const toolSelection = runToolSelectionSlice({ fixturesDir: fixtures, model })
+if (toolSelection.status === 'ok') {
+  results.slices.selection_accuracy_at_1 = toolSelection.results.selection_accuracy_at_1
+  results.slices.selection_margin = toolSelection.results.selection_margin
+  results.slices.max_description_overlap = toolSelection.results.max_description_overlap
+}
 process.stdout.write(`${JSON.stringify(results, null, 2)}\n`)
+process.stdout.write(`\n${formatToolSelection(toolSelection)}\n\n`)
 
-// REPORT-ONLY SLICE (docs/concepts/mcp-surface.mdx): tool-selection accuracy +
-// description overlap. It is printed alongside the gated metrics but is NOT in
-// results.slices and NOT in floors.json — it can never move the exit code, and a
-// missing embeddings fixture is reported, never fatal (the fixture lands in a
-// later PR that also baselines its floors from the observed output).
-process.stdout.write(
-  `\n${formatToolSelection(runToolSelectionSlice({ fixturesDir: fixtures, model }))}\n\n`,
-)
+// A slice that did not RUN is fatal now that it is gated. While it was
+// report-only a missing or malformed embeddings fixture was printed and shrugged
+// off; under a floor that same shrug would hand the gate a PASS with three of its
+// metrics simply absent — the loudest possible failure has to be the cheap one.
+// Exit 2 (harness/integrity), not 1 (regression): nothing was measured, so
+// nothing regressed. The formatted block above already carries the regenerate
+// hint, and the other slices' numbers are printed before we go.
+if (toolSelection.status !== 'ok') {
+  process.stderr.write(
+    `EVAL GATE ERROR: the tool-selection slice is gated and did not run (${toolSelection.status})\n`,
+  )
+  process.exit(2)
+}
+
+/**
+ * Metrics where LOWER is better, so floors.json stores them under `ceilings` and
+ * the ratchet compares with `>`. Only description overlap is one today: it is a
+ * cosine BETWEEN two tool descriptions, and the whole point of the metric is that
+ * it must not grow. Storing it as an inverted "floor" would have been the same
+ * arithmetic with the direction hidden inside a number nobody can read.
+ */
+const CEILING_METRICS = new Set(['max_description_overlap'])
 
 if (record) {
-  writeFileSync(floorsPath, JSON.stringify({ model, recorded: results.slices }, null, 2))
+  const recorded = {}
+  const ceilings = {}
+  for (const [k, v] of Object.entries(results.slices)) {
+    if (CEILING_METRICS.has(k)) ceilings[k] = v
+    else recorded[k] = v
+  }
+  // Trailing newline: `--record` OVERWRITES a committed fixture, and Biome fails a
+  // JSON file without one — recording floors used to hand the maintainer a lint
+  // error on the very file the ratchet asked them to update.
+  writeFileSync(floorsPath, `${JSON.stringify({ model, recorded, ceilings }, null, 2)}\n`)
   process.stdout.write(`floors recorded for ${model}\n`)
 } else if (priorFloors) {
   const floors = priorFloors
@@ -133,13 +172,28 @@ if (record) {
     process.exit(2)
   }
   const failures = []
+  // A declared metric the run did not produce is a FAILURE, not a skip. Both
+  // comparisons below are false against undefined, so a key present in floors.json
+  // and absent from results.slices — a typo, a renamed metric, a slice quietly
+  // dropped — would otherwise pass the gate without ever being evaluated.
+  const observe = (k, bound, kind) => {
+    const value = results.slices[k]
+    if (Number.isFinite(value)) return value
+    failures.push(`${k}: not measured this run (${kind} ${bound})`)
+    return null
+  }
   for (const [k, floor] of Object.entries(floors.recorded)) {
     if (k === 'tau') continue
-    if (results.slices[k] < floor) failures.push(`${k}: ${results.slices[k]} < floor ${floor}`)
+    const value = observe(k, floor, 'floor')
+    if (value !== null && value < floor) failures.push(`${k}: ${value} < floor ${floor}`)
+  }
+  for (const [k, ceiling] of Object.entries(floors.ceilings ?? {})) {
+    const value = observe(k, ceiling, 'ceiling')
+    if (value !== null && value > ceiling) failures.push(`${k}: ${value} > ceiling ${ceiling}`)
   }
   if (failures.length) {
     process.stderr.write(`EVAL GATE FAIL\n${failures.join('\n')}\n`)
     process.exit(1)
   }
-  process.stdout.write('eval gate: PASS (all slices at or above floors)\n')
+  process.stdout.write('eval gate: PASS (floors met, ceilings respected)\n')
 }

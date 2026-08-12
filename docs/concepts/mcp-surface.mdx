@@ -1,19 +1,24 @@
 ---
 title: "MCP surface budget"
-description: "Why the tool cap is ours and not the protocol's, how to choose between a tool, a resource and a prompt, and what the surface should become next."
+description: "Why 3ngram's tool cap was its own and not the protocol's, why a measured eval replaced it, how to choose between a tool, a resource and a prompt, and what the surface should become next."
 icon: "scale-balanced"
 ---
 
-**Status: design.** Nothing here is built. It exists to settle *how* the MCP surface
-should grow before the next feature argues about it, because the current budget is
-already over-subscribed and the rule everyone is arguing under turns out not to be a
-protocol rule at all.
+**Status: the cap question is settled and shipped; the proposals below are still design.**
+This page existed to settle *how* the MCP surface should grow before the next feature
+argued about it, because the budget was over-subscribed and the rule everyone was arguing
+under turned out not to be a protocol rule at all. That argument is over: the number is
+gone and the thing it stood in for is measured. What remains open is the proposal list.
 
-## The cap is ours
+## The cap was ours — and it is gone
 
-`AGENTS.md` hard rule 8 caps the tool count at 12, and `MAX_TOOLS = 12` enforces it.
-That number is **3ngram's own discipline**. It entered at the `v1.0.0` launch commit and
-is not sourced to anything upstream.
+`MAX_TOOLS = 12` and `MAX_PROMPTS = 2` were **3ngram's own discipline**. They entered at
+the `v1.0.0` launch commit, were not sourced to anything upstream, and were removed once
+the property they proxied for could be measured. `AGENTS.md` hard rule 8 is now an
+evidence test rather than a number, gated by the tool-selection eval slice
+(`eval/src/tool-selection.mjs`, floors in `eval/fixtures/floors.json`).
+
+The verification below is kept because it is *why* the number could go.
 
 Verified two ways:
 
@@ -24,21 +29,27 @@ Verified two ways:
 - The pinned SDK enforces no count limit anywhere.
 
 <Note>
-This matters because "the protocol says 12" would be a reason to stop designing. "We
-chose 12 to force evidence" is a reason to **produce the evidence and then re-choose**.
-`mcp-design.mdx` states the actual rule: a new tool needs a JTBD no existing tool covers
-*and* evidence an agent needs it. The number is a forcing function attached to that
-requirement, not a ceiling with independent authority.
+This mattered because "the protocol says 12" would have been a reason to stop designing.
+"We chose 12 to force evidence" was a reason to **produce the evidence and then
+re-choose**, which is what happened. The number was a forcing function attached to the
+`mcp-design.mdx` rule, never a ceiling with independent authority.
 </Note>
 
 The real constraint is **model behaviour**, and it is about description quality rather
 than count: tool-selection accuracy degrades as the list grows, and every description is
 re-sent on every `tools/list`. Two well-separated tools cost less than one overloaded
-one. That is what to optimise; the number is a proxy.
+one. That is what to optimise; the number was only ever a proxy.
+
+So the proxy was replaced by the measurement. The `tool-selection` eval slice scores every
+registered description against five agent utterances per tool and gates three numbers:
+`selection_accuracy_at_1` and `selection_margin` as floors, and `max_description_overlap`
+— the largest pairwise cosine between two tool descriptions — as a **ceiling**. A twelfth
+tool is not blocked; a twelfth tool that reads like an existing one is. That is the
+constraint the count was always trying to express.
 
 ## Choosing between a tool, a resource and a prompt
 
-| | Use when | Costs a slot |
+| | Use when | Competes in `tools/list` |
 |---|---|---|
 | **Tool** | The agent must *do* something, or the read is a **query** (filters, ranking, fusion) | Yes |
 | **Resource** | The thing is **addressable** by a stable identifier and is *read* | No |
@@ -46,26 +57,30 @@ one. That is what to optimise; the number is a proxy.
 
 Two corrections to intuitions that have already caused mistakes here:
 
-**Resources are not a general pressure valve.** They avoid the tool cap, which is real,
-but a resource needs a URI. `search` could never be one — a fused, filtered, ranked
-query has no address. Reach for a resource when there is a *name or id*, not merely
-because the budget is tight.
+**Resources are not a general pressure valve.** They add no description to `tools/list`,
+so they cost nothing against selection accuracy — but a resource needs a URI. `search`
+could never be one: a fused, filtered, ranked query has no address. Reach for a resource
+when there is a *name or id*, not merely because the tool surface feels crowded.
 
 **Cacheability is a separate question from addressability.** Per
 [MCP resources](/concepts/mcp-resources), a long TTL requires an immutable body. A
-mutable thing can still be a resource; it just carries a short TTL and buys only the slot
-saving, not the caching win.
+mutable thing can still be a resource; it just carries a short TTL and buys only the
+description saving, not the caching win.
 
 ## The budget today
 
-Eleven tools registered, one slot left, and **no reservation on it** — the twelfth goes
-to whichever tool next passes the JTBD-plus-evidence test.
+Eleven tools registered, and **no slot ledger any more** — a twelfth tool needs a JTBD no
+existing tool covers, scenarios in the eval, and a run that holds the recorded floors and
+the overlap ceiling. Recorded at 11 tools: `selection_accuracy_at_1` 0.8545,
+`selection_margin` 0.1097, `max_description_overlap` 0.6737 (`briefing` ~ `handoff`, the
+closest pair on the current surface and the one to watch).
 
 The `get_facts` chronological time-series read (`range: {from?, to?}`, [MCP
 design](/concepts/mcp-design)) is a concrete instance of the JTBD-first test working
 against a candidate tool rather than for one: a `get_series`-shaped tool would have
 covered the same job, but the job was already reachable by widening `get_facts`'s
-existing query axis, so the twelfth slot stayed unspent.
+existing query axis, so no new description entered `tools/list` at all — the cheapest
+possible outcome under either regime.
 
 <Note>
 **Resolved 2026-08-08: the `manage_context` reservation is released.** It had held the
@@ -144,10 +159,11 @@ thread filter on `search` becomes a convenience rather than the only way in.
 Released, see above. Kept here so the reasoning survives the decision: a reservation with
 no design cannot be weighed against a feature that has one.
 
-### 4. Prompts are under-used, and the cap is also ours
+### 4. Prompts are under-used
 
-`MAX_PROMPTS = 2` is self-imposed; the protocol sets no limit. Prompts carry no tenant
-data and cost no slot.
+`MAX_PROMPTS = 2` was self-imposed and is gone with its tool-side counterpart; the
+protocol never set a limit. Prompts carry no tenant data and add no tool description, so
+nothing but a JTBD stands between the surface and a third one.
 
 The one clear gap is **`review_proposals` has no prompt**. It is the tool an agent is
 least likely to invoke spontaneously — nothing in a session naturally suggests "check
@@ -164,11 +180,26 @@ would have done reaches the model without one.
 | ~~Settle `manage_context`~~ | ~~Threads~~ | **Done** — reservation released |
 | Resource links (additive) | Evidence for retiring `get_memories` | Client follow-through |
 | Thread index resource | Threads' read path | Ships with threads |
-| `review` prompt + raise the prompt cap | Consolidation loop | Cheap; do it anytime |
-| Re-set the tool cap | — | Only after the above |
+| ~~`review` prompt + raise the prompt cap~~ | Consolidation loop | **Done** for the cap — the `review` prompt is still open, and now needs only a JTBD |
+| ~~Re-set the tool cap~~ | — | **Done** — replaced by a gated eval, not re-set to another number |
 
-Re-set the cap **last**, and record the reasoning as description overlap and selection
-accuracy rather than a number inherited from launch day.
+<Note>
+**Resolved 2026-08-12: both caps are removed, and the eval slice replaced them.** This row
+said to re-set the cap *last*, and to record the reasoning as description overlap and
+selection accuracy rather than a number inherited from launch day. What shipped does the
+second half and skips the first: there is no new number. `MAX_TOOLS` and `MAX_PROMPTS` are
+deleted, and `tool-selection` moved from report-only to gated — floors on
+`selection_accuracy_at_1` and `selection_margin`, a ceiling on `max_description_overlap`,
+baselined from the observed run at 11 tools.
+
+Re-setting the cap to `14` or `16` would have reproduced the original mistake at a higher
+number: a figure with no measurement under it, which the next feature would argue about on
+the same footing. A regression in routing now fails a required status check, and the
+failure names the offending pair — which is the argument the count could never have.
+
+The ordering still held. The cap went last, after `manage_context` was settled and after
+the slice had run report-only long enough to baseline from.
+</Note>
 
 ## What is deliberately not here
 
