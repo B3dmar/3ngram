@@ -64,7 +64,7 @@ Every PR must pass the `ci` workflow (`.github/workflows/ci.yml`). The protected
 
 1. **Hygiene:** action pinning, SPDX headers, DB-access guard, no-skip guard, changeset guard for PRs, and DCO sign-off for external fork PRs.
 2. **Format + lint:** `pnpm exec biome ci .`.
-3. **Workspace checks:** `pnpm run check`.
+3. **Workspace checks:** `pnpm exec turbo run check`.
 4. **Unit tests:** `pnpm run test`.
 5. **Docs reference freshness:** `pnpm run docs:generate` then `git diff --exit-code -- docs`.
 6. **Go hook gate:** when `cmd/3ngram-hook/**` or `ci.yml` changes, run `gofmt`, `go vet ./...`, `go test ./...`, and the 4-target cross-compile with checksums.
@@ -82,7 +82,7 @@ bash scripts/check-spdx.sh
 bash scripts/check-db-access.sh --self-test && bash scripts/check-db-access.sh
 bash scripts/check-no-skip.sh --self-test && bash scripts/check-no-skip.sh
 pnpm exec biome ci .
-pnpm run check
+pnpm exec turbo run check
 pnpm run test
 pnpm run docs:generate && git diff --exit-code -- docs
 ```

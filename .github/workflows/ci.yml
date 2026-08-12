@@ -314,7 +314,7 @@ jobs:
         run: pnpm exec biome ci .
       - name: Workspace checks
         if: ${{ matrix.lane == 'workspace-checks' }}
-        run: pnpm run check
+        run: pnpm exec turbo run check
       - name: Production dependency license audit
         if: ${{ matrix.lane == 'workspace-checks' }}
         run: |
