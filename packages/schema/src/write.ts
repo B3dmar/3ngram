@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod'
 import { actorKindSchema, edgeTypeSchema, memoryTypeSchema } from './memory.js'
+import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 
 /**
@@ -68,6 +69,127 @@ export const rememberInputSchema = z
   })
   .strict()
 export type RememberInput = z.infer<typeof rememberInputSchema>
+
+/**
+ * Upper bound on facts asserted by a single write. A memory states a handful of
+ * measurable things; a longer list is a sign the caller is using the write path
+ * as a bulk fact importer, which is what the import contract is for.
+ */
+export const MAX_FACTS_PER_WRITE = 16
+
+/**
+ * Maximum fractional-second digits a fact's validity instant may carry.
+ *
+ * WHY 3 (the same ceiling, for the same reason, as
+ * MAX_RECORDED_BOUND_FRACTION_DIGITS on the facts-range READ bounds —
+ * recorded-range.ts):
+ * core's `toFactWrite` converts each instant with `new Date(iso)` on the way to
+ * the db, and a JS Date holds MILLISECOND precision — while Postgres stores
+ * `facts.valid_from`/`valid_to` at MICROSECOND precision. `...T00:00:00.1234567Z`
+ * would therefore land as `.123`, silently moving the boundary of a bi-temporal
+ * window: a generation would appear to open or close at an instant the caller
+ * never asked for, and a subsequent range read against the true instant would
+ * disagree with what was written. Rejected loudly at the one validation
+ * boundary (hard rule 2) rather than truncated, so the write surface and the
+ * read bounds enforce ONE precision contract.
+ */
+export const MAX_FACT_WRITE_FRACTION_DIGITS = 3
+
+/** Schema-visible bound description — refinements vanish from emitted JSON Schema, so the limit must be advertised in prose too. */
+function factBoundDescription(bound: 'start' | 'end'): string {
+  const role =
+    bound === 'start'
+      ? 'Inclusive START of the fact’s valid-time window'
+      : 'Exclusive END of the fact’s valid-time window (requires validFrom)'
+  return `${role}, as an ISO-8601 instant. Use at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits (millisecond precision) — a finer instant is rejected, never truncated. Omit (or null) to leave it unset.`
+}
+
+/**
+ * DB-NULL semantics for the optional validity instants: an ISO-8601 string,
+ * with `null` and `undefined` both meaning ABSENT — never the 1970 epoch, which
+ * on validTo would mark a live fact as already closed.
+ *
+ * PRECISION IS CAPPED, NOT TRUNCATED: see {@link MAX_FACT_WRITE_FRACTION_DIGITS}.
+ *
+ * ISO STRING, NOT `z.date()`: this contract is aliased onto the `remember` MCP
+ * tool, and an MCP server publishes its input schema as JSON Schema in
+ * tools/list. A `z.date()` leg is unrepresentable there (it throws at
+ * generation), and JSON has no date type anyway. This matches asOfSchema
+ * (mcp.ts), the existing tool-facing instant contract; the string is converted
+ * to a Date once, in core, on the way to the db.
+ *
+ * The import path's nullableTimestampSchema DOES admit a Date because it is a
+ * programmatic/SDK contract, not a tool surface.
+ */
+const factTimestampSchema = z.iso
+  .datetime()
+  .refine((value) => !exceedsFractionalSecondPrecision(value, MAX_FACT_WRITE_FRACTION_DIGITS), {
+    message: `use at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits (millisecond precision) — a finer instant would be silently truncated`,
+  })
+  .nullish()
+  .transform((value) => value ?? undefined)
+
+/**
+ * One structured fact asserted by a write: the (subject, predicate, value)
+ * projection of what the memory says, with an optional valid-time window.
+ *
+ * Shapes mirror importFactInputSchema minus `memoryId` (the memory is being
+ * written in the same call) and `recordedAt` (knowledge time is now, by
+ * definition, on a fresh write — only an importer replays it).
+ *
+ * The validity rules mirror the DB CHECK on the proposal table
+ * (fact_proposals_validity_check) rather than the looser one on `facts`: a
+ * `validTo` REQUIRES a `validFrom`, because an interval that ends but never
+ * begins is unrepresentable downstream. Caught here, at the one validation
+ * boundary, it is a field-level error instead of a constraint violation.
+ */
+export const factWriteSchema = z
+  .object({
+    subject: z.string().trim().min(1).max(256),
+    predicate: z.string().trim().min(1).max(256),
+    value: z.string().trim().min(1).max(MAX_CONTENT_LENGTH),
+    confidence: z.number().min(0).max(1).optional(),
+    validFrom: factTimestampSchema.describe(factBoundDescription('start')),
+    validTo: factTimestampSchema.describe(factBoundDescription('end')),
+  })
+  .strict()
+  .refine((fact) => fact.validTo === undefined || fact.validFrom !== undefined, {
+    message: 'validTo requires a validFrom — a window cannot end before it begins',
+    path: ['validFrom'],
+  })
+  // COMPARE INSTANTS, NOT STRINGS. The refine runs on the parsed ISO strings,
+  // and `<=` on strings is LEXICOGRAPHIC: '.' (0x2E) sorts before 'Z' (0x5A),
+  // so '2026-01-01T00:00:00Z' <= '2026-01-01T00:00:00.001Z' is false — a valid
+  // 1ms window would be rejected, and the inverted pair accepted. Two
+  // timestamps that differ only in precision are exactly what a model-written
+  // call produces. z.iso.datetime() has already validated both, so Date.parse
+  // cannot return NaN here.
+  .refine(
+    (fact) =>
+      !(fact.validFrom && fact.validTo) || Date.parse(fact.validFrom) <= Date.parse(fact.validTo),
+    {
+      message: 'validFrom must not be after validTo',
+      path: ['validTo'],
+    },
+  )
+export type FactWriteInput = z.infer<typeof factWriteSchema>
+
+/**
+ * `remember` payload EXTENDED with the structured facts the memory asserts —
+ * composed BESIDE {@link rememberInputSchema}, never replacing it (ADR-0011).
+ *
+ * That separation is load-bearing: {@link reviseInputSchema} extends the BASE,
+ * so a `facts` key on a revise stays a strict-mode rejection. Facts belong to
+ * the assertion that introduced them; a revision appends a NEW memory, and
+ * silently carrying facts across would attribute them to the wrong row.
+ *
+ * An empty array is equivalent to omitting the key — the write path returns no
+ * `factIds` for either.
+ */
+export const rememberWithFactsInputSchema = rememberInputSchema.safeExtend({
+  facts: z.array(factWriteSchema).max(MAX_FACTS_PER_WRITE).optional(),
+})
+export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema>
 
 /**
  * `revise` appends a successor and links it to its predecessor with a typed

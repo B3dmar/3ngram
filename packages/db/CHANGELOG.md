@@ -1,5 +1,125 @@
 # @3ngram/db
 
+## 0.8.1
+
+### Patch Changes
+
+- 483c658: Five correctness fixes to the facts, portability, and retrieval surfaces.
+
+  **`fact_proposals` is now erased on account deletion.** Account deletion tombstones the `users` row rather than deleting it, so the FK's `ON DELETE CASCADE` never fires — a staged fact proposal kept its `subject`, `predicate`, `value`, and `rationale` through an Article 17 erasure. It is now redacted in place in the same transaction as `facts` and `consolidation_proposals` (redact-in-place, not DELETE: the runtime role has no DELETE grant on memory-domain tables). The erasure receipt gains a `factProposals` count on `DELETE /api/v1/account` and in the audit tombstone.
+
+  **`fact_proposals` is now included in the portability export.** `GET /api/v1/export` carried `facts` and `consolidation_proposals` but not the staged proposals, which are user content that is not yet a `facts` row. The archive gains a `factProposals` section (and a matching `counts.factProposals`), read under the same repeatable-read snapshot as every other section.
+
+  **Chronological search now rejects a `query` instead of silently ignoring it.** `order: 'chronological'` is an unranked enumeration and the core path takes no query argument, so a caller passing `{order: 'chronological', query}` was returned the whole live corpus as though it had been searched. A present `query` is now a validation error naming `order: 'relevance'` as the ranked alternative. Because `query` no longer bounds the scan, chronological order now REQUIRES at least one filter (previously "query or >=1 filter").
+
+  **Fact write timestamps no longer truncate to milliseconds.** `validFrom`/`validTo` on a written fact accepted arbitrary fractional-second precision, but core converts them with `new Date()` (millisecond) on the way to microsecond-precision Postgres columns — a finer instant silently moved the boundary of a bi-temporal window. Both bounds are now capped at 3 fractional-second digits and REJECTED beyond it, matching the facts-range read bounds, with the limit advertised in the field descriptions.
+
+  **Imported `updates` edges no longer mark live memories superseded.** The `superseded` flag and its ranking tier-penalty counted any incoming `supersedes`/`updates` edge, but the import contract forbids `closePredecessorAt` on an `updates` edge — so every imported `updates`-edge target stayed live (`valid_to IS NULL`) yet read `superseded: true` and was demoted in ranking. The predicate now requires BOTH a revision edge AND closed validity, the same definition `memory_history`'s `lifecycleState` applies, so search and history can no longer disagree about the same row. Genuine revisions are unaffected: the revise path closes `valid_to` for both edge kinds.
+
+- Updated dependencies [483c658]
+  - @3ngram/schema@0.7.1
+
+## 0.8.0
+
+### Minor Changes
+
+- eb68c04: db: review operations for staged fact proposals
+
+  Adds the insert, list, reject and apply steps for `fact_proposals`, so an
+  extracted candidate can be staged, reviewed, and either turned into a real fact
+  or turned down — with the row surviving either way as its own audit trail.
+
+  Re-running an extractor over the same memory is a no-op: the insert skips a
+  triple that already has an open proposal, and repeated extractions collapse to
+  the first one, since the idempotency key deliberately ignores confidence,
+  memory type and the validity window. A rejected proposal does not block
+  re-proposing the same claim later.
+
+  Applying flips the status first, with the transition guarded on the row still
+  being open, so a concurrent double-apply loses the race rather than writing the
+  fact twice; the flip and the fact insert share one transaction. A proposal
+  carrying no `valid_from` — an extractor often cannot date a claim — lets the
+  fact take its own default, so it becomes true when it was accepted. Applying
+  against a source memory that has since been superseded is allowed: a fact
+  carries its own validity and stands on its own once asserted, and the reviewer
+  accepted the claim rather than the prose version.
+
+- d18e749: db: add the `fact_proposals` staging table (migration 0031)
+
+  A staging area so extracted facts are human-reviewed before becoming queryable
+  truth. Candidates land in `fact_proposals` with a `proposed` status and only
+  reach `facts` once accepted, which keeps the structured projection something a
+  reader can trust without re-checking its source.
+
+  Shape follows the shipped memory tables: explicit `user_id`, a tenant-qualified
+  composite FK `(user_id, memory_id)` → `memories`, `user_id`-leading indexes, a
+  `tenant_isolation` policy with the NULLIF guard, and FORCE row level security so
+  a wrong-role connection fails closed. A partial unique index allows one open
+  proposal per `(memory, subject, predicate, value)` while still permitting
+  re-proposal after a rejection, and the status/memory-type CHECKs are generated
+  from the `@3ngram/schema` enums rather than restated in SQL.
+
+  `fact_proposals` is a sibling of `consolidation_proposals`, not a new mode on
+  it: every shipped database object is left byte-identical. Grants are
+  SELECT/INSERT/UPDATE only — a decision flips a status, it never deletes a row.
+
+  Deploy note: creating the composite foreign key takes a brief lock on
+  `memories`, so on a busy database the migration can queue behind a long-running
+  transaction. Run it with a `lock_timeout` and retry rather than letting it
+  block writes.
+
+- c6a819c: `get_facts` gains a `range: {from?, to?}` window for chronological time-series reads over the bi-temporal facts table, on both the MCP tool and REST `GET /api/v1/facts`.
+
+  `range` replaces (never appends to) the default live-only predicate with a half-open `[from, to)` valid-time overlap: a fact whose validity window overlaps the requested range is returned, including generations superseded inside it — the point of a time-series read over "what's currently true." Ordering flips to `valid_from ASC` (chronological) instead of the default `recorded_at DESC` (recency); `range` and `asOf` are mutually exclusive point-in-time vs. window modes, enforced at the schema boundary (empty range object rejected, mirroring `asOfSchema`; an inverted `from`/`to` range rejected rather than silently returning empty, per issue #58's REST/MCP parity precedent). Each bound is also capped at millisecond precision (issue #58 item 2's fix, applied here too): `valid_from`/`valid_to` are microsecond-precise in Postgres, so a sub-millisecond bound would silently truncate up to the next whole millisecond and let an already-ended generation leak into the window. The existing `DEFAULT_FACTS_LIMIT`/`MAX_FACTS_LIMIT` bounds still apply in range mode.
+
+  Every returned fact now also carries `recordedAt` (transaction time) — an additive, output-only widening useful for telling apart same-window generations recorded at different instants.
+
+  Deliberately out of scope: a `valid_from` index (the sort is accepted at current volumes) and a scope axis on `get_facts` (the facts table has no scope column — continuing issue #47's open item). The SDK `getFacts` client and the CLI `facts` command do not yet expose the `from`/`to` range axis (REST/MCP only for now); follow-up planned.
+
+- 91f1d39: db: write structured facts atomically with the memory that asserts them
+
+  `writeMemory` takes an optional list of facts and inserts them in the SAME
+  transaction as the memory and its audit event, returning their ids on
+  `WrittenMemory.factIds`. A fact whose source memory rolled back would be an
+  unsourced claim in the structured projection, and a memory whose facts silently
+  vanished would be a claim nobody can query — neither is now representable.
+
+  Facts are written for every memory type. The commitment auto-create is an early
+  return in `writeMemory`, so the insert deliberately sits before it: a commitment
+  memory comes back with both its `commitmentId` and its `factIds`.
+
+  The column-level inserts move to a new tx-taking `insertFact`/`insertFacts` pair
+  that composes inside a caller's transaction, following the existing
+  `insertEdge` split. The import path keeps its own wrapper — the tenant
+  transaction and the typed not-found probe are what make it import-specific — and
+  now delegates the columns, so both write paths cannot drift apart. A write that
+  supplies no facts is unchanged down to the returned object, which omits
+  `factIds` entirely rather than returning an empty array.
+
+- 1d9a420: Add an exhaustive chronological list mode to `search`.
+
+  Retrieving everything of a given shape (every decision from a project, every commitment recorded last week) previously meant issuing a ranked search and hoping the relevance ordering happened to surface it all within the result window — there was no way to ask for a complete, chronological listing.
+
+  `search` now accepts `order: "chronological"` alongside the default `"relevance"`. Chronological mode returns a most-recent-first, unranked enumeration of live memories narrowed by the same candidate filters ranked search already supports (memoryType, scope, project, status, asOf, recordedAfter/recordedBefore). It never calls the embedding gateway — no query is required as long as at least one filter narrows the set — and pages through a small, drift-free keyset cursor instead of the ranked path's larger frozen-ordering token.
+
+  Superseded predecessors are excluded from chronological listings by default (an exhaustive list has no ranking to demote a superseded row with, so it drops instead — the same live-only default the dashboard memory list already uses), unless an `asOf` coordinate explicitly asks for a historical view.
+
+- 318025a: Fix `search` to demote every superseded predecessor, and label demoted hits.
+
+  The supersession tier-penalty in `search` only fired for a `supersedes` edge — a revision recorded with the `updates` edge kind closed its predecessor's validity exactly the same way, but escaped the ranking demotion entirely, so a superseded row could still outrank its live successor. The penalty now applies whenever a row has an incoming `supersedes` or `updates` edge, matching the existing `CLOSES_PREDECESSOR` convention used elsewhere for the same two edge kinds.
+
+  Search hits (both MCP and REST, full and compact projections) now also carry a `superseded: boolean` flag, so a caller can tell a demoted result from a current one instead of inferring it from score alone. Ranking stays supersession-_aware_, never supersession-_filtered_: a demoted row is still returned, just ranked below its successor and now labeled as such.
+
+### Patch Changes
+
+- Updated dependencies [c6a819c]
+- Updated dependencies [88ee7d4]
+- Updated dependencies [4ed7e25]
+- Updated dependencies [4cd03d4]
+- Updated dependencies [1d9a420]
+- Updated dependencies [318025a]
+  - @3ngram/schema@0.7.0
+
 ## 0.7.5
 
 ### Patch Changes

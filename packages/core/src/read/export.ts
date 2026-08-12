@@ -27,6 +27,7 @@ export type {
   ExportCommitmentRow,
   ExportEdgeRow,
   ExportEnricher,
+  ExportFactProposalRow,
   ExportFactRow,
   ExportLlmUsageRow,
   ExportMemoryEventRow,
@@ -41,7 +42,8 @@ export type {
 /**
  * Assemble the authenticated user's complete portable dataset: account identity
  * (never the password hash) plus every memory, fact, commitment, scope, memory
- * event, and consolidation proposal they own — all lifecycle states, not just the
+ * event, consolidation proposal, and staged fact proposal they own — all
+ * lifecycle states, not just the
  * live set (docs/concepts/memory-model.mdx retains superseded rows; a portability export must include
  * them).
  *

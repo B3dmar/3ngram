@@ -655,6 +655,23 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     )
   }
 
+  // A staged fact proposal — user content awaiting review that is NOT a `facts`
+  // row, so the archive's facts section does not cover it. No REST write path,
+  // so seed via the owner connection like the graph above.
+  async function seedFactProposal(
+    userId: string,
+    memoryId: string,
+    value: string,
+    rationale: string,
+  ): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO fact_proposals
+         (user_id, memory_id, subject, predicate, value, memory_type, rationale, status)
+       VALUES ($1, $2, 'export-subj', 'export-pred', $3, 'note', $4, 'proposed')`,
+      [userId, memoryId, value, rationale],
+    )
+  }
+
   // Seed the user-owned cost/usage rows — budget window (one per user) and one
   // llm_usage cost row. Neither has a REST write path under test, so seed via the
   // owner connection (explicit user_id).
@@ -708,6 +725,9 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     const payloadNote = `evt-${crypto.randomUUID()}`
     const rationale = `rat-${crypto.randomUUID()}`
     await seedGraph(await userIdFor(emailA), memoryId, memoryId2, payloadNote, rationale)
+    const proposedValue = `fp-val-${crypto.randomUUID()}`
+    const proposedRationale = `fp-rat-${crypto.randomUUID()}`
+    await seedFactProposal(await userIdFor(emailA), memoryId, proposedValue, proposedRationale)
 
     const res = await api('/api/v1/export', { key: keyA })
     expect(res.status).toBe(200)
@@ -721,7 +741,14 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
       edges: Array<{ fromId: string; toId: string; edgeType: string }>
       memoryEvents: Array<{ memoryId: string; payload: { note?: string } | null }>
       proposals: Array<{ rationale: string | null }>
-      counts: { memories: number; edges: number; memoryEvents: number; proposals: number }
+      factProposals: Array<{ memoryId: string; value: string; rationale: string | null }>
+      counts: {
+        memories: number
+        edges: number
+        memoryEvents: number
+        proposals: number
+        factProposals: number
+      }
     }
     expect(body.format).toBe('3ngram.account-export.v1')
     expect(body.account.email).toBe(emailA)
@@ -735,13 +762,21 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     ).toBe(true)
     expect(body.memoryEvents.some((e) => e.payload?.note === payloadNote)).toBe(true)
     expect(body.proposals.some((p) => p.rationale === rationale)).toBe(true)
+    // A staged fact proposal is user content the facts section does not carry.
+    expect(
+      body.factProposals.some(
+        (p) =>
+          p.memoryId === memoryId && p.value === proposedValue && p.rationale === proposedRationale,
+      ),
+    ).toBe(true)
     expect(body.counts.memories).toBe(body.memories.length)
     expect(body.counts.edges).toBe(body.edges.length)
     expect(body.counts.memoryEvents).toBe(body.memoryEvents.length)
     expect(body.counts.proposals).toBe(body.proposals.length)
+    expect(body.counts.factProposals).toBe(body.factProposals.length)
   })
 
-  it('TENANT ISOLATION: A export never contains B-owned memories, edges, events, or proposals (RLS)', async () => {
+  it('TENANT ISOLATION: A export never contains B-owned memories, edges, events, proposals, or fact proposals (RLS)', async () => {
     const bContent = `rest-export-b-${crypto.randomUUID()}`
     const bFirst = await api('/api/v1/memories', {
       method: 'POST',
@@ -759,6 +794,9 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     const bPayload = `b-evt-${crypto.randomUUID()}`
     const bRationale = `b-rat-${crypto.randomUUID()}`
     await seedGraph(await userIdFor(emailB), bMemoryId, bMemoryId2, bPayload, bRationale)
+    const bProposedValue = `b-fp-val-${crypto.randomUUID()}`
+    const bProposedRationale = `b-fp-rat-${crypto.randomUUID()}`
+    await seedFactProposal(await userIdFor(emailB), bMemoryId, bProposedValue, bProposedRationale)
 
     const res = await api('/api/v1/export', { key: keyA })
     expect(res.status).toBe(200)
@@ -768,6 +806,7 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
       edges: Array<{ fromId: string; toId: string }>
       memoryEvents: Array<{ memoryId: string; payload: { note?: string } | null }>
       proposals: Array<{ rationale: string | null }>
+      factProposals: Array<{ memoryId: string; value: string; rationale: string | null }>
     }
     // A's export is scoped to A: every B-owned id/content/edge/payload/rationale is absent.
     expect(body.account.email).toBe(emailA)
@@ -777,6 +816,11 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.memoryEvents.some((e) => e.memoryId === bMemoryId)).toBe(false)
     expect(body.memoryEvents.some((e) => e.payload?.note === bPayload)).toBe(false)
     expect(body.proposals.some((p) => p.rationale === bRationale)).toBe(false)
+    // The new factProposals section carries the same two-layer isolation as the
+    // rest of the archive (RLS + the caller-bound user_id predicate).
+    expect(body.factProposals.some((p) => p.memoryId === bMemoryId)).toBe(false)
+    expect(body.factProposals.some((p) => p.value === bProposedValue)).toBe(false)
+    expect(body.factProposals.some((p) => p.rationale === bProposedRationale)).toBe(false)
   })
 
   it('works under a session Bearer (same identity as the key)', async () => {

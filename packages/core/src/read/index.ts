@@ -25,6 +25,7 @@ export {
   type ExportCommitmentRow,
   type ExportEdgeRow,
   type ExportEnricher,
+  type ExportFactProposalRow,
   type ExportFactRow,
   type ExportLlmUsageRow,
   type ExportMemoryEventRow,
@@ -92,3 +93,4 @@ export {
   search,
   searchDashboardPage,
 } from './search.js'
+export { type ListOptions, type ListPage, searchChronological } from './search-list.js'

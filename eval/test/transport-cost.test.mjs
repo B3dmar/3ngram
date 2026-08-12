@@ -73,9 +73,66 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // +13/+104/+26 (issue #71): the `remember` description now names the
       // scope_project includeUnscoped opt-in instead of asserting flatly that a
       // NULL-project memory never matches a project filter.
-      mcp: [19688, 159320, 40208],
+      // +263/+2104/+512 (freshness-gate regen): the committed fixture predated
+      // per-tool ToolAnnotations (readOnlyHint/idempotentHint/openWorldHint) —
+      // live on tools/list already, just never re-captured. A fresh regen picks
+      // them up; the CI freshness gate (this PR) now catches this class of drift.
+      // +66/+528/+129 (supersession visibility): the search tool's output
+      // schema (both full and compact hit shapes) grew a `superseded: boolean`
+      // field, plus a tool-description sentence naming it. Only MCP moves: its
+      // per-tool tools/list surface tokenizes the REAL outputSchema (a standing
+      // per-turn tax). REST's routes[].responseShape in
+      // gen-transport-surfaces.mjs is a hand-maintained compact summary string,
+      // not derived from the live Zod schema, and was not touched here — a
+      // pre-existing approximation this change does not widen.
+      // +693/+5544/+1352 mcp, +486/+486/+486 rest (structured facts on
+      // `remember`): the optional `facts` array joins the tool input schema, so
+      // it rides tools/list every MCP turn and the REST request surface once.
+      // CLI is unchanged — it shells the same commands and never carries the
+      // schema.
+      // +3630/+29040/+7078 mcp (fact proposals in the review flow): the
+      // review_proposals OUTPUT schema grows the fact-proposal record plus two
+      // decision variants, and an output schema rides tools/list on every turn.
+      // REST is unchanged — review_proposals has no REST route — and so is CLI.
+      // +1432/+11456/+2792 (chronological list mode, issue #134): the search
+      // tool's inputSchema grew from a single object to a 2-branch `anyOf`
+      // union (relevance | chronological order, ADR-0011 "unions grow by
+      // variant" — see packages/schema/src/search-list.ts's module comment
+      // for why a single conditionally-optional field can't express this
+      // under Zod 4's safeExtend), plus an `order` field and a longer tool
+      // description. Only MCP moves — REST/CLI are untouched by this PR
+      // (list mode is MCP-only this release). MEASURED on top of the
+      // facts-write stack above (rebased, not arithmetically summed with it —
+      // Track F's own precedent), so this delta is against THIS PR's actual
+      // base, not an isolated pre-facts baseline.
+      // MCP +702/+5616/+1369, REST +462/+462/+462 (get_facts range read, this
+      // PR): get_facts gained the `range: {from?, to?}` input axis (a
+      // half-open valid-time window superRefine-checked against asOf, plus
+      // the same sub-millisecond precision bound the search recorded-range
+      // fix applies to recordedAfter/recordedBefore) and `recordedAt` on
+      // every returned fact — both transports' schemas widened, so both
+      // surfaces grew. CLI is unaffected (the CLI facts command has no
+      // --from/--to flags). MEASURED on the rebased tip (staging
+      // post-chronological-list-mode), not summed on top of the prior delta
+      // comments above — same "measured, not arithmetically summed"
+      // precedent those comments themselves establish.
+      // MCP +136/+1088/+266, REST +112/+112/+112 (pre-release review fixes,
+      // this PR): three tool-facing descriptions changed. `search` now states
+      // that `query` is relevance-only and REJECTED under chronological order
+      // (which instead requires >=1 filter), replacing the old "query becomes
+      // optional given a filter" sentence, and the chronological branch's own
+      // `query` field description changed with it. Separately, the fact-write
+      // `validFrom`/`validTo` fields gained descriptions advertising the
+      // 3-fractional-digit precision cap (a custom refinement is invisible in
+      // emitted JSON Schema, so the limit has to be stated in prose) — those
+      // ride BOTH the MCP `remember`/`review_proposals` schemas and the REST
+      // request surface, which is why REST moves too. CLI is unchanged: it
+      // shells commands and carries no schema. MEASURED on this PR's actual
+      // base (staging post-v1.4.0), not arithmetically summed with the deltas
+      // above — the same precedent those comments establish.
+      mcp: [26610, 214696, 53706],
       cli: [333, 1236, 1236],
-      rest: [1821, 2838, 2838],
+      rest: [2881, 3898, 3898],
     },
   )
 })
@@ -227,6 +284,50 @@ test('the MCP surface fixture is the REAL SDK tools/list + prompts/list (11 tool
   assert.deepEqual(surfaces.mcp.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
 })
 
+test('the MCP surface fixture covers resource templates and completions (additive sections)', () => {
+  // Additive: transport-cost.mjs's surfaceTokens() only reads mcp.tools/prompts
+  // and cli/rest, so these sections carry no per-task token cost — they exist so
+  // the freshness gate (CI) covers the FULL MCP surface, not just tools/prompts.
+  const surfaces = JSON.parse(
+    readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
+  )
+  // resources/templates/list: the one threengram://memory/{id} template
+  // (apps/server/src/mcp/resources.ts), including its registration-time
+  // cacheHint (never echoed on the wire; recovered by running the real
+  // registerResources against a capturing stub — see gen-transport-surfaces.mjs).
+  assert.equal(surfaces.mcp.resourceTemplates.length, 1)
+  const memoryTemplate = surfaces.mcp.resourceTemplates[0]
+  assert.equal(memoryTemplate.name, 'memory')
+  assert.equal(memoryTemplate.uriTemplate, 'threengram://memory/{id}')
+  assert.deepEqual(memoryTemplate.cacheHint, { ttlMs: 24 * 60 * 60_000, cacheScope: 'private' })
+
+  // Completions coverage: which prompt args and resource-template URI variables
+  // are wired to completable() (apps/server/src/mcp/completions.ts, resources.ts).
+  // No `completions.tools`: the MCP completion protocol dispatches
+  // completion/complete on ref/prompt or ref/resource only — there is no
+  // ref/tool, so a tool argument can never be a completion target, and a
+  // section that is `completable: false` for every tool arg by construction
+  // would freeze a protocol fact, not a registry fact worth gating on.
+  const { completions } = surfaces.mcp
+  assert.ok(!('tools' in completions), 'completions must not carry a tools section')
+  assert.deepEqual(completions.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
+
+  // Today exactly one prompt arg — debrief's `scope`, via
+  // facetCompleter(ctx, 'scopes') — is completable; every other prompt arg is not.
+  const completablePromptArgs = completions.prompts.flatMap(({ name, args }) =>
+    args.filter((arg) => arg.completable).map((arg) => `${name}.${arg.name}`),
+  )
+  assert.deepEqual(completablePromptArgs, ['debrief.scope'])
+
+  // The memory template's {id} carries NO complete callback (resources.ts
+  // registers `list: undefined` and no complete map) — docs/concepts/mcp-surface
+  // .mdx rules this out deliberately (enumerating {id} is a cross-tenant
+  // existence oracle by a different door), so this must stay false.
+  assert.deepEqual(completions.resources, [
+    { name: 'memory', variables: [{ name: 'id', completable: false }] },
+  ])
+})
+
 test('the search surface is the WIDER searchQuerySchema on BOTH transports', () => {
   // Regression guard (Codex P2, gen-transport-surfaces.mjs:134): the REST search
   // route .parse()s searchQuerySchema (query + limit + type/scope/project/status
@@ -246,26 +347,42 @@ test('the search surface is the WIDER searchQuerySchema on BOTH transports', () 
   for (const field of widerFields) {
     assert.ok(field in props, `REST search request schema must carry the ${field} field`)
   }
-  // The MCP search tool registers searchQueryV3Schema — a strict SUPERSET
+  // The MCP search tool registers searchQueryV4Schema — a strict SUPERSET
   // composition over the same wider searchQuerySchema (V2 added memoryTypes[]
-  // and the recordedAfter/recordedBefore range; V3 adds the continuation pair
-  // cursor + projection, issue #49; ONE validation boundary, hard rule 2).
-  // REST stays on searchQuerySchema until its own stacked slices land, so MCP
-  // must carry every wider field plus exactly the V2 axes + the V3 pair.
-  const v3Fields = [
+  // and the recordedAfter/recordedBefore range; V3 added the continuation
+  // pair cursor + projection, issue #49; V4 adds `order`, issue #134). REST
+  // stays on searchQuerySchema until its own stacked slices land, so MCP must
+  // carry every wider field plus exactly the V2 axes + the V3 pair + order.
+  const v4Fields = [
     ...widerFields,
     'memoryTypes',
     'recordedAfter',
     'recordedBefore',
     'cursor',
     'projection',
+    'order',
   ].sort()
   const searchTool = surfaces.mcp.tools.find((t) => t.name === 'search')
-  assert.deepEqual(
-    Object.keys(searchTool.inputSchema.properties).sort(),
-    v3Fields,
-    'the MCP search tool surface is searchQueryV3Schema (wider set + V2 axes + cursor/projection)',
+  // V4 composes as a UNION (relevance | chronological — ADR-0011 "unions grow
+  // by variant"; `query`'s conditional optionality can't be expressed as a
+  // single-object override under Zod 4's safeExtend assignability guard, see
+  // packages/schema/src/search-list.ts), so inputSchema serializes as
+  // {anyOf: [...]} rather than a flat {properties: ...}. Both branches carry
+  // the IDENTICAL property set (only query's requiredness and order's literal
+  // value differ between them, never the key set) — assert both to prove that
+  // invariant, not just pick one.
+  assert.ok(
+    Array.isArray(searchTool.inputSchema.anyOf),
+    'V4 input is a union of two order variants',
   )
+  assert.equal(searchTool.inputSchema.anyOf.length, 2)
+  for (const variant of searchTool.inputSchema.anyOf) {
+    assert.deepEqual(
+      Object.keys(variant.properties).sort(),
+      v4Fields,
+      'each order variant of the MCP search tool surface carries the wider set + V2 axes + cursor/projection + order',
+    )
+  }
 })
 
 test('generated MCP and REST contracts advertise the recorded-bound precision limit', () => {
@@ -274,12 +391,17 @@ test('generated MCP and REST contracts advertise the recorded-bound precision li
     readFileSync(join(here, '../fixtures/transport-surfaces.json'), 'utf8'),
   )
   const searchTool = surfaces.mcp.tools.find((tool) => tool.name === 'search')
-  for (const field of ['recordedAfter', 'recordedBefore']) {
-    assert.match(
-      searchTool.inputSchema.properties[field].description,
-      precision,
-      `MCP tools/list must advertise ${field} precision`,
-    )
+  // V4's inputSchema is a union (anyOf) of the relevance/chronological order
+  // variants (see the previous test) — assert BOTH branches, not just one,
+  // so a future edit that only updates one variant's description is caught.
+  for (const variant of searchTool.inputSchema.anyOf) {
+    for (const field of ['recordedAfter', 'recordedBefore']) {
+      assert.match(
+        variant.properties[field].description,
+        precision,
+        `MCP tools/list must advertise ${field} precision on every order variant`,
+      )
+    }
   }
 
   const openapi = JSON.parse(

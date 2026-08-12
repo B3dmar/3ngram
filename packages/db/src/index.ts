@@ -148,6 +148,7 @@ export {
   type ExportCommitmentRow,
   type ExportEdgeRow,
   type ExportEnricher,
+  type ExportFactProposalRow,
   type ExportFactRow,
   type ExportLlmUsageRow,
   type ExportMemoryEventRow,
@@ -159,6 +160,20 @@ export {
   readUserDataExport,
   type UserDataExport,
 } from './data-export.js'
+export {
+  FACT_PROPOSAL_COLUMNS,
+  type FactProposalRow,
+  type FactProposalsQuery,
+  type FactProposalWrite,
+  insertFactProposals,
+  listFactProposals,
+  rejectFactProposal,
+} from './fact-proposals.js'
+// --- fact proposals: staged extraction awaiting human review ---
+export {
+  type AppliedFactProposal,
+  applyFactProposal,
+} from './fact-proposals-apply.js'
 // --- bi-temporal facts read (slice 2) — appended as its own block ---
 export {
   type AsOf,
@@ -168,6 +183,13 @@ export {
   transactionTimePredicate,
   validTimePredicate,
 } from './facts-read.js'
+// --- facts write path: tx-taking inserts composed by the memory write ---
+export {
+  type FactWrite,
+  insertFact,
+  insertFacts,
+  type MemoryFactWrite,
+} from './facts-write.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
 // Revise path + typed edges (slice 2) — appended as its own block.
@@ -305,6 +327,11 @@ export {
   searchRecency,
   searchVector,
 } from './search.js'
+export {
+  type ChronologicalCursor,
+  type ChronologicalPage,
+  searchList,
+} from './search-list.js'
 export {
   getUserProfileAttributes,
   upsertUserProfileAttributes,

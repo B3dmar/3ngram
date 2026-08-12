@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: Apache-2.0
+// Chronological list mode (exhaustive/chronological retrieval): a filter-driven
+// enumeration of memories in recorded-time order — no fusion, no scoring, no
+// embedding call. A SEPARATE small module from search.ts (already near the
+// 500-line file cap, hard rule 5) so the ranked-fusion path stays free of an
+// unrelated branch; reuses rowEligibility + supersededExists from search.ts so
+// the two retrieval modes can never drift on what a filter or the superseded
+// flag means.
+//
+// LIVE GATE DIVERGES FROM RANKED SEARCH (deliberate — docs/concepts/memory-model.mdx
+// documents all three "live" definitions used across this codebase: the
+// status='active' default, this valid_to IS NULL exhaustive-list gate, and the
+// asOf bi-temporal view). searchFused NEVER filters on valid_to — it demotes a
+// superseded predecessor by score penalty, never drops it (demote-not-filter).
+// An EXHAUSTIVE list has no ranking to demote WITH: without a live gate, a
+// superseded predecessor would sit at the SAME rank as its successor and
+// double-count the "current" set. List mode therefore filters to
+// valid_to IS NULL — the SAME live gate listMemories (memory-read.ts) uses —
+// UNLESS an asOf coordinate explicitly asks for a historical view (surface
+// history when asked, never silently drop): rowEligibility's bi-temporal
+// predicate already selects the single row valid at that instant, so forcing
+// valid_to IS NULL on top would silently exclude the very row asOf asked for.
+import { type SQL, sql } from 'drizzle-orm'
+import type { TenantTx } from './client.js'
+import { rowEligibility, type SearchFilters, type SearchHit, supersededExists } from './search.js'
+
+/**
+ * Position within the chronological total order (`recorded_at DESC, id
+ * DESC`). `recordedAt` is OPAQUE full-precision ISO 8601 TEXT — NEVER a JS
+ * `Date`. A `Date` cannot represent Postgres's microsecond `timestamptz`
+ * resolution (JS Date is millisecond-limited): `now()` is transaction-constant,
+ * so a same-transaction batch insert gives every row an IDENTICAL
+ * microsecond-precision timestamp, and a millisecond-truncated cursor
+ * boundary can silently exclude the remainder of that tied group from every
+ * later page (see search-list.ts's buildChronologicalCursorPredicate doc and
+ * packages/schema/src/cursor.ts's cursorPayloadV3Schema doc for the full
+ * mechanism). `id` is the row's uuid tiebreak.
+ */
+export interface ChronologicalCursor {
+  recordedAt: string
+  id: string
+}
+
+/** One page of an exhaustive chronological listing. */
+export interface ChronologicalPage {
+  hits: SearchHit[]
+  /** The last-returned row's position, for minting the next page's cursor. `undefined` iff `hits` is empty. */
+  cursor: ChronologicalCursor | undefined
+  hasMore: boolean
+}
+
+/**
+ * Keyset continuation over the chronological total order (`recorded_at DESC,
+ * id DESC`). Unlike {@link buildCursorPredicate}'s fused-score keyset,
+ * `recorded_at` is DRIFT-FREE — it never changes after insert — so this
+ * cursor can never repeat or skip a row even under concurrent writes; no
+ * frozen candidate pool is needed the way ranked search needs one. BUT this
+ * guarantee holds only because `cursor.recordedAt` is bound at FULL
+ * microsecond precision (opaque text, `::timestamptz` cast) — a
+ * millisecond-truncated boundary compared against a full-precision column
+ * can silently strand rows that tie with the cursor row (module comment).
+ */
+function buildChronologicalCursorPredicate(cursor: ChronologicalCursor | undefined): SQL {
+  if (cursor === undefined) return sql`true`
+  return sql`(recorded_at < ${cursor.recordedAt}::timestamptz
+              OR (recorded_at = ${cursor.recordedAt}::timestamptz AND id < ${cursor.id}::uuid))`
+}
+
+interface ListRow {
+  id: string
+  memory_type: string
+  topic: string
+  content: string
+  /**
+   * Full microsecond-precision ISO 8601 text (`to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+   * in the query below) — NEVER the raw driver-parsed column, which the
+   * pg driver would hand back as a JS `Date` (millisecond-limited, silently
+   * dropping the microsecond remainder before this code ever sees it).
+   */
+  recorded_at_iso: string
+  superseded: boolean
+  score: string | number
+}
+
+/**
+ * Exhaustive, filter-driven chronological listing (most-recent-first). No
+ * fusion, no embedding — `score` is a literal 0 placeholder (list mode is
+ * unranked). Reuses rowEligibility for the SAME candidate-narrowing filters
+ * ranked search applies, so the two modes can never drift on filter semantics.
+ *
+ * Overfetches `limit + 1` to detect `hasMore` without a separate COUNT query;
+ * the extra row is trimmed before mapping. Runs inside withTenant(): RLS
+ * isolates, and the caller-bound `user_id` predicate (via rowEligibility)
+ * binds defense in depth (module header, search.ts).
+ */
+export async function searchList(
+  tx: TenantTx,
+  userId: string,
+  limit: number,
+  filters: SearchFilters = {},
+  cursor?: ChronologicalCursor,
+): Promise<ChronologicalPage> {
+  // FROM memories is aliased `m` below (the supersededExists WARNING doc
+  // comment applies), so rowEligibility is called with the matching 'm.'
+  // prefix for consistency with every other aliased call site in search.ts —
+  // unqualified refs would still resolve correctly at this top-level WHERE
+  // (no competing table in THIS query's own scope, unlike the EXISTS
+  // subquery), but qualifying keeps the convention uniform and future-proof
+  // against this query later growing a join.
+  const eligibility = rowEligibility('m.', userId, filters)
+  const hasTimeTravel = filters.asOf?.validAt !== undefined || filters.asOf?.asKnownAt !== undefined
+  const liveGate = hasTimeTravel ? sql`true` : sql`valid_to IS NULL`
+  // FROM memories MUST be aliased — supersededExists's own WARNING doc comment
+  // (search.ts) explains why an unaliased FROM silently binds the EXISTS
+  // subquery's unqualified id/user_id to memory_edges' OWN columns instead of
+  // this row's.
+  // The to_char(... 'US' ...) text below is aliased `recorded_at_iso`, NOT
+  // `recorded_at` — deliberately a DIFFERENT name from the table column, so
+  // `ORDER BY recorded_at` unambiguously resolves to the true timestamptz
+  // column (sorted as a timestamp) rather than to a SELECT-list alias holding
+  // its text representation (which would sort lexicographically instead —
+  // harmless here since fixed-width zero-padded ISO 8601 text happens to
+  // sort identically to its chronological order, but there is no reason to
+  // rely on that coincidence when a distinct alias name removes the ambiguity
+  // outright). `AT TIME ZONE 'UTC'` first converts the timestamptz to a
+  // zone-less wall-clock reading of the UTC instant — without it, to_char's
+  // implicit timestamptz->timestamp conversion follows the SESSION's
+  // `timezone` GUC, and a non-UTC session would silently mislabel a local
+  // time with the trailing "Z".
+  const rows = await tx.execute(sql`
+    SELECT id, memory_type, topic, content,
+           to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at_iso,
+           ${supersededExists('m')} AS superseded,
+           0::float8 AS score
+    FROM memories m
+    WHERE ${eligibility} AND ${liveGate} AND ${buildChronologicalCursorPredicate(cursor)}
+    ORDER BY recorded_at DESC, id DESC
+    LIMIT ${limit + 1}
+  `)
+  const allRows = rows.rows as unknown as ListRow[]
+  const hasMore = allRows.length > limit
+  const page = hasMore ? allRows.slice(0, limit) : allRows
+  const last = page[page.length - 1]
+  return {
+    hits: page.map((r) => ({
+      id: r.id,
+      memoryType: r.memory_type,
+      topic: r.topic,
+      content: r.content,
+      score: Number(r.score),
+      superseded: Boolean(r.superseded),
+    })),
+    cursor: last === undefined ? undefined : { recordedAt: last.recorded_at_iso, id: last.id },
+    hasMore,
+  }
+}

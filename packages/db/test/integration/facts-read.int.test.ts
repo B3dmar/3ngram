@@ -245,6 +245,76 @@ describe('get_facts — combined axes (true-at-X as-known-at-Y)', () => {
   })
 })
 
+describe('get_facts — range mode (time-series reads)', () => {
+  it('window slicing: [T0, T2) returns the two generations true inside it, not the live one', async () => {
+    // v1 engineer [T0,T1) and v2 lead [T1,T2) are both inside [T0,T2); v3
+    // manager [T2,∞) starts exactly AT the exclusive upper bound, so it is
+    // excluded — proves the overlap predicate, not just "everything live".
+    const rows = await withTenant(uid, (tx) =>
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        range: { from: new Date(T0), to: new Date(T2) },
+      }),
+    )
+    expect(rows.map((r) => r.value)).toEqual(['engineer', 'lead'])
+  })
+
+  it('half-open boundary: [T1, T2) excludes the predecessor ending exactly at T1', async () => {
+    // v1's window ends AT T1 (exclusive on its own valid_to); a range starting
+    // at T1 (inclusive on its own from) must not re-include it — the two
+    // half-open windows touch but do not overlap at the shared instant.
+    const rows = await withTenant(uid, (tx) =>
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        range: { from: new Date(T1), to: new Date(T2) },
+      }),
+    )
+    expect(rows.map((r) => r.value)).toEqual(['lead'])
+  })
+
+  it('surfaces superseded generations inside the window (range REPLACES live-only)', async () => {
+    // An open-ended range (from only) covers all three role generations,
+    // including the two superseded ones — the point of a time-series read,
+    // unlike the default current-row-only behavior.
+    const rows = await withTenant(uid, (tx) =>
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        range: { from: new Date(T0) },
+      }),
+    )
+    expect(rows.map((r) => r.value)).toEqual(['engineer', 'lead', 'manager'])
+  })
+
+  it('ordering is chronological (valid_from ASC), not recency — the opposite of default mode', async () => {
+    const rows = await withTenant(uid, (tx) => getFacts(tx, uid, { range: { from: new Date(T0) } }))
+    // Across both keys (role x3, city x1), earliest valid_from first: city's
+    // TPAST (2019) predates role's T0 (2020).
+    expect(rows.map((r) => r.value)).toEqual(['berlin', 'engineer', 'lead', 'manager'])
+  })
+
+  it('limit bounds range mode to the N earliest-valid-from rows (no-firehose)', async () => {
+    const rows = await withTenant(uid, (tx) =>
+      getFacts(tx, uid, { range: { from: new Date(T0) }, limit: 2 }),
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.value)).toEqual(['berlin', 'engineer'])
+  })
+
+  it('an out-of-window range returns empty, not a throw', async () => {
+    const rows = await withTenant(uid, (tx) =>
+      getFacts(tx, uid, {
+        subject: 'employee:42',
+        predicate: 'role',
+        range: { to: new Date(TPAST) },
+      }),
+    )
+    expect(rows).toEqual([])
+  })
+})
+
 describe('get_facts — tenant isolation (RLS on every path)', () => {
   it('a second tenant never sees the first tenant facts on any read path', async () => {
     const otherUid = await seedUser('facts-read-other@test.local')
@@ -262,6 +332,7 @@ describe('get_facts — tenant isolation (RLS on every path)', () => {
           predicate: 'city',
           asOf: { asKnownAt: new Date('2024-01-01T00:00:00.000Z') },
         },
+        { range: { from: new Date(T0) } },
       ]
       for (const q of liveQueries) {
         const rows = await withTenant(otherUid, (tx) => getFacts(tx, otherUid, q))

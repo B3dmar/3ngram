@@ -17,12 +17,13 @@
 //
 // EDGE DIRECTION IS LOAD-BEARING (memory-edges.ts:10-13, search.ts:458-461): the
 // proposal stores the edge as it was proposed (from_id -> to_id, edge_type), so
-// APPLY inserts it verbatim. The single repo convention is that a supersedes edge
-// runs FROM the successor TO the predecessor, and supersession ranking keys on
-// EXISTS(edge WHERE e.to_id = m.id AND e.edge_type='supersedes') — i.e. the
-// PREDECESSOR is to_id. So for a supersedes/updates edge the validity close
-// targets to_id (the row being superseded/updated by from_id), matching
-// reviseMemory (memory-revise.ts:200-204, which closes the predecessor = to_id).
+// APPLY inserts it verbatim. The single repo convention is that a supersedes/
+// updates edge runs FROM the successor TO the predecessor, and supersession
+// ranking keys on EXISTS(edge WHERE e.to_id = m.id AND e.edge_type IN
+// ('supersedes', 'updates')) — i.e. the PREDECESSOR is to_id. So for a
+// supersedes/updates edge the validity close targets to_id (the row being
+// superseded/updated by from_id), matching reviseMemory (memory-revise.ts:200-204,
+// which closes the predecessor = to_id).
 // The append-only suite already proves the runtime role has no DELETE on
 // memories / memory_edges.
 //

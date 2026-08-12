@@ -196,6 +196,42 @@ describe('A4 remember parity (REST x-api-key ≡ MCP Bearer, same tenant)', () =
     expect(restBody.memory.scope).toBe('personal')
   })
 
+  it('writes structured facts and echoes factIds identically on both transports', async () => {
+    const facts = [{ subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }]
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: {
+        memoryType: 'fact',
+        topic: 'parity-facts',
+        content: `facts-rest-${crypto.randomUUID()}`,
+        facts,
+      },
+    })
+    expect(restRes.status).toBe(201)
+    const restBody = (await restRes.json()) as { factIds: string[] }
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: {
+        memoryType: 'fact',
+        topic: 'parity-facts',
+        content: `facts-mcp-${crypto.randomUUID()}`,
+        facts,
+      },
+    })
+    expect(mcpRes.isError).toBeFalsy()
+    const mcpBody = mcpRes.structuredContent as { factIds: string[] }
+    await client.close()
+
+    // Both transports accept the same `facts` shape and return the same
+    // response key carrying one id per written fact. (Ids differ — distinct rows.)
+    expect(restBody.factIds).toHaveLength(facts.length)
+    expect(mcpBody.factIds).toHaveLength(facts.length)
+    expect(Object.keys(restBody).sort()).toEqual(Object.keys(mcpBody).sort())
+  })
+
   it('surfaces the auto-created commitmentId for a commitment memory on both', async () => {
     const restRes = await rest('/api/v1/memories', {
       method: 'POST',
@@ -267,6 +303,7 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'id',
       'memoryType',
       'score',
+      'superseded',
       'topic',
       'truncated',
     ])
@@ -276,6 +313,7 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'id',
       'memoryType',
       'score',
+      'superseded',
       'topic',
       'truncated',
     ])
@@ -394,19 +432,35 @@ describe('A4 get_facts parity (projection + bi-temporal as_of)', () => {
     }
     const mcpLive = (
       await client.callTool({ name: 'get_facts', arguments: { subject, predicate: 'role' } })
-    ).structuredContent as { facts: Array<{ value: string }> }
+    ).structuredContent as {
+      facts: Array<{
+        id: string
+        subject: string
+        predicate: string
+        value: string
+        confidence: number
+        validFrom: string
+        validTo: string | null
+        recordedAt: string
+      }>
+    }
     expect(restLive.facts.map((f) => f.value)).toEqual(['manager'])
     expect(mcpLive.facts.map((f) => f.value)).toEqual(['manager'])
-    // Identical projection field set on the live row.
-    expect(Object.keys(restLive.facts[0] ?? {}).sort()).toEqual([
+    // Identical projection field set on the live row, on BOTH transports.
+    // recordedAt (output-only strict widening for time-series consumers)
+    // rides both — see factSchema, packages/schema/src/mcp.ts.
+    const expectedKeys = [
       'confidence',
       'id',
       'predicate',
+      'recordedAt',
       'subject',
       'validFrom',
       'validTo',
       'value',
-    ])
+    ]
+    expect(Object.keys(restLive.facts[0] ?? {}).sort()).toEqual(expectedKeys)
+    expect(Object.keys(mcpLive.facts[0] ?? {}).sort()).toEqual(expectedKeys)
 
     // validAt mid-2021 -> the "lead" generation true then, not the live row.
     const restPit = (await (

@@ -344,6 +344,29 @@ jobs:
           pnpm run docs:generate
           git add -N docs
           git diff --exit-code -- docs
+      # Generate-and-diff freshness gate for the eval transport-surfaces fixture
+      # (eval/scripts/gen-transport-surfaces.mjs): the committed MCP surface
+      # snapshot (tools/prompts/resource-templates/completions) must match a
+      # fresh regeneration, byte for byte, so it can never silently drift from
+      # the live registries the transport-cost advisory slice measures against.
+      # This is a freshness guarantee for the MCP surface specifically, not the
+      # whole fixture — the CLI section and parts of the REST section are
+      # hand-maintained constants (see gen-transport-surfaces.mjs), and
+      # regenerating them from themselves would be circular. Builds
+      # @3ngram/server (+ its full dep graph) first: the generator imports the
+      # server's BUILT dist, not source.
+      - name: Transport surfaces freshness
+        if: ${{ matrix.lane == 'docs-reference' }}
+        run: |
+          pnpm exec turbo run build --filter="...@3ngram/server"
+          node eval/scripts/gen-transport-surfaces.mjs > eval/fixtures/transport-surfaces.json
+          pnpm exec biome format --write eval/fixtures/transport-surfaces.json
+          git diff --exit-code -- eval/fixtures/transport-surfaces.json || {
+            echo "eval/fixtures/transport-surfaces.json is stale." >&2
+            echo "Run: node eval/scripts/gen-transport-surfaces.mjs > eval/fixtures/transport-surfaces.json && pnpm exec biome format --write eval/fixtures/transport-surfaces.json" >&2
+            echo "(see the header of eval/scripts/gen-transport-surfaces.mjs) and commit the diff." >&2
+            exit 1
+          }
       - if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
@@ -547,7 +570,9 @@ jobs:
             test_files: >-
               test/integration/briefing-read.int.test.ts
               test/integration/commitments.int.test.ts
+              test/integration/fact-proposals.int.test.ts
               test/integration/facts-read.int.test.ts
+              test/integration/facts-write.int.test.ts
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts
               test/integration/retrieval-policy.int.test.ts

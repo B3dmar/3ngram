@@ -47,7 +47,14 @@ const { search, DEFAULT_SEARCH_WEIGHTS, DEFAULT_SEARCH_SUPERSESSION_PENALTY } = 
   '../src/read/search.js'
 )
 
-const HIT = { id: 'm1', memoryType: 'note', topic: 't', content: 'c', score: 0.9 }
+const HIT = {
+  id: 'm1',
+  memoryType: 'note',
+  topic: 't',
+  content: 'c',
+  score: 0.9,
+  superseded: false,
+}
 const dim = (n = EMBEDDING_DIMENSIONS) => Array.from({ length: n }, () => 0.01)
 
 afterEach(() => {
@@ -341,9 +348,19 @@ describe('search — read-path content excerpting (issue #238)', () => {
     // always yields a schema-valid hit.
     const id = crypto.randomUUID()
     searchFused.mockResolvedValue([
-      { id, memoryType: 'note', topic: 't', content: 'z'.repeat(245_428), score: 0.5 },
+      {
+        id,
+        memoryType: 'note',
+        topic: 't',
+        content: 'z'.repeat(245_428),
+        score: 0.5,
+        superseded: true,
+      },
     ])
     const hits = await search('u1', 'q', { queryEmbedding: dim() })
     expect(searchHitSchema.safeParse(hits[0]).success).toBe(true)
+    // The db-layer superseded flag rides straight through core's excerpting
+    // shape untouched — it is neither dropped nor defaulted.
+    expect(hits[0]?.superseded).toBe(true)
   })
 })

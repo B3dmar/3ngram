@@ -58,15 +58,27 @@ saving, not the caching win.
 
 ## The budget today
 
-Eleven tools registered, one slot left — and **two features claim it**:
+Eleven tools registered, one slot left, and **no reservation on it** — the twelfth goes
+to whichever tool next passes the JTBD-plus-evidence test.
 
-- `mcp-design.mdx` and `tools.ts` reserve slot 12 for `manage_context`.
-- [Threads](/concepts/threads) spends it on `configure_thread`.
+The `get_facts` chronological time-series read (`range: {from?, to?}`, [MCP
+design](/concepts/mcp-design)) is a concrete instance of the JTBD-first test working
+against a candidate tool rather than for one: a `get_series`-shaped tool would have
+covered the same job, but the job was already reachable by widening `get_facts`'s
+existing query axis, so the twelfth slot stayed unspent.
 
-`manage_context` has no design document, no issue, and no specification. It appears in
-four places, all of which merely reserve the name. **An undefined placeholder is
-currently blocking a fully-designed feature**, and that should be resolved first: either
-specify `manage_context` or release the reservation.
+<Note>
+**Resolved 2026-08-08: the `manage_context` reservation is released.** It had held the
+last slot since the `v1.0.0` launch commit with no design document, no issue, and no
+specification — four references, all of which merely reserved the name — while
+[threads](/concepts/threads) had a complete design and needed it.
+
+The standoff was an artifact of treating `12` as though it came from the protocol. It
+does not. The question was never *who gets slot 12*; it is whether each tool earns its
+share of the description budget, because description overlap is what actually degrades
+model selection accuracy. If `manage_context` becomes real, it competes on that footing
+with a design attached.
+</Note>
 
 ## Proposals
 
@@ -127,10 +139,10 @@ models confuses the agent reading the description. That argument stands.
 What the resource *does* buy: threads never need a **second** tool for reading, and the
 thread filter on `search` becomes a convenience rather than the only way in.
 
-### 3. Settle `manage_context`
+### 3. `manage_context` — done
 
-Specify it or release the slot. A reservation with no design cannot be weighed against a
-feature that has one.
+Released, see above. Kept here so the reasoning survives the decision: a reservation with
+no design cannot be weighed against a feature that has one.
 
 ### 4. Prompts are under-used, and the cap is also ours
 
@@ -149,7 +161,7 @@ would have done reaches the model without one.
 
 | Step | Unblocks | Gate |
 |---|---|---|
-| Settle `manage_context` | Threads, and every later tool | A decision, not code |
+| ~~Settle `manage_context`~~ | ~~Threads~~ | **Done** — reservation released |
 | Resource links (additive) | Evidence for retiring `get_memories` | Client follow-through |
 | Thread index resource | Threads' read path | Ships with threads |
 | `review` prompt + raise the prompt cap | Consolidation loop | Cheap; do it anytime |

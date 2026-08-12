@@ -41,9 +41,22 @@ export function recordedBoundDescription(path: 'recordedAfter' | 'recordedBefore
   return `Inclusive ${direction} bound on recorded_at. Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). ${ordering}`
 }
 
+/**
+ * True when an ISO datetime carries more fractional-second digits than
+ * `maxDigits` allows. Shared by every caller with a fractional-second cap —
+ * the recorded_at filter bounds (`maxDigits` = {@link MAX_RECORDED_BOUND_FRACTION_DIGITS},
+ * capped by the `new Date(iso)` conversion those bounds go through) and the
+ * v3 cursor's `recordedAt` (cursor.ts; capped at 6 — Postgres's OWN
+ * microsecond resolution — because that field is threaded as OPAQUE TEXT and
+ * never touches a JS Date, so it has no millisecond ceiling to inherit).
+ */
+export function exceedsFractionalSecondPrecision(iso: string, maxDigits: number): boolean {
+  return (/\.(\d+)/.exec(iso)?.[1]?.length ?? 0) > maxDigits
+}
+
 /** True when an ISO datetime carries more fractional-second digits than a JS Date can represent. */
 export function exceedsRecordedBoundPrecision(iso: string): boolean {
-  return (/\.(\d+)/.exec(iso)?.[1]?.length ?? 0) > MAX_RECORDED_BOUND_FRACTION_DIGITS
+  return exceedsFractionalSecondPrecision(iso, MAX_RECORDED_BOUND_FRACTION_DIGITS)
 }
 
 /** One recorded-range violation: the offending field plus a caller-facing message. */

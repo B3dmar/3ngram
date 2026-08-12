@@ -98,8 +98,16 @@ export type { CommitmentStatus } from './commitment.js'
 export { COMMITMENT_TRANSITIONS, canTransition, commitmentStatusSchema } from './commitment.js'
 export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
-export type { CursorPayload } from './cursor.js'
-export { cursorPayloadSchema, legacyCursorPayloadSchema } from './cursor.js'
+export type { CursorPayload, CursorPayloadV2, CursorPayloadV3 } from './cursor.js'
+export {
+  cursorPayloadSchema,
+  cursorPayloadV2Schema,
+  cursorPayloadV3Schema,
+  legacyCursorPayloadSchema,
+} from './cursor.js'
+// --- get_facts range read: time-series reads over bi-temporal facts ---
+export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'
+export { factsQueryInputV2Schema, factsRangeSchema } from './facts-range.js'
 // --- get_memories batched bounded-content read (MCP tool IO) ---
 export type {
   GetMemoriesArgs,
@@ -272,6 +280,13 @@ export {
   MAX_RECORDED_BOUND_FRACTION_DIGITS,
   recordedRangeIssues,
 } from './recorded-range.js'
+// --- remember V2: structured facts on the write surface ---
+export type {
+  RememberToolArgsV2,
+  RememberToolInputV2,
+  RememberToolOutputV2,
+} from './remember-facts.js'
+export { rememberToolInputV2Schema, rememberToolOutputV2Schema } from './remember-facts.js'
 export type { ResourceLimitKind, ResourceLimits } from './resource-limits.js'
 export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits.js'
 // --- REST /api/v1 dashboard contract — appended block ---
@@ -359,6 +374,16 @@ export {
   searchToolOutputV3Schema,
   setRetrievalDefaultInputSchema,
 } from './retrieval-scope.js'
+// --- review_proposals V2: extracted-fact proposals in the review flow ---
+export type {
+  FactProposalRecordOutput,
+  ReviewProposalsOutputV2,
+} from './review-fact-proposals.js'
+export {
+  factProposalRecordSchema,
+  reviewProposalsOutputV2Schema,
+  reviewProposalsRegisterOutputShapeV2,
+} from './review-fact-proposals.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---
@@ -375,22 +400,42 @@ export {
   searchQueryV3Schema,
   searchToolOutputV2Schema,
 } from './search-cursor.js'
+// --- chronological list mode on `search` (issue #134) ---
+export type {
+  SearchOrder,
+  SearchQueryV4Args,
+  SearchQueryV4ChronologicalInput,
+  SearchQueryV4Input,
+  SearchQueryV4RelevanceInput,
+} from './search-list.js'
+export {
+  searchOrderSchema,
+  searchQueryV4ChronologicalSchema,
+  searchQueryV4RelevanceSchema,
+  searchQueryV4Schema,
+} from './search-list.js'
 export type {
   EdgeInput,
+  FactWriteInput,
   Project,
   RememberInput,
+  RememberWithFactsInput,
   ReviseEdgeIntent,
   ReviseInput,
   Tag,
 } from './write.js'
 export {
   edgeInputSchema,
+  factWriteSchema,
   MAX_CONTENT_LENGTH,
+  MAX_FACT_WRITE_FRACTION_DIGITS,
+  MAX_FACTS_PER_WRITE,
   MAX_TAG_LENGTH,
   MAX_TAGS,
   MAX_TOPIC_LENGTH,
   projectSchema,
   rememberInputSchema,
+  rememberWithFactsInputSchema,
   reviseEdgeIntentSchema,
   reviseInputSchema,
   tagSchema,

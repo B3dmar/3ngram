@@ -258,7 +258,10 @@ export type SearchInput = z.infer<typeof searchInputSchema>
  * core-produced bounded EXCERPT ({@link MAX_EXCERPT_LENGTH}):
  * `contentLength` is the FULL stored length and `truncated` flags whether the
  * excerpt was cut (the text then ends with {@link EXCERPT_MARKER}), so a caller
- * can fetch the full memory by id when it needs the body.
+ * can fetch the full memory by id when it needs the body. `superseded` marks a
+ * demoted predecessor row (docs/concepts/memory-model.mdx: ranked below its
+ * successor, never filtered) so a caller can label it rather than receive it
+ * unmarked.
  */
 export const searchHitSchema = z
   .object({
@@ -269,6 +272,7 @@ export const searchHitSchema = z
     contentLength: z.number().int().min(0),
     truncated: z.boolean(),
     score: z.number(),
+    superseded: z.boolean(),
   })
   .strict()
 export type SearchHitOutput = z.infer<typeof searchHitSchema>
@@ -406,7 +410,17 @@ export type FactsQueryInput = z.infer<typeof factsQueryInputSchema>
  */
 export type FactsQueryArgs = z.input<typeof factsQueryInputSchema>
 
-/** One currently-valid (or as-of) fact row, structured. */
+/**
+ * One currently-valid (or as-of / range) fact row, structured.
+ *
+ * `recordedAt` (transaction-time: when we LEARNED the fact) is an
+ * OUTPUT-ONLY widening — additive, `.strict()`-safe (a wider output never
+ * breaks a caller parsing a subset). Range-mode (time-series) reads return rows
+ * spanning multiple valid-time generations, several possibly recorded at
+ * different instants, so a time-series consumer needs recordedAt on every row
+ * to tell them apart — the default single-row read already had this on
+ * {@link FactRow} (packages/db), it just never reached the wire.
+ */
 export const factSchema = z
   .object({
     id: z.uuid(),
@@ -416,6 +430,7 @@ export const factSchema = z
     confidence: z.number().nullable(),
     validFrom: z.iso.datetime(),
     validTo: z.iso.datetime().nullable(),
+    recordedAt: z.iso.datetime(),
   })
   .strict()
 export type FactOutput = z.infer<typeof factSchema>

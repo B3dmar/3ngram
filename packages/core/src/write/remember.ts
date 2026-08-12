@@ -15,8 +15,13 @@
 // Observability (hard rule 6): never log memory content — ids/hashes/lengths
 // only. This module logs nothing; callers that do must honour the same rule.
 import { createHash } from 'node:crypto'
-import { type DuplicateMemoryError, type WrittenMemory, writeMemory } from '@3ngram/db'
-import { type ActorKind, rememberInputSchema } from '@3ngram/schema'
+import {
+  type DuplicateMemoryError,
+  type MemoryFactWrite,
+  type WrittenMemory,
+  writeMemory,
+} from '@3ngram/db'
+import { type ActorKind, type FactWriteInput, rememberWithFactsInputSchema } from '@3ngram/schema'
 import { assertWithinBudget, resolveResourceLimits } from '../budget/index.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 
@@ -36,6 +41,24 @@ export interface WriteResult extends WrittenMemory {
 }
 
 /**
+ * Bridge a parsed fact to the db write shape: the validity instants arrive as
+ * ISO-8601 strings (the tool-facing contract — JSON has no date type) and the
+ * db layer takes Dates. Converted exactly once, here, mirroring the `toAsOf`
+ * bridge the read tools use. Absent stays absent, so the column keeps its
+ * default instead of being written as an epoch.
+ */
+function toFactWrite(fact: FactWriteInput): MemoryFactWrite {
+  return {
+    subject: fact.subject,
+    predicate: fact.predicate,
+    value: fact.value,
+    confidence: fact.confidence,
+    validFrom: fact.validFrom === undefined ? undefined : new Date(fact.validFrom),
+    validTo: fact.validTo === undefined ? undefined : new Date(fact.validTo),
+  }
+}
+
+/**
  * Content hash for idempotent backfill detection and the duplicate guard.
  * sha256 hex of the raw content — the exact convention the
  * dev seed uses (packages/db/scripts/seed.mjs), so seeded and live rows share
@@ -50,8 +73,14 @@ function contentHash(content: string): string {
  *
  * This is the single validation boundary for the write path (the same
  * convention as createUser): callers pass the RAW payload and `remember`
- * validates it exactly once via rememberInputSchema. Transports must NOT
- * pre-validate — they hand the unparsed request body straight through.
+ * validates it exactly once via rememberWithFactsInputSchema. Transports must
+ * NOT pre-validate — they hand the unparsed request body straight through.
+ *
+ * Structured facts: an optional `facts` list on the payload is persisted in the
+ * SAME transaction as the memory that asserts them, and their ids come back on
+ * {@link WriteResult#factIds}. The parsed contract is composed beside the base
+ * remember schema, so `revise` continues to reject a `facts` key outright —
+ * facts belong to the assertion that introduced them.
  *
  * @param userId  Tenant whose RLS context the write runs under.
  * @param input   Raw, UNVALIDATED write payload — validated here exactly once.
@@ -75,7 +104,7 @@ export async function remember(
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
 ): Promise<WriteResult> {
-  const parsed = rememberInputSchema.parse(input)
+  const parsed = rememberWithFactsInputSchema.parse(input)
   // PRE-PERSIST GUARDS (before writeMemory so a denied write never lands a row):
   //   1. ACCESS: the injected access gate denies a write when the platform policy
   //      forbids it (self-host allowAllAccess allows all). It is resolved
@@ -107,6 +136,10 @@ export async function remember(
       actorKind,
     },
     maxLiveMemories,
+    // Same transaction as the memory (packages/db): a fact whose source memory
+    // rolled back would be an unsourced claim. An empty list is equivalent to
+    // none — the write returns no factIds for either.
+    parsed.facts?.map(toFactWrite),
   )
   // THEN kick the (best-effort, non-throwing, awaitable) embed.
   const embed = kickEmbed(userId, written.id, parsed.content, actorKind, embedOptions)

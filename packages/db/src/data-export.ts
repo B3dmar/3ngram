@@ -23,8 +23,10 @@
 // SELECT below shares one snapshot.
 //
 // COMPLETENESS: includes the OTHER tenant PII the model stores — `memory_events`
-// (append-only audit payloads from imports) and `consolidation_proposals`
-// (generated rationales) — AND the typed memory graph: `memory_edges`
+// (append-only audit payloads from imports), `consolidation_proposals`
+// (generated rationales), and `fact_proposals` (staged subject/predicate/value
+// candidates awaiting review — user content that is not yet a `facts` row, so
+// the facts section alone does not cover it) — AND the typed memory graph: `memory_edges`
 // (supersedes/updates/extends/derives, docs/concepts/memory-model.mdx), so the archive captures the
 // user's memory STRUCTURE, not just isolated rows. The runtime role has SELECT on
 // all three; export is read-only, so the append-only grant is irrelevant here.
@@ -45,6 +47,7 @@ import { userProfileAttributes, userRetrievalPolicy, users } from './schema/iden
 import {
   commitments,
   consolidationProposals,
+  factProposals,
   facts,
   memories,
   memoryEdges,
@@ -150,6 +153,30 @@ export interface ExportProposalRow {
 }
 
 /**
+ * A staged fact-proposal row for an export — the extractor's (subject,
+ * predicate, value) candidate awaiting review, including the (PII-bearing)
+ * rationale. Unlike {@link ExportFactRow} there is no `recordedAt`: a proposal
+ * is not yet an assertion, so it has no transaction-time generation. Its
+ * validity window is nullable for the same reason (fact_proposals allows an
+ * undated candidate; the reviewer supplies the window on accept).
+ */
+export interface ExportFactProposalRow {
+  id: string
+  memoryId: string
+  subject: string
+  predicate: string
+  value: string
+  confidence: number | null
+  validFrom: Date | null
+  validTo: Date | null
+  memoryType: string
+  rationale: string | null
+  status: string
+  decidedAt: Date | null
+  createdAt: Date
+}
+
+/**
  * A user-budget row for an export — the period window + optional operator cap
  * override. `capUsdOverride` is the numeric(20,12) column surfaced as a
  * decimal string (drizzle), NULL meaning "use the tier cap". One row per user.
@@ -205,6 +232,7 @@ export interface UserDataExport {
   edges: ExportEdgeRow[]
   memoryEvents: ExportMemoryEventRow[]
   proposals: ExportProposalRow[]
+  factProposals: ExportFactProposalRow[]
   userBudgets: ExportBudgetRow[]
   llmUsage: ExportLlmUsageRow[]
   /** Onboarding profiling; null if the user never answered. */
@@ -362,6 +390,26 @@ export async function readUserDataExport(
     .where(eq(consolidationProposals.userId, userId))
     .orderBy(asc(consolidationProposals.createdAt), asc(consolidationProposals.id))
 
+  const factProposalRows = await tx
+    .select({
+      id: factProposals.id,
+      memoryId: factProposals.memoryId,
+      subject: factProposals.subject,
+      predicate: factProposals.predicate,
+      value: factProposals.value,
+      confidence: factProposals.confidence,
+      validFrom: factProposals.validFrom,
+      validTo: factProposals.validTo,
+      memoryType: factProposals.memoryType,
+      rationale: factProposals.rationale,
+      status: factProposals.status,
+      decidedAt: factProposals.decidedAt,
+      createdAt: factProposals.createdAt,
+    })
+    .from(factProposals)
+    .where(eq(factProposals.userId, userId))
+    .orderBy(asc(factProposals.createdAt), asc(factProposals.id))
+
   const budgetRows = await tx
     .select({
       id: userBudgets.id,
@@ -421,6 +469,7 @@ export async function readUserDataExport(
     edges: edgeRows,
     memoryEvents: eventRows,
     proposals: proposalRows,
+    factProposals: factProposalRows,
     userBudgets: budgetRows,
     llmUsage: usageRows,
     profile: profileRow ?? null,

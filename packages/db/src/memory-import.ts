@@ -13,6 +13,7 @@
 import type { ActorKind, CommitmentStatus, EdgeType, EventKind } from '@3ngram/schema'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
+import { type FactWrite, insertFact } from './facts-write.js'
 import { insertEdge } from './memory-edges.js'
 import { PredecessorAlreadySupersededError } from './memory-revise.js'
 import {
@@ -22,7 +23,7 @@ import {
   type WrittenMemory,
 } from './memory-write.js'
 import { isUniqueViolation } from './pg-errors.js'
-import { commitments, facts, memories, memoryEvents } from './schema/memory.js'
+import { commitments, memories, memoryEvents } from './schema/memory.js'
 
 /**
  * Thrown when the memory an import write targets (event/edge/fact) does not
@@ -220,44 +221,27 @@ export async function writeImportedEdge(input: ImportedEdgeWrite): Promise<void>
   })
 }
 
-/** A bi-temporal fact riding an imported memory. */
-export interface ImportedFactWrite {
-  userId: string
-  memoryId: string
-  subject: string
-  predicate: string
-  value: string
-  confidence?: number | undefined
-  validFrom?: Date | undefined
-  validTo?: Date | undefined
-  recordedAt?: Date | undefined
-}
+/**
+ * A bi-temporal fact riding an imported memory — the same columns as any
+ * {@link FactWrite}. The import path adds only the tenant transaction and the
+ * target-existence probe; the columns themselves are not import-specific.
+ */
+export type ImportedFactWrite = FactWrite
 
 /**
  * Insert a facts row tied to an imported memory. Omitted timestamps take the
  * column defaults (now()); no uniqueness applies — bi-temporal history keeps
  * every assertion (schema/memory.ts facts rationale).
  *
+ * The columns are written by {@link insertFact}; this wrapper owns what is
+ * import-specific — the tenant transaction and the typed not-found probe (the
+ * writeImportedEdge/insertEdge split).
+ *
  * @throws {@link ImportTargetNotFoundError} memory absent / not owned (RLS).
  */
 export async function insertImportedFact(input: ImportedFactWrite): Promise<{ id: string }> {
   return withTenant(input.userId, async (tx) => {
     await requireMemory(tx, input.userId, input.memoryId)
-    const [row] = await tx
-      .insert(facts)
-      .values({
-        userId: input.userId,
-        memoryId: input.memoryId,
-        subject: input.subject,
-        predicate: input.predicate,
-        value: input.value,
-        confidence: input.confidence,
-        validFrom: input.validFrom,
-        validTo: input.validTo,
-        recordedAt: input.recordedAt,
-      })
-      .returning({ id: facts.id })
-    if (!row) throw new Error('insertImportedFact returned no row')
-    return { id: row.id }
+    return insertFact(tx, input)
   })
 }

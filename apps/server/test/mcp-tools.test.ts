@@ -22,8 +22,9 @@ import {
   handoffToolOutputV2Schema,
   handoffToolOutputV3Schema,
   rememberToolOutputSchema,
+  rememberToolOutputV2Schema,
   resolveToolOutputSchema,
-  reviewProposalsOutputSchema,
+  reviewProposalsOutputV2Schema,
   reviseToolOutputSchema,
   searchQueryV3Schema,
   searchToolOutputV2Schema,
@@ -34,6 +35,7 @@ import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
 const searchDashboardPage = vi.fn()
+const searchChronological = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
 const resolveByMemoryId = vi.fn()
@@ -52,6 +54,9 @@ const setRetrievalDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
+const listAllProposals = vi.fn()
+const rejectProposalAnyKind = vi.fn()
+const acceptProposalAnyKind = vi.fn()
 
 // Real typed error classes so the runTool instanceof mapping is exercised.
 class InvalidEmbeddingError extends Error {}
@@ -243,6 +248,7 @@ vi.mock('@3ngram/core', () => ({
   applyPolicyToScopeFilter,
   remember,
   searchDashboardPage,
+  searchChronological,
   getFacts,
   revise,
   resolveByMemoryId,
@@ -276,6 +282,9 @@ vi.mock('@3ngram/core', () => ({
   listProposals,
   rejectProposal,
   applyProposal,
+  listAllProposals,
+  rejectProposalAnyKind,
+  acceptProposalAnyKind,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -326,7 +335,7 @@ describe('MCP tool registry discipline', () => {
     // (get_memories) + D3 admin (configure_scope, describe_environment,
     // review_proposals) -> the 11-tool surface. The cap (<=12,
     // docs/concepts/mcp-design.mdx / hard rule 8) stays the ceiling; the last
-    // slot is reserved for manage_context.
+    // slot is UNRESERVED — it goes to whichever tool next earns it.
     expect(TOOLS).toHaveLength(11)
     expect(TOOLS.map((t) => t.name)).toEqual([
       'remember',
@@ -476,6 +485,89 @@ describe('remember tool', () => {
     expect(remember).not.toHaveBeenCalled()
   })
 
+  it('threads facts to core and echoes the written factIds', async () => {
+    const factIds = [crypto.randomUUID(), crypto.randomUUID()]
+    remember.mockResolvedValue({ id: MEMO_ID, factIds, embed: { settled: Promise.resolve(false) } })
+    const facts = [
+      { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' },
+      { subject: 'lift.back_squat', predicate: 'top_set.reps', value: '3' },
+    ]
+    const result = await call(
+      'remember',
+      { memoryType: 'fact', topic: 'training', content: 'squat session', facts },
+      ctx({ gateway: undefined }),
+    )
+
+    expect(result.isError).toBeFalsy()
+    // The tool registers the strict V2 schema, so `facts` survives to the
+    // handler instead of being stripped, and reaches core unchanged.
+    const coreInput = remember.mock.calls[0]?.[1] as { facts?: unknown }
+    expect(coreInput.facts).toEqual(facts)
+    const parsed = rememberToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.factIds).toEqual(factIds)
+  })
+
+  it('accepts an ISO validFrom on a fact (JSON carries no date type)', async () => {
+    remember.mockResolvedValue({
+      id: MEMO_ID,
+      factIds: [crypto.randomUUID()],
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'remember',
+      {
+        memoryType: 'fact',
+        topic: 'training',
+        content: 'squat session',
+        facts: [
+          {
+            subject: 'lift.back_squat',
+            predicate: 'top_set.weight_kg',
+            value: '98',
+            validFrom: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = remember.mock.calls[0]?.[1] as { facts: { validFrom: string }[] }
+    expect(coreInput.facts[0]?.validFrom).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('omits factIds entirely when no facts were written (V1 response unchanged)', async () => {
+    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      ctx({ gateway: undefined }),
+    )
+
+    const structured = result.structuredContent as Record<string, unknown>
+    expect('factIds' in structured).toBe(false)
+    // Byte-identical to the shipped surface: the V1 schema still parses it.
+    expect(rememberToolOutputSchema.parse(structured)).toEqual(structured)
+  })
+
+  it('rejects a malformed fact at the tool boundary without calling core', async () => {
+    // Empty value, a Date instead of an ISO string, an unknown key, and a
+    // validTo with no validFrom must each fail before core is reached.
+    for (const bad of [
+      { subject: 's', predicate: 'p', value: '' },
+      { subject: 's', predicate: 'p', value: 'v', validFrom: new Date() },
+      { subject: 's', predicate: 'p', value: 'v', memoryId: MEMO_ID },
+      { subject: 's', predicate: 'p', value: 'v', validTo: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      const result = await call(
+        'remember',
+        { memoryType: 'fact', topic: 't', content: 'c', facts: [bad] },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError, JSON.stringify(bad)).toBe(true)
+    }
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('round-trips an explicit scope + project to core AND echoes them (#284)', async () => {
     // The tool registers the FULL `.strict()` schema, so the SDK no longer wraps
     // it non-strict and strips supplied keys before the handler runs: an explicit
@@ -578,6 +670,7 @@ describe('search tool', () => {
     contentLength: 'pinned'.length,
     truncated: false,
     score: 0.9,
+    superseded: false,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -594,6 +687,14 @@ describe('search tool', () => {
     expect(parsed.nextCursor).toBeUndefined()
   })
 
+  it('surfaces a demoted predecessor as superseded: true on the full-projection hit', async () => {
+    searchDashboardPage.mockResolvedValue(pageOf([{ ...HIT, superseded: true }]))
+    const result = await call('search', { query: 'sdk pin' }, ctx())
+    expect(result.isError).toBeFalsy()
+    const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.hits[0]).toMatchObject({ superseded: true })
+  })
+
   it('compact projection omits the excerpt triple per hit (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT]))
     const result = await call('search', { query: 'sdk pin', projection: 'compact' }, ctx())
@@ -604,6 +705,7 @@ describe('search tool', () => {
       memoryType: 'decision',
       topic: 'pin',
       score: 0.9,
+      superseded: false,
     })
   })
 
@@ -904,6 +1006,153 @@ describe('search tool', () => {
     expect(result.isError).toBe(true)
     expect(searchDashboardPage).not.toHaveBeenCalled()
   })
+
+  describe('order: chronological (list mode, issue #134)', () => {
+    /** Wrap hits as core's ListPage shape (keyset cursor, no frozen pool). */
+    function listPageOf(
+      hits: Array<{ id: string; score: number }>,
+      overrides: Record<string, unknown> = {},
+    ) {
+      const last = hits[hits.length - 1]
+      return {
+        hits,
+        hasMore: false,
+        nextCursor:
+          last === undefined
+            ? undefined
+            : { recordedAt: '2026-01-01T00:00:00.000000Z', id: last.id },
+        appliedScope: null,
+        ...overrides,
+      }
+    }
+
+    it('runs WITHOUT a configured gateway — no query, filter present', async () => {
+      searchChronological.mockResolvedValue(listPageOf([HIT]))
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(searchChronological).toHaveBeenCalledTimes(1)
+      expect(searchDashboardPage).not.toHaveBeenCalled()
+      const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+      expect(parsed.hits[0]?.id).toBe(MEMO_ID)
+    })
+
+    it('rejects a chronological call with no query AND no filter — nothing bounds the scan', async () => {
+      const result = await call('search', { order: 'chronological' }, ctx({ gateway: undefined }))
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    // The chronological core path takes no query argument at all, so a query
+    // that reached it was silently discarded and the caller got the whole live
+    // corpus back. It must never reach core.
+    it('rejects a chronological call carrying a query, even with a filter', async () => {
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work', query: 'find it' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('rejects a chronological call with a query and no filter', async () => {
+      const result = await call(
+        'search',
+        { order: 'chronological', query: 'find it' },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('mints a v3 keyset cursor, decodable, distinct in shape from the v2 frozen cursor, at full microsecond precision', async () => {
+      // A non-zero microsecond remainder (.654321, not .000000) proves the
+      // cursor carries the value through VERBATIM — a `new Date()` round-trip
+      // anywhere in the path would floor this to .654 and fail the assertion.
+      searchChronological.mockResolvedValue(
+        listPageOf([HIT], {
+          hasMore: true,
+          nextCursor: { recordedAt: '2026-03-01T00:00:00.654321Z', id: MEMO_ID },
+        }),
+      )
+      const result = await call('search', { order: 'chronological', scope: 'work' }, ctx())
+      const cursor = (result.structuredContent as { nextCursor: string }).nextCursor
+      expect(cursor).toBeDefined()
+      const decoded = decodeCursor(cursor) as { v: number; recordedAt?: string; id?: string }
+      expect(decoded.v).toBe(3)
+      expect(decoded.id).toBe(MEMO_ID)
+      expect(decoded.recordedAt).toBe('2026-03-01T00:00:00.654321Z')
+    })
+
+    it('rejects a v2 (relevance) cursor replayed under chronological order as invalid input', async () => {
+      // A cursor minted by relevance order carries `fp` bound to a DIFFERENT
+      // fingerprint formula (no `order` folded in, different query/filters) —
+      // decodeSearchCursor's fingerprint check fires before any shape
+      // inspection, so the mismatch is a typed invalid_input, never a crash
+      // or a silent misread of the wrong shape.
+      searchDashboardPage.mockResolvedValue(pageOf([HIT], { hasMore: true }))
+      const relevanceResult = await call('search', { query: 'sdk pin' }, ctx())
+      const v2Cursor = (relevanceResult.structuredContent as { nextCursor: string }).nextCursor
+
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work', cursor: v2Cursor },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('rejects a hand-crafted fingerprint-less v3 cursor as invalid input (fp is required on v3)', async () => {
+      // `fp` is REQUIRED on cursorPayloadV3Schema — v3 is introduced in this
+      // same change, so no legacy fp-less v3 token has ever legitimately
+      // existed (unlike v2's optional `fp`, a backward-compatibility carve-out
+      // for tokens minted before that field existed). Bypass encodeCursor's
+      // typed CursorPayload param (which now REJECTS this shape at compile
+      // time) to simulate a hand-stripped/malicious token: it must not decode
+      // as a v3 shape at all — a fp-less v3 payload is rejected as malformed
+      // input, the same as a garbled token, never silently accepted via the
+      // shape-guard fallback.
+      const malformedV3Cursor = Buffer.from(
+        JSON.stringify({ v: 3, recordedAt: '2026-01-01T00:00:00.000000Z', id: MEMO_ID }),
+        'utf8',
+      ).toString('base64url')
+      const result = await call(
+        'search',
+        { order: 'chronological', scope: 'work', cursor: malformedV3Cursor },
+        ctx({ gateway: undefined }),
+      )
+      expect(result.isError).toBe(true)
+      expect(searchChronological).not.toHaveBeenCalled()
+    })
+
+    it('binds the cursor fingerprint to order, so a chronological cursor is rejected under relevance order', async () => {
+      searchChronological.mockResolvedValue(
+        listPageOf([HIT], {
+          hasMore: true,
+          nextCursor: { recordedAt: '2026-01-01T00:00:00.000000Z', id: MEMO_ID },
+        }),
+      )
+      const chronoResult = await call(
+        'search',
+        { order: 'chronological', scope: 'work' },
+        ctx({ gateway: undefined }),
+      )
+      const v3Cursor = (chronoResult.structuredContent as { nextCursor: string }).nextCursor
+
+      searchDashboardPage.mockResolvedValue(pageOf([HIT]))
+      // SAME scope filter, but order defaults to relevance and a query is now
+      // required — the mismatched shape restarts the walk (no crash), and
+      // relevance order still needs query, which is absent here, so this is
+      // rejected as invalid input rather than silently misreading the cursor.
+      const result = await call('search', { scope: 'work', cursor: v3Cursor }, ctx())
+      expect(result.isError).toBe(true)
+    })
+  })
 })
 
 describe('get_facts tool', () => {
@@ -951,6 +1200,69 @@ describe('get_facts tool', () => {
     const overCap = await call('get_facts', { limit: 999 }, ctx())
     expect(overCap.isError).toBe(true)
     expect(getFacts).toHaveBeenCalledOnce() // the over-cap call never reached core
+  })
+
+  // get_facts range read: a chronological time-series read over a valid-time window.
+  it('forwards a range window to core and returns recordedAt on every fact', async () => {
+    getFacts.mockResolvedValue([
+      {
+        id: MEMO_ID,
+        memoryId: MEMO_ID,
+        subject: 'sdk',
+        predicate: 'version',
+        value: '1.28.0',
+        confidence: null,
+        validFrom: new Date('2025-01-01T00:00:00.000Z'),
+        validTo: new Date('2026-01-01T00:00:00.000Z'),
+        recordedAt: new Date('2025-01-01T00:00:00.000Z'),
+      },
+    ])
+    const result = await call(
+      'get_facts',
+      { range: { from: '2025-01-01T00:00:00.000Z', to: '2026-06-01T00:00:00.000Z' } },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getFacts).toHaveBeenCalledWith(
+      UID,
+      expect.objectContaining({
+        range: {
+          from: new Date('2025-01-01T00:00:00.000Z'),
+          to: new Date('2026-06-01T00:00:00.000Z'),
+        },
+      }),
+    )
+    const parsed = factsToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.facts[0]?.recordedAt).toBe('2025-01-01T00:00:00.000Z')
+  })
+
+  it('rejects an empty range object without calling core (mirrors asOf)', async () => {
+    const result = await call('get_facts', { range: {} }, ctx())
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('rejects range together with asOf (mutually exclusive time-travel modes)', async () => {
+    const result = await call(
+      'get_facts',
+      {
+        range: { from: '2025-01-01T00:00:00.000Z' },
+        asOf: { validAt: '2025-06-01T00:00:00.000Z' },
+      },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('rejects an inverted range (from later than to) — issue #58 precedent: reject, not clamp', async () => {
+    const result = await call(
+      'get_facts',
+      { range: { from: '2026-01-01T00:00:00.000Z', to: '2025-01-01T00:00:00.000Z' } },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(getFacts).not.toHaveBeenCalled()
   })
 
   // ACCESS GATE ENFORCEMENT: get_facts is a READ, so the handler asserts
@@ -1560,6 +1872,8 @@ function scopeRecord(name: string, aliases: string[] = []) {
   return { id: SCOPE_ID, name, aliases, createdAt: new Date('2026-01-01T00:00:00.000Z') }
 }
 const PROPOSAL_ID = crypto.randomUUID()
+const FACT_PROPOSAL_ID = '019fecaa-0000-7000-8000-0000000000f1'
+
 function proposalRecord(status = 'proposed') {
   return {
     id: PROPOSAL_ID,
@@ -1568,6 +1882,26 @@ function proposalRecord(status = 'proposed') {
     edgeType: 'supersedes',
     memoryType: 'fact',
     similarity: 0.91,
+    rationale: null,
+    status,
+    decidedAt:
+      status === 'rejected' || status === 'applied' ? new Date('2026-02-01T00:00:00.000Z') : null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  }
+}
+
+/** A core fact-proposal record (Dates, as the db layer returns them). */
+function factProposalRecord(status = 'proposed') {
+  return {
+    id: FACT_PROPOSAL_ID,
+    memoryId: MEMO_ID,
+    subject: 'lift.back_squat',
+    predicate: 'top_set.weight_kg',
+    value: '98',
+    memoryType: 'fact',
+    confidence: 0.82,
+    validFrom: null,
+    validTo: null,
     rationale: null,
     status,
     decidedAt:
@@ -1663,6 +1997,103 @@ describe('configure_scope tool', () => {
     )
     expect(result.isError).toBeFalsy()
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
+  })
+
+  it('list: an edge-only tenant gets NO factProposals key (byte-stable V1 response)', async () => {
+    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+    const result = await call(
+      'review_proposals',
+      { action: 'list' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+
+    // KEY ABSENCE, not `undefined`: a tenant with no fact proposals must see
+    // the response it always saw, with no new field appearing at all.
+    const structured = result.structuredContent as Record<string, unknown>
+    expect('factProposals' in structured).toBe(false)
+    expect(Object.keys(structured).sort()).toEqual(['action', 'count', 'proposals'])
+  })
+
+  it('list: surfaces fact proposals alongside edge ones, count stays the edge count', async () => {
+    listAllProposals.mockResolvedValue({
+      proposals: [proposalRecord()],
+      factProposals: [factProposalRecord()],
+    })
+    const result = await call(
+      'review_proposals',
+      { action: 'list' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.action).toBe('list')
+    if (parsed.action === 'list') {
+      expect(parsed.factProposals?.[0]?.subject).toBe('lift.back_squat')
+      // `count` is the shipped edge count, unchanged by the new list.
+      expect(parsed.count).toBe(1)
+      // Dates cross the transport as ISO strings.
+      expect(parsed.factProposals?.[0]?.createdAt).toBe('2026-01-01T00:00:00.000Z')
+      expect(parsed.factProposals?.[0]?.validFrom).toBeNull()
+    }
+  })
+
+  it('reject: a fact proposal returns the rejected_fact variant', async () => {
+    rejectProposalAnyKind.mockResolvedValue({
+      kind: 'fact',
+      proposal: factProposalRecord('rejected'),
+    })
+    const result = await call(
+      'review_proposals',
+      { action: 'reject', proposalId: FACT_PROPOSAL_ID },
+      ctx(),
+    )
+
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    // A DISTINCT literal: a client matching on `rejected` keeps getting the
+    // edge payload it was written against.
+    expect(parsed.action).toBe('rejected_fact')
+    if (parsed.action === 'rejected_fact') {
+      expect(parsed.proposal.status).toBe('rejected')
+      expect(parsed.proposal.decidedAt).toBe('2026-02-01T00:00:00.000Z')
+    }
+  })
+
+  it('accept: a fact proposal returns applied_fact with the materialized factId', async () => {
+    const factId = crypto.randomUUID()
+    acceptProposalAnyKind.mockResolvedValue({
+      kind: 'fact_applied',
+      proposal: factProposalRecord('applied'),
+      factId,
+    })
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: FACT_PROPOSAL_ID },
+      ctx(),
+    )
+
+    expect(result.isError).toBeFalsy()
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    expect(parsed.action).toBe('applied_fact')
+    if (parsed.action === 'applied_fact') {
+      // The reviewer learns what was written without a second call.
+      expect(parsed.factId).toBe(factId)
+      expect(parsed.proposal.status).toBe('applied')
+    }
+    expect(acceptProposalAnyKind).toHaveBeenCalledWith(UID, FACT_PROPOSAL_ID, 'user_mcp')
+  })
+
+  it('the input contract is unchanged: accept/reject still take a bare proposalId', async () => {
+    // Ids are uuidv7 and disjoint across both tables, so the id alone says
+    // which kind it is — naming the kind must stay unnecessary AND rejected.
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: FACT_PROPOSAL_ID, kind: 'fact' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect(acceptProposalAnyKind).not.toHaveBeenCalled()
   })
 
   it('anyOf FLOOR: a WRITE-ONLY token CANNOT list (handler read-gate)', async () => {
@@ -1794,64 +2225,67 @@ describe('describe_environment tool', () => {
 
 describe('review_proposals tool', () => {
   it('list: read-only token returns bounded schema-valid records', async () => {
-    listProposals.mockResolvedValue([proposalRecord()])
+    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
     const result = await call(
       'review_proposals',
       { action: 'list' },
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
       expect(parsed.proposals[0]?.status).toBe('proposed')
     }
     // The schema default limit is forwarded (no-firehose).
-    expect(listProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
+    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
   })
 
   it('list: forwards a status filter and a caller limit', async () => {
-    listProposals.mockResolvedValue([])
+    listAllProposals.mockResolvedValue({ proposals: [], factProposals: [] })
     await call(
       'review_proposals',
       { action: 'list', status: 'rejected', limit: 10 },
       ctx({ scopes: ['memory:read'] }),
     )
-    expect(listProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
   })
 
   it('reject: write token transitions and echoes the updated record', async () => {
-    rejectProposal.mockResolvedValue(proposalRecord('rejected'))
+    rejectProposalAnyKind.mockResolvedValue({ kind: 'edge', proposal: proposalRecord('rejected') })
     const result = await call(
       'review_proposals',
       { action: 'reject', proposalId: PROPOSAL_ID },
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('rejected')
     if (parsed.action === 'rejected') expect(parsed.proposal.status).toBe('rejected')
-    expect(rejectProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID)
+    expect(rejectProposalAnyKind).toHaveBeenCalledWith(UID, PROPOSAL_ID)
   })
 
   it('accept: write token applies the proposal and echoes the applied record', async () => {
-    applyProposal.mockResolvedValue(proposalRecord('applied'))
+    acceptProposalAnyKind.mockResolvedValue({
+      kind: 'edge_applied',
+      proposal: proposalRecord('applied'),
+    })
     const result = await call(
       'review_proposals',
       { action: 'accept', proposalId: PROPOSAL_ID },
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputSchema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('applied')
     if (parsed.action === 'applied') expect(parsed.proposal.status).toBe('applied')
     // The MCP transport stamps its actor class on the apply.
-    expect(applyProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID, 'user_mcp')
+    expect(acceptProposalAnyKind).toHaveBeenCalledWith(UID, PROPOSAL_ID, 'user_mcp')
   })
 
   it('accept: maps a missing/already-decided proposal to not_found', async () => {
-    applyProposal.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
+    acceptProposalAnyKind.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
     const result = await call(
       'review_proposals',
       { action: 'accept', proposalId: PROPOSAL_ID },
@@ -1862,7 +2296,7 @@ describe('review_proposals tool', () => {
   })
 
   it('accept: maps an event-type supersession refusal to conflict (docs/concepts/memory-model.mdx "Consolidation is advisory")', async () => {
-    applyProposal.mockRejectedValue(new EpisodicSupersessionError(PROPOSAL_ID, 'event'))
+    acceptProposalAnyKind.mockRejectedValue(new EpisodicSupersessionError(PROPOSAL_ID, 'event'))
     const result = await call(
       'review_proposals',
       { action: 'accept', proposalId: PROPOSAL_ID },
@@ -1873,7 +2307,7 @@ describe('review_proposals tool', () => {
   })
 
   it('accept: maps a stale (no-longer-live) successor refusal to conflict', async () => {
-    applyProposal.mockRejectedValue(new SuccessorNotLiveError(PROPOSAL_ID, MEMO_ID))
+    acceptProposalAnyKind.mockRejectedValue(new SuccessorNotLiveError(PROPOSAL_ID, MEMO_ID))
     const result = await call(
       'review_proposals',
       { action: 'accept', proposalId: PROPOSAL_ID },
@@ -1884,7 +2318,7 @@ describe('review_proposals tool', () => {
   })
 
   it('anyOf FLOOR: a WRITE-ONLY token passes the floor and CAN reject', async () => {
-    rejectProposal.mockResolvedValue(proposalRecord('rejected'))
+    rejectProposalAnyKind.mockResolvedValue({ kind: 'edge', proposal: proposalRecord('rejected') })
     const writeOnly = ctx({ scopes: ['memory:write'] })
     const result = await call(
       'review_proposals',
@@ -1892,7 +2326,7 @@ describe('review_proposals tool', () => {
       writeOnly,
     )
     expect(result.isError).toBeFalsy()
-    expect(rejectProposal).toHaveBeenCalledWith(UID, PROPOSAL_ID)
+    expect(rejectProposalAnyKind).toHaveBeenCalledWith(UID, PROPOSAL_ID)
   })
 
   it('anyOf FLOOR: a WRITE-ONLY token CANNOT list (handler read-gate)', async () => {
@@ -1900,7 +2334,7 @@ describe('review_proposals tool', () => {
     const result = await call('review_proposals', { action: 'list' }, writeOnly)
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
-    expect(listProposals).not.toHaveBeenCalled()
+    expect(listAllProposals).not.toHaveBeenCalled()
   })
 
   it('TWO-LAYER SCOPE: a read-only token may list but NOT reject/accept', async () => {
@@ -1919,12 +2353,12 @@ describe('review_proposals tool', () => {
     )
     expect(accepted.isError).toBe(true)
     expect((accepted.content[0] as { text: string }).text).toContain('insufficient scope')
-    expect(rejectProposal).not.toHaveBeenCalled()
-    expect(applyProposal).not.toHaveBeenCalled()
+    expect(rejectProposalAnyKind).not.toHaveBeenCalled()
+    expect(acceptProposalAnyKind).not.toHaveBeenCalled()
   })
 
   it('maps a missing/already-decided proposal to not_found', async () => {
-    rejectProposal.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
+    rejectProposalAnyKind.mockRejectedValue(new ProposalNotFoundError(PROPOSAL_ID))
     const result = await call(
       'review_proposals',
       { action: 'reject', proposalId: PROPOSAL_ID },
@@ -1937,7 +2371,7 @@ describe('review_proposals tool', () => {
   it('rejects a non-uuid proposalId without calling core', async () => {
     const result = await call('review_proposals', { action: 'reject', proposalId: 'nope' }, ctx())
     expect(result.isError).toBe(true)
-    expect(rejectProposal).not.toHaveBeenCalled()
+    expect(rejectProposalAnyKind).not.toHaveBeenCalled()
   })
 })
 

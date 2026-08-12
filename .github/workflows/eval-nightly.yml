@@ -26,6 +26,14 @@
 # license-clean fixture in the default lane; the official MIT-licensed upstream
 # parquet subsets are pinned (url+sha256+bytes) and fetched only by the gated
 # --download integrity lane (parquet decoding deferred — no dependency added).
+# Slice 6: model-in-the-loop tool-selection (src/tool-selection-model.mjs) —
+# the REAL-model counterpart to the deterministic embedding-cosine proxy that
+# runs report-only inside the BLOCKING gate (src/tool-selection.mjs). Forces a
+# live model to pick one tool from the real catalog per scenario in
+# fixtures/tool-selection.json, and — when the tool-selection embeddings
+# fixture is present — reports agreement between the model's picks and the
+# deterministic proxy's picks. Advisory-only, live only when the gateway
+# secret is configured, skipped (green) otherwise (docs/concepts/mcp-surface.mdx).
 #
 # Each lane writes a per-run JSON metrics file (ids/counts/scores ONLY — never
 # haystack/memory content, hard rule 6) into eval-metrics/, uploaded as a build
@@ -141,6 +149,45 @@ jobs:
             echo
             echo '```json'
             printf '%s\n' "$judge"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Model-in-the-loop tool-selection slice (slice 6). ADVISORY, NEVER
+      # BLOCKING and NEVER required: a wrong pick, an unparseable answer, or a
+      # missing secret does not fail the run. Live-model lane ONLY when
+      # LLM_GATEWAY_API_KEY is configured — otherwise it skips with a clear
+      # log line (no silent network dependency), same convention as the
+      # model-judged slice above.
+      - name: Tool-selection model-in-the-loop slice (advisory, live model when secret set)
+        id: tool_selection_model
+        continue-on-error: true
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+          # A model NAME, not a secret: repo/org Actions variable so this lane
+          # can be pointed at a different model than --judge's LLM_JUDGE_MODEL
+          # independently (falls back to the script's gpt-4o-mini default when
+          # unset — see MODEL_ENV in src/tool-selection-model.mjs).
+          LLM_TOOL_SELECTION_MODEL: ${{ vars.LLM_TOOL_SELECTION_MODEL }}
+        run: |
+          if [ -z "${LLM_GATEWAY_API_KEY:-}" ]; then
+            echo "SKIP: LLM_GATEWAY_API_KEY not configured — skipping model-in-the-loop tool-selection slice. Advisory, never blocks."
+            {
+              echo
+              echo '### tool-selection model-in-the-loop slice: skipped'
+              echo 'LLM_GATEWAY_API_KEY is not configured; the model-in-the-loop tool-selection slice was skipped. Advisory only.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p eval-metrics
+          selection=$(node eval/src/tool-selection-model.mjs --json)
+          printf '%s\n' "$selection" > eval-metrics/tool-selection-model.json
+          {
+            echo
+            echo '### tool-selection model-in-the-loop slice (live)'
+            echo
+            echo '```json'
+            printf '%s\n' "$selection"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

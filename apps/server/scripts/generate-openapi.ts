@@ -28,7 +28,8 @@ import {
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseV2Schema,
-  factsQueryInputSchema,
+  factsQueryInputV2Schema,
+  factsRangeSchema,
   factsToolOutputSchema,
   invalidInputRestErrorResponseSchema,
   memoriesFacetsResponseSchema,
@@ -42,8 +43,8 @@ import {
   proposalRejectBodySchema,
   proposalStatusSchema,
   proposalsListQuerySchema,
-  rememberToolInputSchema,
-  rememberToolOutputSchema,
+  rememberToolInputV2Schema,
+  rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   retrievalScopeModeSchema,
@@ -66,12 +67,18 @@ const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
 const SERVERS = [{ url: 'https://api.3ngram.ai', description: '3ngram platform' }]
 
-// GET /api/v1/facts flattens the nested asOf object into two flat query keys
-// (router.ts reshapes before the single parse) — compose the documented query
-// contract from the SAME exports, never redeclared.
+// GET /api/v1/facts flattens the nested asOf AND range objects into flat query
+// keys (router.ts reshapes both before the single parse) — compose the
+// documented query contract from the SAME exports, never redeclared.
+// factsQueryInputV2Schema carries a superRefine (range/asOf mutual exclusion +
+// inverted-range check), and zod rejects `.omit()` on a refined object schema,
+// so the base shape is rebuilt into a fresh (refinement-free) object first —
+// same reason briefingQueryShape below is assembled field-by-field rather than
+// derived via `.omit()` off a refined schema.
 const factsQuery = z.object({
-  ...factsQueryInputSchema.omit({ asOf: true }).shape,
+  ...z.object({ ...factsQueryInputV2Schema.shape }).omit({ asOf: true, range: true }).shape,
   ...asOfSchema.shape,
+  ...factsRangeSchema.shape,
 })
 
 // GET /api/v1/briefing flattens the selector union into flat keys: `kind` is the
@@ -217,6 +224,27 @@ const exportProposal = z
     createdAt: z.string().datetime(),
   })
   .strict()
+// Staged fact proposals awaiting review: the extractor's candidate
+// subject/predicate/value plus its rationale. No recordedAt (a proposal is not
+// yet an assertion) and a nullable validity window (the reviewer supplies it on
+// accept), unlike exportFact above.
+const exportFactProposal = z
+  .object({
+    id: z.uuid(),
+    memoryId: z.uuid(),
+    subject: z.string(),
+    predicate: z.string(),
+    value: z.string(),
+    confidence: z.number().nullable(),
+    validFrom: z.string().datetime().nullable(),
+    validTo: z.string().datetime().nullable(),
+    memoryType: z.string(),
+    rationale: z.string().nullable(),
+    status: z.string(),
+    decidedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  })
+  .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like
 // the rest of the archive. Numeric USD columns surface as decimal strings (drizzle
 // numeric); usage rows carry no content (hard rule 6).
@@ -275,6 +303,7 @@ const accountExport = z
     edges: z.array(exportEdge),
     memoryEvents: z.array(exportMemoryEvent),
     proposals: z.array(exportProposal),
+    factProposals: z.array(exportFactProposal),
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
@@ -288,6 +317,7 @@ const accountExport = z
         edges: z.number().int().min(0),
         memoryEvents: z.number().int().min(0),
         proposals: z.number().int().min(0),
+        factProposals: z.number().int().min(0),
         userBudgets: z.number().int().min(0),
         llmUsage: z.number().int().min(0),
       })
@@ -308,6 +338,7 @@ const accountDeletion = z
         facts: z.number().int().min(0),
         commitments: z.number().int().min(0),
         proposals: z.number().int().min(0),
+        factProposals: z.number().int().min(0),
         sessionsDeleted: z.number().int().min(0),
         apiKeysRevoked: z.number().int().min(0),
         oauthTokensRevoked: z.number().int().min(0),
@@ -342,7 +373,7 @@ interface RouteDoc {
 /** Every /api/v1 route. assertRouteCoverage() keeps this table honest. */
 // biome-ignore format: one route per line keeps the table auditable against router.ts
 const ROUTES: readonly RouteDoc[] = [
-  { method: 'post', path: '/api/v1/memories', operationId: 'remember', summary: 'Append a new memory (mirrors the MCP remember tool)', body: rememberToolInputSchema, status: 201, response: rememberToolOutputSchema, errors: [{ status: 409, description: 'The content is already live or the live-memory resource limit has been reached', reasons: ['duplicate_memory', 'resource_limit_exceeded'] }] },
+  { method: 'post', path: '/api/v1/memories', operationId: 'remember', summary: 'Append a new memory (mirrors the MCP remember tool)', body: rememberToolInputV2Schema, status: 201, response: rememberToolOutputV2Schema, errors: [{ status: 409, description: 'The content is already live or the live-memory resource limit has been reached', reasons: ['duplicate_memory', 'resource_limit_exceeded'] }] },
   { method: 'get', path: '/api/v1/memories', operationId: 'listMemories', summary: 'List memories (bounded; identity fields only, never content)', query: memoriesListQuerySchema, status: 200, response: memoriesListResponseSchema },
   { method: 'get', path: '/api/v1/memories/facets', operationId: 'getMemoryFacets', summary: 'Distinct scope and project values for the tenant (filter population)', status: 200, response: memoriesFacetsResponseSchema },
   { method: 'get', path: '/api/v1/memories/:id', operationId: 'getMemory', summary: 'Inspect a single memory, including content', status: 200, response: memoryDetailSchema },

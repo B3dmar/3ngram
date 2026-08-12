@@ -48,6 +48,7 @@ function publicResponse(result: ScopedSearchResult) {
       contentLength: hit.contentLength,
       truncated: hit.truncated,
       score: hit.score,
+      superseded: hit.superseded,
     })),
     count: result.hits.length,
     ...(result.appliedScope === null ? {} : { appliedScope: result.appliedScope }),
@@ -79,14 +80,25 @@ async function handlePublicSearch(
 function frozenPage(input: DashboardSearchQuery, fingerprint: string) {
   if (input.cursor === undefined) return undefined
   const decoded = decodeSearchCursor(input.cursor, fingerprint)
-  return decoded === undefined
-    ? undefined
-    : {
-        ids: decoded.ids,
-        scores: decoded.scores,
-        off: decoded.off,
-        ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
-      }
+  // REST dashboard search only ever mints/consumes the v2 frozen-ordering
+  // cursor — the v3 chronological keyset cursor (list mode) is MCP-only, and
+  // this route never folds `order` into `fingerprint` above, so ANY v3 token
+  // is already rejected as a typed mismatch by decodeSearchCursor before this
+  // line ever runs: `fp` is REQUIRED on cursorPayloadV3Schema (v3 has no
+  // legacy fp-less analogue — it is introduced alongside this same required
+  // field, unlike v2's fp, which is optional only for tokens minted before it
+  // existed). So this shape guard is UNREACHABLE for a well-formed v3 token;
+  // it stays as defense in depth against a malformed/hand-crafted payload —
+  // restart at page 1, the same graceful-restart behavior a legacy/garbled
+  // cursor already gets, rather than reading `.ids`/`.scores` off the wrong
+  // shape.
+  if (decoded === undefined || decoded.v !== 2) return undefined
+  return {
+    ids: decoded.ids,
+    scores: decoded.scores,
+    off: decoded.off,
+    ...(decoded.policyScope === undefined ? {} : { policyScope: decoded.policyScope }),
+  }
 }
 
 function nextCursor(page: DashboardSearchPage, fingerprint: string): string | undefined {
@@ -108,6 +120,7 @@ function dashboardResponse(page: DashboardSearchPage, cursor: string | undefined
       memoryType: hit.memoryType,
       topic: hit.topic,
       score: hit.score,
+      superseded: hit.superseded,
       ...(hit.commitmentStatus == null ? {} : { commitmentStatus: hit.commitmentStatus }),
     })),
     count: page.hits.length,

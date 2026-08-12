@@ -28,14 +28,16 @@
 // bridge. The exact per-action contract is enforced at the transport boundary.
 import { log, mcpToolErrors } from '@3ngram/config'
 import {
-  applyProposal,
+  acceptProposalAnyKind,
   createScope,
+  type DecidedProposal,
   deleteScope,
   describeEnvironment,
-  listProposals,
+  type FactProposalRecord,
+  listAllProposals,
   listScopes,
   type ProposalRecord,
-  rejectProposal,
+  rejectProposalAnyKind,
   renameScope,
   type ScopeRecord,
   setRetrievalDefault,
@@ -50,7 +52,7 @@ import {
   describeEnvironmentOutputV2Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
-  reviewProposalsOutputSchema,
+  reviewProposalsOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -223,12 +225,22 @@ async function runReviewProposals(
     // ACCESS GUARD: proposals are memory-derived, so listing them is a READ — read
     // access is asserted BEFORE the db op (self-host allowAllAccess allows all).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    const proposals = await listProposals(ctx.userId, { status: input.status, limit: input.limit })
+    const { proposals, factProposals } = await listAllProposals(ctx.userId, {
+      status: input.status,
+      limit: input.limit,
+    })
     return ok(
-      parseOutput('review_proposals', reviewProposalsOutputSchema, {
+      parseOutput('review_proposals', reviewProposalsOutputV2Schema, {
         action: 'list',
         proposals: proposals.map(toProposalOutput),
+        // `count` stays the EDGE count: it is the shipped field, and a tenant
+        // with no fact proposals must see the identical response it always has.
         count: proposals.length,
+        // Key OMITTED when there are none, so an edge-only tenant's response is
+        // byte-identical to V1 rather than growing an empty array.
+        ...(factProposals.length > 0
+          ? { factProposals: factProposals.map(toFactProposalOutput) }
+          : {}),
       }),
     )
   }
@@ -239,22 +251,56 @@ async function runReviewProposals(
   // allowAllAccess allows all).
   if (ctx.access) await ctx.access.assertWrite(ctx.userId)
 
-  if (input.action === 'accept') {
-    const proposal = await applyProposal(ctx.userId, input.proposalId, 'user_mcp')
-    return ok(
-      parseOutput('review_proposals', reviewProposalsOutputSchema, {
-        action: 'applied',
-        proposal: toProposalOutput(proposal),
-      }),
-    )
-  }
-  const proposal = await rejectProposal(ctx.userId, input.proposalId)
+  // The id alone identifies the kind (uuidv7, disjoint across both tables), so
+  // the shipped single-id input is unchanged; core probes edge then fact.
+  const decided =
+    input.action === 'accept'
+      ? await acceptProposalAnyKind(ctx.userId, input.proposalId, 'user_mcp')
+      : await rejectProposalAnyKind(ctx.userId, input.proposalId)
   return ok(
-    parseOutput('review_proposals', reviewProposalsOutputSchema, {
-      action: 'rejected',
-      proposal: toProposalOutput(proposal),
-    }),
+    parseOutput('review_proposals', reviewProposalsOutputV2Schema, toDecisionOutput(decided)),
   )
+}
+
+/** Shape a core fact-proposal record for the structured output (Dates -> ISO). */
+function toFactProposalOutput(p: FactProposalRecord) {
+  return {
+    id: p.id,
+    memoryId: p.memoryId,
+    subject: p.subject,
+    predicate: p.predicate,
+    value: p.value,
+    memoryType: p.memoryType,
+    confidence: p.confidence,
+    validFrom: p.validFrom === null ? null : p.validFrom.toISOString(),
+    validTo: p.validTo === null ? null : p.validTo.toISOString(),
+    rationale: p.rationale,
+    status: p.status,
+    decidedAt: p.decidedAt === null ? null : p.decidedAt.toISOString(),
+    createdAt: p.createdAt.toISOString(),
+  }
+}
+
+/**
+ * Map a decided proposal to its output variant. The two kinds get DISTINCT
+ * discriminator literals so a client matching on `applied`/`rejected` keeps
+ * receiving the edge payload it was written against.
+ */
+function toDecisionOutput(decided: DecidedProposal): Record<string, unknown> {
+  switch (decided.kind) {
+    case 'edge':
+      return { action: 'rejected', proposal: toProposalOutput(decided.proposal) }
+    case 'edge_applied':
+      return { action: 'applied', proposal: toProposalOutput(decided.proposal) }
+    case 'fact':
+      return { action: 'rejected_fact', proposal: toFactProposalOutput(decided.proposal) }
+    case 'fact_applied':
+      return {
+        action: 'applied_fact',
+        proposal: toFactProposalOutput(decided.proposal),
+        factId: decided.factId,
+      }
+  }
 }
 
 /**
@@ -339,9 +385,9 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
     config: {
       title: 'Review Proposals',
       description:
-        'List consolidation proposals (optionally by status), reject one, or accept one (materializes the proposed edge; a supersedes/updates edge also closes the predecessor). Reject and accept require the write scope.',
+        'List proposals awaiting review (optionally by status), reject one, or accept one. Two kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; and extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it. Accept and reject take the proposal id either way. Reject and accept require the write scope.',
       inputSchema: reviewProposalsInputSchema,
-      outputSchema: reviewProposalsOutputSchema,
+      outputSchema: reviewProposalsOutputV2Schema,
       // Per-action (list is a read; reject/accept are writes), so the hints
       // describe the write path. destructiveHint: false: accepting materializes
       // an edge, and a supersedes/updates edge CLOSES the predecessor's validity

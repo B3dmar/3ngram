@@ -15,6 +15,7 @@
 import type { ActorKind, EventKind } from '@3ngram/schema'
 import { and, count, eq, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
+import { insertFacts, type MemoryFactWrite } from './facts-write.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { ResourceLimitExceededError } from './resource-limits.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
@@ -78,6 +79,12 @@ export interface MemoryEventWrite {
 export interface WrittenMemory {
   id: string
   commitmentId?: string | undefined
+  /**
+   * Ids of the facts written alongside this memory, positionally matching the
+   * `facts` argument of {@link writeMemory}. Present ONLY when at least one
+   * fact was written, so a write without facts keeps a byte-identical result.
+   */
+  factIds?: string[] | undefined
 }
 
 /**
@@ -206,18 +213,42 @@ export async function insertMemoryWithEvent(
  * deferral held only because no surface created commitment memories yet. The
  * returned {@link WrittenMemory#commitmentId} carries the new commitment id.
  *
+ * Structured facts:
+ * `facts` rides the SAME transaction as the memory, so a memory and the facts
+ * it asserts are never half-written — a fact whose source memory rolled back
+ * would be an unsourced claim in the structured projection. Facts are inserted
+ * for EVERY memory type, before the commitment branch below, because nothing
+ * about asserting a fact is commitment-specific. The returned
+ * {@link WrittenMemory#factIds} carries the new ids positionally.
+ *
  * The duplicate guard and its concurrent-INSERT backstop live in
  * {@link insertMemoryWithEvent}; this wrapper owns the transaction and the
  * unique-violation -> {@link DuplicateMemoryError} mapping. Neither path
  * swallows the error.
+ *
+ * That mapping stays safe with facts in the transaction because `facts` carries
+ * no unique index and no unique constraint — bi-temporal history keeps every
+ * assertion — and its only unique object, the uuidv7 primary key, is
+ * server-generated, so no caller input can collide on it. A facts INSERT
+ * therefore has no violation to raise and nothing to misattribute to the
+ * memories partial-hash index. The premise is pinned by a schema-shape test
+ * (test/facts-write.test.ts): adding uniqueness to `facts` fails that test,
+ * which is the signal to scope this catch (the insertEdge precedent) rather
+ * than let a fact collision surface as a duplicate memory.
  */
 export async function writeMemory(
   input: MemoryWrite,
   maxLiveMemories?: number,
+  facts?: readonly MemoryFactWrite[],
 ): Promise<WrittenMemory> {
   try {
     return await withTenant(input.userId, async (tx) => {
-      const written = await insertMemoryWithEvent(tx, input, undefined, maxLiveMemories)
+      const inserted = await insertMemoryWithEvent(tx, input, undefined, maxLiveMemories)
+      const factIds = await insertFacts(
+        tx,
+        (facts ?? []).map((fact) => ({ ...fact, userId: input.userId, memoryId: inserted.id })),
+      )
+      const written: WrittenMemory = factIds.length > 0 ? { ...inserted, factIds } : inserted
       if (input.memoryType !== 'commitment') return written
       // Same-tx commitment auto-create: defaults only (status 'open'). The
       // composite FK to the just-inserted memory holds inside the tx; the unique

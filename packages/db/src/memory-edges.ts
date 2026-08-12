@@ -8,10 +8,12 @@
 // (RLS binds app.user_id), so it never references user_id beyond the row value.
 //
 // EDGE DIRECTION IS LOAD-BEARING (search.ts): supersession ranking keys on
-// EXISTS(edge WHERE e.to_id = m.id AND e.edge_type = 'supersedes') — "m is a
-// superseded predecessor". A revision therefore writes the edge FROM the
-// successor TO the predecessor. revise() (memory-revise.ts) owns that direction;
-// this helper is direction-agnostic and just persists what it is given.
+// EXISTS(edge WHERE e.to_id = m.id AND e.edge_type IN ('supersedes', 'updates'))
+// — "m is a superseded predecessor" (either revise kind, matching
+// CLOSES_PREDECESSOR in proposals-apply.ts). A revision therefore writes the
+// edge FROM the successor TO the predecessor. revise() (memory-revise.ts) owns
+// that direction; this helper is direction-agnostic and just persists what it
+// is given.
 //
 // Append-only: this only ever INSERTs. The runtime role has no DELETE on
 // memory_edges (provision-roles.sql / append-only.int.test.ts).

@@ -29,11 +29,12 @@ import { MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE, type MemoryScope } from '@3ngram
 import type { Gateway } from '@3ngram/llm'
 import {
   type AsOfInput,
-  factsQueryInputSchema,
+  type FactsRangeInput,
+  factsQueryInputV2Schema,
   factsToolOutputSchema,
   MAX_CONTENT_LENGTH,
-  rememberToolInputSchema,
-  rememberToolOutputSchema,
+  rememberToolInputV2Schema,
+  rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   reviseToolInputSchema,
@@ -197,6 +198,12 @@ function toAsOf(asOf: AsOfInput | undefined): { validAt?: Date; asKnownAt?: Date
   return defined({ validAt: toDate(asOf.validAt), asKnownAt: toDate(asOf.asKnownAt) })
 }
 
+/** Coerce a range's optional ISO-8601 bounds to Dates for the bi-temporal core query (range read). */
+function toRange(range: FactsRangeInput | undefined): { from?: Date; to?: Date } | undefined {
+  if (range === undefined) return undefined
+  return defined({ from: toDate(range.from), to: toDate(range.to) })
+}
+
 /**
  * remember — append a memory (docs/concepts/mcp-design.mdx JTBD "persist something worth
  * keeping"). Validates via the canonical write schema, calls core remember()
@@ -212,9 +219,9 @@ const rememberTool: ToolDefinition = {
   requiredScope: MEMORY_WRITE_SCOPE,
   config: {
     title: 'Remember',
-    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in.`,
-    inputSchema: rememberToolInputSchema,
-    outputSchema: rememberToolOutputSchema,
+    description: `Append a new memory (decision, fact, preference, blocker, commitment, ...). Never merges; append-only. Content is capped at ${MAX_CONTENT_LENGTH} characters. To surface a commitment or blocker in a PROJECT-scoped briefing, pass \`project\` — a memory written with a NULL project never matches the bare project selector; only the scope_project selector's includeUnscoped: true opts it back in. Optionally pass \`facts\`: the measurable claims the memory states, as subject/predicate/value triples that \`get_facts\` can then read back directly instead of re-reading the prose. Values are text, so put the unit in the predicate and keep one measure per fact (subject \`lift.back_squat\`, predicate \`top_set.weight_kg\`, value \`98\`). Give a fact a \`validFrom\` when it became true, if that is not now.`,
+    inputSchema: rememberToolInputV2Schema,
+    outputSchema: rememberToolOutputV2Schema,
     // Appends a NEW row on every call, so repeating it is not a no-op —
     // idempotentHint: false. destructiveHint: false is a real product claim:
     // remember never merges into or overwrites an existing memory (hard rule 1).
@@ -230,7 +237,7 @@ const rememberTool: ToolDefinition = {
     // It returns the new id only, so the structured output echoes the NORMALIZED
     // write input (scope default + null project applied here) for the rest.
     // Embedding is on iff a gateway is configured — best-effort, never blocks.
-    const input = rememberToolInputSchema.parse(args)
+    const input = rememberToolInputV2Schema.parse(args)
     const gatewayOpts =
       ctx.gateway === undefined
         ? { access: ctx.access, limits: ctx.limits }
@@ -251,7 +258,7 @@ const rememberTool: ToolDefinition = {
     // it without a follow-up lookup. Undefined (omitted) for every other type.
     const output = parseOutput(
       'remember',
-      rememberToolOutputSchema,
+      rememberToolOutputV2Schema,
       defined({
         memory: {
           id: written.id,
@@ -262,6 +269,11 @@ const rememberTool: ToolDefinition = {
         },
         embedded,
         commitmentId: written.commitmentId,
+        // Ids only, and only when facts were written: `defined()` drops the key
+        // when undefined, so a write without facts returns the V1 response
+        // byte-for-byte. The triples themselves are memory content and are not
+        // echoed back (hard rule 6).
+        factIds: written.factIds,
       }),
     )
     return ok(output)
@@ -270,9 +282,15 @@ const rememberTool: ToolDefinition = {
 
 /**
  * get_facts — currently-valid facts for a subject, bi-temporally (docs/concepts/mcp-design.mdx
- * JTBD "what is currently true about X"). Calls core getFacts() with the
- * subject/predicate filters and the as_of coordinates (ISO strings coerced to
- * Date at this boundary).
+ * JTBD "what is currently true about X"), OR a chronological time-series read
+ * across a valid-time window (`range`). Calls core getFacts() with the
+ * subject/predicate filters and either the as_of coordinates or the range
+ * bounds (ISO strings coerced to Date at this boundary) — `range` and `asOf`
+ * are mutually exclusive, enforced by factsQueryInputV2Schema.
+ *
+ * get_facts has NO scope axis (issue #47, reaffirmed for the range read): the
+ * facts table carries no scope column, so a range read is not policy-enforced
+ * either — deliberately deferred again, not silently dropped.
  */
 const getFactsTool: ToolDefinition = {
   name: 'get_facts',
@@ -280,13 +298,13 @@ const getFactsTool: ToolDefinition = {
   config: {
     title: 'Get Facts',
     description:
-      'Currently-valid facts for a subject, with optional bi-temporal time travel. List mode (no subject) returns the most recent facts, bounded by an optional limit (default 50, max 200).',
-    inputSchema: factsQueryInputSchema,
+      'Currently-valid facts for a subject, with optional bi-temporal time travel, OR a chronological time-series read across a valid-time window (range: {from?, to?} — half-open [from, to), surfaces superseded generations inside it). range and asOf are mutually exclusive. List/range mode (no subject) returns the most recent (or earliest-in-window) facts, bounded by an optional limit (default 50, max 200).',
+    inputSchema: factsQueryInputV2Schema,
     outputSchema: factsToolOutputSchema,
     annotations: READ_ONLY_ANNOTATIONS,
   },
   async handler(args, ctx) {
-    const input = factsQueryInputSchema.parse(args)
+    const input = factsQueryInputV2Schema.parse(args)
     // ACCESS GUARD: get_facts is a READ, so read access is asserted BEFORE the db
     // op (self-host allowAllAccess allows all; back-compat when no gate is wired).
     // Mirrors search (which asserts this inside core) and the REST /api/v1/facts
@@ -298,6 +316,7 @@ const getFactsTool: ToolDefinition = {
         subject: input.subject,
         predicate: input.predicate,
         asOf: toAsOf(input.asOf),
+        range: toRange(input.range),
         // Always forward the bounded limit (schema default 50, max 200) so list
         // mode never returns every fact (no-firehose, docs/concepts/mcp-design.mdx).
         limit: input.limit,
@@ -312,6 +331,7 @@ const getFactsTool: ToolDefinition = {
         confidence: fact.confidence,
         validFrom: fact.validFrom.toISOString(),
         validTo: fact.validTo?.toISOString() ?? null,
+        recordedAt: fact.recordedAt.toISOString(),
       })),
       count: facts.length,
     })
@@ -467,7 +487,16 @@ export const TOOLS: readonly ToolDefinition[] = [
   ...createAdminTools(() => TOOLS.map((t) => t.name)),
 ]
 
-/** Hard ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12 registered; the LAST slot is reserved for the future `manage_context` tool. */
+/**
+ * Working ceiling per docs/concepts/mcp-design.mdx / hard rule 8. LEDGER: 11/12
+ * registered, and the twelfth is UNRESERVED — it goes to whichever tool next
+ * earns it on the JTBD + evidence test.
+ *
+ * The number is 3ngram's own, not the protocol's: the 2026-07-28 specification
+ * defines no maximum tool count and paginates `tools/list`. What it proxies for
+ * is description overlap and model selection accuracy, which is what to argue
+ * about when this binds. See docs/concepts/mcp-surface.mdx.
+ */
 export const MAX_TOOLS = 12
 
 /**

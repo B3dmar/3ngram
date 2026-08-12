@@ -32,7 +32,13 @@ import {
   userSessions,
   users,
 } from './schema/identity.js'
-import { commitments, consolidationProposals, facts, memories } from './schema/memory.js'
+import {
+  commitments,
+  consolidationProposals,
+  factProposals,
+  facts,
+  memories,
+} from './schema/memory.js'
 
 /** Redaction sentinel written into erased text PII columns. */
 export const ERASED_PII = '[erased]'
@@ -67,6 +73,8 @@ export interface AccountErasureResult {
   facts: number
   commitments: number
   proposals: number
+  /** Staged fact proposals awaiting review — user content, erased like `facts`. */
+  factProposals: number
   sessionsDeleted: number
   apiKeysRevoked: number
   oauthTokensRevoked: number
@@ -120,6 +128,7 @@ export async function eraseAccountData(
       facts: 0,
       commitments: 0,
       proposals: 0,
+      factProposals: 0,
       sessionsDeleted: 0,
       apiKeysRevoked: 0,
       oauthTokensRevoked: 0,
@@ -148,6 +157,17 @@ export async function eraseAccountData(
     .update(consolidationProposals)
     .set({ rationale: null })
     .returning({ id: consolidationProposals.id })
+  // Staged fact proposals carry the SAME user content as `facts` (subject,
+  // predicate, value) plus a generated rationale, and they outlive the account:
+  // the users row is tombstoned rather than deleted, so the FK's ON DELETE
+  // CASCADE never fires and an un-reviewed proposal would survive the erasure
+  // with its content intact. Redacted in place (no DELETE grant), matching the
+  // facts + consolidation_proposals treatment above. The structural skeleton
+  // (ids, memory_id, status, decided_at, validity window) survives.
+  const erasedFactProposals = await tx
+    .update(factProposals)
+    .set({ subject: ERASED_PII, predicate: ERASED_PII, value: ERASED_PII, rationale: null })
+    .returning({ id: factProposals.id })
 
   // Revoke credentials. Sessions are deletable (not append-only memory); api keys
   // and oauth tokens are revoked in place (revoked_at) — only the still-live ones.
@@ -216,6 +236,7 @@ export async function eraseAccountData(
     facts: erasedFacts.length,
     commitments: erasedCommitments.length,
     proposals: erasedProposals.length,
+    factProposals: erasedFactProposals.length,
     sessionsDeleted: deletedSessions.length,
     apiKeysRevoked: revokedKeys.length,
     oauthTokensRevoked: revokedTokens.length,

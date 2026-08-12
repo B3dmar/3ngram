@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   EDGE_TYPES,
   edgeInputSchema,
+  factWriteSchema,
   MAX_CONTENT_LENGTH,
+  MAX_FACT_WRITE_FRACTION_DIGITS,
+  MAX_FACTS_PER_WRITE,
   MAX_TAGS,
   rememberInputSchema,
+  rememberWithFactsInputSchema,
   reviseInputSchema,
 } from '../src/index.js'
 
@@ -145,6 +150,201 @@ describe('edgeInput', () => {
         toId: UUID_B,
         edgeType: 'supersedes',
         createdBy: 'robot',
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('factWrite', () => {
+  const validFact = { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }
+
+  it('accepts a minimal triple and leaves the validity window open', () => {
+    const parsed = factWriteSchema.parse(validFact)
+    expect(parsed.validFrom).toBeUndefined()
+    expect(parsed.validTo).toBeUndefined()
+  })
+
+  it('keeps instants as ISO strings and treats explicit null as absent', () => {
+    const parsed = factWriteSchema.parse({
+      ...validFact,
+      validFrom: '2026-01-01T00:00:00.000Z',
+      validTo: null,
+    })
+    // ISO string, NOT a Date: this contract is published as JSON Schema on the
+    // remember tool, where a z.date() leg is unrepresentable. Core converts to
+    // a Date once, on the way to the db (the asOfSchema precedent).
+    expect(parsed.validFrom).toBe('2026-01-01T00:00:00.000Z')
+    // null means DB-NULL (absent), never the 1970 epoch — an epoch validTo
+    // would mark a live fact as already closed.
+    expect(parsed.validTo).toBeUndefined()
+  })
+
+  it('rejects a Date and a non-ISO string (JSON has no date type)', () => {
+    expect(factWriteSchema.safeParse({ ...validFact, validFrom: new Date() }).success).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, validFrom: 'yesterday' }).success).toBe(false)
+  })
+
+  it('rejects a validTo with no validFrom (a window that ends but never begins)', () => {
+    // Mirrors fact_proposals_validity_check: unrepresentable downstream, so it
+    // fails at the validation boundary rather than as a constraint violation.
+    expect(
+      factWriteSchema.safeParse({ ...validFact, validTo: '2026-01-01T00:00:00.000Z' }).success,
+    ).toBe(false)
+  })
+
+  it('rejects an inverted validity window', () => {
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-02T00:00:00.000Z',
+        validTo: '2026-01-01T00:00:00.000Z',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('orders MIXED-PRECISION instants by time, not lexicographically', () => {
+    // Regression: the refine compares parsed ISO strings, and string `<=` is
+    // lexicographic — '.' (0x2E) sorts before 'Z' (0x5A). Same-length pairs
+    // (every other case here) mask it; these differ in precision, which is
+    // exactly what a model-written call produces.
+    // A REAL 1ms window must be accepted:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.001Z',
+      }).success,
+    ).toBe(true)
+    // and the inverted pair rejected, though it sorts as "ascending" as text:
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.001Z',
+        validTo: '2026-01-01T00:00:00Z',
+      }).success,
+    ).toBe(false)
+    // Equal instants written at different precisions are a zero-length window,
+    // which the DB CHECK admits (valid_from <= valid_to), so the schema must too.
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: '2026-01-01T00:00:00.000Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  // Core's toFactWrite converts each instant via `new Date(iso)` (millisecond
+  // precision) on the way to a MICROSECOND-precision Postgres column, so a
+  // finer instant would land silently moved. Rejected, never truncated.
+  it('rejects a validity instant finer than millisecond precision', () => {
+    expect(
+      factWriteSchema.safeParse({ ...validFact, validFrom: '2026-01-01T00:00:00.1234Z' }).success,
+    ).toBe(false)
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validTo: '2026-01-02T00:00:00.1234567Z',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts millisecond precision and coarser', () => {
+    expect(
+      factWriteSchema.safeParse({ ...validFact, validFrom: '2026-01-01T00:00:00.123Z' }).success,
+    ).toBe(true)
+    expect(
+      factWriteSchema.safeParse({
+        ...validFact,
+        validFrom: '2026-01-01T00:00:00.12Z',
+        validTo: '2026-01-02T00:00:00Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('advertises the precision cap in the field descriptions (refinements vanish from JSON Schema)', () => {
+    const shape = z.toJSONSchema(factWriteSchema, { io: 'input' }) as {
+      properties: Record<string, { description?: string }>
+    }
+    expect(shape.properties.validFrom?.description).toContain(
+      `at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits`,
+    )
+    expect(shape.properties.validTo?.description).toContain(
+      `at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits`,
+    )
+  })
+
+  it('bounds the triple and the confidence', () => {
+    expect(factWriteSchema.safeParse({ ...validFact, subject: '' }).success).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, subject: 'x'.repeat(257) }).success).toBe(
+      false,
+    )
+    expect(
+      factWriteSchema.safeParse({ ...validFact, value: 'v'.repeat(MAX_CONTENT_LENGTH + 1) })
+        .success,
+    ).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, confidence: 1.1 }).success).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, confidence: 1 }).success).toBe(true)
+  })
+
+  it('rejects unknown keys (strict)', () => {
+    expect(factWriteSchema.safeParse({ ...validFact, memoryId: UUID_A }).success).toBe(false)
+    expect(factWriteSchema.safeParse({ ...validFact, recordedAt: new Date() }).success).toBe(false)
+  })
+})
+
+describe('rememberWithFactsInput', () => {
+  const validFact = { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }
+
+  it('accepts a remember payload carrying facts, and one carrying none', () => {
+    const withFacts = rememberWithFactsInputSchema.parse({ ...validRemember, facts: [validFact] })
+    expect(withFacts.facts).toHaveLength(1)
+    expect(rememberWithFactsInputSchema.parse(validRemember).facts).toBeUndefined()
+  })
+
+  it('treats an empty list as absent for the write path', () => {
+    // Pinned because the db layer omits factIds for both — an empty array must
+    // not become a distinguishable "wrote zero facts" result.
+    const parsed = rememberWithFactsInputSchema.parse({ ...validRemember, facts: [] })
+    expect(parsed.facts).toEqual([])
+  })
+
+  it('caps the number of facts per write', () => {
+    const many = Array.from({ length: MAX_FACTS_PER_WRITE + 1 }, (_, i) => ({
+      ...validFact,
+      predicate: `p${i}`,
+    }))
+    expect(rememberWithFactsInputSchema.safeParse({ ...validRemember, facts: many }).success).toBe(
+      false,
+    )
+    expect(
+      rememberWithFactsInputSchema.safeParse({ ...validRemember, facts: many.slice(1) }).success,
+    ).toBe(true)
+  })
+
+  it('propagates a bad fact through the composed schema', () => {
+    expect(
+      rememberWithFactsInputSchema.safeParse({
+        ...validRemember,
+        facts: [{ ...validFact, value: '' }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('keeps the base remember and revise contracts free of facts', () => {
+    // LOAD-BEARING: the facts contract is composed BESIDE the shipped base, so
+    // revise (which extends the base) still rejects a facts key under strict
+    // mode. Facts belong to the assertion that introduced them; a revision
+    // appends a NEW memory and must not silently carry them across.
+    expect(rememberInputSchema.safeParse({ ...validRemember, facts: [validFact] }).success).toBe(
+      false,
+    )
+    expect(
+      reviseInputSchema.safeParse({
+        ...validRemember,
+        predecessorId: UUID_A,
+        facts: [validFact],
       }).success,
     ).toBe(false)
   })

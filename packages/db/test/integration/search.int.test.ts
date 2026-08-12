@@ -18,11 +18,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import {
   DEFAULT_FUSION_WEIGHTS,
+  DEFAULT_SUPERSESSION_PENALTY,
   searchFts,
   searchFused,
   searchRecency,
   searchVector,
 } from '../../src/search.js'
+import { type ChronologicalCursor, searchList } from '../../src/search-list.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const EMBEDDING_DIMENSIONS = 1536
@@ -164,6 +166,22 @@ describe('recency leg (searchRecency)', () => {
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
   })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // A DIRECT regression case for a scoping bug in supersededExists:
+    // searchRecency used to query FROM memories UNALIASED, exactly the shape
+    // that let an unqualified id/user_id reference inside the EXISTS subquery
+    // silently bind to memory_edges' OWN id/user_id columns instead of the
+    // outer row's — returning superseded: false for every row, with no
+    // ambiguity error to catch it. limit spans the full golden set so the
+    // known g115/g116 supersession pair is guaranteed present regardless of
+    // recency order.
+    const hits = await withTenant(uid, (tx) => searchRecency(tx, uid, 200))
+    const succ = dbIdByGoldenId.get('g116') as string
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
 })
 
 describe('fusion (searchFused) — supersession-aware ranking', () => {
@@ -184,6 +202,99 @@ describe('fusion (searchFused) — supersession-aware ranking', () => {
     const succScore = hits.find((h) => h.id === succ)?.score as number
     const predScore = hits.find((h) => h.id === pred)?.score as number
     expect(succScore).toBeGreaterThan(predScore)
+    // The demoted predecessor is also LABELED, not just ranked down.
+    expect(hits.find((h) => h.id === pred)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succ)?.superseded).toBe(false)
+  })
+
+  it('an "updates" revise demotes its predecessor exactly like "supersedes" does', async () => {
+    // A fresh pair OUTSIDE the golden-set fixture (which only wires 'supersedes'
+    // edges): mirrors memory-revise.ts's 'updates' edge kind directly via SQL,
+    // proving the demotion predicate now keys on BOTH CLOSES_PREDECESSOR edge
+    // types (search.ts), closing the previously-documented gap
+    // (memory-revise.ts) where an 'updates' revise linked the memories but did
+    // not tier-demote the predecessor. Also asserts the new `superseded` flag
+    // on the returned hits.
+    const marker = 'zzzupdatesdemotion'
+    const pred = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-pred') RETURNING id`,
+      [uid, `${marker} predecessor content`],
+    )
+    const predId = pred.rows[0]?.id as string
+    const succ = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'updates-demotion', $2, 'updates-demotion-succ') RETURNING id`,
+      [uid, `${marker} successor content`],
+    )
+    const succId = succ.rows[0]?.id as string
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'importer')`,
+      [uid, succId, predId],
+    )
+    await ownerPool.query('UPDATE memories SET valid_to = now() WHERE id = $1', [predId])
+
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, marker, 200))
+    const ids = hits.map((h) => h.id)
+    expect(ids).toContain(succId)
+    expect(ids).toContain(predId)
+    expect(ids.indexOf(succId)).toBeLessThan(ids.indexOf(predId))
+    expect(hits.find((h) => h.id === predId)?.superseded).toBe(true)
+    expect(hits.find((h) => h.id === succId)?.superseded).toBe(false)
+  })
+
+  it('an IMPORTED "updates" edge with OPEN validity neither flags nor demotes its target', async () => {
+    // The import contract FORBIDS closePredecessorAt on an 'updates' edge
+    // (packages/schema/src/import.ts: "closing the predecessor requires a
+    // supersedes edge"), so every imported updates-edge target stays LIVE —
+    // valid_to IS NULL. Under the old edge-only predicate such a row still read
+    // superseded: true and took the tier-penalty, so importing a graph silently
+    // demoted memories the import itself declares current. supersededExists now
+    // requires closed validity AND a revision edge (the same definition
+    // memory_history's lifecycleState applies), so this row is neither.
+    //
+    // The ONLY difference from the demotion case above is the absent valid_to
+    // close — deliberately, so this pins the validity half specifically.
+    const marker = 'zzzimportedupdatesopen'
+    const target = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'imported-updates', $2, 'imported-updates-target') RETURNING id`,
+      [uid, `${marker} target content`],
+    )
+    const targetId = target.rows[0]?.id as string
+    const source = await ownerPool.query<{ id: string }>(
+      `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+       VALUES ($1, 'note', 'imported-updates', $2, 'imported-updates-source') RETURNING id`,
+      [uid, `${marker} source content`],
+    )
+    const sourceId = source.rows[0]?.id as string
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'importer')`,
+      [uid, sourceId, targetId],
+    )
+    // NO valid_to close — exactly what importMemories produces for an
+    // 'updates' edge. Guard the premise so a contract change cannot let this
+    // test pass vacuously.
+    const validity = await ownerPool.query<{ valid_to: Date | null }>(
+      'SELECT valid_to FROM memories WHERE id = $1',
+      [targetId],
+    )
+    expect(validity.rows[0]?.valid_to).toBeNull()
+
+    const hits = await withTenant(uid, (tx) => searchFused(tx, uid, marker, 200))
+    const ids = hits.map((h) => h.id)
+    expect(ids).toContain(targetId)
+    expect(ids).toContain(sourceId)
+    // NOT flagged: the row is live, so it is not a superseded predecessor.
+    expect(hits.find((h) => h.id === targetId)?.superseded).toBe(false)
+    expect(hits.find((h) => h.id === sourceId)?.superseded).toBe(false)
+    // NOT demoted: with no penalty applied, the target is not forced below the
+    // source the way a genuinely superseded predecessor is.
+    const targetScore = hits.find((h) => h.id === targetId)?.score as number
+    const sourceScore = hits.find((h) => h.id === sourceId)?.score as number
+    expect(Math.abs(targetScore - sourceScore)).toBeLessThan(DEFAULT_SUPERSESSION_PENALTY)
   })
 
   it('the supersession penalty is what demotes the predecessor (penalty=0 can reorder)', async () => {
@@ -313,6 +424,18 @@ describe('vector leg (searchVector)', () => {
     }
     const scores = hits.map((h) => h.score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
+  })
+
+  it('labels a superseded row via superseded (aliased-EXISTS regression)', async () => {
+    // Same regression case as the recency leg, for searchVector's identical
+    // (now-fixed) formerly-unaliased FROM memories shape. The predecessor's
+    // OWN embedding ranks it #1 by cosine similarity (exact match), so a
+    // small limit is enough to guarantee it is in the returned set.
+    const predEmbedding = embeddingByGoldenId.get('g115') as number[]
+    const hits = await withTenant(uid, (tx) => searchVector(tx, uid, predEmbedding, 5))
+    const pred = dbIdByGoldenId.get('g115') as string
+    expect(hits[0]?.id).toBe(pred)
+    expect(hits[0]?.superseded).toBe(true)
   })
 })
 
@@ -550,5 +673,160 @@ describe('fusion (searchFused) — vector leg', () => {
     for (const h of inert) {
       expect(h.vectorScore).toBeUndefined()
     }
+  })
+})
+
+describe('chronological list mode (searchList) — exhaustive, filter-driven enumeration', () => {
+  it('orders by recorded_at DESC, id DESC and applies the live gate (valid_to IS NULL)', async () => {
+    const page = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    const ids = page.hits.map((h) => h.id)
+    const succ = dbIdByGoldenId.get('g116') as string
+    const pred = dbIdByGoldenId.get('g115') as string
+    // The live successor is present; the superseded predecessor (valid_to
+    // set) is EXCLUDED by the live gate — unlike ranked search's
+    // demote-not-filter, an exhaustive list has no ranking to demote with.
+    expect(ids).toContain(succ)
+    expect(ids).not.toContain(pred)
+    const succHit = page.hits.find((h) => h.id === succ)
+    expect(succHit?.superseded).toBe(false)
+    expect(page.hasMore).toBe(false)
+    // Total order cross-checked against a raw recorded_at DESC, id DESC
+    // query over the SAME live set (status='active' AND valid_to IS NULL,
+    // the same default rowEligibility applies with no explicit status
+    // filter), independent of the function under test.
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM memories WHERE user_id = $1 AND status = 'active' AND valid_to IS NULL
+       ORDER BY recorded_at DESC, id DESC`,
+      [uid],
+    )
+    expect(ids).toEqual(rows.rows.map((r) => r.id))
+  })
+
+  it('narrows by memoryType, the same filter axis ranked search applies', async () => {
+    const page = await withTenant(uid, (tx) =>
+      searchList(tx, uid, 200, { memoryType: 'commitment' }),
+    )
+    expect(page.hits.length).toBeGreaterThan(0)
+    // Every returned row really is a live commitment — cross-checked directly
+    // against the owner connection, independent of the function under test.
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM memories WHERE user_id = $1 AND memory_type = 'commitment'
+       AND status = 'active' AND valid_to IS NULL`,
+      [uid],
+    )
+    const expectedIds = new Set(rows.rows.map((r) => r.id))
+    expect(page.hits.length).toBe(expectedIds.size)
+    for (const hit of page.hits) {
+      expect(expectedIds.has(hit.id)).toBe(true)
+    }
+  })
+
+  it('continues strictly after the (recordedAt, id) cursor with no skips or repeats', async () => {
+    const all = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    expect(all.hits.length).toBeGreaterThanOrEqual(4)
+    const PAGE = Math.max(1, Math.floor(all.hits.length / 2))
+
+    const page1 = await withTenant(uid, (tx) => searchList(tx, uid, PAGE))
+    expect(page1.hits.length).toBe(PAGE)
+    expect(page1.hasMore).toBe(true)
+    const cursor = page1.cursor as ChronologicalCursor
+    expect(cursor).toBeDefined()
+
+    const page2 = await withTenant(uid, (tx) => searchList(tx, uid, PAGE, {}, cursor))
+    expect(page2.hits.length).toBeGreaterThan(0)
+
+    const page1Ids = page1.hits.map((h) => h.id)
+    const page2Ids = page2.hits.map((h) => h.id)
+    // No row appears on both pages, and the concatenation matches the
+    // unpaged order exactly (no skip, no repeat, no reorder).
+    expect(new Set(page1Ids).size + new Set(page2Ids).size).toBe(
+      new Set([...page1Ids, ...page2Ids]).size,
+    )
+    expect([...page1Ids, ...page2Ids]).toEqual(
+      all.hits.slice(0, page1Ids.length + page2Ids.length).map((h) => h.id),
+    )
+  })
+
+  it('reports hasMore: false and no cursor on the final page', async () => {
+    const all = await withTenant(uid, (tx) => searchList(tx, uid, 200))
+    const page = await withTenant(uid, (tx) => searchList(tx, uid, all.hits.length + 10))
+    expect(page.hasMore).toBe(false)
+    expect(page.hits.length).toBe(all.hits.length)
+  })
+
+  it('an asOf coordinate lifts the live gate and can surface a superseded predecessor', async () => {
+    // g115 (predecessor) is valid_from 2026-05-08, closed (valid_to) at
+    // g116's creation (2026-05-09) — see this file's beforeAll. An asOf
+    // instant strictly inside that window surfaces the historical row the
+    // default (valid_to IS NULL) live gate excludes.
+    const pred = dbIdByGoldenId.get('g115') as string
+    const page = await withTenant(uid, (tx) =>
+      searchList(tx, uid, 200, { asOf: { validAt: new Date('2026-05-08T12:00:00Z') } }),
+    )
+    const ids = page.hits.map((h) => h.id)
+    expect(ids).toContain(pred)
+  })
+
+  it('spans a page boundary within a same-transaction batch (shared now()) with zero skips or dups', async () => {
+    // REGRESSION for a ms-truncation bug: `now()` is TRANSACTION-CONSTANT in
+    // Postgres, so every row inserted in ONE transaction shares the EXACT
+    // same MICROSECOND-precision recorded_at. If the v3 cursor's recordedAt
+    // is ever round-tripped through a JS `Date` (millisecond-limited), a
+    // continuation's boundary check (`recorded_at = cursor.recordedAt`)
+    // silently stops matching the tied group's true (microsecond) timestamp,
+    // and the remainder of a same-transaction batch that spans a page
+    // boundary is DROPPED — never seen on any page, with no error. A fresh,
+    // isolated tenant + a small page size that forces the boundary to land
+    // INSIDE the 30-row tied batch (not at its edge) makes this deterministic
+    // rather than depending on incidental ordering, and proves the cursor is
+    // full-precision opaque text, not a Date, end to end.
+    const batchUid = await seedUser('search-batch-tie@test.local')
+    // A dedicated connection (not the module-level ownerPool.query one-shot
+    // helper) so all 30 inserts run inside ONE explicit transaction and share
+    // ONE now() — named ownerConn, not `client`, so it does not trip the
+    // no-raw-db.grit lint (banned identifiers: pool/client/pgPool/pgClient);
+    // this is the SAME owner-bypass trust level ownerPool.query already has.
+    const ownerConn = await ownerPool.connect()
+    const batchIds: string[] = []
+    try {
+      await ownerConn.query('BEGIN')
+      for (let i = 0; i < 30; i++) {
+        const r = await ownerConn.query<{ id: string }>(
+          `INSERT INTO memories (user_id, memory_type, topic, content, content_hash)
+           VALUES ($1, 'note', 'batch-tie', $2, $3) RETURNING id`,
+          [batchUid, `batch-tie content ${i}`, `batch-tie-${i}`],
+        )
+        const id = r.rows[0]?.id
+        if (id === undefined) throw new Error('expected an inserted id')
+        batchIds.push(id)
+      }
+      await ownerConn.query('COMMIT')
+    } catch (err) {
+      await ownerConn.query('ROLLBACK')
+      throw err
+    } finally {
+      ownerConn.release()
+    }
+
+    const seen: string[] = []
+    let cursor: ChronologicalCursor | undefined
+    let hasMore = true
+    let guard = 0
+    while (hasMore) {
+      guard += 1
+      if (guard > 20) throw new Error('runaway pagination — infinite loop guard tripped')
+      const page = await withTenant(batchUid, (tx) => searchList(tx, batchUid, 7, {}, cursor))
+      seen.push(...page.hits.map((h) => h.id))
+      hasMore = page.hasMore
+      cursor = page.cursor
+    }
+
+    // Every row from the tied batch is seen EXACTLY once across the full
+    // walk — the old bug would drop rows past wherever a page boundary fell
+    // inside the tied group, so a shorter `seen` or a missing id is exactly
+    // the failure mode this test exists to catch.
+    expect(seen.length).toBe(batchIds.length)
+    expect(new Set(seen).size).toBe(batchIds.length)
+    expect(seen.slice().sort()).toEqual(batchIds.slice().sort())
   })
 })

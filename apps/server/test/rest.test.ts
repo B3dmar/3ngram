@@ -393,6 +393,49 @@ describe('POST /api/v1/memories (remember)', () => {
     )
   })
 
+  it('echoes factIds when the body carries facts, and omits the key otherwise', async () => {
+    const factIds = [crypto.randomUUID()]
+    remember.mockResolvedValue({ id: NEW_ID, factIds, embed: { settled: Promise.resolve(true) } })
+    const withFacts = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: {
+        memoryType: 'fact',
+        topic: 'training',
+        content: 'squat session',
+        facts: [{ subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }],
+      },
+    })
+    expect(withFacts.status).toBe(201)
+    expect((await withFacts.json()) as { factIds: string[] }).toMatchObject({ factIds })
+
+    // No facts -> the key is absent entirely, so the shipped response shape is
+    // byte-identical for every existing caller.
+    remember.mockResolvedValue({ id: NEW_ID, embed: { settled: Promise.resolve(true) } })
+    const without = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'rest', content: 'no facts here' },
+    })
+    expect('factIds' in ((await without.json()) as object)).toBe(false)
+  })
+
+  it('400s a malformed fact at the REST boundary without calling core', async () => {
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: {
+        memoryType: 'fact',
+        topic: 't',
+        content: 'c',
+        facts: [{ subject: 's', predicate: 'p', value: 'v', validTo: '2026-01-01T00:00:00.000Z' }],
+      },
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
+    expect(remember).not.toHaveBeenCalled()
+  })
+
   it('400s a payload missing required fields (schema boundary)', async () => {
     const res = await call('/api/v1/memories', {
       method: 'POST',
@@ -835,6 +878,7 @@ describe('GET /api/v1/facts', () => {
         confidence: 0.8,
         validFrom: new Date('2026-01-01T00:00:00Z'),
         validTo: null,
+        recordedAt: new Date('2026-01-01T00:00:00Z'),
       },
     ])
     const res = await call('/api/v1/facts?subject=seb&limit=10', { key: VALID_KEY })
@@ -906,6 +950,66 @@ describe('GET /api/v1/facts', () => {
 
   it('400s a malformed asOf coordinate (z.iso.datetime boundary, never a silent drop)', async () => {
     const res = await call('/api/v1/facts?validAt=not-a-date', { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  // get_facts range read (from/to flat query keys reshaped into {range:{from?,to?}}
+  // before the SAME factsQueryInputV2Schema parse — mirrors the asOf reshape
+  // above).
+  it('forwards from/to as a range window (Date) to core', async () => {
+    getFacts.mockResolvedValue([])
+    const res = await call(
+      '/api/v1/facts?subject=seb&from=2020-01-01T00:00:00.000Z&to=2022-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    expect(getFacts).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({
+        subject: 'seb',
+        range: {
+          from: new Date('2020-01-01T00:00:00.000Z'),
+          to: new Date('2022-01-01T00:00:00.000Z'),
+        },
+      }),
+    )
+  })
+
+  it('accepts an open-ended range (from-only or to-only)', async () => {
+    getFacts.mockResolvedValue([])
+    const fromOnly = await call('/api/v1/facts?from=2020-01-01T00:00:00.000Z', {
+      key: VALID_KEY,
+    })
+    expect(fromOnly.status).toBe(200)
+    expect(getFacts).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ range: { from: new Date('2020-01-01T00:00:00.000Z') } }),
+    )
+  })
+
+  it('omits range entirely (current-facts default) when neither from nor to is given', async () => {
+    getFacts.mockResolvedValue([])
+    const res = await call('/api/v1/facts?subject=seb', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const [, opts] = getFacts.mock.calls[0] as [string, Record<string, unknown>]
+    expect(opts).not.toHaveProperty('range')
+  })
+
+  it('400s range together with asOf (mutually exclusive time-travel modes)', async () => {
+    const res = await call(
+      '/api/v1/facts?from=2020-01-01T00:00:00.000Z&validAt=2021-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(400)
+    expect(getFacts).not.toHaveBeenCalled()
+  })
+
+  it('400s an inverted range (from later than to) — issue #58 precedent: reject, not clamp', async () => {
+    const res = await call(
+      '/api/v1/facts?from=2022-01-01T00:00:00.000Z&to=2020-01-01T00:00:00.000Z',
+      { key: VALID_KEY },
+    )
     expect(res.status).toBe(400)
     expect(getFacts).not.toHaveBeenCalled()
   })
@@ -1921,6 +2025,23 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ],
+    factProposals: [
+      {
+        id: COMMIT_ID,
+        memoryId: NEW_ID,
+        subject: 'deploy target',
+        predicate: 'is',
+        value: 'fly.io',
+        confidence: 0.8,
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        memoryType: 'note',
+        rationale: 'extracted from the memory body',
+        status: 'proposed',
+        decidedAt: null,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ],
     userBudgets: [
       {
         id: COMMIT_ID,
@@ -1967,6 +2088,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       edges: Array<{ edgeType: string }>
       memoryEvents: Array<{ payload: unknown }>
       proposals: Array<{ rationale: string | null }>
+      factProposals: Array<{ subject: string; value: string; rationale: string | null }>
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
       retrievalPolicy: {
@@ -1982,6 +2104,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         edges: number
         memoryEvents: number
         proposals: number
+        factProposals: number
         userBudgets: number
         llmUsage: number
       }
@@ -2000,6 +2123,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     expect(body.edges[0]?.edgeType).toBe('supersedes')
     expect(body.memoryEvents[0]?.payload).toEqual({ note: 'imported' })
     expect(body.proposals[0]?.rationale).toBe('near-duplicate')
+    // Staged fact proposals are user content too — they are NOT `facts` rows,
+    // so the facts section above does not cover them.
+    expect(body.factProposals[0]?.subject).toBe('deploy target')
+    expect(body.factProposals[0]?.value).toBe('fly.io')
+    expect(body.factProposals[0]?.rationale).toBe('extracted from the memory body')
     // Cost/usage rows are present — user-owned, RLS-scoped like the rest.
     expect(body.userBudgets[0]?.capUsdOverride).toBe('5.000000000000')
     expect(body.llmUsage[0]?.operation).toBe('memory.embed')
@@ -2017,6 +2145,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       edges: 1,
       memoryEvents: 1,
       proposals: 1,
+      factProposals: 1,
       userBudgets: 1,
       llmUsage: 1,
     })
@@ -2086,6 +2215,7 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     facts: 1,
     commitments: 0,
     proposals: 0,
+    factProposals: 3,
     sessionsDeleted: 1,
     apiKeysRevoked: 1,
     oauthTokensRevoked: 0,
@@ -2110,12 +2240,15 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     const body = (await res.json()) as {
       deleted: boolean
       alreadyDeleted: boolean
-      erased: { memories: number; sessionsDeleted: number }
+      erased: { memories: number; factProposals: number; sessionsDeleted: number }
     }
     expect(body.deleted).toBe(true)
     expect(body.alreadyDeleted).toBe(false)
     expect(body.erased.memories).toBe(2)
     expect(body.erased.sessionsDeleted).toBe(1)
+    // Staged fact proposals are erased too, and the receipt must report them —
+    // the count is echoed, not dropped on the way through the transport.
+    expect(body.erased.factProposals).toBe(3)
   })
 
   it('400s without an explicit { confirm: true } (no silent destructive call)', async () => {

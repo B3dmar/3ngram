@@ -89,7 +89,9 @@ describe('remember (validation boundary)', () => {
     await remember(USER, validInput(), ACTOR, { limits })
 
     expect(limits).toHaveBeenCalledExactlyOnceWith(USER)
-    expect(mockWrite).toHaveBeenCalledWith(expect.any(Object), 7)
+    // Third positional arg is the optional facts list — undefined here, which
+    // is what keeps a write without facts identical to the shipped call.
+    expect(mockWrite).toHaveBeenCalledWith(expect.any(Object), 7, undefined)
   })
 
   it('fails closed on an invalid injected live-memory cap', async () => {
@@ -126,6 +128,74 @@ describe('remember (validation boundary)', () => {
     const result = await remember(USER, validInput(), ACTOR)
 
     expect(result.commitmentId).toBeUndefined()
+  })
+})
+
+describe('remember (structured facts)', () => {
+  const fact = { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' }
+
+  it('forwards parsed facts to the db write and surfaces the returned factIds', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-5', factIds: ['fact-1'] })
+
+    const result = await remember(USER, { ...validInput(), facts: [fact] }, ACTOR)
+
+    // Facts ride the SAME db call as the memory — core adds no second write.
+    expect(mockWrite).toHaveBeenCalledTimes(1)
+    expect(mockWrite.mock.calls[0]?.[2]).toEqual([fact])
+    expect(result.factIds).toEqual(['fact-1'])
+  })
+
+  it('coerces fact timestamps at the boundary, so db receives Dates', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-6', factIds: ['fact-2'] })
+
+    await remember(
+      USER,
+      { ...validInput(), facts: [{ ...fact, validFrom: '2026-01-01T00:00:00.000Z' }] },
+      ACTOR,
+    )
+
+    expect(mockWrite.mock.calls[0]?.[2]?.[0].validFrom).toEqual(
+      new Date('2026-01-01T00:00:00.000Z'),
+    )
+  })
+
+  it('passes no facts and returns no factIds when the key is omitted or empty', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-7' })
+    const omitted = await remember(USER, validInput(), ACTOR)
+    expect(mockWrite.mock.calls[0]?.[2]).toBeUndefined()
+    expect(omitted.factIds).toBeUndefined()
+
+    mockWrite.mockResolvedValue({ id: 'mem-8' })
+    const empty = await remember(USER, { ...validInput(), facts: [] }, ACTOR)
+    // The empty list is threaded through as an empty list (core does not
+    // normalize it away); the db layer is what collapses it to "no factIds",
+    // so both halves are pinned.
+    expect(mockWrite.mock.calls[1]?.[2]).toEqual([])
+    expect(empty.factIds).toBeUndefined()
+  })
+
+  it('rejects an invalid fact before any DB call', async () => {
+    await expectZodRejection(
+      remember(USER, { ...validInput(), facts: [{ ...fact, value: '' }] }, ACTOR),
+    )
+    expect(mockWrite).not.toHaveBeenCalled()
+  })
+
+  it('rejects a validTo with no validFrom before any DB call', async () => {
+    await expectZodRejection(
+      remember(
+        USER,
+        { ...validInput(), facts: [{ ...fact, validTo: '2026-01-01T00:00:00.000Z' }] },
+        ACTOR,
+      ),
+    )
+    expect(mockWrite).not.toHaveBeenCalled()
+  })
+
+  it('rejects more than the per-write fact ceiling before any DB call', async () => {
+    const many = Array.from({ length: 17 }, (_, i) => ({ ...fact, predicate: `p${i}` }))
+    await expectZodRejection(remember(USER, { ...validInput(), facts: many }, ACTOR))
+    expect(mockWrite).not.toHaveBeenCalled()
   })
 })
 
