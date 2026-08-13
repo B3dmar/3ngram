@@ -207,6 +207,11 @@ jobs:
           bash scripts/check-no-lifecycle-scripts.sh
           bash scripts/check-action-pins.sh
           bash scripts/check-spdx.sh
+          # Advisory overrides are write-once and never re-checked: --frozen-lockfile
+          # keeps passing when an override stops reaching the graph or outlives the
+          # package it pinned. Reads the two committed files only, so it needs no install.
+          node scripts/check-override-freshness.mjs --self-test
+          node scripts/check-override-freshness.mjs
           # Fork-PR token-policy guard: no workflow may combine
           # pull_request_target with secrets. (self-test first, then real scan).
           bash scripts/check-workflow-safety.sh --self-test
