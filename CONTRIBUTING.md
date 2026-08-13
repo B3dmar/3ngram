@@ -62,7 +62,7 @@ Every PR must pass the `ci` workflow (`.github/workflows/ci.yml`). The protected
 
 **`check` context:** aggregates the quality lanes:
 
-1. **Hygiene:** action pinning, SPDX headers, DB-access guard, no-skip guard, changeset guard for PRs, and DCO sign-off for external fork PRs.
+1. **Hygiene:** action pinning, SPDX headers, DB-access guard, no-skip guard, dependency-override freshness, changeset guard for PRs, and DCO sign-off for external fork PRs.
 2. **Format + lint:** `pnpm exec biome ci .`.
 3. **Workspace checks:** `pnpm exec turbo run check`.
 4. **Unit tests:** `pnpm run test`.
@@ -81,11 +81,24 @@ bash scripts/check-action-pins.sh
 bash scripts/check-spdx.sh
 bash scripts/check-db-access.sh --self-test && bash scripts/check-db-access.sh
 bash scripts/check-no-skip.sh --self-test && bash scripts/check-no-skip.sh
+node scripts/check-override-freshness.mjs --self-test && node scripts/check-override-freshness.mjs
 pnpm exec biome ci .
 pnpm exec turbo run check
 pnpm run test
 pnpm run docs:generate && git diff --exit-code -- docs
 ```
+
+### Dependency overrides
+
+Advisory fixes for transitive packages live in the `overrides:` block of `pnpm-workspace.yaml`. An override is written once and then never re-examined: `--frozen-lockfile` re-installs the recorded resolution, so CI keeps passing whether or not the override still does anything. `scripts/check-override-freshness.mjs` re-asserts each entry against the committed lockfile and fails on two outcomes:
+
+- **NOT APPLIED** — a resolved version still satisfies the override's own selector, so the entry names a version as unwanted and did not move it. This is the failure mode recorded in `apps/server/CHANGELOG.md`: pnpm overrides cannot reach a dependency that arrives as an auto-installed optional peer, so the workspace file reads as correct while the graph never moves. `hono` had to become a declared dependency of `apps/server` for exactly this reason.
+- **ORPHANED** — the overridden package is no longer in the lockfile at all. `fast-uri@<3.1.4` was added on 2026-07-28 (`f987f7e`) and had left the graph by 2026-08-13, leaving an entry that constrained nothing and would not have protected a future reintroduction.
+- **INERT** — the package is still resolved, but neither the selector's version line nor the replacement target reaches any of those resolutions, so the entry governs a region of the version space this workspace has left behind. Both halves have to miss: a deliberate cross-major rewrite (`js-yaml@>=5.0.0 <5.2.4: ^4.3.1`) empties its own selector line by design and stays live through its target. For `0.x` packages the line is the **minor**, following npm's caret convention — bucketing `0.x` by major would put every `0.anything` in one line and no dead `esbuild` entry would ever be flagged.
+
+What the check deliberately does **not** do is judge whether a selector's floor is still high enough — that needs advisory data, and Dependabot already supplies it. That gap is worth knowing about, because raising a floor is the step that keeps getting missed: `js-yaml@<3.15.0` was cut at the v1.0.0 launch (`6e35460`, 2026-07-10) and `js-yaml@>=4.0.0 <4.3.0` on 2026-07-28 (`f987f7e`), and by the 2026-08-13 advisory round both sat one patch below the new floor while matching their selectors perfectly. Treat a Dependabot alert on an already-overridden package as a signal to re-cut the selector, not to add a second one.
+
+When adding an override, prefer a bounded selector (`pkg@<X.Y.Z`) over a bare package name so an unaffected major keeps resolving normally, and keep the block alphabetical.
 
 ## PR checklist
 

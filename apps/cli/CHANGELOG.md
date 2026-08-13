@@ -1,5 +1,11 @@
 # @3ngram/cli
 
+## 1.4.3
+
+### Patch Changes
+
+- @3ngram/sdk@1.4.3
+
 ## 1.4.2
 
 ### Patch Changes
