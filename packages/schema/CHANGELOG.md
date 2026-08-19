@@ -1,5 +1,11 @@
 # @3ngram/schema
 
+## 0.7.3
+
+### Patch Changes
+
+- 33d1a7f: Debrief and server instructions require one typed atom per remember, under the 2000-character cap. Optional `project` on the debrief prompt so writes can hit a project briefing.
+
 ## 0.7.2
 
 ### Patch Changes
