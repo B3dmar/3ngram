@@ -2,6 +2,7 @@
 // Dual-era MCP contract: one handler must serve the legacy 2025 handshake,
 // a client pinned to 2026-07-28, and automatic era negotiation. The handler is
 // driven in-process through its real fetch face, so no sockets or DB are needed.
+import { MAX_CONTENT_LENGTH } from '@3ngram/schema'
 import {
   type ClientOptions,
   Client as McpClient,
@@ -102,6 +103,8 @@ describe('MCP protocol compatibility', () => {
         // text — pinning the wording turns a copy edit into a failing test.
         expect(discover.instructions).toBeDefined()
         expect((discover.instructions ?? '').length).toBeGreaterThan(200)
+        // Issue #166: the cap is policy the model must see, not just a schema 400.
+        expect(discover.instructions).toContain(String(MAX_CONTENT_LENGTH))
       } else {
         expect(toolCatalog).not.toHaveProperty('ttlMs')
         expect(toolCatalog).not.toHaveProperty('cacheScope')

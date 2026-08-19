@@ -81,6 +81,7 @@ bash scripts/check-action-pins.sh
 bash scripts/check-spdx.sh
 bash scripts/check-db-access.sh --self-test && bash scripts/check-db-access.sh
 bash scripts/check-no-skip.sh --self-test && bash scripts/check-no-skip.sh
+bash scripts/check-docs-truth.sh --self-test && bash scripts/check-docs-truth.sh
 node scripts/check-override-freshness.mjs --self-test && node scripts/check-override-freshness.mjs
 pnpm exec biome ci .
 pnpm exec turbo run check

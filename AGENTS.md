@@ -10,7 +10,9 @@ dashboard and cloud operations are proprietary and live in `3ngram-platform`.
 
 **Where the design lives:**
 
-- `docs/concepts/` — system design and specs (architecture, data model, MCP design, memory model, scopes, local development, testing).
+- `docs/concepts/` — **shipped** system design (architecture, data model, MCP, memory model, scopes, testing). An unbuilt design must open with `Status: design, not built.` A mixed page (shipped contract + open proposals) must say so on the status line — see `docs/concepts/mcp-surface.mdx`.
+- `docs/reference/` — generated MCP/CLI/SDK/OpenAPI (`pnpm run docs:generate`; CI diffs it).
+- GitHub issues/PRs — live work. 3ngram (`work` / `3ngram`) — durable decisions. Do not add a third backlog.
 
 ## Layout
 
@@ -43,7 +45,7 @@ behind — say so in the PR description.
 4. **No `it.skip`/`todo` on main. No flake retries.** A failing test gets fixed or deleted-with-issue (`docs/concepts/testing.mdx`). — *Enforcement: `scripts/check-no-skip.sh` (also catches `.only` and chained modifiers); `scripts/check-db-shards.sh` catches an integration test that no shard runs.*
 5. **Layering**: `apps/*` → `packages/core` → `packages/db`. Transports (REST routes, MCP tools) contain zero business logic. 50-line functions, 500-line files. — *Enforcement: **review** (the size limits are targets, not lint rules).*
 6. **No memory content in logs/traces/metrics** — IDs, types, lengths, hashes only. — *Enforcement: **review**.*
-7. **Supply chain**: `ignore-scripts` stays on; GitHub Actions pinned by full SHA; lockfile frozen. — *Enforcement: `scripts/check-no-lifecycle-scripts.sh`, `scripts/check-action-pins.sh`, `scripts/check-workflow-safety.sh`, `scripts/check-dependency-licenses.mjs`, `scripts/check-override-freshness.mjs` (advisory overrides must still reach the graph), and `--frozen-lockfile` in CI.*
+7. **Supply chain**: `strictDepBuilds` is on and `ignoreScripts` is banned (it would swallow the tripwire); GitHub Actions pinned by full SHA; lockfile frozen. — *Enforcement: `scripts/check-no-lifecycle-scripts.sh`, `scripts/check-action-pins.sh`, `scripts/check-workflow-safety.sh`, `scripts/check-dependency-licenses.mjs`, `scripts/check-override-freshness.mjs` (advisory overrides must still reach the graph), and `--frozen-lockfile` in CI.*
 8. **The MCP surface earns its size by evidence, not by a count.** Adding or changing a tool requires: a JTBD no existing tool covers (`docs/concepts/mcp-design.mdx`); a regenerated surface snapshot committed with the change (`pnpm run docs:generate`, plus `eval/fixtures/transport-surfaces.json` and the tool-selection embeddings when a description moves); and its scenarios in `eval/fixtures/tool-selection.json` — exactly 5 agent utterances per registered tool, pinned by a unit test, so a new tool without them fails before the gate even scores. There is no numeric ceiling — `MAX_TOOLS`/`MAX_PROMPTS` were removed once the property they proxied for could be measured, and a twelfth tool is not blocked, only a twelfth tool that reads like an existing one. — *Enforcement: the `eval-gate` required check (floors on `selection_accuracy_at_1`/`selection_margin`, ceiling on `max_description_overlap`); the `docs-reference` byte-for-byte diff for the regenerated snapshot; and `check` — the `quality (unit)` lane's `pnpm test` — for the per-tool scenario count (`eval/test/tool-selection.test.mjs`). The JTBD itself is **review**.*
 
 ## Database / env safety
@@ -61,3 +63,4 @@ Integration tests run destructive cleanup (`resetDomainTables()` TRUNCATEs domai
 - Conventional commits: `<type>(<scope>): <subject>`, imperative, ≤ 50 chars.
 - A PR that regresses the blocking golden-set eval does not merge — do not "fix" the eval to pass it.
 - Every source file carries an SPDX header (`LICENSING.md`).
+- Concept docs describe shipped behavior. Changing a tool, table count, or enforcement claim means updating the matching `docs/concepts/` sentence in the same PR (`scripts/check-docs-truth.sh`).

@@ -1,5 +1,11 @@
 # @3ngram/worker
 
+## 1.4.4
+
+### Patch Changes
+
+- @3ngram/core@0.9.3
+
 ## 1.4.3
 
 ## 1.4.2
