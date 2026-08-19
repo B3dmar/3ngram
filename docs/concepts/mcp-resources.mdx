@@ -26,9 +26,9 @@ just a second way to read something a tool already returned.
 
 The 2026-07-28 revision changed the calculus in one specific way: **`resources/read`
 is a cacheable result.** It carries `ttlMs` and `cacheScope`, so a client can hold a
-memory body locally instead of re-fetching it. That turns resources from a redundant
-read path into a bandwidth and latency story, and it is the strongest capability the
-v2 migration unlocked that 3ngram does not yet use.
+memory body locally instead of re-fetching it. That turned resources from a redundant
+read path into a bandwidth and latency story, which is why `threengram://memory/{id}`
+shipped.
 
 The job it serves: `search` and `handoff` return bounded excerpts and mark long
 bodies `truncated: true`. Reading the full body means calling `get_memories` — every
