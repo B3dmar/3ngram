@@ -20,7 +20,12 @@ import { scopeSchema } from './scope.js'
  * implied for it.
  */
 
-/** Per-write upper bound on raw content. Matches the S5 capture-hook contract. */
+/**
+ * Per-write upper bound on raw content. One typed atom, not a session dump.
+ * Originally the S5 capture-hook latency budget; capture is gone. Kept as the
+ * native remember/revise ceiling so a debrief splits into several calls rather
+ * than one 10k transcript (issue #166). Import uses a separate, larger bound.
+ */
 export const MAX_CONTENT_LENGTH = 2000
 /** Topic is a short label, not a body — keep it scannable in lists. */
 export const MAX_TOPIC_LENGTH = 256

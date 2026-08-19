@@ -5,6 +5,7 @@
 // request — any instance serves any request and a Railway redeploy is a
 // non-event. The authenticated tenant + optional embedding gateway are captured
 // in the handler closure (the per-request context), never stored on the server.
+import { MAX_CONTENT_LENGTH } from '@3ngram/schema'
 import { McpServer } from '@modelcontextprotocol/server'
 import { SERVER_VERSION } from '../version.js'
 import { registerPrompts } from './prompts.js'
@@ -36,7 +37,7 @@ Start a session with \`briefing\` to load what is already known. Before saying s
 
 Memory is append-only. Never rewrite or delete: use \`revise\` to supersede a memory that has become wrong, and \`resolve\` to settle a commitment or blocker. Superseding keeps the old version readable as history.
 
-Write decisions, commitments, blockers, and stated preferences — the things that would be expensive to rediscover. Do not write transcript noise, restatements of what the user just said, or anything re-derivable from the code.
+Write decisions, commitments, blockers, and stated preferences — the things that would be expensive to rediscover. Do not write transcript noise, restatements of what the user just said, or anything re-derivable from the code. Each \`remember\` is one typed atom; content is capped at ${MAX_CONTENT_LENGTH} characters — split a longer recap into several calls.
 
 Scope and project decide what later reads return, so set them when you \`remember\`: a memory written with no project will not appear in that project's briefing.
 

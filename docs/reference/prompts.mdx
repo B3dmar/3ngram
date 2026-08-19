@@ -45,7 +45,7 @@ Orient yourself at the start of a session: call the briefing TOOL with an explic
 
 ## debrief
 
-Close a session cleanly: review what happened, then persist what is worth keeping — decisions, commitments, and follow-ups — by calling the remember TOOL for each, and resolve any completed commitments.
+Close a session cleanly: review what happened, then persist what is worth keeping — one typed atom per remember call, content capped — by calling the remember TOOL for each, and resolve any completed commitments.
 
 **Title:** Session debrief
 
@@ -61,6 +61,12 @@ Close a session cleanly: review what happened, then persist what is worth keepin
       "maxLength": 64,
       "pattern": "^[a-z0-9][a-z0-9-]*$",
       "description": "Optional scope (kebab-case, e.g. work, personal) the session belonged to."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Optional project the session belonged to. Pass it on remember or the memory is invisible to that project briefing."
     }
   }
 }
