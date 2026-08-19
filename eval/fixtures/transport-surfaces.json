@@ -3384,11 +3384,16 @@
       {
         "name": "debrief",
         "title": "Session debrief",
-        "description": "Close a session cleanly: review what happened, then persist what is worth keeping — decisions, commitments, and follow-ups — by calling the remember TOOL for each, and resolve any completed commitments.",
+        "description": "Close a session cleanly: review what happened, then persist what is worth keeping — one typed atom per remember call, content capped — by calling the remember TOOL for each, and resolve any completed commitments.",
         "arguments": [
           {
             "name": "scope",
             "description": "Optional scope (kebab-case, e.g. work, personal) the session belonged to.",
+            "required": false
+          },
+          {
+            "name": "project",
+            "description": "Optional project the session belonged to. Pass it on remember or the memory is invisible to that project briefing.",
             "required": false
           }
         ]
@@ -3425,6 +3430,10 @@
         {
           "name": "debrief",
           "args": [
+            {
+              "name": "project",
+              "completable": true
+            },
             {
               "name": "scope",
               "completable": true

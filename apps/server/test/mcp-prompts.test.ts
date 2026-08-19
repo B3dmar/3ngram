@@ -8,6 +8,7 @@
 // The PROMPTS registry IS the auditable surface: 2 today
 // (docs/concepts/mcp-design.mdx), no numeric cap. A prompt orients only — it
 // carries no tenant data and reads no DB, so no context/mock is needed.
+import { MAX_CONTENT_LENGTH } from '@3ngram/schema'
 import { Client as McpClient } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -55,6 +56,8 @@ describe('prompts/list', () => {
     expect(debrief?.title).toBe('Session debrief')
     const scope = (debrief?.arguments ?? []).find((a) => a.name === 'scope')
     expect(scope?.required).toBe(false)
+    const project = (debrief?.arguments ?? []).find((a) => a.name === 'project')
+    expect(project?.required).toBe(false)
   })
 })
 
@@ -112,6 +115,8 @@ describe('prompts/get debrief', () => {
     expect(text).toContain('commitment')
     // The optional scope arg interpolates into the persist instruction.
     expect(text).toContain('work')
+    expect(text).toContain(String(MAX_CONTENT_LENGTH))
+    expect(text).toMatch(/ONE typed atom|split/i)
   })
 
   it('renders without the optional scope argument', async () => {
@@ -119,6 +124,17 @@ describe('prompts/get debrief', () => {
     const text = result.messages[0]?.content.type === 'text' ? result.messages[0].content.text : ''
     expect(text).toContain('remember')
     expect(text.length).toBeGreaterThan(0)
+    expect(text).toContain('project')
+  })
+
+  it('interpolates project so remember writes can hit a project briefing', async () => {
+    const result = await client.getPrompt({
+      name: 'debrief',
+      arguments: { scope: 'work', project: '3ngram' },
+    })
+    const text = result.messages[0]?.content.type === 'text' ? result.messages[0].content.text : ''
+    expect(text).toContain('3ngram')
+    expect(text).toContain('work')
   })
 
   it('rejects a non-canonical scope the remember TOOL would also reject', async () => {

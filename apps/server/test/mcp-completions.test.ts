@@ -64,6 +64,12 @@ const completeScope = (client: McpClient, value: string) =>
     argument: { name: 'scope', value },
   })
 
+const completeProject = (client: McpClient, value: string) =>
+  client.complete({
+    ref: { type: 'ref/prompt', name: 'debrief' },
+    argument: { name: 'project', value },
+  })
+
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((c) => c.close()))
   await Promise.all(handlers.splice(0).map((h) => h.close()))
@@ -85,6 +91,12 @@ describe('completion over tenant facets', () => {
     expect(result.completion.values).toEqual(['work', 'work-archive', 'personal'])
     // The tenant comes from verified authInfo, never from the request.
     expect(listMemoryFacets).toHaveBeenCalledWith(TENANT)
+  })
+
+  it('offers the tenant’s own project names on debrief.project', async () => {
+    const client = await connect()
+    const result = await completeProject(client, '')
+    expect(result.completion.values).toEqual(['3ngram', 'platform'])
   })
 
   it('filters by what the user has typed, case-insensitively', async () => {

@@ -130,7 +130,10 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // shells commands and carries no schema. MEASURED on this PR's actual
       // base (staging post-v1.4.0), not arithmetically summed with the deltas
       // above — the same precedent those comments establish.
-      mcp: [26610, 214696, 53706],
+      // MCP +33/+264/+64 (issue #166): debrief prompt description + optional
+      // `project` argument ride prompts/list (standing MCP surface). REST/CLI
+      // unchanged. MEASURED on this PR's actual base, not summed.
+      mcp: [26643, 214960, 53770],
       cli: [333, 1236, 1236],
       rest: [2881, 3898, 3898],
     },
@@ -312,12 +315,12 @@ test('the MCP surface fixture covers resource templates and completions (additiv
   assert.ok(!('tools' in completions), 'completions must not carry a tools section')
   assert.deepEqual(completions.prompts.map((p) => p.name).sort(), ['briefing', 'debrief'])
 
-  // Today exactly one prompt arg — debrief's `scope`, via
-  // facetCompleter(ctx, 'scopes') — is completable; every other prompt arg is not.
+  // debrief.scope and debrief.project, via facetCompleter — every other prompt
+  // arg is not completable.
   const completablePromptArgs = completions.prompts.flatMap(({ name, args }) =>
     args.filter((arg) => arg.completable).map((arg) => `${name}.${arg.name}`),
   )
-  assert.deepEqual(completablePromptArgs, ['debrief.scope'])
+  assert.deepEqual(completablePromptArgs, ['debrief.project', 'debrief.scope'])
 
   // The memory template's {id} carries NO complete callback (resources.ts
   // registers `list: undefined` and no complete map) — docs/concepts/mcp-surface
