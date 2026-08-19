@@ -19,7 +19,7 @@ When a memory needs correction, `revise` creates a **typed edge** between the ne
 | `extends` | The new memory adds to the old one without contradicting it |
 | `derives` | The new memory was derived from the old one |
 
-A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: `search` returns currently-valid memories by default, and accepts an `asOf` filter (a `validAt` and/or `asKnownAt` timestamp) for time travel, so "what did I believe on date X" stays answerable.
+A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: ranked `search` **demotes** superseded predecessors (it does not drop them). Chronological listing, briefing, and the dashboard list **default** to currently-valid rows (`status = active` AND `valid_to IS NULL`); an explicit `status = archived` filter still returns archived rows whose `valid_to` is NULL. `asOf` (`validAt` and/or `asKnownAt`) is time travel, so "what did I believe on date X" stays answerable.
 
 Episodic memories (dated sessions, events) and semantic memories (facts, preferences, patterns) are distinct and never collapsed into each other.
 
@@ -45,7 +45,7 @@ Facts track two timelines independently:
 - **World time** (`valid_from` / `valid_to`): when the statement was true in the world.
 - **System time** (`recorded_at`): when 3ngram learned it.
 
-When a fact is superseded, the old fact's validity is closed and the new fact is linked with a `supersedes` edge — in one atomic step. `get_facts` returns the currently-valid facts for a subject; historical queries can reconstruct what was known at any point.
+`get_facts` returns rows whose `valid_to` is NULL (or that overlap a requested `asOf` / `range`). The write path only **INSERTs** facts — it does not close a previous live row for the same `(subject, predicate)`, and it does not write a `supersedes` edge between fact rows. Multiple currently-open facts for one subject are representable. Closing a generation is either a writer-supplied `validTo` on the insert, or future current-truth work.
 
 This separation matters because corrections arrive late: you might learn today that a value changed last month. Bi-temporal storage records both when the change happened and when you found out.
 

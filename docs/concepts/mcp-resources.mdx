@@ -4,9 +4,10 @@ description: "Design for 3ngram://memory/{id} — why the resource addresses the
 icon: "link"
 ---
 
-**Status: design, not built.** This document settles the questions that had to be
-answered before any code, per [issue #105](https://github.com/B3dmar/3ngram/issues/105).
-No `resources/*` method is served today.
+**Status: shipped.** `threengram://memory/{id}` is registered (`apps/server/src/mcp/resources.ts`)
+and served on `resources/read` with a 24-hour private cache hint. `resources/list` is
+intentionally empty (`list: undefined`) so the catalog cannot enumerate the corpus.
+This page is the design that the implementation follows — not a backlog item.
 
 <Note>
 **The scheme is `threengram`, not `3ngram`.** Issue #105 and the first version of
@@ -25,9 +26,9 @@ just a second way to read something a tool already returned.
 
 The 2026-07-28 revision changed the calculus in one specific way: **`resources/read`
 is a cacheable result.** It carries `ttlMs` and `cacheScope`, so a client can hold a
-memory body locally instead of re-fetching it. That turns resources from a redundant
-read path into a bandwidth and latency story, and it is the strongest capability the
-v2 migration unlocked that 3ngram does not yet use.
+memory body locally instead of re-fetching it. That turned resources from a redundant
+read path into a bandwidth and latency story, which is why `threengram://memory/{id}`
+shipped.
 
 The job it serves: `search` and `handoff` return bounded excerpts and mark long
 bodies `truncated: true`. Reading the full body means calling `get_memories` — every

@@ -23,7 +23,7 @@ Decisions, commitments, blockers, and facts that survive the session, across Cla
 - **Append-and-supersede.** Writes never destroy data. Corrections create typed edges between memories, so the old record stays queryable, including "what did I believe on date X".
 - **Bi-temporal facts.** Facts track both when they were true in the world and when the system learned them, so retrieval can answer "what is true now" and "what was true then".
 - **Knows what it doesn't know.** Retrieval is calibrated to abstain rather than return a confident false match when the answer genuinely isn't stored.
-- **A deliberately small surface.** 10 MCP tools and 2 prompts over Streamable HTTP, mirrored on a REST API (`/api/v1`), designed around jobs to be done, not feature count.
+- **A deliberately small surface.** 11 MCP tools and 2 prompts over Streamable HTTP, mirrored on a REST API (`/api/v1`), designed around jobs to be done, not feature count.
 
 ## How to run it
 

@@ -222,6 +222,8 @@ jobs:
           bash scripts/check-db-shards.sh
           bash scripts/check-no-skip.sh --self-test
           bash scripts/check-no-skip.sh
+          bash scripts/check-docs-truth.sh --self-test
+          bash scripts/check-docs-truth.sh
           bash scripts/check-no-direct-provider.sh --self-test
           bash scripts/check-no-direct-provider.sh
           # Curated release notes must exist for the current apps/server version
