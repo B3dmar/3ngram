@@ -10,7 +10,7 @@ dashboard and cloud operations are proprietary and live in `3ngram-platform`.
 
 **Where the design lives:**
 
-- `docs/concepts/` — **shipped** system design (architecture, data model, MCP, memory model, scopes, testing). An unbuilt design in this tree must open with `Status: design, not built.`
+- `docs/concepts/` — **shipped** system design (architecture, data model, MCP, memory model, scopes, testing). An unbuilt design must open with `Status: design, not built.` A mixed page (shipped contract + open proposals) must say so on the status line — see `docs/concepts/mcp-surface.mdx`.
 - `docs/reference/` — generated MCP/CLI/SDK/OpenAPI (`pnpm run docs:generate`; CI diffs it).
 - GitHub issues/PRs — live work. 3ngram (`work` / `3ngram`) — durable decisions. Do not add a third backlog.
 

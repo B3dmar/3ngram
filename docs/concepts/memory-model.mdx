@@ -19,7 +19,7 @@ When a memory needs correction, `revise` creates a **typed edge** between the ne
 | `extends` | The new memory adds to the old one without contradicting it |
 | `derives` | The new memory was derived from the old one |
 
-A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: ranked `search` **demotes** superseded predecessors (it does not drop them); chronological listing, briefing, and the dashboard list show only currently-valid rows (`status = active` AND `valid_to IS NULL`). `asOf` (`validAt` and/or `asKnownAt`) is time travel, so "what did I believe on date X" stays answerable.
+A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: ranked `search` **demotes** superseded predecessors (it does not drop them). Chronological listing, briefing, and the dashboard list **default** to currently-valid rows (`status = active` AND `valid_to IS NULL`); an explicit `status = archived` filter still returns archived rows whose `valid_to` is NULL. `asOf` (`validAt` and/or `asKnownAt`) is time travel, so "what did I believe on date X" stays answerable.
 
 Episodic memories (dated sessions, events) and semantic memories (facts, preferences, patterns) are distinct and never collapsed into each other.
 

@@ -4,7 +4,7 @@ description: "The v1 table layout, the append-and-supersede write path, and the 
 icon: "table"
 ---
 
-Shipped baseline: **24 Drizzle-modeled tables** (identity 10 · memory domain 8 · ops 3 · budget 3). SQL also contains leftover `subscriptions` / `stripe_events` from the platform split; they are filtered out of the public Drizzle schema (`drizzle.config.ts` `tablesFilter`) and are not part of this inventory. The scope guard is the physical count — every table beyond 24 needs a one-line justification in the PR description referencing a JTBD.
+Shipped baseline: **26 physical tables** — **24** in the public Drizzle schema (identity 10 · memory domain 8 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 26 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (24).
 
 ## Design rules
 
@@ -28,7 +28,7 @@ Shipped baseline: **24 Drizzle-modeled tables** (identity 10 · memory domain 8 
 | `oauth_clients` / `oauth_codes` / `oauth_tokens` | 3ngram's own OAuth 2.1 AS+RS: authoritative DCR clients (public or confidential) plus materialized public CIMD clients, short-lived PKCE codes, rotating access/refresh state | `registration_method` distinguishes DCR from CIMD; fetched CIMD remains the authorization source. Device flow cut; `oauth_codes`/`oauth_tokens` are RLS tables |
 | `password_reset_tokens` | Single-use, time-boxed forgotten-password reset tokens (hashed) | RLS |
 | `email_verification_tokens` | Single-use, time-boxed signup verification | RLS |
-| `user_profile_attributes` | Display name and similar profile fields | RLS |
+| `user_profile_attributes` | Onboarding attributes: `role`, `use_case`, `ai_tools`, `referral_source` | RLS; no display-name column |
 | `user_retrieval_policy` | Per-tenant retrieval-scope default (`off` / `default` / `require`) | RLS |
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
