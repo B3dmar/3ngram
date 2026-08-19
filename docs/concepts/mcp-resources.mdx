@@ -4,9 +4,10 @@ description: "Design for 3ngram://memory/{id} — why the resource addresses the
 icon: "link"
 ---
 
-**Status: design, not built.** This document settles the questions that had to be
-answered before any code, per [issue #105](https://github.com/B3dmar/3ngram/issues/105).
-No `resources/*` method is served today.
+**Status: shipped.** `threengram://memory/{id}` is registered (`apps/server/src/mcp/resources.ts`)
+and served on `resources/read` with a 24-hour private cache hint. `resources/list` is
+intentionally empty (`list: undefined`) so the catalog cannot enumerate the corpus.
+This page is the design that the implementation follows — not a backlog item.
 
 <Note>
 **The scheme is `threengram`, not `3ngram`.** Issue #105 and the first version of

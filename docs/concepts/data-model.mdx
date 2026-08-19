@@ -4,7 +4,7 @@ description: "The v1 table layout, the append-and-supersede write path, and the 
 icon: "table"
 ---
 
-Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · ops 3). The scope guard is the physical count — every table beyond 17 needs a one-line justification in the PR description referencing a JTBD.
+Shipped baseline: **24 Drizzle-modeled tables** (identity 10 · memory domain 8 · ops 3 · budget 3). SQL also contains leftover `subscriptions` / `stripe_events` from the platform split; they are filtered out of the public Drizzle schema (`drizzle.config.ts` `tablesFilter`) and are not part of this inventory. The scope guard is the physical count — every table beyond 24 needs a one-line justification in the PR description referencing a JTBD.
 
 ## Design rules
 
@@ -18,7 +18,7 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 
 ## Tables (v1)
 
-### Identity & access (7)
+### Identity & access (10)
 
 | Table | Purpose | Notes |
 |---|---|---|
@@ -27,6 +27,9 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 | `api_keys` | Hashed, prefix-indexed, revocable | RLS |
 | `oauth_clients` / `oauth_codes` / `oauth_tokens` | 3ngram's own OAuth 2.1 AS+RS: authoritative DCR clients (public or confidential) plus materialized public CIMD clients, short-lived PKCE codes, rotating access/refresh state | `registration_method` distinguishes DCR from CIMD; fetched CIMD remains the authorization source. Device flow cut; `oauth_codes`/`oauth_tokens` are RLS tables |
 | `password_reset_tokens` | Single-use, time-boxed forgotten-password reset tokens (hashed) | RLS |
+| `email_verification_tokens` | Single-use, time-boxed signup verification | RLS |
+| `user_profile_attributes` | Display name and similar profile fields | RLS |
+| `user_retrieval_policy` | Per-tenant retrieval-scope default (`off` / `default` / `require`) | RLS |
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
 
@@ -51,7 +54,15 @@ Shipped v1 baseline: **17 physical tables** (identity 7 · memory domain 7 · op
 | `eval_runs` | Benchmark run results (golden set, LongMemEval scores) — benchmarks are first-class data |
 | `audit_log` | Security audit (actor, action, resource, IP) |
 
-**Deliberately absent in v1** (schema must not preclude them): teams/sharing (when added: 2 tables max — `shares` + `share_denials` with a mode column, not a multi-table matrix), documents/chunks, integrations, billing, agent schedules/triggers, plans, work contexts, notifications.
+### Budget (3)
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `user_budgets` | Per-tenant spend window | RLS |
+| `budget_reservations` | In-flight embed/search cost holds | RLS |
+| `plan_tiers` | Named caps (`free` / `pro` / `team`) as **data**, not prices | The enum lives in `packages/schema`; hosted billing is the private platform repo |
+
+**Deliberately absent** (schema must not preclude them): teams/sharing (when added: 2 tables max — `shares` + `share_denials` with a mode column, not a multi-table matrix), documents/chunks, integrations, agent schedules/triggers, work contexts, notifications. Hosted Stripe state is not modeled here.
 
 ## RLS pattern
 
