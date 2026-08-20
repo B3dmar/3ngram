@@ -123,30 +123,31 @@ Verified against Claude Code's hook reference (`code.claude.com/docs/en/hooks`,
 | Blocking `Stop` | yes | **yes** |
 | Gets final message | `last_assistant_message` | `last_assistant_message` |
 | Continuation envelope | top-level `{"decision":"block","reason"}` — `reason` is continuation input | **the same** — `reason` becomes a new user prompt; blank `reason` is a hook *failure* |
-| Extra, optional | `hookSpecificOutput.additionalContext` for non-error feedback (`systemMessage` also exists) | no `hookSpecificOutput` on Stop |
-| Loop guard | `stop_hook_active`; **overrides after eight consecutive blocks** | `stop_hook_active` only — **no built-in cap** (openai/codex#37937) |
+| Extra, optional | universal Stop fields (`systemMessage`, `continue`, `stopReason`, `suppressOutput`). **Not** `hookSpecificOutput.additionalContext` — that is SessionStart / PreToolUse / PostToolUse | no `hookSpecificOutput` on Stop |
+| Loop guard | `stop_hook_active`; default override after eight consecutive blocks (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`). anthropics/claude-code#54360: `stop_hook_active` can fail to propagate when system reminders interleave | `stop_hook_active` only — **no built-in cap** (openai/codex#37937) |
 | Alternate path | exit 2, stderr to agent | exit 2, stderr carries the text |
 
 <Note>
 **The continuation envelope is portable.** An earlier draft claimed Claude injects via
 `hookSpecificOutput.additionalContext` and Codex via `reason`. Current Claude docs and
 Anthropic's own Stop hook (the ralph-wiggum plugin) block with top-level
-`decision`/`reason`, the same shape Codex requires. The hook still emits per-harness JSON
-because optional fields differ (Claude `additionalContext`, Codex none), but the words
-and the fire/no-fire decision stay shared: 3ngram owns the words, the hook owns the
-trigger.
+`decision`/`reason`, the same shape Codex requires. `additionalContext` is not a Stop
+field. The honest per-harness extras on Stop are Claude's universal fields
+(`systemMessage`, `continue`, `stopReason`, `suppressOutput`) versus Codex none. The
+words and the fire/no-fire decision stay shared: 3ngram owns the words, the hook owns
+the trigger.
 </Note>
 
 Codex hooks are **stable and enabled by default** (`Stage::Stable`, `default_enabled: true`).
-Claude's `stop_hook_active` is documented in the hooks guide as the field a Stop hook
-must parse to avoid the eight-block override; re-verify the input schema at
-implementation time. openai/codex#20783 is a known reliability caveat: a blocking Stop
+Claude's `stop_hook_active` is documented in the hooks guide; re-verify the input schema
+at implementation time. openai/codex#20783 is a known reliability caveat: a blocking Stop
 continuation can fail with an invalid message id.
 
 **Codex has no continuation cap.** The hook must self-terminate with a numeric cap even
 though Claude will eventually override. An ungated triage is an infinite turn loop on
 Codex, not merely an annoying one. Matching hooks launch concurrently with no ordering
-guarantee; multiple blocking Stop reasons are joined with `\n\n`.
+guarantee; multiple blocking Stop reasons are joined with `\n\n`. The numeric self-cap
+is also the finalize path when Claude never sets `stop_hook_active` (#54360).
 
 Register **main-agent `Stop` only.** Skip `SubagentStop`, skip
 `THREENGRAM_HOOK_ROLE=subagent`, skip secondary worktrees — the same filters
@@ -220,7 +221,7 @@ agent_sessions (
   last_triaged_event_at timestamptz null,
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memory_ids   jsonb not null default '[]',
-  last_message_excerpt text null,            -- bounded; for the closer worker, not retrieval
+  last_message_excerpt text null,            -- bounded assistant text; closer input only; cleared when consumed or on explicit close
   unique (user_id, agent, session_id)
 )
 ```
@@ -253,7 +254,19 @@ Do not write the literal `"unknown"` that `deriveProject` returns for an empty c
 SessionEnd is best-effort. Stop (and SessionStart) refresh `last_seen_at`. A row whose
 lease is older than a threshold is **implicitly closed** (`closed_at` set, open-session
 counts ignore it). Without this, one crashed session plus one live session makes the
-unhooked attribution default see "many open" and attach nothing forever.
+unhooked attribution default see "many open" and attach nothing forever. The lease
+must outlast a plausible idle-open-terminal gap (overnight); the exact duration is
+tunable.
+
+**Resurrection.** Implicit close is not SessionEnd. A later heartbeat, SessionStart
+`resume`, or tenant-owned write carrying that `sessionRunId` **reopens** the same row:
+clear `closed_at`, refresh `last_seen_at`, do not restamp briefing fields, do not
+insert a new row. Cancel a closer job still queued for that run. If the closer already
+completed, leave those memories; a later explicit close re-runs the closer only when
+there is untriaged signal since. An **explicit** SessionEnd close does not resurrect
+on write — those writes succeed unattributed (below). The closer on implicit close
+waits a grace after lease expiry so an overnight idle gap can reopen instead of being
+debriefed mid-conversation.
 
 ### Last-consumed cursor — deferred
 
@@ -278,7 +291,9 @@ at SessionEnd. That lesson stays. The feed itself is not this epic.
 
 PreCompact is the last moment the model still has the full context. The hook may
 enqueue the closer worker or snapshot a bounded `last_message_excerpt` onto the row.
-It must not open a session and must not restamp briefing fields.
+It must not open a session and must not restamp briefing fields. Null
+`last_message_excerpt` once the closer consumes it, and on explicit close if it is
+still set — it is assistant content at rest, not a memory.
 
 ## Layer 2 — write-time provenance
 
@@ -305,15 +320,22 @@ Same optional key on native revise and on the resolve/unresolve/archive inputs.
 **How the value gets there.**
 
 1. The caller may pass only an opaque `sessionRunId`. The server resolves it to a
-   **live, tenant-owned, unexpired-lease** `agent_sessions` row and **derives**
-   `agent` / `project` from that row. A client-supplied agent or project on the write
-   is rejected. A run id for another tenant, a closed row, or a stale lease is
-   rejected, not attached.
+   tenant-owned `agent_sessions` row and **derives** `agent` / `project` from that
+   row. A client-supplied agent or project on the write is rejected. **The memory
+   write and the attachment are not the same decision.** Another tenant's run id
+   (or a syntactically valid id that is not ours) **fails the write** — that is a
+   cross-tenant probe. A closed or stale-lease row of *this* tenant **does not**:
+   the `remember` / `revise` / `resolve` succeeds with payload unset. Bookkeeping
+   going stale must not destroy curated writes. An implicitly-closed row also
+   resurrects (see Lease); an explicitly-closed row does not.
 2. Transports copy, they do not invent. MCP writes stay `user_mcp`; REST writes stay
    `user_api`. Session provenance is payload, not `actor_kind`. Reintroducing
    `capture_hook` is forbidden (migration 0010).
 3. **Hooked path always sends `sessionRunId`** (the hook opened the row at
-   SessionStart and the MCP/SDK adapter the hook owns can inject the id).
+   SessionStart and the MCP/SDK adapter the hook owns can inject the id). Step 5
+   registers a **heartbeat-only** Stop so the lease stays fresh during active turns
+   before the nudge exists. Overnight idle with no Stop still expires the lease;
+   the next write or heartbeat resurrects rather than 400ing.
 4. **Single-open-session default is unhooked-only.** If a vanilla MCP client omits
    the id and the tenant has exactly one leased-open row for that project, the write
    path MAY attach it. Zero or many → leave payload unset. Time-window guesses are
@@ -387,23 +409,28 @@ may fail, lack MCP access, or be interrupted (false complete); its `remember` /
 debrief). Handshake:
 
 ```text
-Stop(stop_hook_active=false)
+Stop(stop_hook_active=false, triage_status=idle|expired)
   → persist triage_status=pending (idempotent attempt id)
   → inject prompt
         ↓
   model writes (ordinary MCP, actor user_mcp)
         ↓
-Stop(stop_hook_active=true)
+Stop(stop_hook_active=true)  OR  numeric self-cap hit
   → triage_status=completed
   → last_triaged_event_at = max(events.createdAt) for this sessionRunId
      (this absorbs the triage's own writes)
-        ↓
-  no second Stop (interrupt, crash)
-  → expire the attempt after the lease; a later Stop or the closer worker may retry
 ```
 
-The hook also applies a **numeric continuation cap** (Claude will override at eight;
-Codex will not). `stop_hook_active=true` never injects a new prompt; it only finalizes.
+`stop_hook_active=true` never injects a new prompt; it only finalizes. Claude's
+eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`) and
+`stop_hook_active` may never arrive (#54360), so the **numeric self-cap is a
+finalize path**, not a backstop we hope not to need.
+
+A later ordinary Stop (`stop_hook_active=false`) that finds `triage_status=pending`
+**finalizes** that attempt (same watermark rule) and does not inject again. A live
+session keeps refreshing the lease, so "expire pending after the lease" cannot fire
+while the user is working — that expiry is only for a dead session the closer will
+pick up. Interrupted triage in a live session is the next Stop, not the lease.
 
 ### Debounce
 
@@ -496,11 +523,11 @@ not this epic's closer. Named so it is not "solved" by Stop.
 
 | Harness | Blocking turn-end? | Notes |
 |---|---|---|
-| Claude Code | yes | 8-consecutive-block override; `reason` continuation |
+| Claude Code | yes | `reason` continuation; configurable consecutive-block cap (default 8) |
 | Codex CLI | yes | no cap; `reason` continuation; #37937, #20783 |
-| Cursor | yes | documented `loop_limit` 5 |
-| Copilot CLI | yes | `agentStop`, cap 8 |
-| Gemini CLI | yes | AfterAgent |
+| Cursor | **follow-up, not block** | fire-and-forget `followup_message`; `loop_limit` default 5 (`null` uncapped); input is `status` / `loop_count`, no `stop_hook_active`. Do not emit `decision`/`reason` there |
+| Copilot CLI | yes | `agentStop` + `stop_hook_active` and a continuation cap; **confirm the numeric cap at implementation** (do not assume 8) |
+| Gemini CLI | yes | AfterAgent. gemini-cli#20426: in 0.30.0 `stopHookActive` is not propagated (defaults false) — the loop guard is broken, which is why the hook's own numeric cap exists |
 | Amp, OpenCode, Aider | **no** | fallback: MCP + SessionStart briefing only |
 
 Fallback for the last row is what we already ship. The nudge and closer still help
@@ -537,9 +564,9 @@ accepted as the contract.** Stop nudge is last and default-off.
 | 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema | Table count 26 → 27 |
 | 3 | Native-only `sessionRunId` plumbing; hooked path always sends it; unhooked single-open default | Attribution is server-validated |
 | 4 | Typed provenance read | Closer and nudge can list this run's writes |
-| 5 | REST open / close / heartbeat / prompt render. Hook SessionStart only (no Stop yet) | Bookkeeping works with resume/compact/crash |
+| 5 | REST open / close / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** (no triage) | Lease stays live across active turns; resume/compact/crash still hold |
 | 6 | Closer worker, same debrief rubric | Recall **and** precision vs the 26% / 0% / 0-spurious baseline |
-| 7 | Gated Stop nudge, one project, one harness, default-off | Handshake absorbs its own writes; debounce; numeric cap |
+| 7 | Gated Stop nudge, one project, one harness, default-off | Handshake absorbs its own writes; debounce; numeric cap (finalize path included) |
 
 **Validation bar** (go/no-go for default-on, closer and nudge separately):
 
