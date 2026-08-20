@@ -69,6 +69,8 @@ run_production_checks() {
     'shipped concept pages must say so'
   require docs/concepts/threads.mdx 'Status: design, not built' \
     'unbuilt designs must declare status so they cannot be read as shipped'
+  require docs/concepts/session-continuity.mdx 'Status: design, not built' \
+    'unbuilt designs must declare status so they cannot be read as shipped'
   require docs/concepts/mcp-surface.mdx 'Status:.*design' \
     'mixed shipped/design pages must declare the design half'
 
@@ -87,6 +89,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   printf 'ok\n' >"$tmp/docs/concepts/architecture.mdx"
   printf 'ok\n' >"$tmp/AGENTS.md"
   printf '**Status: design, not built.**\n' >"$tmp/docs/concepts/threads.mdx"
+  printf '**Status: design, not built.**\n' >"$tmp/docs/concepts/session-continuity.mdx"
   printf '**Status: the cap is shipped; the proposals below are still design.**\n' \
     >"$tmp/docs/concepts/mcp-surface.mdx"
   ROOT="$tmp"
