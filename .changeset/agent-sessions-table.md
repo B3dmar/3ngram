@@ -1,4 +1,5 @@
 ---
+'@3ngram/core': patch
 '@3ngram/schema': patch
 '@3ngram/db': minor
 '@3ngram/server': patch
