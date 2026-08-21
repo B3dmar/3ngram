@@ -223,7 +223,7 @@ agent_sessions (
   activation_epoch     int not null,         -- incremented on startup/resume; close must match
   triage_status        text not null,        -- idle | pending | completed | expired
   triage_attempt_id    uuid null,
-  last_triaged_event_ids jsonb not null default '[]', -- event ids absorbed at complete, not max(createdAt)
+  last_triaged_event_ids jsonb not null default '[]', -- all event ids for the run visible at last complete/expire, not since-attempt-begin
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
   last_message_excerpt text null,            -- bounded; closer input; cleared only after closer consumes; TTL sweep leftovers
@@ -444,27 +444,36 @@ may fail, lack MCP access, or be interrupted (false complete); its `remember` /
 debrief). Handshake:
 
 ```text
-Stop(stop_hook_active=false, triage_status=idle|expired)
+Stop(stop_hook_active=false, triage_status=idle)
   → persist triage_status=pending (idempotent attempt id)
   → inject prompt
         ↓
   model writes (ordinary MCP, actor user_mcp)
         ↓
 Stop(stop_hook_active=true)  OR  numeric self-cap hit
-  → list event ids for this sessionRunId since attempt begin (uuidv7 order)
-  → if that set is empty: triage_status=expired (closer may still run)
-  → if non-empty: triage_status=completed, last_triaged_event_ids = that set
+  → since_begin = event ids for this run since attempt begin
+  → visible = all event ids for this run now (uuidv7 order, per-run ceiling)
+  → last_triaged_event_ids = visible   // cumulative, not since_begin
+  → if visible truncated: triage_status=expired
+  → else if since_begin is empty: triage_status=expired   // closer-eligible
+  → else: triage_status=completed
 ```
 
-Do **not** complete on `stop_hook_active=true` after a zero-write continuation —
-that suppresses the closer. Complete only when provenance events exist since
-attempt begin; otherwise expire.
+Those are two different listings. **Zero-write check** is `since_begin` — complete
+only when the continuation produced provenance; otherwise expire so the closer
+still runs. **Watermark** is `visible` — every event id for the run at this Stop,
+including the writes that armed the debounce *before* `triage/begin`. Storing only
+`since_begin` would re-arm immediately on those pre-attempt events (and again on
+attempt N+1 when the set is replaced). Union across attempts; truncated → expire.
 
 Do **not** watermark with `max(createdAt)`. That is the same Read Committed
-timestamp race this page rejects for briefing cursors. The watermark is the **set
-of event ids** visible at complete (bounded like `listSessionEvents`). Re-arm is
-an event id not in the set — including a write that committed after the listing.
-If the listing is truncated, expire rather than complete.
+timestamp race this page rejects for briefing cursors. Re-arm is an event id not
+in `last_triaged_event_ids`, including a write that committed after the listing.
+
+`expired` is closer-eligible and **not** a handshake entry status. A zero-write
+continuation must not re-inject on every later Stop — the numeric cap bounds
+within-turn continuations, not cross-turn nags. Re-nudge only from `idle`, which
+a new event id (not in the watermark) restores from `completed` or `expired`.
 
 `stop_hook_active=true` never injects a new prompt; it only finalizes or expires.
 Claude's eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
@@ -485,12 +494,13 @@ substance before a nudge: a minimum turn count **or** elapsed time **or** a prov
 event that is not itself a prior-triage write. Thresholds are tunable; the condition
 is not optional.
 
-Signal for re-arm after a *completed* attempt: a later provenance event of
-create / supersede / resolve / **unresolve** / **archive** whose id is not in
-`last_triaged_event_ids`. That write **atomically** sets `triage_status` back to
-`idle` (completed is not terminal). The closer also selects `completed` rows
-whose event cursor has advanced, so a session that ends before the next Stop is
-not skipped.
+Signal for re-arm after a *completed* or *expired* attempt: a later provenance
+event of create / supersede / resolve / **unresolve** / **archive** whose id is
+not in `last_triaged_event_ids`. That write **atomically** sets `triage_status`
+back to `idle` (neither status is a handshake entry). The closer still selects
+every `expired` row (zero-write: run even with no new signal) and `completed`
+rows whose event ids are not in `last_triaged_event_ids`, so a session that ends
+before the next Stop is not skipped.
 
 ### Who is registered
 
