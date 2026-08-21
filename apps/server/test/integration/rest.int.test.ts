@@ -672,6 +672,19 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     )
   }
 
+  async function seedAgentSession(
+    userId: string,
+    sessionId: string,
+    excerpt: string,
+  ): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO agent_sessions
+         (user_id, agent, session_id, source, selector, last_message_excerpt)
+       VALUES ($1, 'codex', $2, 'startup', '{"kind":"all"}'::jsonb, $3)`,
+      [userId, sessionId, excerpt],
+    )
+  }
+
   // Seed the user-owned cost/usage rows — budget window (one per user) and one
   // llm_usage cost row. Neither has a REST write path under test, so seed via the
   // owner connection (explicit user_id).
@@ -728,6 +741,8 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     const proposedValue = `fp-val-${crypto.randomUUID()}`
     const proposedRationale = `fp-rat-${crypto.randomUUID()}`
     await seedFactProposal(await userIdFor(emailA), memoryId, proposedValue, proposedRationale)
+    const sessionExcerpt = `sess-${crypto.randomUUID()}`
+    await seedAgentSession(await userIdFor(emailA), 'sess-export-a', sessionExcerpt)
 
     const res = await api('/api/v1/export', { key: keyA })
     expect(res.status).toBe(200)
@@ -742,12 +757,14 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
       memoryEvents: Array<{ memoryId: string; payload: { note?: string } | null }>
       proposals: Array<{ rationale: string | null }>
       factProposals: Array<{ memoryId: string; value: string; rationale: string | null }>
+      agentSessions: Array<{ sessionId: string; lastMessageExcerpt: string | null }>
       counts: {
         memories: number
         edges: number
         memoryEvents: number
         proposals: number
         factProposals: number
+        agentSessions: number
       }
     }
     expect(body.format).toBe('3ngram.account-export.v1')
@@ -774,6 +791,12 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.counts.memoryEvents).toBe(body.memoryEvents.length)
     expect(body.counts.proposals).toBe(body.proposals.length)
     expect(body.counts.factProposals).toBe(body.factProposals.length)
+    expect(
+      body.agentSessions.some(
+        (s) => s.sessionId === 'sess-export-a' && s.lastMessageExcerpt === sessionExcerpt,
+      ),
+    ).toBe(true)
+    expect(body.counts.agentSessions).toBe(body.agentSessions.length)
   })
 
   it('TENANT ISOLATION: A export never contains B-owned memories, edges, events, proposals, or fact proposals (RLS)', async () => {
@@ -797,6 +820,8 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     const bProposedValue = `b-fp-val-${crypto.randomUUID()}`
     const bProposedRationale = `b-fp-rat-${crypto.randomUUID()}`
     await seedFactProposal(await userIdFor(emailB), bMemoryId, bProposedValue, bProposedRationale)
+    const bExcerpt = `b-sess-${crypto.randomUUID()}`
+    await seedAgentSession(await userIdFor(emailB), 'sess-export-b', bExcerpt)
 
     const res = await api('/api/v1/export', { key: keyA })
     expect(res.status).toBe(200)
@@ -807,6 +832,7 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
       memoryEvents: Array<{ memoryId: string; payload: { note?: string } | null }>
       proposals: Array<{ rationale: string | null }>
       factProposals: Array<{ memoryId: string; value: string; rationale: string | null }>
+      agentSessions: Array<{ sessionId: string; lastMessageExcerpt: string | null }>
     }
     // A's export is scoped to A: every B-owned id/content/edge/payload/rationale is absent.
     expect(body.account.email).toBe(emailA)
@@ -821,6 +847,8 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.factProposals.some((p) => p.memoryId === bMemoryId)).toBe(false)
     expect(body.factProposals.some((p) => p.value === bProposedValue)).toBe(false)
     expect(body.factProposals.some((p) => p.rationale === bProposedRationale)).toBe(false)
+    expect(body.agentSessions.some((s) => s.sessionId === 'sess-export-b')).toBe(false)
+    expect(body.agentSessions.some((s) => s.lastMessageExcerpt === bExcerpt)).toBe(false)
   })
 
   it('works under a session Bearer (same identity as the key)', async () => {

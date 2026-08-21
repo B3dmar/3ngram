@@ -21,6 +21,7 @@
 // Observability (hard rule 6): logs NOTHING; callers log the id hash + counts only.
 import { eq, isNull } from 'drizzle-orm'
 import { lockAccountLifecycle, lockPasswordReset, type TenantTx } from './client.js'
+import { agentSessions } from './schema/agent-sessions.js'
 import {
   apiKeys,
   emailVerificationTokens,
@@ -75,6 +76,8 @@ export interface AccountErasureResult {
   proposals: number
   /** Staged fact proposals awaiting review — user content, erased like `facts`. */
   factProposals: number
+  /** Session-control rows — excerpt/topics/selector redacted in place (no DELETE). */
+  agentSessions: number
   sessionsDeleted: number
   apiKeysRevoked: number
   oauthTokensRevoked: number
@@ -129,6 +132,7 @@ export async function eraseAccountData(
       commitments: 0,
       proposals: 0,
       factProposals: 0,
+      agentSessions: 0,
       sessionsDeleted: 0,
       apiKeysRevoked: 0,
       oauthTokensRevoked: 0,
@@ -168,6 +172,21 @@ export async function eraseAccountData(
     .update(factProposals)
     .set({ subject: ERASED_PII, predicate: ERASED_PII, value: ERASED_PII, rationale: null })
     .returning({ id: factProposals.id })
+  // agent_sessions is user-owned content (excerpt, briefing topics, selector)
+  // and the users row is tombstoned rather than deleted, so the FK cascade
+  // never fires. No DELETE grant — redact in place, keep the structural
+  // skeleton (id, natural key, lease, triage).
+  const erasedAgentSessions = await tx
+    .update(agentSessions)
+    .set({
+      project: null,
+      scope: null,
+      selector: { kind: 'all' as const },
+      lastTriagedEventIds: [],
+      briefedMemories: [],
+      lastMessageExcerpt: ERASED_PII,
+    })
+    .returning({ id: agentSessions.id })
 
   // Revoke credentials. Sessions are deletable (not append-only memory); api keys
   // and oauth tokens are revoked in place (revoked_at) — only the still-live ones.
@@ -237,6 +256,7 @@ export async function eraseAccountData(
     commitments: erasedCommitments.length,
     proposals: erasedProposals.length,
     factProposals: erasedFactProposals.length,
+    agentSessions: erasedAgentSessions.length,
     sessionsDeleted: deletedSessions.length,
     apiKeysRevoked: revokedKeys.length,
     oauthTokensRevoked: revokedTokens.length,

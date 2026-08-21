@@ -144,6 +144,7 @@ export { AccountDeletedError } from './credential-guard.js'
 // --- full-account data export (GDPR portability) — appended block ---
 export {
   type ExportAccountRow,
+  type ExportAgentSessionRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
   type ExportEdgeRow,

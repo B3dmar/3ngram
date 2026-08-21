@@ -67,6 +67,7 @@ const DOMAIN_TABLES = [
   'memory_edges',
   'memories',
   'scopes',
+  'agent_sessions',
   'llm_usage',
 ]
 

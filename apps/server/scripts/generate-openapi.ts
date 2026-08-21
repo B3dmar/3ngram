@@ -245,6 +245,35 @@ const exportFactProposal = z
     createdAt: z.string().datetime(),
   })
   .strict()
+const exportAgentSession = z
+  .object({
+    id: z.uuid(),
+    agent: z.string(),
+    sessionId: z.string(),
+    source: z.string(),
+    project: z.string().nullable(),
+    scope: z.string().nullable(),
+    selector: z.unknown(),
+    openedAt: z.string().datetime(),
+    closedAt: z.string().datetime().nullable(),
+    lastSeenAt: z.string().datetime(),
+    activationEpoch: z.number().int(),
+    triageStatus: z.string(),
+    triageAttemptId: z.uuid().nullable(),
+    lastTriagedEventIds: z.array(z.uuid()),
+    briefingDeliveredAt: z.string().datetime().nullable(),
+    briefedMemories: z.array(
+      z
+        .object({
+          id: z.uuid(),
+          topic: z.string(),
+          status: z.string(),
+        })
+        .strict(),
+    ),
+    lastMessageExcerpt: z.string().nullable(),
+  })
+  .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like
 // the rest of the archive. Numeric USD columns surface as decimal strings (drizzle
 // numeric); usage rows carry no content (hard rule 6).
@@ -304,6 +333,7 @@ const accountExport = z
     memoryEvents: z.array(exportMemoryEvent),
     proposals: z.array(exportProposal),
     factProposals: z.array(exportFactProposal),
+    agentSessions: z.array(exportAgentSession),
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
@@ -318,6 +348,7 @@ const accountExport = z
         memoryEvents: z.number().int().min(0),
         proposals: z.number().int().min(0),
         factProposals: z.number().int().min(0),
+        agentSessions: z.number().int().min(0),
         userBudgets: z.number().int().min(0),
         llmUsage: z.number().int().min(0),
       })
@@ -339,6 +370,7 @@ const accountDeletion = z
         commitments: z.number().int().min(0),
         proposals: z.number().int().min(0),
         factProposals: z.number().int().min(0),
+        agentSessions: z.number().int().min(0),
         sessionsDeleted: z.number().int().min(0),
         apiKeysRevoked: z.number().int().min(0),
         oauthTokensRevoked: z.number().int().min(0),

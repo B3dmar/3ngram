@@ -114,6 +114,7 @@ export {
   type EmbeddingSource,
   EmptySectionsError,
   type ExportAccountRow,
+  type ExportAgentSessionRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
   type ExportEdgeRow,
