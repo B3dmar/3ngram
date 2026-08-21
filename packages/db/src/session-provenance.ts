@@ -27,8 +27,20 @@ function leaseFloor(now: Date): Date {
   return new Date(now.getTime() - SESSION_LEASE_MS)
 }
 
+/** Explicit SessionEnd: closed while the lease was still live. Durable — lastSeenAt freezes at close. */
+function isExplicitClose(closedAt: Date | null, lastSeenAt: Date): boolean {
+  return closedAt !== null && closedAt.getTime() <= lastSeenAt.getTime() + SESSION_LEASE_MS
+}
+
 function projectPredicate(project: string | null | undefined) {
   return project == null ? isNull(agentSessions.project) : eq(agentSessions.project, project)
+}
+
+async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
+  await tx
+    .update(agentSessions)
+    .set({ lastSeenAt: now })
+    .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }
 
 async function resurrect(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
@@ -51,6 +63,7 @@ async function attachKnownRun(
   const [row] = await tx
     .select({
       id: agentSessions.id,
+      project: agentSessions.project,
       closedAt: agentSessions.closedAt,
       lastSeenAt: agentSessions.lastSeenAt,
     })
@@ -58,11 +71,14 @@ async function attachKnownRun(
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
     .limit(1)
   if (row === undefined) throw new UnknownSessionRunError(sessionRunId)
+  if (isExplicitClose(row.closedAt, row.lastSeenAt)) return undefined
   const leased = row.lastSeenAt.getTime() > leaseFloor(now).getTime()
-  // Explicit SessionEnd: closed while the lease was still live. Do not resurrect.
-  if (row.closedAt !== null && leased) return undefined
   if (!leased) {
+    // Resurrecting changes the open-session set; serialize with omitted-id attach.
+    await lockSessionAttach(tx, userId, row.project)
     await resurrect(tx, userId, row.id, now)
+  } else {
+    await heartbeat(tx, userId, row.id, now)
   }
   return row.id
 }
@@ -73,6 +89,9 @@ async function attachSingleOpen(
   project: string | null | undefined,
   now: Date,
 ): Promise<string | undefined> {
+  // Held until commit: zero/one/many is only valid at commit, and uniqueness is
+  // not on project. Skipping the lock when a pre-count ≠ 1 races a concurrent
+  // open or resurrect.
   await lockSessionAttach(tx, userId, project)
   const open = await tx
     .select({ id: agentSessions.id })
@@ -86,7 +105,9 @@ async function attachSingleOpen(
       ),
     )
     .limit(2)
-  return open.length === 1 ? open[0]?.id : undefined
+  const id = open.length === 1 ? open[0]?.id : undefined
+  if (id !== undefined) await heartbeat(tx, userId, id, now)
+  return id
 }
 
 /**

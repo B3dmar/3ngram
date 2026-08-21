@@ -90,6 +90,26 @@ describe('writeMemory session provenance', () => {
     )
   })
 
+  it('stamps payload and refreshes last_seen_at on a live attach', async () => {
+    const seen = new Date(NOW.getTime() - 60_000)
+    await seedSession({
+      userId: uid,
+      id: RUN_A,
+      sessionId: 'live-hb',
+      project: '3ngram',
+      lastSeenAt: seen,
+      closedAt: null,
+    })
+    const written = await writeMemory(memoryInput(uid, { sessionRunId: RUN_A }))
+    expect(await eventPayload(written.id)).toEqual({ sessionRunId: RUN_A })
+    const row = await ownerPool.query(
+      'SELECT last_seen_at, activation_epoch FROM agent_sessions WHERE id = $1',
+      [RUN_A],
+    )
+    expect(row.rows[0].last_seen_at.toISOString()).toBe(NOW.toISOString())
+    expect(row.rows[0].activation_epoch).toBe(1)
+  })
+
   it('succeeds unattributed on an explicitly closed live-lease row', async () => {
     await seedSession({
       userId: uid,
@@ -121,6 +141,27 @@ describe('writeMemory session provenance', () => {
     )
     expect(row.rows[0].closed_at).toBeNull()
     expect(row.rows[0].activation_epoch).toBe(2)
+  })
+
+  it('does not resurrect an explicit close after the lease has expired', async () => {
+    const closeAt = NOW
+    const writeAt = new Date(NOW.getTime() + SESSION_LEASE_MS + 60_000)
+    await seedSession({
+      userId: uid,
+      id: RUN_A,
+      sessionId: 'ended-stale',
+      project: '3ngram',
+      lastSeenAt: closeAt,
+      closedAt: closeAt,
+    })
+    const written = await writeMemory(memoryInput(uid, { sessionRunId: RUN_A, now: writeAt }))
+    expect(await eventPayload(written.id)).toBeNull()
+    const row = await ownerPool.query(
+      'SELECT closed_at, activation_epoch FROM agent_sessions WHERE id = $1',
+      [RUN_A],
+    )
+    expect(row.rows[0].closed_at).not.toBeNull()
+    expect(row.rows[0].activation_epoch).toBe(1)
   })
 
   it('omitted id attaches the single leased-open session for the project', async () => {
