@@ -221,7 +221,7 @@ agent_sessions (
   closed_at            timestamptz null,
   last_seen_at         timestamptz not null, -- lease heartbeat
   activation_epoch     int not null,         -- incremented on startup/resume; close must match
-  triage_status        text not null,        -- idle | pending | completed | expired
+  triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
   last_triaged_event_ids jsonb not null default '[]', -- all event ids for the run visible at last complete/expire, not since-attempt-begin
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
@@ -236,8 +236,12 @@ leading with `user_id`, runtime INSERT/SELECT/UPDATE grants only on this table (
 DELETE — close is an update), bounded cleanup on account deletion, export of the row
 in GDPR dump, no memory content in logs.
 
-`id` is the only identifier writes may carry (`sessionRunId`). The harness `session_id`
-stays on the row. Resume reuses it; compact is not a new conversation.
+`id` (`sessionRunId`) is what native writes may carry when the model passes it.
+Hook bookkeeping does **not** need it: `open` / `heartbeat` / `triage` / `close`
+address the row by the unique natural key `(user_id, agent, session_id)` — `user_id`
+from the API key, `session_id` from harness stdin, `agent` from the hook binary.
+Stop is a separate process and holds no `sessionRunId`; it must not require a
+local mapping file. Resume reuses the row; compact is not a new conversation.
 
 ### SessionStart
 
@@ -246,7 +250,7 @@ The shipped hook is registered for Codex matchers `startup|resume|clear|compact`
 
 | `source` | Behavior |
 |---|---|
-| `startup` | Insert the row (`activation_epoch = 1`). Request `mode=full` on `GET /api/v1/briefing` — the shipped hook omits `mode` and gets the `brief` slice (`cmd/3ngram-hook/briefing.go`). Stamp `briefing_delivered_at` and `briefed_memories` (id, topic, status — not bare UUIDs) after delivery. |
+| `startup` | `GET /api/v1/briefing?mode=full` (the shipped hook omits `mode` and gets the `brief` slice). Render, then **truncate locally** (`BRIEFING_MAX_TOKENS`, default 2000 → `maxChars` at `briefing.go`). `POST /open` with the natural key **and the `{id, topic, status}` rows that survived the cut**. The stamp is that POST, not the GET — otherwise `briefed_memories` records commitments the agent never saw. |
 | `resume` | Idempotent: reuse the existing `(user_id, agent, session_id)` row; increment `activation_epoch`; reopen if implicitly or explicitly closed. Do **not** restamp the briefing fields. Heartbeat `last_seen_at`. |
 | `compact` | **No-op.** Not an open, not a restamp. See PreCompact below. |
 | `clear` | Treat as startup of a new conversation if the harness mints a new `session_id`; otherwise same as resume. Confirm against the harness at implementation. |
@@ -270,16 +274,19 @@ debrief. A throttled `PostToolUse` heartbeat is optional, not required for corre
 
 **Resurrection.** Implicit close is not SessionEnd. A later heartbeat, SessionStart
 `resume`, or tenant-owned write carrying that `sessionRunId` **reopens** the same row:
-clear `closed_at`, refresh `last_seen_at`, do not restamp briefing fields, do not
-insert a new row. If the lease has expired but `closed_at` is still null, treat that
-write as implicit close **then** reopen, and attach provenance, in one transaction —
-the same post-idle write must not depend on whether the sweeper has run. Cancel a
-closer job still queued for that run. If the closer already completed, leave those
-memories; a later explicit close re-runs the closer only when there is untriaged
-signal since. An **explicit** SessionEnd close does not resurrect on write — those
-writes succeed unattributed (below). The closer on implicit close waits a grace after
-lease expiry so an overnight idle gap can reopen instead of being debriefed
-mid-conversation.
+clear `closed_at`, refresh `last_seen_at`, **increment `activation_epoch`**, do not
+restamp briefing fields, do not insert a new row. If the lease has expired but
+`closed_at` is still null, treat that write as implicit close **then** reopen, and
+attach provenance, in one transaction — the same post-idle write must not depend on
+whether the sweeper has run. The closer **claims at a recorded epoch**; every
+subsequent write or cleanup re-checks it. A queued job for an old epoch is a no-op;
+an in-flight generation whose epoch no longer matches **abandons without writing**.
+"Cancel the queue entry" is not enough — the worker may already be calling the
+model. If a closer attempt already committed memories, leave them; a later explicit
+close re-runs only when there is untriaged signal since. An **explicit** SessionEnd
+close does not resurrect on write — those writes succeed unattributed (below). The
+closer on implicit close waits a grace after lease expiry so an overnight idle gap
+can reopen instead of being debriefed mid-conversation.
 
 ### Last-consumed cursor — deferred
 
@@ -322,18 +329,20 @@ payload. Thread the same payload through **all** of those inserts, including
 
 **Do not add `sessionRunId` to `rememberInputSchema`.** `importMemoryInputSchema`
 extends that schema (`packages/schema/src/import.ts`); a key there would be accepted
-on import and then silently dropped. Compose a native-only input with
-`safeExtend` (ADR-0011), the same way `rememberWithFactsInputSchema` sits beside
-the base.
+on import and then silently dropped. The shipped native write path is already the
+facts-capable schema: `rememberToolInputV2Schema` aliases
+`rememberWithFactsInputSchema`, and `packages/core/src/write/remember.ts` re-parses
+that **strict** shape. Compose beside that canonical native input (ADR-0011):
 
 ```text
-nativeRememberInputSchema = rememberInputSchema.safeExtend({
+nativeRememberInputSchema = rememberWithFactsInputSchema.safeExtend({
   sessionRunId: uuid.optional()
 })
 ```
 
-Same optional key on native revise and on the resolve/unresolve/archive inputs.
-`.strict()` stays.
+Core's single parse must accept the extended type — otherwise `sessionRunId`
+regresses structured fact writes. Same optional key on native revise and on the
+resolve/unresolve/archive inputs. `.strict()` stays.
 
 **How the value gets there.**
 
@@ -365,6 +374,10 @@ Same optional key on native revise and on the resolve/unresolve/archive inputs.
    that omitted the id). If the write omits `sessionRunId` and the tenant has
    exactly one leased-open row for that project, the write path MAY attach it.
    Zero or many → leave payload unset. Time-window guesses are out; they collide.
+   Serialize that decision against concurrent opens (transaction `FOR SHARE` on
+   the candidate row, or a tenant advisory lock) so "unattributed rather than
+   guessed wrong" still holds when two sessions open in the same moment — the
+   same Read Committed genus as the watermark race.
 
 Payload schema (JSON keys are spelling-sensitive — the index must use the same
 spelling):
@@ -375,9 +388,12 @@ sessionProvenancePayloadSchema = { sessionRunId: uuid }.strict()
 
 ```sql
 CREATE INDEX memory_events_session_idx
-  ON memory_events (user_id, ((payload->>'sessionRunId')), created_at)
+  ON memory_events (user_id, ((payload->>'sessionRunId')), id)
   WHERE payload->>'sessionRunId' IS NOT NULL;
 ```
+
+The reader keysets on `id` (`uuidv7()`, `packages/db/src/schema/memory.ts`). A
+`created_at` tail would not serve that scan; with uuidv7 it is redundant anyway.
 
 Import and `embed_failed` payloads stay on their own contracts. `cwd` and
 `transcript_path` are out.
@@ -396,18 +412,19 @@ The history endpoint does **not** start returning payload.
 This is a **narrowing of that rule**, not an exception:
 
 ```text
-GET /api/v1/agent-sessions/:sessionRunId/events?cursor&limit
+GET /api/v1/agent-sessions/events?cursor&limit  // natural key or sessionRunId
   -> { items: [{ id, memoryId, eventKind, actorKind, sessionRunId, createdAt }],
        nextCursor?, truncated }
 ```
 
 Hard per-call `limit` (and a per-run ceiling the closer will not exceed). Keyset
 pagination on event `id` (uuidv7 order). `truncated: true` when more exist than the
-ceiling — the closer then treats the run as incomplete for completion/watermark
-purposes rather than pretending it saw everything. `jsonb` operators for
-`sessionRunId` only, parsed through `sessionProvenancePayloadSchema`, never
-`payload` as a blob. History DTO stays metadata-only (`present` / `jsonType` /
-`byteLength`).
+ceiling. A truncated run is **terminal `overflowed`**: the closer must not
+re-claim and re-spend an LLM pass on the same run; emit a metric. Chunked
+progress across ceilings is out — that is a pathological case, not a product
+path. `jsonb` operators for `sessionRunId` only, parsed through
+`sessionProvenancePayloadSchema`, never `payload` as a blob. History DTO stays
+metadata-only (`present` / `jsonType` / `byteLength`).
 
 ## Layer 4 — Stop is a nudge
 
@@ -454,7 +471,7 @@ Stop(stop_hook_active=true)  OR  numeric self-cap hit
   → since_begin = event ids for this run since attempt begin
   → visible = all event ids for this run now (uuidv7 order, per-run ceiling)
   → last_triaged_event_ids = visible   // cumulative, not since_begin
-  → if visible truncated: triage_status=expired
+  → if visible truncated: triage_status=overflowed   // terminal; closer does not retry
   → else if since_begin is empty: triage_status=expired   // closer-eligible
   → else: triage_status=completed
 ```
@@ -464,11 +481,13 @@ only when the continuation produced provenance; otherwise expire so the closer
 still runs. **Watermark** is `visible` — every event id for the run at this Stop,
 including the writes that armed the debounce *before* `triage/begin`. Storing only
 `since_begin` would re-arm immediately on those pre-attempt events (and again on
-attempt N+1 when the set is replaced). Union across attempts; truncated → expire.
+attempt N+1 when the set is replaced). Union across attempts; truncated → overflowed (terminal).
 
-Do **not** watermark with `max(createdAt)`. That is the same Read Committed
-timestamp race this page rejects for briefing cursors. Re-arm is an event id not
-in `last_triaged_event_ids`, including a write that committed after the listing.
+Do **not** watermark with `max(createdAt)`, and do **not** fall back to "ids
+greater than X in uuidv7 order." A late-committing write can hold an *earlier*
+uuidv7 (assigned at insert, visible after complete), which is exactly the race
+the set exists to catch. Persist the full bounded set of ids **visible at
+complete**. Re-arm is an event id not in that set.
 
 `expired` is closer-eligible and **not** a handshake entry status. A zero-write
 continuation must not re-inject on every later Stop — the numeric cap bounds
@@ -521,14 +540,20 @@ The documented Compose stack has Postgres, Redis, and the server — **no worker
 follow-up). Step 6 includes a worker image and Compose service, or self-host never
 runs the closer.
 
-**Claim then write.** Before any `remember` / `resolve`, the job atomically claims
-the row (`triage_status` → a processing state, or a `closer_attempt_id` unique per
-run). Durable idempotency key = that attempt id. BullMQ retries (3) plus LLM
-rephrasing would otherwise bypass content-hash dedup and append duplicate atoms.
-Deleting the extras is forbidden (hard rule 1). If the process crashes after
-claim and before completion, retry resumes the same attempt rather than a new
-generation. Clear `last_message_excerpt` only after this attempt has durably
-finished.
+**Claim then write, fenced by epoch.** Before any model call, the job atomically
+claims the row at the current `activation_epoch` (`closer_attempt_id` unique per
+run+epoch). If resurrection has incremented the epoch, the claim fails and the
+job is a no-op — including an in-flight generation that re-checks the epoch
+before each write. One rule; no separate cancel protocol.
+
+**Per-output idempotency.** One attempt id cannot tell which atoms of a
+partially-committed batch survived a crash, and hard rule 1 forbids deleting the
+duplicates. Persist the generated batch under the attempt *before* any
+`remember` / `resolve`, then write each atom with key `(attempt_id, ordinal)`.
+Retries **replay** those rows; they never regenerate. BullMQ's three attempts
+plus LLM rephrasing would otherwise bypass content-hash dedup.
+
+Clear `last_message_excerpt` only after this attempt has durably finished.
 
 Input, all bounded, none of it a transcript:
 
@@ -538,8 +563,9 @@ Input, all bounded, none of it a transcript:
 
 It runs on lease-expiry (after grace) or explicit `closed_at` when
 `triage_status` is `idle`, `pending`, `expired`, **or `completed` with event ids
-not in `last_triaged_event_ids`**. It does not scrape tool I/O. It does not run
-on every Stop. It does not invent user-turn decisions that were never written.
+not in `last_triaged_event_ids`**. It does **not** run on `overflowed` (terminal;
+metric only). It does not scrape tool I/O. It does not run on every Stop. It does
+not invent user-turn decisions that were never written.
 
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That
@@ -547,25 +573,27 @@ reconsolidation can follow this job; it is not a blocker for the closer itself.
 
 ## Layer 6 — SessionEnd is close, not capture
 
-`POST /api/v1/agent-sessions/:sessionRunId/close` sets `closed_at`. Idempotent.
-Fits the SessionEnd budget. Correctness does not depend on it (the lease does).
-The body carries `activation_epoch`. A close whose epoch does not match the
-row's current epoch is a **no-op** — a delayed SessionEnd from the previous
-activation must not close a resumed run.
+`POST /api/v1/agent-sessions/close` sets `closed_at`. Addressed by natural key
+plus `activation_epoch`. Idempotent. Fits the SessionEnd budget. Correctness does
+not depend on it (the lease does). A close whose epoch does not match the row's
+current epoch is a **no-op** — a delayed SessionEnd from the previous activation
+must not close a resumed run.
 
 ## REST surface (hook-facing, API-key)
 
 All of these are new, thin, idempotent (request token; reuse with changed params is
-`409`), tenant-scoped, no memory content in logs:
+`409`), tenant-scoped, no memory content in logs. Hook routes take the natural key
+`(agent, session_id)` in the body; tenant from the API key. `sessionRunId` is not
+required on heartbeat/close/triage — Stop does not have it.
 
 | Method | Path | Job |
 |---|---|---|
-| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume idempotent reuse |
-| `POST` | `/api/v1/agent-sessions/:sessionRunId/close` | set `closed_at` if `activation_epoch` matches |
-| `POST` | `/api/v1/agent-sessions/:sessionRunId/heartbeat` | `last_seen_at` |
-| `POST` | `/api/v1/agent-sessions/:sessionRunId/triage/begin` | pending attempt |
-| `POST` | `/api/v1/agent-sessions/:sessionRunId/triage/complete` | absorb writes, stamp watermark |
-| `GET` | `/api/v1/agent-sessions/:sessionRunId/events` | typed provenance read |
+| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate |
+| `POST` | `/api/v1/agent-sessions/close` | set `closed_at` if `activation_epoch` matches |
+| `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key |
+| `POST` | `/api/v1/agent-sessions/triage/begin` | pending attempt |
+| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark |
+| `GET` | `/api/v1/agent-sessions/events` | typed provenance read (natural key or `sessionRunId`) |
 | `GET` | `/api/v1/prompts/debrief` | render the same registrar |
 
 No new MCP tool.
@@ -579,8 +607,8 @@ Existing tools cover the jobs. The reason not to add one is the JTBD test.
 | Needed | Why it does not exist today |
 |---|---|
 | `agent_sessions` + RLS + lease + grants | Session identity cannot live on `memory_events` |
-| Expression index on `payload->>'sessionRunId'` | Stop/closer must not scan a tenant's audit history |
-| Native-only `sessionRunId` on write contracts | Must not ride `rememberInputSchema` (import extends it) |
+| Expression index on `(user_id, payload->>'sessionRunId', id)` | Stop/closer must not scan a tenant's audit history; reader keysets on `id` |
+| Native-only `sessionRunId` on `rememberWithFactsInputSchema` | Must not ride `rememberInputSchema` (import extends it); core's strict parse must accept the extend |
 | `payload` through `writeMemory` and `transitionCommitment` | Native path hardcodes `undefined` / omits payload |
 | Typed provenance read | History redacts payload values by design |
 | REST prompt render + session open/close/heartbeat/triage | Prompts are MCP-only; the hook has no MCP client |
@@ -632,13 +660,15 @@ still help Claude/Codex first.
 
 ## Plan
 
-Each step is independently useful. **Do not start implementation until this page is
-accepted as the contract.** Stop nudge is last and default-off.
+Each step is independently useful. Stop nudge is last and default-off.
+
+**Contract review is converged** (2026-08-21). Remaining discoveries belong in
+step-level implementation review against this page, not more prose here.
 
 | # | Step | Validates |
 |---|---|---|
 | 0 | ~~Verify Codex blocking `Stop`~~ | **Done** |
-| 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (2026-08-20 re-review) |
+| 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (converged 2026-08-21) |
 | 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema | Table count 26 → 27 |
 | 3 | Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor | Attribution is server-validated; hooked path is not "always" |
 | 4 | Typed provenance read (bounded, paginated) | Closer and nudge can list this run's writes |
