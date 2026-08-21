@@ -4,8 +4,10 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built.** No `agent_sessions` table, no write-time `sessionRunId`, no
-typed provenance read, no Stop nudge, no session-closer worker. Tracked as
+**Status: design, not built** (table exists; write path / hook / closer do not).
+`agent_sessions` and the `memory_events` session expression index shipped in
+migration 0032. No write-time `sessionRunId` on native remember, no typed
+provenance read, no Stop nudge, no session-closer worker. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.

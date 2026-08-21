@@ -292,6 +292,7 @@ export {
   type RlsGuardOptions,
   readForcedTenantTables,
 } from './rls-guard.js'
+export * from './schema/agent-sessions.js'
 export * from './schema/budget.js'
 export * from './schema/identity.js'
 export * from './schema/memory.js'
