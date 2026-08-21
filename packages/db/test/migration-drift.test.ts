@@ -86,7 +86,7 @@ const factProposalsSql = readFileSync(
   'utf8',
 )
 const agentSessionsSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0032_great_human_fly.sql'),
+  join(import.meta.dirname, '../migrations/0032_agent_sessions.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -613,6 +613,12 @@ describe('agent_sessions table (0032, issue #166)', () => {
   it('unique natural key is (user_id, agent, session_id)', () => {
     expect(agentSessionsSql).toContain(
       'CONSTRAINT "agent_sessions_natural_key" UNIQUE("user_id","agent","session_id")',
+    )
+  })
+
+  it('lease index only covers open rows', () => {
+    expect(agentSessionsSql).toContain(
+      'CREATE INDEX "agent_sessions_lease_idx" ON "agent_sessions" USING btree ("user_id","last_seen_at") WHERE "agent_sessions"."closed_at" IS NULL',
     )
   })
 

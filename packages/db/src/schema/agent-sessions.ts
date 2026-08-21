@@ -53,7 +53,7 @@ export const agentSessions = pgTable(
   (t) => [
     unique('agent_sessions_tenant_id_uq').on(t.userId, t.id),
     unique('agent_sessions_natural_key').on(t.userId, t.agent, t.sessionId),
-    index('agent_sessions_lease_idx').on(t.userId, t.lastSeenAt),
+    index('agent_sessions_lease_idx').on(t.userId, t.lastSeenAt).where(sql`${t.closedAt} IS NULL`),
     check('agent_sessions_source_check', enumCheckSql(t.source, agentSessionSourceSchema.options)),
     check(
       'agent_sessions_triage_check',

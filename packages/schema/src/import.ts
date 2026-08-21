@@ -37,9 +37,16 @@ const serializedLength = (payload: Record<string, unknown>): number => {
  * Bounded JSON object persisted on an import audit event (memory_events.payload,
  * jsonb). Bounded by SERIALIZED length so jsonb's typelessness cannot smuggle an
  * unbounded body through the boundary (the tags-in-jsonb precedent).
+ * `sessionRunId` is reserved for native write provenance
+ * (docs/concepts/session-continuity.mdx) and is rejected here — imported
+ * events are permanent (hard rule 1) and the session reader treats that key
+ * as native.
  */
 export const importEventPayloadSchema = z
   .record(z.string(), z.unknown())
+  .refine((payload) => !('sessionRunId' in payload), {
+    message: 'sessionRunId is reserved for native write provenance',
+  })
   .refine((payload) => serializedLength(payload) <= MAX_IMPORT_PAYLOAD_LENGTH, {
     message: `import payload must serialize to at most ${MAX_IMPORT_PAYLOAD_LENGTH} characters`,
   })

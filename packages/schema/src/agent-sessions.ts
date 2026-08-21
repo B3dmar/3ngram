@@ -72,6 +72,10 @@ export const agentSessionRowSchema = z
     lastTriagedEventIds: z.array(z.uuid()).max(MAX_SESSION_EVENT_IDS),
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
     lastMessageExcerpt: z.string().max(MAX_SESSION_EXCERPT_LENGTH).nullable(),
+    openedAt: z.date(),
+    closedAt: z.date().nullable(),
+    lastSeenAt: z.date(),
+    briefingDeliveredAt: z.date().nullable(),
   })
   .strict()
 export type AgentSessionRow = z.infer<typeof agentSessionRowSchema>

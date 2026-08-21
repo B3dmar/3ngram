@@ -150,6 +150,46 @@ describe('importEventKindSchema (FR-004: replay full lifecycle history, #220)', 
   })
 })
 
+describe('import payload reserved sessionRunId (issue #166)', () => {
+  it('rejects sessionRunId on importEvent payload', () => {
+    expect(
+      importEventInputSchema.safeParse({
+        memoryId: UUID_A,
+        eventKind: 'create',
+        payload: { sessionRunId: UUID_B },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a null sessionRunId the same way — the key is reserved', () => {
+    expect(
+      importEventInputSchema.safeParse({
+        memoryId: UUID_A,
+        eventKind: 'create',
+        payload: { sessionRunId: null },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects sessionRunId on the import memory event override', () => {
+    expect(
+      importMemoryInputSchema.safeParse({
+        ...validMemory,
+        event: { payload: { sessionRunId: UUID_B } },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('still accepts other bounded payload keys', () => {
+    const event = importEventInputSchema.parse({
+      memoryId: UUID_A,
+      eventKind: 'create',
+      payload: { source: 'legacy-engram', id: 'abc' },
+    })
+    expect(event.payload).toEqual({ source: 'legacy-engram', id: 'abc' })
+  })
+})
+
 describe('import content bound (frozen mapping: historical blobs land as-is)', () => {
   it('accepts content over the native cap on import, while remember rejects it', () => {
     const overNativeCap = { ...validMemory, content: 'a'.repeat(MAX_CONTENT_LENGTH + 1) }

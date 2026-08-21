@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
 import {
+  agentSessionRowSchema,
   agentSessionSourceSchema,
   agentSessionTriageStatusSchema,
   briefedMemorySchema,
@@ -37,6 +38,43 @@ describe('agent session enums', () => {
       'expired',
       'overflowed',
     ])
+  })
+})
+
+describe('agentSessionRowSchema', () => {
+  const openedAt = new Date('2026-08-21T12:00:00Z')
+  const row = {
+    id: RUN,
+    agent: 'codex',
+    sessionId: 'sess-1',
+    source: 'startup',
+    project: null,
+    scope: null,
+    selector: { kind: 'all' },
+    activationEpoch: 1,
+    triageStatus: 'idle',
+    triageAttemptId: null,
+    lastTriagedEventIds: [],
+    briefedMemories: [],
+    lastMessageExcerpt: null,
+    openedAt,
+    closedAt: null,
+    lastSeenAt: openedAt,
+    briefingDeliveredAt: null,
+  }
+
+  it('accepts a row with the timestamp columns', () => {
+    expect(agentSessionRowSchema.parse(row)).toEqual(row)
+  })
+
+  it('rejects a row missing openedAt / lastSeenAt', () => {
+    expect(
+      agentSessionRowSchema.safeParse({
+        ...row,
+        openedAt: undefined,
+        lastSeenAt: undefined,
+      }).success,
+    ).toBe(false)
   })
 })
 

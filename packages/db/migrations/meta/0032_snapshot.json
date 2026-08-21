@@ -144,7 +144,8 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
-          "with": {}
+          "with": {},
+          "where": "\"agent_sessions\".\"closed_at\" IS NULL"
         }
       },
       "foreignKeys": {

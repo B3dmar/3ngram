@@ -410,9 +410,9 @@ CREATE INDEX memory_events_session_idx
 The reader keysets on `id` (`uuidv7()`, `packages/db/src/schema/memory.ts`). A
 `created_at` tail would not serve that scan; with uuidv7 it is redundant anyway.
 
-Import and `embed_failed` payloads stay on their own contracts. **Reject or
-strip `sessionRunId` at the import boundary** (`packages/schema/src/import.ts`
-accepts arbitrary bounded payload keys today). An imported lifecycle event that
+Import and `embed_failed` payloads stay on their own contracts. **Reject
+`sessionRunId` at the import boundary** (`importEventPayloadSchema` in
+`packages/schema/src/import.ts`). An imported lifecycle event that
 carries that key would land in a live run's event set, re-arm triage, or push
 the run toward `overflowed`. Native provenance is only a payload written by the
 native path. `cwd` and `transcript_path` are out.
@@ -698,7 +698,7 @@ prose here.
 |---|---|---|
 | 0 | ~~Verify Codex blocking `Stop`~~ | **Done** |
 | 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (converged 2026-08-21) |
-| 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema | Table count 26 → 27 |
+| 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema + import-boundary `sessionRunId` reject | Table count 26 → 27 |
 | 3 | Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor | Attribution is server-validated; hooked path is not "always" |
 | 4 | Typed provenance read (bounded, paginated) | Closer and nudge can list this run's writes |
 | 5 | REST open / close (natural key, no epoch) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |

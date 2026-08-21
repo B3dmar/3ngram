@@ -25,7 +25,7 @@ CREATE TABLE "agent_sessions" (
 --> statement-breakpoint
 ALTER TABLE "agent_sessions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "agent_sessions" ADD CONSTRAINT "agent_sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "agent_sessions_lease_idx" ON "agent_sessions" USING btree ("user_id","last_seen_at");--> statement-breakpoint
+CREATE INDEX "agent_sessions_lease_idx" ON "agent_sessions" USING btree ("user_id","last_seen_at") WHERE "agent_sessions"."closed_at" IS NULL;--> statement-breakpoint
 CREATE INDEX "memory_events_session_idx" ON "memory_events" USING btree ("user_id",("payload"->>'sessionRunId'),"id") WHERE "memory_events"."payload"->>'sessionRunId' IS NOT NULL;--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "agent_sessions" AS PERMISSIVE FOR ALL TO public USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid) WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);--> statement-breakpoint
 -- Tenant-isolation hardening (0028/0031 precedent): FORCE so the tenant_isolation
