@@ -70,6 +70,22 @@ export async function lockAccountLifecycle(tx: TenantTx, userId: string): Promis
 }
 
 /**
+ * Serialize the single-open-session attach decision for a tenant/project.
+ * Uniqueness is on (user_id, agent, session_id), not project — FOR SHARE on an
+ * existing row cannot block a concurrent INSERT of a different session.
+ */
+export async function lockSessionAttach(
+  tx: TenantTx,
+  userId: string,
+  project: string | null | undefined,
+): Promise<void> {
+  const key = `${userId}:${project ?? ''}`
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('agent_session_attach'), hashtext(${key}))`,
+  )
+}
+
+/**
  * Take the per-user PASSWORD-RESET advisory lock for the current transaction.
  *
  * The SAME key the `auth_reset_password` resolver (migration 0016/0020) and

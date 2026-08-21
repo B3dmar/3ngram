@@ -10,17 +10,18 @@
 import { z } from 'zod'
 import { rememberToolOutputSchema } from './mcp.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
-import { rememberWithFactsInputSchema } from './write.js'
+import { nativeRememberInputSchema } from './write.js'
 
 /**
- * `remember` V2 input: a thin MCP-facing alias of the canonical write contract
- * WITH facts ({@link rememberWithFactsInputSchema}), so the tool, REST, and SDK
- * validate the same shape — the same aliasing the V1 tool input does.
+ * `remember` V2 input: a thin MCP-facing alias of the canonical NATIVE write
+ * contract ({@link nativeRememberInputSchema}: facts + optional sessionRunId),
+ * so the tool, REST, and SDK validate the same shape. Import still uses the
+ * facts-less {@link rememberInputSchema} and rejects sessionRunId.
  *
  * Composed beside the V1 alias, never over it: `revise` shares the V1 base and
  * must keep rejecting a `facts` key.
  */
-export const rememberToolInputV2Schema = rememberWithFactsInputSchema
+export const rememberToolInputV2Schema = nativeRememberInputSchema
 export type RememberToolInputV2 = z.infer<typeof rememberToolInputV2Schema>
 /**
  * Caller-side (pre-parse) shape: the `z.input` side where server-defaulted

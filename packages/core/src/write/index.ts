@@ -23,6 +23,7 @@ export {
 export {
   DuplicateMemoryError,
   remember,
+  UnknownSessionRunError,
   type WriteResult,
   type WrittenMemory,
 } from './remember.js'

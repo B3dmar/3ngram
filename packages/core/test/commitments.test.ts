@@ -217,7 +217,7 @@ describe('resolveByMemoryId (memory-keyed transition for the resolve tool)', () 
     const result = await resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR)
 
     expect(result).toEqual({ id: MEMORY, status: 'archived' })
-    expect(archiveBlockerMemory.mock.calls[0]).toEqual([USER, MEMORY, ACTOR])
+    expect(archiveBlockerMemory.mock.calls[0]).toEqual([USER, MEMORY, ACTOR, undefined])
     // The commitment FSM path is NOT touched for a blocker.
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
   })

@@ -22,6 +22,7 @@ vi.mock('@3ngram/db', () => ({
   recordEmbedFailure: (...a: unknown[]) => recordEmbedFailure(...a),
   insertLlmUsage: (...a: unknown[]) => insertLlmUsage(...a),
   DuplicateMemoryError: class extends Error {},
+  UnknownSessionRunError: class extends Error {},
   EdgeConflictError: class extends Error {},
   PredecessorAlreadySupersededError: class extends Error {},
   PredecessorNotFoundError: class extends Error {},

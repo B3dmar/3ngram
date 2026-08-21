@@ -163,7 +163,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.9.2
+## `@3ngram/core` 0.9.3
 
 ### `.`
 
@@ -172,7 +172,7 @@ its row here even when its name and kind are unchanged.
 | `AccessDeniedError` | class | `945522ecb966` |
 | `AccessGate` | interface | `68f4e3b0905f` |
 | `AccountDeletionResult` | interface | `8e3595b94fe4` |
-| `AccountErasureResult` | interface | `55e4014dd8e0` |
+| `AccountErasureResult` | interface | `93d351d3d44b` |
 | `AllProposals` | interface | `b7eb6b725249` |
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
 | `AsOf` | interface | `7ff84f49ed40` |
@@ -214,6 +214,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
+| `ExportAgentSessionRow` | interface | `5060776a1109` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -293,8 +294,9 @@ its row here even when its name and kind are unchanged.
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
+| `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
-| `UserDataExport` | interface | `613aa86a2611` |
+| `UserDataExport` | interface | `00f736484b00` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
 | `acceptProposalAnyKind` | function | `663283b43b9a` |
@@ -302,7 +304,7 @@ its row here even when its name and kind are unchanged.
 | `applyPolicyToScopeFilter` | function | `d3b36d15020f` |
 | `applyPolicyToSelector` | function | `6687608a2baf` |
 | `applyProposal` | function | `28d312115687` |
-| `archiveMemory` | function | `c5cef211b5ce` |
+| `archiveMemory` | function | `9207c7f19fa9` |
 | `assertRlsInForce` | function | `d2c61c280d14` |
 | `assertWithinBudget` | function | `adfdb8f8723b` |
 | `briefing` | function | `981b58704849` |
@@ -344,7 +346,7 @@ its row here even when its name and kind are unchanged.
 | `renameScope` | function | `de255c44bf53` |
 | `requireSelector` | function | `9939360dd211` |
 | `reserveBudgetSlot` | function | `f23fa3966c48` |
-| `resolveByMemoryId` | function | `32988766cfc0` |
+| `resolveByMemoryId` | function | `161dbd9b5527` |
 | `resolveResourceLimits` | function | `a4a0b13ca9fa` |
 | `resolveRetrievalPolicy` | function | `8d2d78bd62d8` |
 | `retryFailedEmbeds` | function | `814fcebeb911` |
@@ -461,14 +463,14 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.8.2
+## `@3ngram/db` 0.8.3
 
 ### `.`
 
 | Export | Kind | Signature |
 |---|---|---|
 | `AccountDeletedError` | class | `f886d02839f5` |
-| `AccountErasureResult` | interface | `55e4014dd8e0` |
+| `AccountErasureResult` | interface | `93d351d3d44b` |
 | `ActiveMemoryNotFoundError` | class | `6ee34ec19971` |
 | `ApiKeyMetadata` | interface | `79f070aa6a83` |
 | `AppliedFactProposal` | interface | `9ad3015726f8` |
@@ -490,7 +492,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
-| `CommitmentTransition` | interface | `18452b928eeb` |
+| `CommitmentTransition` | interface | `7ff05ebf8e31` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
 | `DEFAULT_RECENCY_HALF_LIFE_DAYS` | const | `f8e82bdcf21b` |
@@ -506,6 +508,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
+| `ExportAgentSessionRow` | interface | `5060776a1109` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -554,7 +557,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistorySectionStatus` | type | `8637fbf356e5` |
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
-| `MemoryWrite` | interface | `6b18490062d8` |
+| `MemoryWrite` | interface | `e8a209e29e38` |
 | `NewEmailVerificationToken` | interface | `1b4b292f2832` |
 | `NewOAuthClient` | type | `f315a73482b4` |
 | `NewOauthCode` | interface | `2e6e2540b16a` |
@@ -587,21 +590,23 @@ its row here even when its name and kind are unchanged.
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingSweepResult` | interface | `7be2206cfb1b` |
 | `TenantTx` | type | `62a38afad7f6` |
+| `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
 | `UserBudgetWrite` | interface | `8e6b2933fc5b` |
-| `UserDataExport` | interface | `613aa86a2611` |
+| `UserDataExport` | interface | `00f736484b00` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `UserRow` | interface | `0d5553e9b368` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
 | `WrittenMemory` | interface | `bec591e2c3d0` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
+| `agentSessions` | const | `937e5566ecdd` |
 | `apiKeys` | const | `c5d36321993d` |
 | `appendImportedEvent` | function | `4654962471fe` |
 | `applyFactProposal` | function | `bb1b15f61cc0` |
 | `applyProposal` | function | `fa33f54559a5` |
-| `archiveBlockerMemory` | function | `987460254cf8` |
-| `archiveMemory` | function | `c5cef211b5ce` |
+| `archiveBlockerMemory` | function | `3ad80537eb43` |
+| `archiveMemory` | function | `a710fad9d8a2` |
 | `assertRlsInForce` | function | `d2c61c280d14` |
 | `auditLog` | const | `16136a25b871` |
 | `auditLogEntryExists` | function | `bab2ee9b3919` |
@@ -784,7 +789,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `94e1b06a4303` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.7.2
+## `@3ngram/schema` 0.7.3
 
 ### `.`
 
@@ -792,10 +797,15 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `AccountDeleteBody` | type | `67b6affde4b2` |
 | `ActorKind` | type | `0e0517b76c62` |
+| `AgentName` | type | `11a9a370f4c8` |
+| `AgentSessionRow` | type | `d4d5b03da60f` |
+| `AgentSessionSource` | type | `8c3ffb08f101` |
+| `AgentSessionTriageStatus` | type | `c575ca6b65f7` |
 | `ApiKeyId` | type | `7c3726c9d129` |
 | `AsOfInput` | type | `80bbe425bddf` |
 | `AuthorizeRequest` | type | `68f7fb6a9aa9` |
 | `BRIEFING_SECTION_NAMES` | const | `5763b573cd80` |
+| `BriefedMemory` | type | `43c4bea6e02f` |
 | `BriefingCommitmentOutput` | type | `3b4e5e010705` |
 | `BriefingMemoryItemOutput` | type | `be9d107f2260` |
 | `BriefingModeInput` | type | `d6489784d10d` |
@@ -879,6 +889,7 @@ its row here even when its name and kind are unchanged.
 | `HandoffToolOutputV3` | type | `2e59a297b7b1` |
 | `HandoffToolOutputV4` | type | `70200a10d25a` |
 | `HandoffTruncatedOutput` | type | `7c0d87a0d80c` |
+| `HarnessSessionId` | type | `fde5dcfed177` |
 | `ImportCommitmentInput` | type | `cbc2d55d1e6f` |
 | `ImportEdgeInput` | type | `bc28058d1b69` |
 | `ImportEventInput` | type | `f161f06b19a9` |
@@ -888,6 +899,7 @@ its row here even when its name and kind are unchanged.
 | `ImportMemoryInput` | type | `4c9d8d2c948b` |
 | `IssueApiKeyInput` | type | `cf1e734aba72` |
 | `LoginInput` | type | `80ad24a1c8e6` |
+| `MAX_BRIEFED_MEMORIES` | const | `a1a6ddbeaf28` |
 | `MAX_BRIEFING_SECTION_CEILING` | const | `9cc0a36f612c` |
 | `MAX_CONTENT_LENGTH` | const | `acc5daa385ab` |
 | `MAX_DASHBOARD_SEARCH_LIMIT` | const | `627835e2debc` |
@@ -908,10 +920,12 @@ its row here even when its name and kind are unchanged.
 | `MAX_REST_PROPOSALS_LIMIT` | const | `f1509546a975` |
 | `MAX_SCOPE_ALIASES` | const | `2dab13b8d48c` |
 | `MAX_SEARCH_LIMIT` | const | `3b4be4f038c1` |
+| `MAX_SESSION_EVENT_IDS` | const | `c08d9546e185` |
+| `MAX_SESSION_EXCERPT_LENGTH` | const | `7bfe77fc6dec` |
 | `MAX_TAGS` | const | `1e28dd3d6556` |
 | `MAX_TAG_LENGTH` | const | `27eb8fddc2d5` |
 | `MAX_TOPIC_LENGTH` | const | `6e710757d412` |
-| `MEMORY_TYPES` | const | `b847defda0bc` |
+| `MEMORY_TYPES` | const | `c45bf5870a7d` |
 | `MIN_GET_CONTENT_CHARS` | const | `3ca90d47ce79` |
 | `MeResponse` | type | `d4fef7d38e10` |
 | `MemoriesFacetsResponse` | type | `b828d917a1e4` |
@@ -928,6 +942,8 @@ its row here even when its name and kind are unchanged.
 | `MemoryListItem` | type | `ba2277109cba` |
 | `MemoryStatus` | type | `a1a65a8fa7db` |
 | `MemoryType` | type | `6d5684c2a472` |
+| `NativeRememberInput` | type | `88272fc24856` |
+| `NativeReviseInput` | type | `576a3ddcc8fa` |
 | `OAuthClientIdParam` | type | `cdff48c25b49` |
 | `OAuthClientRegistrationMethod` | type | `27dcbcff235b` |
 | `PLAN_TIERS` | const | `6daec5a496ed` |
@@ -968,6 +984,7 @@ its row here even when its name and kind are unchanged.
 | `ReviseToolArgs` | type | `b45806d452a9` |
 | `ReviseToolInput` | type | `e603fdbc008c` |
 | `ReviseToolOutput` | type | `616dbf434372` |
+| `SESSION_LEASE_MS` | const | `7b16006cd0d7` |
 | `Scope` | type | `97f97074b2b5` |
 | `ScopeProjectSelectorInput` | type | `f01d419d5d17` |
 | `ScopeRecordOutput` | type | `5117e4c15162` |
@@ -992,6 +1009,7 @@ its row here even when its name and kind are unchanged.
 | `SearchToolOutput` | type | `404e58875256` |
 | `SearchToolOutputV2` | type | `633a17f87ee4` |
 | `SearchToolOutputV3` | type | `3da64c60f572` |
+| `SessionProvenancePayload` | type | `9c58c89b1038` |
 | `SetRetrievalDefaultInput` | type | `7bdf14e37d90` |
 | `SignupInput` | type | `27484a57f0f4` |
 | `StatsResponse` | type | `b434990c3408` |
@@ -1005,11 +1023,16 @@ its row here even when its name and kind are unchanged.
 | `WrittenMemoryOutput` | type | `56fbf701722c` |
 | `accountDeleteBodySchema` | const | `3de27a9bbf59` |
 | `actorKindSchema` | const | `768f5910467d` |
+| `agentNameSchema` | const | `1e4eae0c30ad` |
+| `agentSessionRowSchema` | const | `4459480e2172` |
+| `agentSessionSourceSchema` | const | `aae3e1f2b354` |
+| `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
+| `briefedMemorySchema` | const | `644d63b7a76e` |
 | `briefingCommitmentSchema` | const | `1a29febc4d45` |
-| `briefingMemoryItemSchema` | const | `93d7084e559c` |
+| `briefingMemoryItemSchema` | const | `72cd0b44c81f` |
 | `briefingModeSchema` | const | `4124f29d7a33` |
 | `briefingSectionNameSchema` | const | `077c3845a881` |
 | `briefingSelectorSchema` | const | `881c60ab84bd` |
@@ -1017,10 +1040,10 @@ its row here even when its name and kind are unchanged.
 | `briefingToolInputSchema` | const | `519839c27cfb` |
 | `briefingToolInputV2Schema` | const | `f0178f19eb42` |
 | `briefingToolInputV3Schema` | const | `e2f4e87054ad` |
-| `briefingToolOutputSchema` | const | `cd972d5553c5` |
-| `briefingToolOutputV2Schema` | const | `32f3dc45eac9` |
-| `briefingToolOutputV3Schema` | const | `1e5512c073ee` |
-| `briefingToolOutputV4Schema` | const | `4dcd7980cd46` |
+| `briefingToolOutputSchema` | const | `e127bdeb3f3d` |
+| `briefingToolOutputV2Schema` | const | `f3c7cce823f6` |
+| `briefingToolOutputV3Schema` | const | `f9520a578873` |
+| `briefingToolOutputV4Schema` | const | `a4d410f9b695` |
 | `budgetStatusResponseSchema` | const | `350c20868744` |
 | `canTransition` | function | `753f70cf8b76` |
 | `capabilityDescriptorSchema` | const | `64ebc3cf1323` |
@@ -1041,10 +1064,10 @@ its row here even when its name and kind are unchanged.
 | `cursorPayloadSchema` | const | `d6a77993c9c7` |
 | `cursorPayloadV2Schema` | const | `039f52dd86d5` |
 | `cursorPayloadV3Schema` | const | `5c5cd33b0753` |
-| `dashboardSearchHitSchema` | const | `075f62876b74` |
-| `dashboardSearchQuerySchema` | const | `408ba335dfb4` |
-| `dashboardSearchResponseSchema` | const | `3e869cf8860b` |
-| `dashboardSearchResponseV2Schema` | const | `60067d9e544c` |
+| `dashboardSearchHitSchema` | const | `ab35d7186ba2` |
+| `dashboardSearchQuerySchema` | const | `968e7138ed47` |
+| `dashboardSearchResponseSchema` | const | `9dfb11d7363f` |
+| `dashboardSearchResponseV2Schema` | const | `dc81d8e8a9c5` |
 | `describeEnvironmentInputSchema` | const | `38dfd6c1a221` |
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |
@@ -1053,7 +1076,7 @@ its row here even when its name and kind are unchanged.
 | `embedStatusSchema` | const | `ac5117a08996` |
 | `eventKindSchema` | const | `baeea743e9c9` |
 | `exceedsRecordedBoundPrecision` | function | `b6ca070a8ac1` |
-| `factProposalRecordSchema` | const | `07d51cd4f67a` |
+| `factProposalRecordSchema` | const | `78ec1dbc2134` |
 | `factSchema` | const | `8222b4b77888` |
 | `factWriteSchema` | const | `ccd8c23e9889` |
 | `factsQueryInputSchema` | const | `072db1556589` |
@@ -1062,26 +1085,27 @@ its row here even when its name and kind are unchanged.
 | `factsToolOutputSchema` | const | `fe477256bd85` |
 | `forgotPasswordInputSchema` | const | `bd34c5196ff8` |
 | `getMemoriesInputSchema` | const | `9bdf15008f83` |
-| `getMemoriesItemSchema` | const | `97b9a85f20fb` |
-| `getMemoriesOutputSchema` | const | `c338a815e905` |
+| `getMemoriesItemSchema` | const | `49be8620b222` |
+| `getMemoriesOutputSchema` | const | `7ac3dfb74002` |
 | `handoffCommitmentSchema` | const | `8d80b1deb054` |
 | `handoffCountsSchema` | const | `19a4f4765dbf` |
-| `handoffMemorySchema` | const | `a40aceb5f529` |
+| `handoffMemorySchema` | const | `8bece3348a56` |
 | `handoffToolInputSchema` | const | `dee82ec93083` |
 | `handoffToolInputV2Schema` | const | `fe3e244f3d69` |
 | `handoffToolInputV3Schema` | const | `8415305c9bca` |
-| `handoffToolOutputSchema` | const | `e8be8e2928ea` |
-| `handoffToolOutputV2Schema` | const | `6fa44a0f289b` |
-| `handoffToolOutputV3Schema` | const | `3fb885e334bf` |
-| `handoffToolOutputV4Schema` | const | `5d17bc138255` |
+| `handoffToolOutputSchema` | const | `8d5207f84b24` |
+| `handoffToolOutputV2Schema` | const | `bbd2fcb44509` |
+| `handoffToolOutputV3Schema` | const | `767e3351aad0` |
+| `handoffToolOutputV4Schema` | const | `9cb1f2aa6fc5` |
 | `handoffTruncatedSchema` | const | `d97e0ca4fb77` |
+| `harnessSessionIdSchema` | const | `e84a82f37d1d` |
 | `importCommitmentSchema` | const | `921d8ea3ab89` |
 | `importEdgeInputSchema` | const | `b225599c98f4` |
 | `importEventInputSchema` | const | `80b7e3d41eac` |
 | `importEventKindSchema` | const | `20de9784b419` |
 | `importEventPayloadSchema` | const | `2c4d9d79ce28` |
 | `importFactInputSchema` | const | `e694bd431f59` |
-| `importMemoryInputSchema` | const | `41be5758a5ed` |
+| `importMemoryInputSchema` | const | `0cc6f9ca330d` |
 | `importTimestampSchema` | const | `46a7d9350b69` |
 | `invalidInputRestErrorResponseSchema` | const | `0667cb9d2d3d` |
 | `issueApiKeyInputSchema` | const | `3e72d160312f` |
@@ -1089,19 +1113,21 @@ its row here even when its name and kind are unchanged.
 | `loginInputSchema` | const | `8be1ee749cd1` |
 | `meResponseSchema` | const | `c77d3c3ef39b` |
 | `memoriesFacetsResponseSchema` | const | `a0dd0fe81bc1` |
-| `memoriesListQuerySchema` | const | `9550a07b1458` |
-| `memoriesListResponseSchema` | const | `1bf25ab84df0` |
-| `memoryDetailSchema` | const | `fdd1966b60b1` |
+| `memoriesListQuerySchema` | const | `fb46c70fae9b` |
+| `memoriesListResponseSchema` | const | `3b44eb1d4a89` |
+| `memoryDetailSchema` | const | `5146a276dc36` |
 | `memoryHistoryEdgeSchema` | const | `c6963e79dcf5` |
 | `memoryHistoryEventPayloadMetadataSchema` | const | `605d325a27ab` |
 | `memoryHistoryEventSchema` | const | `4715201faff6` |
-| `memoryHistoryIdentitySchema` | const | `09d15d885fcb` |
+| `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
-| `memoryHistoryRelationshipSchema` | const | `94edbf5661d4` |
-| `memoryHistoryResponseSchema` | const | `bb4c71d37d8f` |
-| `memoryListItemSchema` | const | `412951e80820` |
+| `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
+| `memoryHistoryResponseSchema` | const | `7be081cc12da` |
+| `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
-| `memoryTypeSchema` | const | `99ed024eae4e` |
+| `memoryTypeSchema` | const | `1e54c74d92f2` |
+| `nativeRememberInputSchema` | const | `079ad390af60` |
+| `nativeReviseInputSchema` | const | `40ec69d28da6` |
 | `oauthClientIdParamSchema` | const | `13dbe689b959` |
 | `oauthClientRegistrationMethodSchema` | const | `9fbe195ac6eb` |
 | `planTierSchema` | const | `6eb47fe4ea0c` |
@@ -1110,22 +1136,22 @@ its row here even when its name and kind are unchanged.
 | `profileRoleSchema` | const | `54ba45481760` |
 | `profileUseCaseSchema` | const | `95a03e3a6d0c` |
 | `projectSchema` | const | `bcb00934b8c6` |
-| `proposalRecordSchema` | const | `2dd3037a916d` |
+| `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |
 | `proposalsListQuerySchema` | const | `5bfeca47bd8a` |
 | `recordedRangeIssues` | function | `087a45a9e342` |
 | `redirectUriSchema` | const | `fd884c385be1` |
-| `rememberInputSchema` | const | `e3b8b8f4f52a` |
-| `rememberToolInputSchema` | const | `a61a8a8e1280` |
-| `rememberToolInputV2Schema` | const | `93af9cebd60e` |
-| `rememberToolOutputSchema` | const | `3c96bc09dbf2` |
-| `rememberToolOutputV2Schema` | const | `bac243027a5d` |
-| `rememberWithFactsInputSchema` | const | `10b9ef1dcbb9` |
+| `rememberInputSchema` | const | `16100440a692` |
+| `rememberToolInputSchema` | const | `1489c4354420` |
+| `rememberToolInputV2Schema` | const | `3b797237b3c8` |
+| `rememberToolOutputSchema` | const | `91a0502f9fa9` |
+| `rememberToolOutputV2Schema` | const | `5dd2d2f6afec` |
+| `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |
 | `resendVerificationInputSchema` | const | `258740cf44b0` |
 | `resetPasswordInputSchema` | const | `33f21153f1c1` |
 | `resolveOutcomeStatusSchema` | const | `ea02c06327dd` |
-| `resolveToolInputSchema` | const | `3ad7aee0a1d1` |
+| `resolveToolInputSchema` | const | `931fa65ef6e0` |
 | `resolveToolOutputSchema` | const | `e7808ed62ded` |
 | `resourceLimitKindSchema` | const | `ba462cc09a99` |
 | `resourceLimitsSchema` | const | `db1d186cc9a5` |
@@ -1134,37 +1160,38 @@ its row here even when its name and kind are unchanged.
 | `retrievalScopePolicySchema` | const | `8fe9bd2568c5` |
 | `retrievalScopePolicyScopeRequirements` | const | `e9d9207e7728` |
 | `reviewProposalsInputSchema` | const | `4ae8d6a4b446` |
-| `reviewProposalsOutputSchema` | const | `1eafd4b4c22b` |
-| `reviewProposalsOutputV2Schema` | const | `52775c0ff16f` |
-| `reviewProposalsRegisterOutputShape` | const | `2c482d98db81` |
-| `reviewProposalsRegisterOutputShapeV2` | const | `dafa6fcd68d3` |
+| `reviewProposalsOutputSchema` | const | `9b97544b2f22` |
+| `reviewProposalsOutputV2Schema` | const | `fcf8e201af78` |
+| `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
+| `reviewProposalsRegisterOutputShapeV2` | const | `b1853a58a44b` |
 | `reviewProposalsRegisterShape` | const | `399283e722f1` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
-| `reviseInputSchema` | const | `8b0e620ad7a3` |
-| `reviseToolInputSchema` | const | `87eb48018136` |
-| `reviseToolOutputSchema` | const | `3169bdeb34a8` |
+| `reviseInputSchema` | const | `a4962faae750` |
+| `reviseToolInputSchema` | const | `77b3cf4d9fb1` |
+| `reviseToolOutputSchema` | const | `1217ef364cc8` |
 | `scopeAliasesSchema` | const | `3b20b9ac8157` |
 | `scopeNameSchema` | const | `3d34f13b9953` |
 | `scopeProjectSelectorSchema` | const | `2fc41e46ba86` |
 | `scopeRecordSchema` | const | `e5823025dfb5` |
 | `scopeSchema` | const | `c80b675a855b` |
-| `searchFiltersSchema` | const | `b324be87c63a` |
-| `searchFiltersV2Schema` | const | `85532c701fca` |
+| `searchFiltersSchema` | const | `95db88e873a1` |
+| `searchFiltersV2Schema` | const | `a9ee22e6bf07` |
 | `searchHitCompactSchema` | const | `5c2df271170f` |
 | `searchHitSchema` | const | `02afe1aa2c6a` |
 | `searchInputSchema` | const | `1b30debf20eb` |
 | `searchOrderSchema` | const | `53e1f0ae783f` |
 | `searchProjectionSchema` | const | `dbb4fe80fb3f` |
-| `searchQuerySchema` | const | `3e281296fc02` |
-| `searchQueryV2Schema` | const | `ec61b8ab208a` |
-| `searchQueryV3Schema` | const | `8536304cd7f9` |
-| `searchQueryV4ChronologicalSchema` | const | `93a9f3306a02` |
-| `searchQueryV4RelevanceSchema` | const | `fde93e97c281` |
-| `searchQueryV4Schema` | const | `6b1baf709d0c` |
+| `searchQuerySchema` | const | `d4f11c65b30d` |
+| `searchQueryV2Schema` | const | `fe86cea36557` |
+| `searchQueryV3Schema` | const | `2d6181387d9a` |
+| `searchQueryV4ChronologicalSchema` | const | `13de60726a2b` |
+| `searchQueryV4RelevanceSchema` | const | `d8f3b10ea33d` |
+| `searchQueryV4Schema` | const | `fc8e00d5ee44` |
 | `searchRestResponseV2Schema` | const | `a21e9ddba2e7` |
 | `searchToolOutputSchema` | const | `9d19c5269b35` |
 | `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
 | `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
+| `sessionProvenancePayloadSchema` | const | `1f6f03db6b5d` |
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
 | `statsResponseSchema` | const | `8bf52ea1e959` |
@@ -1175,9 +1202,9 @@ its row here even when its name and kind are unchanged.
 | `userProfileAttributesSchema` | const | `52e833aa6cb7` |
 | `verifyEmailInputSchema` | const | `1e61e8ac32ad` |
 | `versionResponseSchema` | const | `95603c3e8e8b` |
-| `writtenMemorySchema` | const | `91ad610a01ff` |
+| `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.4.2
+## `@3ngram/server` 1.4.4
 
 ### `./app`
 

@@ -212,5 +212,6 @@ export {
   retryFailedEmbeds,
   revise,
   transition,
+  UnknownSessionRunError,
   type WrittenCommitment,
 } from './write/index.js'

@@ -4,9 +4,11 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** (table exists; write path / hook / closer do not).
+**Status: design, not built** (table and native `sessionRunId` plumbing exist;
+hook / closer / typed read do not).
 `agent_sessions` and the `memory_events` session expression index shipped in
-migration 0032. No write-time `sessionRunId` on native remember, no typed
+migration 0032. Native remember / revise / resolve accept optional `sessionRunId`
+and stamp `{ sessionRunId }` on the audit events those writes emit. No typed
 provenance read, no Stop nudge, no session-closer worker. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
@@ -699,7 +701,7 @@ prose here.
 | 0 | ~~Verify Codex blocking `Stop`~~ | **Done** |
 | 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (converged 2026-08-21) |
 | 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema + import-boundary `sessionRunId` reject | Table count 26 → 27 |
-| 3 | Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor | Attribution is server-validated; hooked path is not "always" |
+| 3 | ~~Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor~~ | Attribution is server-validated; hooked path is not "always" |
 | 4 | Typed provenance read (bounded, paginated) | Closer and nudge can list this run's writes |
 | 5 | REST open / close (natural key, no epoch) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |

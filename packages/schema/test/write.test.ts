@@ -9,6 +9,7 @@ import {
   MAX_FACT_WRITE_FRACTION_DIGITS,
   MAX_FACTS_PER_WRITE,
   MAX_TAGS,
+  nativeRememberInputSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,
   reviseInputSchema,
@@ -291,6 +292,25 @@ describe('factWrite', () => {
   it('rejects unknown keys (strict)', () => {
     expect(factWriteSchema.safeParse({ ...validFact, memoryId: UUID_A }).success).toBe(false)
     expect(factWriteSchema.safeParse({ ...validFact, recordedAt: new Date() }).success).toBe(false)
+  })
+})
+
+describe('nativeRememberInputSchema', () => {
+  it('accepts optional sessionRunId beside facts', () => {
+    const parsed = nativeRememberInputSchema.parse({
+      ...validRemember,
+      sessionRunId: UUID_A,
+    })
+    expect(parsed.sessionRunId).toBe(UUID_A)
+  })
+
+  it('rememberWithFactsInputSchema still rejects sessionRunId (import must not take it)', () => {
+    expect(
+      rememberWithFactsInputSchema.safeParse({
+        ...validRemember,
+        sessionRunId: UUID_A,
+      }).success,
+    ).toBe(false)
   })
 })
 

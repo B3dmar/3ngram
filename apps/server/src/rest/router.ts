@@ -580,7 +580,13 @@ export function restRouter(options: RestRouterOptions): Router {
       // ACCESS GUARD: write access is asserted BEFORE the db op runs (self-host
       // allowAllAccess allows all).
       if (options.access) await options.access.assertWrite(tenant(req))
-      const result = await resolveByMemoryId(tenant(req), input.memoryId, input.status, 'user_api')
+      const result = await resolveByMemoryId(
+        tenant(req),
+        input.memoryId,
+        input.status,
+        'user_api',
+        input.sessionRunId,
+      )
       res.status(200).json({ commitmentId: result.id, status: result.status })
     })
   })

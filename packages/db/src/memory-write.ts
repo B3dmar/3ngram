@@ -19,6 +19,11 @@ import { insertFacts, type MemoryFactWrite } from './facts-write.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { ResourceLimitExceededError } from './resource-limits.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
+import {
+  resolveSessionProvenance,
+  sessionPayload,
+  UnknownSessionRunError,
+} from './session-provenance.js'
 
 /**
  * Thrown when a write would duplicate content already live for this tenant —
@@ -48,6 +53,10 @@ export interface MemoryWrite {
   contentHash: string
   /** Actor class recorded on the `create` audit event (memory_events). */
   actorKind: ActorKind
+  /** Native-only session provenance. Import never sets this. */
+  sessionRunId?: string | undefined
+  /** Injected clock for lease evaluation. Defaults to now. */
+  now?: Date | undefined
   // Optional original-history overrides (import path). Omitted -> column
   // defaults ('active' / now()), i.e. byte-for-byte the native write.
   status?: string | undefined
@@ -243,7 +252,17 @@ export async function writeMemory(
 ): Promise<WrittenMemory> {
   try {
     return await withTenant(input.userId, async (tx) => {
-      const inserted = await insertMemoryWithEvent(tx, input, undefined, maxLiveMemories)
+      const runId = await resolveSessionProvenance(tx, input.userId, {
+        sessionRunId: input.sessionRunId,
+        project: input.project,
+        now: input.now ?? new Date(),
+      })
+      const inserted = await insertMemoryWithEvent(
+        tx,
+        input,
+        { kind: 'create', payload: sessionPayload(runId) },
+        maxLiveMemories,
+      )
       const factIds = await insertFacts(
         tx,
         (facts ?? []).map((fact) => ({ ...fact, userId: input.userId, memoryId: inserted.id })),
@@ -262,6 +281,7 @@ export async function writeMemory(
     })
   } catch (error) {
     if (error instanceof DuplicateMemoryError) throw error
+    if (error instanceof UnknownSessionRunError) throw error
     if (isUniqueViolation(error)) throw new DuplicateMemoryError(input.contentHash)
     throw error
   }

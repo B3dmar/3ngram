@@ -155,9 +155,10 @@ export async function resolveByMemoryId(
   memoryId: string,
   to: CommitmentStatus,
   actorKind: ActorKind,
+  sessionRunId?: string,
 ): Promise<{ id: string; status: ResolveStatus }> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
-  if (current) return applyTransition(userId, current, to, actorKind)
+  if (current) return applyTransition(userId, current, to, actorKind, sessionRunId)
 
   // No commitment rides the memory. A blocker is MEMORY-ONLY: it
   // leaves the active set by archiving its OWN status, not via a commitment FSM.
@@ -167,7 +168,7 @@ export async function resolveByMemoryId(
   const memory = await withTenant(userId, (tx) => getMemoryById(tx, userId, memoryId))
   if (memory?.memoryType === 'blocker') {
     try {
-      return await archiveBlockerMemory(userId, memoryId, actorKind)
+      return await archiveBlockerMemory(userId, memoryId, actorKind, sessionRunId)
     } catch (error) {
       // A live blocker that lost a concurrent archive race (already archived /
       // superseded between the read and the UPDATE) collapses to the same
@@ -193,10 +194,11 @@ async function applyTransition(
   current: CommitmentState,
   to: CommitmentStatus,
   actorKind: ActorKind,
+  sessionRunId?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
   if (current.status === to) return { id: current.id, status: current.status }
   if (!canTransition(current.status, to)) {
     throw new InvalidCommitmentTransitionError(current.status, to)
   }
-  return dbTransitionCommitment({ userId, commitmentId: current.id, to, actorKind })
+  return dbTransitionCommitment({ userId, commitmentId: current.id, to, actorKind, sessionRunId })
 }

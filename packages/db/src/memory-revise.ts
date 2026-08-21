@@ -61,6 +61,11 @@ import { EdgeConflictError, insertEdge } from './memory-edges.js'
 import { DuplicateMemoryError, insertMemoryWithEvent, type MemoryWrite } from './memory-write.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
+import {
+  resolveSessionProvenance,
+  sessionPayload,
+  UnknownSessionRunError,
+} from './session-provenance.js'
 
 /**
  * Thrown when the predecessor does not exist for this tenant. Under RLS a
@@ -119,6 +124,7 @@ async function carryCommitment(
   tx: TenantTx,
   input: ReviseWrite,
   successorId: string,
+  payload: ReturnType<typeof sessionPayload>,
 ): Promise<void> {
   const successorIsCommitment = input.memoryType === 'commitment'
 
@@ -167,6 +173,7 @@ async function carryCommitment(
         memoryId: input.predecessorId,
         eventKind: 'resolve',
         actorKind: input.actorKind,
+        payload,
       })
       return
     }
@@ -221,6 +228,13 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
         throw new PredecessorAlreadySupersededError(input.predecessorId)
       }
 
+      const runId = await resolveSessionProvenance(tx, input.userId, {
+        sessionRunId: input.sessionRunId,
+        project: input.project,
+        now: input.now ?? new Date(),
+      })
+      const payload = sessionPayload(runId)
+
       // Close the predecessor: bi-temporal validity ONLY. Content, topic, tags
       // are NEVER touched (docs/concepts/memory-model.mdx append-and-supersede). The WHERE re-asserts
       // valid_to IS NULL so a concurrent revise that closed it first loses the
@@ -243,7 +257,7 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
       // Append the successor (reuses remember()'s insert + create-event +
       // duplicate guard). The predecessor is already closed, so re-asserting its
       // exact content here is legal — the partial-hash guard sees only live rows.
-      const successor = await insertMemoryWithEvent(tx, input)
+      const successor = await insertMemoryWithEvent(tx, input, { kind: 'create', payload })
 
       // Typed edge FROM successor TO predecessor (direction is load-bearing).
       await insertEdge(tx, {
@@ -261,13 +275,14 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
         memoryId: input.predecessorId,
         eventKind: 'supersede',
         actorKind: input.actorKind,
+        payload,
       })
 
       // Keep the commitment obligation aligned with the LIVE memory (see module
       // header). The obligation's identity is the commitment, not the memory
       // revision, so it must follow the revision rather than strand on the
       // now-superseded predecessor.
-      await carryCommitment(tx, input, successor.id)
+      await carryCommitment(tx, input, successor.id, payload)
 
       return { id: successor.id }
     })
@@ -281,7 +296,8 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
       error instanceof DuplicateMemoryError ||
       error instanceof EdgeConflictError ||
       error instanceof PredecessorNotFoundError ||
-      error instanceof PredecessorAlreadySupersededError
+      error instanceof PredecessorAlreadySupersededError ||
+      error instanceof UnknownSessionRunError
     ) {
       throw error
     }
@@ -350,6 +366,8 @@ export async function archiveBlockerMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
+  sessionRunId?: string,
+  now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   return withTenant(userId, async (tx) => {
     const archived = await tx
@@ -364,14 +382,20 @@ export async function archiveBlockerMemory(
           isNull(memories.validTo),
         ),
       )
-      .returning({ id: memories.id })
+      .returning({ id: memories.id, project: memories.project })
     if (archived.length === 0 || !archived[0]) throw new BlockerNotFoundError(memoryId)
 
+    const runId = await resolveSessionProvenance(tx, userId, {
+      sessionRunId,
+      project: archived[0].project,
+      now: now ?? new Date(),
+    })
     await tx.insert(memoryEvents).values({
       userId,
       memoryId,
       eventKind: 'archive',
       actorKind,
+      payload: sessionPayload(runId),
     })
 
     return { id: archived[0].id, status: 'archived' }
@@ -425,6 +449,8 @@ export async function archiveMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
+  sessionRunId?: string,
+  now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   return withTenant(userId, async (tx) => {
     const archived = await tx
@@ -438,14 +464,20 @@ export async function archiveMemory(
           isNull(memories.validTo),
         ),
       )
-      .returning({ id: memories.id })
+      .returning({ id: memories.id, project: memories.project })
     if (archived.length === 0 || !archived[0]) throw new ActiveMemoryNotFoundError(memoryId)
 
+    const runId = await resolveSessionProvenance(tx, userId, {
+      sessionRunId,
+      project: archived[0].project,
+      now: now ?? new Date(),
+    })
     await tx.insert(memoryEvents).values({
       userId,
       memoryId,
       eventKind: 'archive',
       actorKind,
+      payload: sessionPayload(runId),
     })
 
     return { id: archived[0].id, status: 'archived' }

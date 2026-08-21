@@ -334,6 +334,7 @@ export {
   type ChronologicalPage,
   searchList,
 } from './search-list.js'
+export { UnknownSessionRunError } from './session-provenance.js'
 export {
   getUserProfileAttributes,
   upsertUserProfileAttributes,

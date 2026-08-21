@@ -19,6 +19,7 @@ export {
   MAX_BRIEFED_MEMORIES,
   MAX_SESSION_EVENT_IDS,
   MAX_SESSION_EXCERPT_LENGTH,
+  SESSION_LEASE_MS,
   sessionProvenancePayloadSchema,
 } from './agent-sessions.js'
 export type {
@@ -438,6 +439,8 @@ export {
 export type {
   EdgeInput,
   FactWriteInput,
+  NativeRememberInput,
+  NativeReviseInput,
   Project,
   RememberInput,
   RememberWithFactsInput,
@@ -454,6 +457,8 @@ export {
   MAX_TAG_LENGTH,
   MAX_TAGS,
   MAX_TOPIC_LENGTH,
+  nativeRememberInputSchema,
+  nativeReviseInputSchema,
   projectSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,

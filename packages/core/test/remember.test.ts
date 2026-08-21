@@ -26,6 +26,14 @@ vi.mock('@3ngram/db', () => ({
       this.contentHash = contentHash
     }
   },
+  UnknownSessionRunError: class UnknownSessionRunError extends Error {
+    readonly sessionRunId: string
+    constructor(sessionRunId: string) {
+      super('session run is not owned by this tenant')
+      this.name = 'UnknownSessionRunError'
+      this.sessionRunId = sessionRunId
+    }
+  },
 }))
 
 const { DuplicateMemoryError, remember } = await import('../src/write/remember.js')
@@ -80,6 +88,13 @@ describe('remember (validation boundary)', () => {
     expect(call.contentHash).toBe(createHash('sha256').update(input.content).digest('hex'))
     // scope defaults at the schema boundary, not in core
     expect(call.scope).toBe('personal')
+  })
+
+  it('forwards sessionRunId on the native write', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-session' })
+    const runId = '01890b6e-0000-7000-8000-000000000001'
+    await remember(USER, { ...validInput(), sessionRunId: runId }, ACTOR)
+    expect(mockWrite.mock.calls[0]?.[0].sessionRunId).toBe(runId)
   })
 
   it('validates and forwards the live-memory cap to the transactional db write', async () => {
