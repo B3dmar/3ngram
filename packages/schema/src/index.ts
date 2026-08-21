@@ -1,6 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type {
+  AgentName,
+  AgentSessionRow,
+  AgentSessionSource,
+  AgentSessionTriageStatus,
+  BriefedMemory,
+  HarnessSessionId,
+  SessionProvenancePayload,
+} from './agent-sessions.js'
+export {
+  agentNameSchema,
+  agentSessionRowSchema,
+  agentSessionSourceSchema,
+  agentSessionTriageStatusSchema,
+  briefedMemorySchema,
+  harnessSessionIdSchema,
+  MAX_BRIEFED_MEMORIES,
+  MAX_SESSION_EVENT_IDS,
+  MAX_SESSION_EXCERPT_LENGTH,
+  sessionProvenancePayloadSchema,
+} from './agent-sessions.js'
+export type {
   ApiKeyId,
   AuthorizeRequest,
   ChangePasswordInput,

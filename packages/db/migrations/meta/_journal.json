@@ -225,6 +225,13 @@
       "when": 1786379748231,
       "tag": "0031_fact_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787308024346,
+      "tag": "0032_agent_sessions",
+      "breakpoints": true
     }
   ]
 }

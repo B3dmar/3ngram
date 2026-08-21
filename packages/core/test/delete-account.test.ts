@@ -37,6 +37,8 @@ const fullErasure = {
   facts: 2,
   commitments: 1,
   proposals: 0,
+  factProposals: 0,
+  agentSessions: 1,
   sessionsDeleted: 2,
   apiKeysRevoked: 1,
   oauthTokensRevoked: 1,

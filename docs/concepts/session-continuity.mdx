@@ -4,8 +4,10 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built.** No `agent_sessions` table, no write-time `sessionRunId`, no
-typed provenance read, no Stop nudge, no session-closer worker. Tracked as
+**Status: design, not built** (table exists; write path / hook / closer do not).
+`agent_sessions` and the `memory_events` session expression index shipped in
+migration 0032. No write-time `sessionRunId` on native remember, no typed
+provenance read, no Stop nudge, no session-closer worker. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -187,21 +189,24 @@ purpose: that is the curated write the 2026-06-11 decision kept. The accurate cl
 
 **Who writes.** Stop-injected debrief is a **nudge**: capped, debounced, opt-in, and not
 the thing that closes the 26% / 0% hole. The same agent that posted 0% commitment recall
-is the one receiving the prompt. The **closer** is a worker job that applies the same
-debrief rubric off the interactive turn (actor is not `capture_hook`; input is not
-tool-I/O). Its honest scope is **commitment-resolution and this-run re-checks** against
-briefed ids, this-run provenance events, and a bounded last-message excerpt. It cannot
-reconstruct a decision, preference, or user-turn remark that nobody recorded — that
-hole is the same structural miss `/debrief` already has (user-turn feedback never
-appears in tool I/O). Named here the way the stale-gate hole is named, not papered
-over. Compatible with 2026-06-11: intentional context, not a scrape.
+is the one receiving the prompt. The **closer** is a worker job off the interactive turn. v1 **auto-resolves**
+briefed commitments (reversible via `unresolve`) and does **not** `remember` new
+atoms — consolidation in this repo is already advisory (`apps/worker` inserts
+proposal rows and never mutates memories). Direct corpus writes from a retried
+LLM pass are how we grew claims, fences, epochs-per-write, and a 28th table for
+`(attempt_id, ordinal)`. Commitment recall is the 0% hole and the validation
+bar's headline; `resolve` is the verb that covers it. New-atom capture stays on
+the nudge and on humans typing `/debrief` until a later promotion if acceptance
+rate justifies direct `remember`. Actor is not `capture_hook`. Input is not
+tool-I/O. It cannot reconstruct a decision nobody recorded — same hole `/debrief`
+already has. Compatible with 2026-06-11: intentional context, not a scrape.
 
 ## Layer 1 — `agent_sessions`
 
 A new user-owned table. This is a migration. The "no migration" claim is withdrawn.
 
-Physical table count today is 26 ([data model](/concepts/data-model)); this raises it to
-**27** (Drizzle 24 → 25). Justification: the JTBD "worth-keeping work is written without
+Physical table count is **27** ([data model](/concepts/data-model); Drizzle 25).
+Justification: the JTBD "worth-keeping work is written without
 a human typing `/debrief`" cannot be expressed on `memory_events` without a `memory_id`
 and a lifecycle kind, and it cannot be a side-file on disk.
 
@@ -220,7 +225,7 @@ agent_sessions (
   opened_at            timestamptz not null,
   closed_at            timestamptz null,
   last_seen_at         timestamptz not null, -- lease heartbeat
-  activation_epoch     int not null,         -- incremented on startup/resume; close must match
+  activation_epoch     int not null,         -- incremented on startup/resume/resurrect; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
   last_triaged_event_ids jsonb not null default '[]', -- all event ids for the run visible at last complete/expire, not since-attempt-begin
@@ -252,7 +257,7 @@ The shipped hook is registered for Codex matchers `startup|resume|clear|compact`
 |---|---|
 | `startup` | `GET /api/v1/briefing?mode=full` (the shipped hook omits `mode` and gets the `brief` slice). Render, then **truncate locally** (`BRIEFING_MAX_TOKENS`, default 2000 → `maxChars` at `briefing.go`). `POST /open` with the natural key **and the `{id, topic, status}` rows that survived the cut**. The stamp is that POST, not the GET — otherwise `briefed_memories` records commitments the agent never saw. |
 | `resume` | Idempotent: reuse the existing `(user_id, agent, session_id)` row; increment `activation_epoch`; reopen if implicitly or explicitly closed. Do **not** restamp the briefing fields. Heartbeat `last_seen_at`. |
-| `compact` | **No-op.** Not an open, not a restamp. See PreCompact below. |
+| `compact` | Not an open, not a restamp. **Re-inject** the existing `sessionRunId` and the instruction to pass it on writes — compaction discards the model-mediated id with the context. Same row, same briefing stamp. |
 | `clear` | Treat as startup of a new conversation if the harness mints a new `session_id`; otherwise same as resume. Confirm against the harness at implementation. |
 
 Do not write the literal `"unknown"` that `deriveProject` returns for an empty cwd
@@ -271,6 +276,12 @@ A turn that lasts longer than the lease has no Stop and no SessionStart, so no
 heartbeat runs while the model is still working. That is expected. Resurrection plus
 the closer's grace after implicit close are the mitigation — not a 400, not a mid-turn
 debrief. A throttled `PostToolUse` heartbeat is optional, not required for correctness.
+
+Lease-at-read does not enqueue work when a terminal is killed and nothing touches
+the row. A **repeatable BullMQ sweep** (same harness as consolidation in
+`apps/worker/src/queues.ts`) discovers rows whose `last_seen_at` is past the lease
+plus grace and enqueues their closer. Without that producer the crash path never
+runs.
 
 **Resurrection.** Implicit close is not SessionEnd. A later heartbeat, SessionStart
 `resume`, or tenant-owned write carrying that `sessionRunId` **reopens** the same row:
@@ -307,14 +318,16 @@ Until a replayable, per-selector, at-least-once change-feed exists:
 When a change-feed is designed, advance the consumer offset at **consume** time, not
 at SessionEnd. That lesson stays. The feed itself is not this epic.
 
-### PreCompact
+### PreCompact and Stop excerpt
 
-PreCompact is the last moment the model still has the full context. The hook may
-enqueue the closer worker or snapshot a bounded `last_message_excerpt` onto the row.
-It must not open a session and must not restamp briefing fields. Null
-`last_message_excerpt` **only after the closer has durably consumed it** (or a TTL
-sweep if the closer never runs). Explicit close must not clear it first — that is
-the closer's conversation-bearing input.
+Every **main-agent Stop** (including the heartbeat-only Stop in step 5) persists a
+bounded `last_assistant_message` onto `last_message_excerpt`. PreCompact may also
+snapshot; it is not the only writer. Ordinary sessions never compact, and SessionEnd
+has no final-message field — without the Stop path the closer sees null in the
+common case. Retention is unchanged: clear only after the closer durably consumes
+the excerpt (or a TTL sweep). Explicit close must not clear it first.
+
+PreCompact must not open a session and must not restamp briefing fields.
 
 ## Layer 2 — write-time provenance
 
@@ -369,15 +382,17 @@ resolve/unresolve/archive inputs. `.strict()` stays.
    the `sessionRunId` plus instructions to pass it on writes. Concurrent hooked
    sessions and agents that omit the field fall through to (4). Do not claim the
    hooked path always sends the id. Step 5 still registers a **heartbeat-only**
-   Stop so the lease stays fresh during *completed* turns before the nudge exists.
+   Stop so the lease stays fresh during *completed* turns before the nudge exists,
+   and so `last_assistant_message` is snapshotted every turn.
 4. **Single-open-session default is the floor** (vanilla MCP and hooked sessions
    that omitted the id). If the write omits `sessionRunId` and the tenant has
    exactly one leased-open row for that project, the write path MAY attach it.
    Zero or many → leave payload unset. Time-window guesses are out; they collide.
-   Serialize that decision against concurrent opens (transaction `FOR SHARE` on
-   the candidate row, or a tenant advisory lock) so "unattributed rather than
-   guessed wrong" still holds when two sessions open in the same moment — the
-   same Read Committed genus as the watermark race.
+   Serialize that decision with a **tenant/project advisory lock** (the same
+   genus as `auth_resend_email_verification`). `FOR SHARE` on the existing row
+   does not block a concurrent INSERT of a different session — uniqueness is on
+   `(user_id, agent, session_id)`, not project — so it cannot prevent the
+   phantom. Zero or many at commit → leave payload unset.
 
 Payload schema (JSON keys are spelling-sensitive — the index must use the same
 spelling):
@@ -395,8 +410,12 @@ CREATE INDEX memory_events_session_idx
 The reader keysets on `id` (`uuidv7()`, `packages/db/src/schema/memory.ts`). A
 `created_at` tail would not serve that scan; with uuidv7 it is redundant anyway.
 
-Import and `embed_failed` payloads stay on their own contracts. `cwd` and
-`transcript_path` are out.
+Import and `embed_failed` payloads stay on their own contracts. **Reject
+`sessionRunId` at the import boundary** (`importEventPayloadSchema` in
+`packages/schema/src/import.ts`). An imported lifecycle event that
+carries that key would land in a live run's event set, re-arm triage, or push
+the run toward `overflowed`. Native provenance is only a payload written by the
+native path. `cwd` and `transcript_path` are out.
 
 `reviseMemory` stamps `valid_to` / `updated_at` on the predecessor; append-and-supersede
 is a content/topic/tags guarantee, not row immutability. Provenance lands on every
@@ -529,39 +548,43 @@ Default-off until the validation bar in the plan says otherwise.
 
 ## Layer 5 — closer worker
 
-A new BullMQ job on the existing worker (`apps/worker`, `admin-maintenance` queue).
-Not the hourly consolidation pass (that is advisory similarity proposals and never
-mutates memories). This job **may** `remember` / `resolve` under a non-`capture_hook`
-actor (`system` or a dedicated kind added at the schema boundary — not a revival of
-`capture_hook`).
+A new BullMQ job on the existing worker (`apps/worker`, `admin-maintenance` queue),
+plus a **repeatable lease-expiry sweep** (same `upsertJobScheduler` pattern as
+consolidation). The hourly consolidation pass stays advisory similarity proposals.
+This job is not that pass.
 
 The documented Compose stack has Postgres, Redis, and the server — **no worker**
 (`docker-compose.yml`; `docs/concepts/local-development.mdx` calls worker packaging
 follow-up). Step 6 includes a worker image and Compose service, or self-host never
 runs the closer.
 
-**Claim then write, fenced by epoch.** Before any model call, the job atomically
-claims the row at the current `activation_epoch` (`closer_attempt_id` unique per
-run+epoch). If resurrection has incremented the epoch, the claim fails and the
-job is a no-op — including an in-flight generation that re-checks the epoch
-before each write. One rule; no separate cancel protocol.
+**v1 writes: `resolve` only.** Auto-resolve briefed commitments when the excerpt
+and this-run events support it. `resolve` is reversible (`unresolve`). Do **not**
+`remember` new atoms in v1 — that is how a retried LLM pass becomes an
+append-only duplicate, which hard rule 1 cannot delete. No `(attempt_id, ordinal)`
+batch table. No third proposal kind. New decisions/notes stay on the Stop nudge
+and on `/debrief`. Direct `remember` from the closer is a later promotion.
 
-**Per-output idempotency.** One attempt id cannot tell which atoms of a
-partially-committed batch survived a crash, and hard rule 1 forbids deleting the
-duplicates. Persist the generated batch under the attempt *before* any
-`remember` / `resolve`, then write each atom with key `(attempt_id, ordinal)`.
-Retries **replay** those rows; they never regenerate. BullMQ's three attempts
-plus LLM rephrasing would otherwise bypass content-hash dedup.
+**Live re-read before resolve.** `briefed_memories` is a startup stamp. Another
+session may already have resolved or superseded the row. Immediately before each
+`resolve`, read the live commitment/memory (bounded). Skip illegal transitions;
+do not persist a failing batch.
 
-Clear `last_message_excerpt` only after this attempt has durably finished.
+**Epoch fence on the claim, not on every memory insert.** Claim the session row
+at `activation_epoch`. If resurrection has incremented the epoch, the job is a
+no-op. Resolve is reversible, so a torn write is not a 28th-table problem. Actor
+is `system` or a new schema kind — never `capture_hook`.
+
+Clear `last_message_excerpt` only after the attempt has durably finished.
 
 Input, all bounded, none of it a transcript:
 
 - the session row (selector, `briefed_memories`, bounded `last_message_excerpt`)
 - `listSessionEvents(sessionRunId)` (paginated; honor `truncated`)
-- the same `debrief` registrar the hook uses
+- a live read of each resolve target
+- the same `debrief` registrar for *what to look for*, not as a remember script
 
-It runs on lease-expiry (after grace) or explicit `closed_at` when
+It runs on the lease-expiry sweep, or on explicit `closed_at`, when
 `triage_status` is `idle`, `pending`, `expired`, **or `completed` with event ids
 not in `last_triaged_event_ids`**. It does **not** run on `overflowed` (terminal;
 metric only). It does not scrape tool I/O. It does not run on every Stop. It does
@@ -573,11 +596,14 @@ reconsolidation can follow this job; it is not a blocker for the closer itself.
 
 ## Layer 6 — SessionEnd is close, not capture
 
-`POST /api/v1/agent-sessions/close` sets `closed_at`. Addressed by natural key
-plus `activation_epoch`. Idempotent. Fits the SessionEnd budget. Correctness does
-not depend on it (the lease does). A close whose epoch does not match the row's
-current epoch is a **no-op** — a delayed SessionEnd from the previous activation
-must not close a resumed run.
+`POST /api/v1/agent-sessions/close` sets `closed_at` by **natural key only**.
+SessionEnd has the harness `session_id`, not `activation_epoch`, and looking up
+the current epoch would close a resumed activation. Do not require the epoch on
+close and do not persist an activation token in a local state file. A delayed
+stale close is **transient**: the next heartbeat or resume resurrects and bumps
+the epoch; the closer's epoch fence ignores work claimed under the old one.
+Idempotent. Fits the SessionEnd budget. Correctness does not depend on it (the
+lease + sweep do).
 
 ## REST surface (hook-facing, API-key)
 
@@ -589,7 +615,7 @@ required on heartbeat/close/triage — Stop does not have it.
 | Method | Path | Job |
 |---|---|---|
 | `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate |
-| `POST` | `/api/v1/agent-sessions/close` | set `closed_at` if `activation_epoch` matches |
+| `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch |
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | pending attempt |
 | `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark |
@@ -612,7 +638,7 @@ Existing tools cover the jobs. The reason not to add one is the JTBD test.
 | `payload` through `writeMemory` and `transitionCommitment` | Native path hardcodes `undefined` / omits payload |
 | Typed provenance read | History redacts payload values by design |
 | REST prompt render + session open/close/heartbeat/triage | Prompts are MCP-only; the hook has no MCP client |
-| Closer job on the worker | No between-session writer of curated atoms exists |
+| Closer job + lease-expiry sweep on the worker | Crash path never enqueues without a producer; v1 resolve-only |
 | Worker image + Compose service | `docker-compose.yml` has no worker; self-host would enqueue into a void |
 
 ## Relation to threads and reconsolidation
@@ -648,6 +674,8 @@ still help Claude/Codex first.
 | Sharing raw transcripts | Codex: transcript format is not a stable hook interface |
 | New MCP tools for work state | Existing tools cover the jobs |
 | A SQLite/JSONL side store | Second system of record |
+| SessionEnd carrying `activation_epoch` / a local activation token | SessionEnd has no run mapping; stale close is transient (heartbeat resurrects) |
+| Closer v1 `remember` into the corpus | Append-only duplicates; v1 auto-resolves only |
 | Hanging the gate on `memory_events` alone | Needs a `memory_id`; cannot represent a briefing |
 | Sampling a handoff cursor at SessionEnd | Omits Session A's work; also not a safe DB high-water |
 | Time-window attribution | Collides when two sessions overlap |
@@ -662,18 +690,19 @@ still help Claude/Codex first.
 
 Each step is independently useful. Stop nudge is last and default-off.
 
-**Contract review is converged** (2026-08-21). Remaining discoveries belong in
-step-level implementation review against this page, not more prose here.
+**Contract review is converged** (2026-08-21, post-merge #172 follow-up). Remaining
+discoveries belong in step-level implementation review against this page, not more
+prose here.
 
 | # | Step | Validates |
 |---|---|---|
 | 0 | ~~Verify Codex blocking `Stop`~~ | **Done** |
 | 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (converged 2026-08-21) |
-| 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema | Table count 26 → 27 |
+| 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema + import-boundary `sessionRunId` reject | Table count 26 → 27 |
 | 3 | Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor | Attribution is server-validated; hooked path is not "always" |
 | 4 | Typed provenance read (bounded, paginated) | Closer and nudge can list this run's writes |
-| 5 | REST open / close (`activation_epoch`) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** (no triage). Optional throttled PostToolUse heartbeat | Lease stays live across completed turns; resume/compact/crash still hold |
-| 6 | Closer worker, same debrief rubric, atomic claim. **Worker image + Compose service** so self-host has a consumer | Commitment-recall **improvement** vs 0%, not merely ≥ the 26%/0% status quo; precision near zero-spurious |
+| 5 | REST open / close (natural key, no epoch) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
+| 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |
 | 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |
 
 **Validation bar** (go/no-go for default-on, closer and nudge separately):

@@ -68,7 +68,7 @@ GRANT EXECUTE ON FUNCTION auth_retry_unverified_signup(uuid, text, text, text, t
 GRANT EXECUTE ON FUNCTION auth_resend_email_verification(uuid, text, text, timestamp with time zone) TO app_user;
 
 -- Memory domain (RLS-enforced; append-and-supersede => NO DELETE on memory data)
-GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes TO app_user;
+GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes, agent_sessions TO app_user;
 
 -- Scopes are a NAME/ALIAS REGISTRY, not memory data: deleting a scope row only
 -- edits the registry (memories.scope is denormalized text with no FK, so a

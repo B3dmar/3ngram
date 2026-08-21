@@ -59,6 +59,27 @@ async function seedFactProposal(userId: string, memoryId: string, value: string)
   )
 }
 
+// agent_sessions is user-owned (excerpt, briefing topics, selector) and the
+// users row is tombstoned, so the FK cascade never fires.
+async function seedAgentSession(
+  userId: string,
+  sessionId: string,
+  excerpt: string,
+  topic: string,
+): Promise<void> {
+  await ownerPool.query(
+    `INSERT INTO agent_sessions
+       (user_id, agent, session_id, source, project, scope, selector, briefed_memories, last_message_excerpt)
+     VALUES ($1, 'codex', $2, 'startup', '3ngram', 'work', '{"kind":"all"}'::jsonb, $3::jsonb, $4)`,
+    [
+      userId,
+      sessionId,
+      JSON.stringify([{ id: crypto.randomUUID(), topic, status: 'open' }]),
+      excerpt,
+    ],
+  )
+}
+
 async function countRows(table: string, userId: string): Promise<number> {
   const r = await ownerPool.query(`SELECT count(*)::int AS n FROM ${table} WHERE user_id = $1`, [
     userId,
@@ -105,6 +126,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     await seedMemory(userA, 'second', 'secret body two')
     await seedFact(userA, m1, 'secret value')
     await seedFactProposal(userA, m1, 'secret proposed value')
+    await seedAgentSession(userA, 'sess-a', 'secret last message', 'secret briefing topic')
     await ownerPool.query(
       `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
        VALUES ($1, 'default', 'private')`,
@@ -164,6 +186,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(result?.memories).toBe(2)
     expect(result?.facts).toBe(1)
     expect(result?.factProposals).toBe(1)
+    expect(result?.agentSessions).toBe(1)
     expect(result?.sessionsDeleted).toBe(1)
     expect(result?.apiKeysRevoked).toBe(1)
     expect(result?.oauthTokensRevoked).toBe(1)
@@ -175,6 +198,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(await countRows('memories', userA)).toBe(memoriesBefore)
     expect(await countRows('facts', userA)).toBe(1)
     expect(await countRows('fact_proposals', userA)).toBe(1)
+    expect(await countRows('agent_sessions', userA)).toBe(1)
 
     // PII is redacted in place.
     const mem = await ownerPool.query(
@@ -201,6 +225,16 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(proposal.rows[0].predicate).toBe(ERASED_PII)
     expect(proposal.rows[0].value).toBe(ERASED_PII)
     expect(proposal.rows[0].rationale).toBeNull()
+    const session = await ownerPool.query(
+      `SELECT project, scope, selector, briefed_memories, last_message_excerpt
+       FROM agent_sessions WHERE user_id = $1`,
+      [userA],
+    )
+    expect(session.rows[0].project).toBeNull()
+    expect(session.rows[0].scope).toBeNull()
+    expect(session.rows[0].selector).toEqual({ kind: 'all' })
+    expect(session.rows[0].briefed_memories).toEqual([])
+    expect(session.rows[0].last_message_excerpt).toBe(ERASED_PII)
 
     // Identity erased; the email becomes the deletion marker.
     const user = await ownerPool.query('SELECT email, password_hash FROM users WHERE id = $1', [
@@ -246,6 +280,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
   it('RLS scopes erasure to the tenant — user B is untouched', async () => {
     await seedMemory(userA, 'a-topic', 'a-body')
     await seedMemory(userB, 'b-topic', 'b-body')
+    await seedAgentSession(userB, 'sess-b', 'b last message', 'b briefing')
 
     await withTenant(userA, (tx) => eraseAccountData(tx, userA, NOW))
 
@@ -257,6 +292,12 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(bMem.rows[0].topic).toBe('b-topic')
     const bUser = await ownerPool.query('SELECT email FROM users WHERE id = $1', [userB])
     expect(bUser.rows[0].email).toBe('acct-del-b@test.local')
+    const bSession = await ownerPool.query(
+      'SELECT last_message_excerpt, project FROM agent_sessions WHERE user_id = $1',
+      [userB],
+    )
+    expect(bSession.rows[0].last_message_excerpt).toBe('b last message')
+    expect(bSession.rows[0].project).toBe('3ngram')
   })
 })
 

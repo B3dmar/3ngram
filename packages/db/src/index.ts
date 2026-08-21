@@ -144,6 +144,7 @@ export { AccountDeletedError } from './credential-guard.js'
 // --- full-account data export (GDPR portability) — appended block ---
 export {
   type ExportAccountRow,
+  type ExportAgentSessionRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
   type ExportEdgeRow,
@@ -292,6 +293,7 @@ export {
   type RlsGuardOptions,
   readForcedTenantTables,
 } from './rls-guard.js'
+export * from './schema/agent-sessions.js'
 export * from './schema/budget.js'
 export * from './schema/identity.js'
 export * from './schema/memory.js'

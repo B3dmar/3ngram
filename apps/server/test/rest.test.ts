@@ -2042,6 +2042,27 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ],
+    agentSessions: [
+      {
+        id: NEW_ID,
+        agent: 'codex',
+        sessionId: 'sess-export',
+        source: 'startup',
+        project: '3ngram',
+        scope: 'work',
+        selector: { kind: 'all' },
+        openedAt: new Date('2026-01-01T00:00:00.000Z'),
+        closedAt: null,
+        lastSeenAt: new Date('2026-01-01T00:00:00.000Z'),
+        activationEpoch: 1,
+        triageStatus: 'idle',
+        triageAttemptId: null,
+        lastTriagedEventIds: [],
+        briefingDeliveredAt: null,
+        briefedMemories: [{ id: NEW_ID, topic: 'ship v1.4.4', status: 'open' }],
+        lastMessageExcerpt: 'we should ship the migration',
+      },
+    ],
     userBudgets: [
       {
         id: COMMIT_ID,
@@ -2089,6 +2110,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       memoryEvents: Array<{ payload: unknown }>
       proposals: Array<{ rationale: string | null }>
       factProposals: Array<{ subject: string; value: string; rationale: string | null }>
+      agentSessions: Array<{ agent: string; lastMessageExcerpt: string | null }>
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
       retrievalPolicy: {
@@ -2105,6 +2127,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         memoryEvents: number
         proposals: number
         factProposals: number
+        agentSessions: number
         userBudgets: number
         llmUsage: number
       }
@@ -2128,6 +2151,8 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     expect(body.factProposals[0]?.subject).toBe('deploy target')
     expect(body.factProposals[0]?.value).toBe('fly.io')
     expect(body.factProposals[0]?.rationale).toBe('extracted from the memory body')
+    expect(body.agentSessions[0]?.agent).toBe('codex')
+    expect(body.agentSessions[0]?.lastMessageExcerpt).toBe('we should ship the migration')
     // Cost/usage rows are present — user-owned, RLS-scoped like the rest.
     expect(body.userBudgets[0]?.capUsdOverride).toBe('5.000000000000')
     expect(body.llmUsage[0]?.operation).toBe('memory.embed')
@@ -2146,6 +2171,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       memoryEvents: 1,
       proposals: 1,
       factProposals: 1,
+      agentSessions: 1,
       userBudgets: 1,
       llmUsage: 1,
     })
@@ -2187,6 +2213,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     const schema =
       spec.paths['/api/v1/export'].get.responses['200'].content['application/json'].schema
     expect(schema.required).toContain('retrievalPolicy')
+    expect(schema.required).toContain('agentSessions')
     const policy = schema.properties.retrievalPolicy
     const objectBranch = policy?.anyOf?.find((branch) => branch.type === 'object')
     expect(objectBranch).toMatchObject({
@@ -2216,6 +2243,7 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     commitments: 0,
     proposals: 0,
     factProposals: 3,
+    agentSessions: 1,
     sessionsDeleted: 1,
     apiKeysRevoked: 1,
     oauthTokensRevoked: 0,
@@ -2240,7 +2268,12 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     const body = (await res.json()) as {
       deleted: boolean
       alreadyDeleted: boolean
-      erased: { memories: number; factProposals: number; sessionsDeleted: number }
+      erased: {
+        memories: number
+        factProposals: number
+        agentSessions: number
+        sessionsDeleted: number
+      }
     }
     expect(body.deleted).toBe(true)
     expect(body.alreadyDeleted).toBe(false)
@@ -2249,6 +2282,7 @@ describe('DELETE /api/v1/account (self-serve deletion, spec 015)', () => {
     // Staged fact proposals are erased too, and the receipt must report them —
     // the count is echoed, not dropped on the way through the transport.
     expect(body.erased.factProposals).toBe(3)
+    expect(body.erased.agentSessions).toBe(1)
   })
 
   it('400s without an explicit { confirm: true } (no silent destructive call)', async () => {

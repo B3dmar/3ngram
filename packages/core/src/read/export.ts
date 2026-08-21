@@ -23,6 +23,7 @@ import {
 
 export type {
   ExportAccountRow,
+  ExportAgentSessionRow,
   ExportBudgetRow,
   ExportCommitmentRow,
   ExportEdgeRow,
@@ -42,7 +43,7 @@ export type {
 /**
  * Assemble the authenticated user's complete portable dataset: account identity
  * (never the password hash) plus every memory, fact, commitment, scope, memory
- * event, consolidation proposal, and staged fact proposal they own — all
+ * event, consolidation proposal, staged fact proposal, and agent session they own — all
  * lifecycle states, not just the
  * live set (docs/concepts/memory-model.mdx retains superseded rows; a portability export must include
  * them).
