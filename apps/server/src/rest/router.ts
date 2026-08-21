@@ -49,6 +49,7 @@ import {
 import type { Gateway } from '@3ngram/llm'
 import {
   accountDeleteBodySchema,
+  archiveMemoryBodySchema,
   briefingToolInputV3Schema,
   factsQueryInputV2Schema,
   memoriesListQuerySchema,
@@ -594,11 +595,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // POST /api/v1/memories/:id/archive — archive an active memory of ANY type
   // (adoption-gate Decision D: REST-only, no MCP tool mirrors it). status flips
   // 'active' -> 'archived'; valid_to stays NULL, so the row lands in the archived
-  // bucket GET /memories?status=archived and GET /stats read. No body: the :id
-  // path segment is the whole input, bounded here (a malformed uuid can never
-  // match a stored uuid, so it is the same 404 as an unknown id — mirrors the
-  // proposals/:id routes). Core throws MemoryNotFoundError for an absent,
-  // cross-tenant, already-archived, or superseded id — the mapper's 404.
+  // bucket GET /memories?status=archived and GET /stats read. Optional body
+  // carries sessionRunId; omitted body is the same as {}. A malformed uuid path
+  // is the same 404 as an unknown id. Core throws MemoryNotFoundError for an
+  // absent, cross-tenant, already-archived, or superseded id — the mapper's 404.
   router.post('/api/v1/memories/:id/archive', (req, res) => {
     void guard('archive', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -606,10 +606,11 @@ export function restRouter(options: RestRouterOptions): Router {
         res.status(404).json({ error: 'not_found' })
         return
       }
+      const body = archiveMemoryBodySchema.parse(req.body ?? {})
       // ACCESS GUARD: write access is asserted BEFORE the db op runs (self-host
       // allowAllAccess allows all).
       if (options.access) await options.access.assertWrite(tenant(req))
-      const archived = await archiveMemory(tenant(req), id.data, 'user_api')
+      const archived = await archiveMemory(tenant(req), id.data, 'user_api', body.sessionRunId)
       res.status(200).json({ id: archived.id, status: archived.status })
     })
   })

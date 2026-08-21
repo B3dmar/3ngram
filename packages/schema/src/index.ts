@@ -314,6 +314,7 @@ export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits
 // --- REST /api/v1 dashboard contract — appended block ---
 export type {
   AccountDeleteBody,
+  ArchiveMemoryBody,
   DashboardSearchHit,
   DashboardSearchQuery,
   DashboardSearchResponse,
@@ -338,6 +339,7 @@ export type {
 } from './rest.js'
 export {
   accountDeleteBodySchema,
+  archiveMemoryBodySchema,
   DEFAULT_DASHBOARD_SEARCH_LIMIT,
   DEFAULT_MEMORIES_LIMIT,
   DEFAULT_REST_PROPOSALS_LIMIT,

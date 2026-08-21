@@ -508,3 +508,16 @@ export const accountDeleteBodySchema = z
   })
   .strict()
 export type AccountDeleteBody = z.infer<typeof accountDeleteBodySchema>
+
+/** Optional body for REST-only POST /api/v1/memories/:id/archive. */
+export const archiveMemoryBodySchema = z
+  .object({
+    sessionRunId: z
+      .uuid()
+      .optional()
+      .describe(
+        'Opaque id of the current agent session run. Omit to attach the single leased-open session for this project, if any.',
+      ),
+  })
+  .strict()
+export type ArchiveMemoryBody = z.infer<typeof archiveMemoryBodySchema>

@@ -1324,7 +1324,7 @@ describe('POST /api/v1/memories/:id/archive', () => {
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ id: NEW_ID, status: 'archived' })
-    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api')
+    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api', undefined)
   })
 
   it('404s an unknown id (typed MemoryNotFoundError -> not_found)', async () => {
@@ -1362,6 +1362,17 @@ describe('POST /api/v1/memories/:id/archive', () => {
     const res = await call(`/api/v1/memories/${NEW_ID}/archive`, { method: 'POST' })
     expect(res.status).toBe(401)
     expect(archiveMemory).not.toHaveBeenCalled()
+  })
+
+  it('forwards optional sessionRunId from the body', async () => {
+    archiveMemory.mockResolvedValue({ id: NEW_ID, status: 'archived' })
+    const res = await call(`/api/v1/memories/${NEW_ID}/archive`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { sessionRunId: NEW_ID },
+    })
+    expect(res.status).toBe(200)
+    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api', NEW_ID)
   })
 })
 
