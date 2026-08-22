@@ -12,6 +12,7 @@
 // Observability (hard rule 6): ids/status only — never memory content.
 import {
   archiveBlockerMemory,
+  assertSessionRunOwned,
   BlockerNotFoundError,
   CommitmentNotFoundError,
   type CommitmentState,
@@ -188,6 +189,15 @@ export async function resolveByMemoryId(
  * Shared FSM-validated transition body for both id- and memory-keyed surfaces. A
  * same-state transition is a no-op success; an illegal pair throws BEFORE any DB
  * write (core is the primary guard, the DB trigger is the backstop).
+ *
+ * The no-op branch still VALIDATES a supplied sessionRunId. Idempotency is about
+ * the commitment's state, not about which inputs get checked: the native-write
+ * contract is that a run id this tenant does not own fails the request, and the
+ * early return would otherwise let a foreign or nonexistent id come back 200
+ * purely because the commitment already held the requested status — the one
+ * request shape where a bad id was silently accepted. The check is ownership
+ * only: it never attaches, heartbeats, or stamps an event, so a no-op resolve
+ * cannot be used to keep a session's lease alive.
  */
 async function applyTransition(
   userId: string,
@@ -196,7 +206,10 @@ async function applyTransition(
   actorKind: ActorKind,
   sessionRunId?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
-  if (current.status === to) return { id: current.id, status: current.status }
+  if (current.status === to) {
+    if (sessionRunId !== undefined) await assertSessionRunOwned(userId, sessionRunId)
+    return { id: current.id, status: current.status }
+  }
   if (!canTransition(current.status, to)) {
     throw new InvalidCommitmentTransitionError(current.status, to)
   }

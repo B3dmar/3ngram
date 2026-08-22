@@ -10,9 +10,6 @@
 //
 // Run it through the root pipeline, which builds the closure first:
 //   pnpm run docs:generate
-// or standalone, after building the closure yourself:
-//   pnpm --filter "@3ngram/server..." run build
-//   node scripts/report-public-api.mjs
 //
 // FRESHNESS: this is the last step of the root `docs:generate` script, so the
 // existing `docs-reference` CI lane (which runs `pnpm run docs:generate` and
@@ -139,7 +136,7 @@ function exportSurface(entryFile, program, checker) {
   const source = program.getSourceFile(entryFile)
   if (!source)
     fail(
-      `built declaration missing: ${path.relative(ROOT, entryFile)} — run: pnpm --filter "@3ngram/server..." run build`,
+      `built declaration missing: ${path.relative(ROOT, entryFile)} — run: pnpm run docs:generate`,
     )
   const moduleSymbol = checker.getSymbolAtLocation(source)
   if (!moduleSymbol) return []

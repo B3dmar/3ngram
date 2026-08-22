@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Resolve native write-time session provenance (docs/concepts/session-continuity.mdx).
 // SQL ONLY: core validates the optional sessionRunId at the schema boundary and
-// hands it here inside withTenant. Import never calls this.
+// hands it here inside withTenant. Import never calls this. The one exception to
+// "caller owns the tx" is assertSessionRunOwned, which core's idempotent no-op
+// path calls without a transaction of its own.
 import { SESSION_LEASE_MS, type SessionProvenancePayload } from '@3ngram/schema'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
-import { lockSessionAttach, type TenantTx } from './client.js'
+import { lockSessionAttach, type TenantTx, withTenant } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 
 /** A syntactically valid sessionRunId that is not a tenant-owned row. */
@@ -41,6 +43,13 @@ function isLeased(lastSeenAt: Date, now: Date): boolean {
   return lastSeenAt.getTime() > leaseFloor(now).getTime()
 }
 
+/**
+ * Attach-lock attempts before giving up unattributed. Erasure moves a row's
+ * project at most once (to NULL), so one re-lock always suffices; the extra
+ * headroom exists so an unforeseen mutation degrades instead of spinning.
+ */
+const MAX_ATTACH_LOCK_ATTEMPTS = 3
+
 interface SessionRow {
   id: string
   project: string | null
@@ -66,19 +75,42 @@ async function readSession(
   return row
 }
 
+/**
+ * MONOTONIC lease refresh: never move `last_seen_at` backwards.
+ *
+ * `now` is captured in the caller's process before the statement runs, so a
+ * slow attacher can reach its UPDATE after a later attacher already committed a
+ * NEWER heartbeat. A bare `SET last_seen_at = now` would then overwrite the
+ * fresher timestamp with the older captured one, SHORTENING the lease — enough
+ * for the next write to read the run as stale and resurrect it for no reason.
+ * GREATEST makes a successful heartbeat a floor, never a rollback. The
+ * `::timestamptz` cast is the repo's convention for an interpolated timestamp
+ * param (search.ts, search-list.ts) — without it the param arrives untyped.
+ */
+function monotonicLastSeen(now: Date) {
+  return sql`GREATEST(${agentSessions.lastSeenAt}, ${now.toISOString()}::timestamptz)`
+}
+
 async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
   await tx
     .update(agentSessions)
-    .set({ lastSeenAt: now })
+    .set({ lastSeenAt: monotonicLastSeen(now) })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }
 
+/**
+ * Reopen a stale-lease row and advance its activation epoch. Callers MUST hold
+ * the attach lock keyed by the row's CURRENT project (see attachKnownRun) —
+ * the epoch is a fence, so a double increment invalidates a closer's claim.
+ * `lastSeenAt` uses the same monotonic floor as heartbeat: a resurrect that
+ * loses a race to a newer heartbeat must not shorten the lease it just revived.
+ */
 async function resurrect(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
   await tx
     .update(agentSessions)
     .set({
       closedAt: null,
-      lastSeenAt: now,
+      lastSeenAt: monotonicLastSeen(now),
       activationEpoch: sql`${agentSessions.activationEpoch} + 1`,
     })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
@@ -98,28 +130,52 @@ async function attachKnownRun(
     return row.id
   }
 
-  // Stale lease. Resurrecting changes the open-session set; serialize with
-  // omitted-id attach.
-  await lockSessionAttach(tx, userId, row.project)
+  // Stale lease. Resurrecting changes the open-session set, so it must be
+  // serialized with omitted-id attach.
+  //
+  // INVARIANT: the resurrect/heartbeat decision is made under the attach lock
+  // keyed by the row's CURRENT project. Two things force the loop below.
+  //
+  // (1) RE-READ under the lock. The first read was taken BEFORE the lock, so two
+  //     concurrent writes carrying the SAME stale run id both saw it stale; the
+  //     lock only serializes them. Resurrecting on both would bump
+  //     activation_epoch TWICE for ONE resurrection, invalidating claims a
+  //     closer fenced at the first epoch. The loser re-decides on committed
+  //     state (READ COMMITTED gives each statement a fresh snapshot, and the
+  //     winner's xact-scoped advisory lock is only released at its commit) and
+  //     heartbeats the already-open row instead. The explicit-close guard is
+  //     re-checked too: a SessionEnd may have committed while we waited.
+  //
+  // (2) RE-LOCK when the project moved. The key comes from the observed row, and
+  //     `agent_sessions.project` is mutable in exactly one place: account erasure
+  //     redacts it to NULL (account-delete.ts). Two attachers straddling that
+  //     commit would otherwise lock DIFFERENT keys, lose serialization entirely,
+  //     and both resurrect. Locking the new key too restores it. No inversion is
+  //     possible: erasure only ever goes project -> NULL and happens once, so
+  //     every attacher that takes both keys takes them in the same old -> new
+  //     order and NULL is terminal. That bounds the loop at one extra iteration;
+  //     the cap is a fail-safe, and exhausting it returns unattributed rather
+  //     than resurrecting on a key we do not hold.
+  let observed = row
+  for (let attempt = 0; attempt < MAX_ATTACH_LOCK_ATTEMPTS; attempt++) {
+    const lockedProject = observed.project
+    await lockSessionAttach(tx, userId, lockedProject)
 
-  // RE-READ under the lock. The read above was taken BEFORE the lock, so two
-  // concurrent writes carrying the SAME stale run id both saw it stale; the lock
-  // only serializes them. Resurrecting on both would bump activation_epoch TWICE
-  // for ONE resurrection, invalidating claims that a closer fenced at the first
-  // epoch. The loser must therefore re-decide on committed state (READ COMMITTED
-  // gives each statement a fresh snapshot, and the winner's xact-scoped advisory
-  // lock is only released at its commit) and heartbeat the already-open row
-  // instead. The explicit-close guard is re-checked too: the row may have been
-  // closed by a SessionEnd that committed while we waited.
-  const fresh = await readSession(tx, userId, sessionRunId)
-  if (fresh === undefined) throw new UnknownSessionRunError(sessionRunId)
-  if (isExplicitClose(fresh.closedAt, fresh.lastSeenAt)) return undefined
-  if (isLeased(fresh.lastSeenAt, now)) {
-    await heartbeat(tx, userId, fresh.id, now)
+    const fresh = await readSession(tx, userId, sessionRunId)
+    if (fresh === undefined) throw new UnknownSessionRunError(sessionRunId)
+    if (isExplicitClose(fresh.closedAt, fresh.lastSeenAt)) return undefined
+    if (isLeased(fresh.lastSeenAt, now)) {
+      await heartbeat(tx, userId, fresh.id, now)
+      return fresh.id
+    }
+    if (fresh.project !== lockedProject) {
+      observed = fresh
+      continue
+    }
+    await resurrect(tx, userId, fresh.id, now)
     return fresh.id
   }
-  await resurrect(tx, userId, fresh.id, now)
-  return fresh.id
+  return undefined
 }
 
 async function attachSingleOpen(
@@ -147,6 +203,32 @@ async function attachSingleOpen(
   const id = open.length === 1 ? open[0]?.id : undefined
   if (id !== undefined) await heartbeat(tx, userId, id, now)
   return id
+}
+
+/**
+ * Assert that `sessionRunId` names a row this tenant owns, and nothing else.
+ *
+ * The write paths get this validation for free: resolveSessionProvenance throws
+ * {@link UnknownSessionRunError} on an unowned id before it stamps anything. An
+ * IDEMPOTENT no-op has no write to hang it on — a resolve to the status the
+ * commitment already holds returns early without reaching the DB — yet the
+ * contract is that a run id this tenant does not own FAILS the request, whatever
+ * else the request does. This is that check standing alone.
+ *
+ * Deliberately inert beyond the check: no attach, no heartbeat, no epoch change,
+ * no audit event. A no-op resolve must not refresh a lease as a side effect of
+ * being validated, or "resolve to the current status" would become a way to keep
+ * a session alive. Opens its own withTenant so RLS scopes the lookup and callers
+ * in core need no transaction of their own.
+ *
+ * @throws {@link UnknownSessionRunError} the id is not a row of this tenant.
+ */
+export async function assertSessionRunOwned(userId: string, sessionRunId: string): Promise<void> {
+  await withTenant(userId, async (tx) => {
+    if ((await readSession(tx, userId, sessionRunId)) === undefined) {
+      throw new UnknownSessionRunError(sessionRunId)
+    }
+  })
 }
 
 /**

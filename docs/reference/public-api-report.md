@@ -609,6 +609,7 @@ its row here even when its name and kind are unchanged.
 | `archiveBlockerMemory` | function | `3ad80537eb43` |
 | `archiveMemory` | function | `a710fad9d8a2` |
 | `assertRlsInForce` | function | `d2c61c280d14` |
+| `assertSessionRunOwned` | function | `49433fabc3b3` |
 | `auditLog` | const | `16136a25b871` |
 | `auditLogEntryExists` | function | `bab2ee9b3919` |
 | `budgetReservations` | const | `2323c0409991` |

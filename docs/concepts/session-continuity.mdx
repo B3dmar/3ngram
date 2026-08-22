@@ -269,7 +269,9 @@ Do not write the literal `"unknown"` that `deriveProject` returns for an empty c
 
 SessionEnd is best-effort. Stop, SessionStart, and a write that successfully attaches
 to the row refresh `last_seen_at` — a turn's own writes must not let its lease lapse
-mid-turn and make the next write look like a resurrection. A row is
+mid-turn and make the next write look like a resurrection. The refresh is a floor
+(`GREATEST(last_seen_at, now)`), never an overwrite, so a slow writer carrying an
+older captured clock cannot shorten a lease a later one already extended. A row is
 **implicitly closed** when `last_seen_at` is older than the lease threshold — evaluated
 on read and write, not only after a sweeper has stamped `closed_at`. Sweeper timing
 must not change attribution. Open-session counts ignore implicitly closed rows. The

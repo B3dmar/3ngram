@@ -13,6 +13,7 @@ const dbCreateCommitment = vi.fn()
 const dbTransitionCommitment = vi.fn()
 const getMemoryById = vi.fn()
 const archiveBlockerMemory = vi.fn()
+const assertSessionRunOwned = vi.fn(async (..._a: unknown[]) => undefined)
 
 // withTenant runs the body against a fake tx; the body only forwards to
 // getMemoryById (also mocked), so a stub tx object suffices.
@@ -25,7 +26,16 @@ vi.mock('@3ngram/db', () => ({
   transitionCommitment: (...a: unknown[]) => dbTransitionCommitment(...a),
   getMemoryById: (...a: unknown[]) => getMemoryById(...a),
   archiveBlockerMemory: (...a: unknown[]) => archiveBlockerMemory(...a),
+  assertSessionRunOwned: (...a: unknown[]) => assertSessionRunOwned(...a),
   withTenant: (_userId: string, fn: (tx: unknown) => unknown) => fn(FAKE_TX),
+  UnknownSessionRunError: class UnknownSessionRunError extends Error {
+    readonly sessionRunId: string
+    constructor(sessionRunId: string) {
+      super('session run is not owned by this tenant')
+      this.name = 'UnknownSessionRunError'
+      this.sessionRunId = sessionRunId
+    }
+  },
   CommitmentNotFoundError: class CommitmentNotFoundError extends Error {
     readonly commitmentId: string
     readonly keyedBy: string
@@ -58,6 +68,11 @@ vi.mock('@3ngram/db', () => ({
   },
 }))
 
+// Pulled from the mocked module so the thrown shape matches what core catches.
+const { UnknownSessionRunError } = (await import('@3ngram/db')) as unknown as {
+  UnknownSessionRunError: new (id: string) => Error
+}
+
 const {
   BlockerNotFoundError,
   CommitmentNotFoundError,
@@ -81,7 +96,11 @@ afterEach(() => {
   dbTransitionCommitment.mockReset()
   getMemoryById.mockReset()
   archiveBlockerMemory.mockReset()
+  assertSessionRunOwned.mockReset()
+  assertSessionRunOwned.mockResolvedValue(undefined)
 })
+
+const RUN = '01890b6e-0000-7000-8000-0000000000cc'
 
 describe('createCommitment', () => {
   it('forwards memoryId, actor, and metadata to the db helper', async () => {
@@ -133,7 +152,12 @@ describe('transition (schema FSM validation, every legal/illegal pair)', () => {
 
     expect(result).toEqual({ id: COMMITMENT, status: 'open' })
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
+    // No id supplied: nothing to validate, and the no-op must not invent a check.
+    expect(assertSessionRunOwned).not.toHaveBeenCalled()
   })
+
+  // The id-keyed `transition` surface takes no sessionRunId, so there is nothing
+  // to validate here; the run-id no-op coverage lives on resolveByMemoryId below.
 
   it('throws CommitmentNotFoundError when the commitment is absent (RLS)', async () => {
     getCommitment.mockResolvedValue(undefined)
@@ -265,6 +289,31 @@ describe('resolveByMemoryId (memory-keyed transition for the resolve tool)', () 
     const result = await resolveByMemoryId(USER, MEMORY, 'open', ACTOR)
 
     expect(result).toEqual({ id: COMMITMENT, status: 'open' })
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+    expect(assertSessionRunOwned).not.toHaveBeenCalled()
+  })
+
+  it('validates a supplied sessionRunId even on a same-state no-op', async () => {
+    // The early return skips dbTransitionCommitment, which is where an unowned
+    // run id is normally rejected. Idempotency is about the commitment's state,
+    // not about which inputs get checked.
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+
+    const result = await resolveByMemoryId(USER, MEMORY, 'open', ACTOR, RUN)
+
+    expect(result).toEqual({ id: COMMITMENT, status: 'open' })
+    expect(assertSessionRunOwned).toHaveBeenCalledWith(USER, RUN)
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+
+  it('fails a same-state no-op carrying a run id this tenant does not own', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    assertSessionRunOwned.mockRejectedValue(new UnknownSessionRunError(RUN))
+
+    await expect(resolveByMemoryId(USER, MEMORY, 'open', ACTOR, RUN)).rejects.toMatchObject({
+      name: 'UnknownSessionRunError',
+      sessionRunId: RUN,
+    })
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
   })
 })
