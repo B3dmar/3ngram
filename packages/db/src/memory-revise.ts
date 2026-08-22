@@ -228,6 +228,10 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
         throw new PredecessorAlreadySupersededError(input.predecessorId)
       }
 
+      // LOCK ORDER (canonical for every write path that stamps provenance):
+      // resolve provenance — which may take the tenant/project attach advisory
+      // lock — BEFORE any memory row lock. The archive helpers below mirror it;
+      // inverting it in one path is an AB-BA deadlock against this one.
       const runId = await resolveSessionProvenance(tx, input.userId, {
         sessionRunId: input.sessionRunId,
         project: input.project,
@@ -370,6 +374,36 @@ export async function archiveBlockerMemory(
   now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   return withTenant(userId, async (tx) => {
+    // LOCK ORDER (must match reviseMemory): session provenance FIRST — it may
+    // take the tenant/project attach advisory lock — then the memory row lock.
+    // Taking the row lock first (UPDATE ... RETURNING project) inverted the
+    // order against reviseMemory, so an omitted-id archive racing a revise on
+    // the same project deadlocked (AB-BA) and Postgres aborted one of them.
+    // Reading the project with an unlocked SELECT keeps the ordering intact.
+    const [target] = await tx
+      .select({ project: memories.project })
+      .from(memories)
+      .where(
+        and(
+          eq(memories.userId, userId),
+          eq(memories.id, memoryId),
+          eq(memories.memoryType, 'blocker'),
+          eq(memories.status, 'active'),
+          isNull(memories.validTo),
+        ),
+      )
+      .limit(1)
+    if (!target) throw new BlockerNotFoundError(memoryId)
+
+    const runId = await resolveSessionProvenance(tx, userId, {
+      sessionRunId,
+      project: target.project,
+      now: now ?? new Date(),
+    })
+
+    // The guard is re-asserted here, not merely re-used: the SELECT above took
+    // no row lock, so a concurrent archive may have won in between. Zero rows
+    // is the same clean BlockerNotFoundError it always was.
     const archived = await tx
       .update(memories)
       .set({ status: 'archived', validTo: sql`now()`, updatedAt: sql`now()` })
@@ -382,14 +416,9 @@ export async function archiveBlockerMemory(
           isNull(memories.validTo),
         ),
       )
-      .returning({ id: memories.id, project: memories.project })
+      .returning({ id: memories.id })
     if (archived.length === 0 || !archived[0]) throw new BlockerNotFoundError(memoryId)
 
-    const runId = await resolveSessionProvenance(tx, userId, {
-      sessionRunId,
-      project: archived[0].project,
-      now: now ?? new Date(),
-    })
     await tx.insert(memoryEvents).values({
       userId,
       memoryId,
@@ -453,6 +482,32 @@ export async function archiveMemory(
   now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   return withTenant(userId, async (tx) => {
+    // LOCK ORDER (must match reviseMemory): session provenance FIRST — it may
+    // take the tenant/project attach advisory lock — then the memory row lock.
+    // See archiveBlockerMemory for why the inverted order deadlocked.
+    const [target] = await tx
+      .select({ project: memories.project })
+      .from(memories)
+      .where(
+        and(
+          eq(memories.userId, userId),
+          eq(memories.id, memoryId),
+          eq(memories.status, 'active'),
+          isNull(memories.validTo),
+        ),
+      )
+      .limit(1)
+    if (!target) throw new ActiveMemoryNotFoundError(memoryId)
+
+    const runId = await resolveSessionProvenance(tx, userId, {
+      sessionRunId,
+      project: target.project,
+      now: now ?? new Date(),
+    })
+
+    // Guard re-asserted under the row lock: the SELECT above took none, so a
+    // concurrent archive may have won in between. Zero rows stays the same
+    // clean ActiveMemoryNotFoundError.
     const archived = await tx
       .update(memories)
       .set({ status: 'archived', updatedAt: sql`now()` })
@@ -464,14 +519,9 @@ export async function archiveMemory(
           isNull(memories.validTo),
         ),
       )
-      .returning({ id: memories.id, project: memories.project })
+      .returning({ id: memories.id })
     if (archived.length === 0 || !archived[0]) throw new ActiveMemoryNotFoundError(memoryId)
 
-    const runId = await resolveSessionProvenance(tx, userId, {
-      sessionRunId,
-      project: archived[0].project,
-      now: now ?? new Date(),
-    })
     await tx.insert(memoryEvents).values({
       userId,
       memoryId,

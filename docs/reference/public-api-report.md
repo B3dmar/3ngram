@@ -4,11 +4,12 @@
 # Public API report — the @3ngram publish closure
 
 Deterministic export surface of the six packages published under `@3ngram`.
-Regenerate after building the closure:
+Regenerate it with the rest of the reference docs (this is the last step of
+the root `docs:generate` script, and the `docs-reference` CI lane diffs the
+result byte for byte):
 
 ```sh
-pnpm --filter "@3ngram/server..." run build
-node scripts/report-public-api.mjs
+pnpm run docs:generate
 ```
 
 **How the contract gate consumes this** (the blocking half runs in the private
@@ -18,8 +19,8 @@ prereleases on staging merges touching the closure; stable lane:
 The private repo's CI installs `@3ngram/*@next`, builds + runs its suite, and
 diffs the surface it imports against this committed artifact — a removed or
 retyped consumed symbol goes red **before** any stable publish or deploy
-(SC-005). This file is regenerated manually in the PR that changes a closure
-package's exports, so the diff is reviewable where the change happens.
+(SC-005). This file regenerates in the PR that changes a closure package's
+exports, so the diff is reviewable where the change happens.
 
 The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
@@ -802,6 +803,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionSource` | type | `8c3ffb08f101` |
 | `AgentSessionTriageStatus` | type | `c575ca6b65f7` |
 | `ApiKeyId` | type | `7c3726c9d129` |
+| `ArchiveMemoryBody` | type | `e45c53e264c9` |
 | `AsOfInput` | type | `80bbe425bddf` |
 | `AuthorizeRequest` | type | `68f7fb6a9aa9` |
 | `BRIEFING_SECTION_NAMES` | const | `5763b573cd80` |
@@ -1028,6 +1030,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
+| `archiveMemoryBodySchema` | const | `159c881512f8` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
 | `briefedMemorySchema` | const | `644d63b7a76e` |

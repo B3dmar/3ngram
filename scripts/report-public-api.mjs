@@ -8,19 +8,21 @@
 // hardcoded list) and the built `dist/*.d.ts` of each
 // `exports` entry, into docs/reference/public-api-report.md.
 //
-// Prerequisite: the closure must be built first —
+// Run it through the root pipeline, which builds the closure first:
+//   pnpm run docs:generate
+// or standalone, after building the closure yourself:
 //   pnpm --filter "@3ngram/server..." run build
-// then:
 //   node scripts/report-public-api.mjs
 //
-// Manual-run for now (deliberately NOT wired into ci.yml — the report only
-// changes when a publishable export surface changes, and the consuming half
-// of the gate lives in the private repo's CI, not here). Re-run it in
-// the PR that changes a closure package's exports and commit the diff; the
-// blocking check is the private repo's CI installing the `@3ngram/*@next`
-// snapshot prereleases and going
-// red on an incompatible surface. Uses the repo's own `typescript` — no new
-// dependencies.
+// FRESHNESS: this is the last step of the root `docs:generate` script, so the
+// existing `docs-reference` CI lane (which runs `pnpm run docs:generate` and
+// then `git diff --exit-code -- docs`) covers the report byte for byte. It was
+// manual-run at first and went stale twice, because a changed export surface
+// looks like an unrelated PR until the diff is missing. There is no separate
+// gate to add: the blocking cross-repo check is still the private repo's CI
+// installing the `@3ngram/*@next` snapshot prereleases and going red on an
+// incompatible surface — this artifact just cannot lag it any more. Uses the
+// repo's own `typescript` — no new dependencies.
 
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -155,11 +157,12 @@ function renderReport(sections) {
     '# Public API report — the @3ngram publish closure',
     '',
     'Deterministic export surface of the six packages published under `@3ngram`.',
-    'Regenerate after building the closure:',
+    'Regenerate it with the rest of the reference docs (this is the last step of',
+    'the root `docs:generate` script, and the `docs-reference` CI lane diffs the',
+    'result byte for byte):',
     '',
     '```sh',
-    'pnpm --filter "@3ngram/server..." run build',
-    'node scripts/report-public-api.mjs',
+    'pnpm run docs:generate',
     '```',
     '',
     '**How the contract gate consumes this** (the blocking half runs in the private',
@@ -169,8 +172,8 @@ function renderReport(sections) {
     "The private repo's CI installs `@3ngram/*@next`, builds + runs its suite, and",
     'diffs the surface it imports against this committed artifact — a removed or',
     'retyped consumed symbol goes red **before** any stable publish or deploy',
-    '(SC-005). This file is regenerated manually in the PR that changes a closure',
-    "package's exports, so the diff is reviewable where the change happens.",
+    "(SC-005). This file regenerates in the PR that changes a closure package's",
+    'exports, so the diff is reviewable where the change happens.',
     '',
     'The `Signature` column is a sha256 hash (first 12 hex chars) over the',
     "export's declaration text in the built `.d.ts`, so a retyped symbol changes",
