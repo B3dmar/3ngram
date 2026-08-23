@@ -163,6 +163,27 @@ describe('selectResolvable — the model may only name ids it was shown', () => 
     expect(candidates).toEqual([MEM_B])
   })
 
+  it('tolerates a bare fence, a longer fence, and stray padding', () => {
+    const body = JSON.stringify({ completed: [MEM_B] })
+    for (const reply of [
+      ['```', body, '```'].join('\n'),
+      ['`````JSON', body, '`````'].join('\n'),
+      ['```json   ', body, '   ```   '].join('\n'),
+    ]) {
+      expect(selectResolvable(reply, BRIEFED).candidates).toEqual([MEM_B])
+    }
+  })
+
+  it('strips the fence in LINEAR time on a whitespace-heavy reply', () => {
+    // Regression guard for js/polynomial-redos: the anchored-regex spelling of
+    // this strip backtracks quadratically on a long whitespace run, and the
+    // reply is model output derived from tenant text. 200k spaces must not hang.
+    const reply = `\`\`\`json${' '.repeat(200_000)}`
+    const started = Date.now()
+    expect(() => selectResolvable(reply, BRIEFED)).toThrow(CloserVerdictError)
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
   it('rejects prose, an extra key, or a non-uuid — whole, never partially', () => {
     for (const reply of [
       'I think the first one is done.',

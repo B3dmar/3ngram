@@ -336,16 +336,41 @@ export class CloserVerdictError extends Error {
   }
 }
 
+const BACKTICK = 96
+
+function isSpace(text: string, index: number): boolean {
+  return /\s/.test(text.charAt(index))
+}
+
 /**
  * Tolerate a model that wrapped its JSON in a code fence despite being told not
  * to. Purely a leading/trailing strip — the content between the fences is still
  * strict-parsed, so this widens what is accepted, never what is trusted.
+ *
+ * SCANNED, NOT MATCHED. The obvious spelling is a pair of anchored regexes —
+ * one stripping leading backticks plus an optional info string plus whitespace,
+ * one stripping trailing whitespace plus backticks. Both are polynomial-ReDoS
+ * shaped: a whitespace star adjacent to a backtick-plus quantifier backtracks
+ * quadratically on a long run of whitespace, which CodeQL flags
+ * (js/polynomial-redos) and which this input can actually reach — the reply is
+ * model output derived from tenant text. Two index scans do the same job in
+ * linear time.
  */
 function stripCodeFence(reply: string): string {
   const trimmed = reply.trim()
   if (!trimmed.startsWith('`')) return trimmed
-  const withoutOpen = trimmed.replace(/^`+(?:json)?\s*/i, '')
-  return withoutOpen.replace(/\s*`+$/, '')
+
+  let start = 0
+  while (start < trimmed.length && trimmed.charCodeAt(start) === BACKTICK) start += 1
+  // The info string, if the model wrote ```json rather than a bare fence.
+  if (trimmed.slice(start, start + 4).toLowerCase() === 'json') start += 4
+  while (start < trimmed.length && isSpace(trimmed, start)) start += 1
+
+  let end = trimmed.length
+  while (end > start && trimmed.charCodeAt(end - 1) === BACKTICK) end -= 1
+  while (end > start && isSpace(trimmed, end - 1)) end -= 1
+
+  return trimmed.slice(start, end)
 }
 
 /**
