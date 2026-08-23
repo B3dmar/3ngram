@@ -54,6 +54,16 @@ export const agentSessions = pgTable(
     unique('agent_sessions_tenant_id_uq').on(t.userId, t.id),
     unique('agent_sessions_natural_key').on(t.userId, t.agent, t.sessionId),
     index('agent_sessions_lease_idx').on(t.userId, t.lastSeenAt).where(sql`${t.closedAt} IS NULL`),
+    // The closer's candidate scan is the exact OPPOSITE predicate to the lease
+    // index (`closed_at IS NOT NULL`, ordered by `closed_at`), so that index
+    // cannot serve it: a tenant with a long session history would re-scan and
+    // re-sort every row of it on each sweep tick. LIMIT bounds the rows
+    // returned, not the work done, and agent_sessions is never routinely
+    // deleted. Excluding the terminal status keeps the index to rows a closer
+    // could still act on.
+    index('agent_sessions_closer_idx')
+      .on(t.userId, t.closedAt)
+      .where(sql`${t.closedAt} IS NOT NULL AND ${t.triageStatus} <> 'overflowed'`),
     check('agent_sessions_source_check', enumCheckSql(t.source, agentSessionSourceSchema.options)),
     check(
       'agent_sessions_triage_check',

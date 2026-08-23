@@ -37,9 +37,10 @@ import {
   SESSION_LEASE_MS,
   SESSION_SWEEP_GRACE_MS,
 } from '@3ngram/schema'
-import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
+import { memoryEvents } from './schema/memory.js'
 
 /**
  * Triage states a CLOSED row is closer-eligible in, unconditionally
@@ -118,10 +119,20 @@ export async function sweepExpiredLeases(
     .limit(limit)
   if (stale.length === 0) return []
 
-  // Re-assert `closed_at IS NULL` in the UPDATE, not just the SELECT: an
-  // explicit SessionEnd close can commit between the two statements, and
-  // re-stamping would move `closed_at` past the explicit-close window and
-  // silently reclassify a close the tenant made deliberately.
+  // Re-assert BOTH predicates in the UPDATE, not just the SELECT. Under READ
+  // COMMITTED, Postgres re-evaluates the qual against the new row version, so
+  // repeating them is what makes a concurrent writer WIN the race:
+  //
+  //   - `closed_at IS NULL`: an explicit SessionEnd close can commit in the gap,
+  //     and re-stamping would move `closed_at` past the explicit-close window,
+  //     silently reclassifying a close the tenant made deliberately.
+  //   - `last_seen_at < sweepFloor`: a HEARTBEAT can commit in the gap. Without
+  //     this the sweep would close a session that just came back to life — and
+  //     then enqueue it for an LLM-driven resolve pass against a live run, which
+  //     is exactly the mid-conversation debrief the grace exists to prevent.
+  //
+  // A row that loses either check simply returns no row and is skipped this
+  // pass, which is correct: it is no longer stale.
   const closed = await tx
     .update(agentSessions)
     .set({ closedAt: now })
@@ -129,6 +140,7 @@ export async function sweepExpiredLeases(
       and(
         eq(agentSessions.userId, userId),
         isNull(agentSessions.closedAt),
+        lt(agentSessions.lastSeenAt, sweepFloor(now)),
         inArray(
           agentSessions.id,
           stale.map((row) => row.id),
@@ -142,18 +154,49 @@ export async function sweepExpiredLeases(
 /**
  * Closed rows of this tenant that the closer should run on, bounded by `limit`.
  *
- * Covers BOTH producers the page names: the rows the sweep just implicitly
- * closed (they are closed and still `idle`) and rows closed explicitly by
- * SessionEnd whose triage never ran. The `completed`-with-untriaged-events case
- * is deliberately NOT a predicate here — deciding it needs a per-row event
- * listing, which is the closer's job, and the write-time re-arm rule
- * (layer 4) flips such a row back to `idle`, where this query already sees it.
+ * Covers all three producers the page names:
+ *
+ *   1. rows the sweep just implicitly closed (closed and still `idle`);
+ *   2. rows closed explicitly by SessionEnd whose triage never ran;
+ *   3. `completed` rows holding a provenance event id that is NOT in
+ *      `last_triaged_event_ids` — the page's re-arm rule.
+ *
+ * (3) cannot be dropped on the grounds that a write-time re-arm will flip such a
+ * row back to `idle`: no write path in this repository does that yet (it is
+ * step 7), and even once it exists there is a real race it cannot cover. A
+ * memory-event row takes its uuidv7 `id` at INSERT but becomes visible at
+ * COMMIT, so a transaction that started before the closer's final listing and
+ * committed after it holds an id the watermark never saw. Its `sessionRunId`
+ * payload is written inside that same transaction, so nothing outside it can
+ * observe the row in time to re-arm the session. Without this leg that event is
+ * missed permanently — which is precisely the failure the watermark is a SET of
+ * ids, rather than a high-water mark, to avoid.
+ *
+ * COST. The `completed` leg rides an EXISTS, not a per-row listing: it stops at
+ * the first untriaged event. The inner scan is served by
+ * `memory_events_session_idx` — `(user_id, (payload->>'sessionRunId'), id)`
+ * partial on that key being present — which is the same index the typed
+ * provenance read keysets on, so this adds no new index on the events side. The
+ * outer scan is bounded by `agent_sessions_closer_idx` (migration 0033).
  */
 export async function listCloserCandidates(
   tx: TenantTx,
   userId: string,
   limit: number,
 ): Promise<CloserCandidate[]> {
+  // The jsonb array holds event ids as TEXT, so membership is a containment
+  // test against the scalar (`'["a"]'::jsonb @> '"a"'::jsonb`). `e.id::text` and
+  // `agent_sessions.id::text` are both Postgres' canonical lowercase uuid
+  // spelling, which is the spelling the write path stamps into the payload —
+  // the same equality `listSessionEvents` relies on.
+  const hasUntriagedEvent = sql`EXISTS (
+    SELECT 1
+      FROM ${memoryEvents} AS e
+     WHERE e.user_id = ${agentSessions.userId}
+       AND e.payload->>'sessionRunId' = ${agentSessions.id}::text
+       AND NOT (${agentSessions.lastTriagedEventIds} @> to_jsonb(e.id::text))
+  )`
+
   const rows = await tx
     .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
     .from(agentSessions)
@@ -161,7 +204,10 @@ export async function listCloserCandidates(
       and(
         eq(agentSessions.userId, userId),
         isNotNull(agentSessions.closedAt),
-        inArray(agentSessions.triageStatus, [...CLOSER_ELIGIBLE_STATUSES]),
+        or(
+          inArray(agentSessions.triageStatus, [...CLOSER_ELIGIBLE_STATUSES]),
+          and(eq(agentSessions.triageStatus, 'completed'), hasUntriagedEvent),
+        ),
       ),
     )
     .orderBy(agentSessions.closedAt)
@@ -305,19 +351,58 @@ export async function finishSessionTriage(
 }
 
 /**
- * TTL sweep for excerpts on rows the closer will never process: terminal
- * `overflowed` runs, and `completed` runs whose excerpt outlived its
- * consumption. Bounded by `before`; returns the count cleared (never the text).
+ * TTL sweep for `last_message_excerpt` — the page's "TTL sweep leftovers".
+ * Bounded by `before` AND by `limit`; returns the count cleared (never the text).
  *
- * Deliberately narrow. It must not touch an `idle`/`pending`/`expired` row, however
- * old: those are still closer-eligible, and dropping the excerpt would silently
- * remove the closer's only input in the common case.
+ * SCOPE: every CLOSED row past the floor, whatever its triage status.
+ *
+ * An earlier version restricted this to `completed` and `overflowed`, reasoning
+ * that an `idle`/`pending`/`expired` row is still closer-eligible and needs its
+ * excerpt. That leaves a hole with no bottom: a closed, eligible row is only
+ * consumed if a closer actually runs, and it may never run — the flag is
+ * default-off, the gateway may be unconfigured, the pass may keep reporting
+ * `no-gateway`. Those rows would retain user/assistant content indefinitely,
+ * which is the one thing the retention rule exists to prevent. A TTL that only
+ * fires on the happy path is not a TTL.
+ *
+ * The trade is explicit: past the floor, RETENTION WINS over a stale input. A
+ * closer pass on such a row still has the briefed commitments and the run's
+ * event kinds; it loses only the excerpt, and an excerpt that old is poor
+ * evidence anyway.
+ *
+ * OPEN rows are never touched. `closed_at IS NULL` means the session can still
+ * come back, and its excerpt is current turn state rather than a leftover — a
+ * live row's `last_seen_at` is recent enough that the floor already excludes it,
+ * and this predicate is the explicit guarantee rather than a consequence.
+ *
+ * BOUNDED like the other two legs. Without a limit one pass over a tenant with a
+ * long session history would UPDATE and materialise every matching row in a
+ * single transaction, holding row locks on the shared maintenance worker far
+ * past the advertised per-tenant batch. The remainder is cleared on the next
+ * tick; nothing about a TTL needs to finish in one pass. Postgres has no
+ * `UPDATE ... LIMIT`, so the bound is a sub-select of ids.
  */
 export async function expireStaleExcerpts(
   tx: TenantTx,
   userId: string,
   before: Date,
+  limit: number,
 ): Promise<number> {
+  const stale = await tx
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.userId, userId),
+        isNotNull(agentSessions.lastMessageExcerpt),
+        isNotNull(agentSessions.closedAt),
+        lt(agentSessions.lastSeenAt, before),
+      ),
+    )
+    .orderBy(agentSessions.lastSeenAt)
+    .limit(limit)
+  if (stale.length === 0) return 0
+
   const rows = await tx
     .update(agentSessions)
     .set({ lastMessageExcerpt: null })
@@ -325,8 +410,13 @@ export async function expireStaleExcerpts(
       and(
         eq(agentSessions.userId, userId),
         isNotNull(agentSessions.lastMessageExcerpt),
-        inArray(agentSessions.triageStatus, ['completed', 'overflowed']),
-        lt(agentSessions.lastSeenAt, before),
+        // Re-assert: a resurrection between the two statements reopens the row,
+        // and a live session's excerpt is current turn state, not a leftover.
+        isNotNull(agentSessions.closedAt),
+        inArray(
+          agentSessions.id,
+          stale.map((row) => row.id),
+        ),
       ),
     )
     .returning({ id: agentSessions.id })

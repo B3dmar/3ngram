@@ -1,0 +1,1 @@
+CREATE INDEX "agent_sessions_closer_idx" ON "agent_sessions" USING btree ("user_id","closed_at") WHERE "agent_sessions"."closed_at" IS NOT NULL AND "agent_sessions"."triage_status" <> 'overflowed';

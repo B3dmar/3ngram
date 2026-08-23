@@ -89,6 +89,12 @@ const agentSessionsSql = readFileSync(
   join(import.meta.dirname, '../migrations/0032_agent_sessions.sql'),
   'utf8',
 )
+// 0033 indexes the closer's candidate scan — the exact OPPOSITE predicate to
+// 0032's lease index, which is why that one cannot serve it.
+const sessionCloserIndexSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0033_session_closer_index.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -648,6 +654,25 @@ describe('agent_sessions table (0032, issue #166)', () => {
       /GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes, agent_sessions/,
     )
     expect(rolesSql).not.toMatch(/GRANT DELETE ON agent_sessions/)
+  })
+})
+
+describe('session closer candidate index (0033, issue #166 step 6)', () => {
+  it('is user-leading, ordered by closed_at, and partial on CLOSED rows', () => {
+    // The lease index (0032) is partial on `closed_at IS NULL`; the closer scans
+    // `closed_at IS NOT NULL` and sorts by `closed_at`, so it needs its own.
+    expect(sessionCloserIndexSql).toContain(
+      'CREATE INDEX "agent_sessions_closer_idx" ON "agent_sessions" USING btree ("user_id","closed_at")',
+    )
+    expect(sessionCloserIndexSql).toContain('"agent_sessions"."closed_at" IS NOT NULL')
+  })
+
+  it('excludes the terminal status, so the index only holds actionable rows', () => {
+    expect(sessionCloserIndexSql).toContain(`"agent_sessions"."triage_status" <> 'overflowed'`)
+  })
+
+  it('adds no table — the table count is unchanged at 27', () => {
+    expect(sessionCloserIndexSql).not.toMatch(/CREATE TABLE/i)
   })
 })
 

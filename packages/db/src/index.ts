@@ -128,6 +128,7 @@ export {
   CommitmentExistsError,
   CommitmentNotFoundError,
   type CommitmentState,
+  CommitmentStateChangedError,
   type CommitmentTransition,
   createCommitment,
   getCommitment,

@@ -15,8 +15,11 @@
 // Concurrency is provoked with the deterministic two-promise barrier the
 // lifecycle suite uses, never with sleeps (hard rule 4 forbids flake).
 import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
+import { and, eq, isNull, lt } from 'drizzle-orm'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
+import { createCommitment, transitionCommitment } from '../../src/commitments.js'
+import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
   expireStaleExcerpts,
@@ -24,6 +27,7 @@ import {
   listCloserCandidates,
   readCloserSession,
   sweepExpiredLeases,
+  sweepFloor,
 } from '../../src/session-closer.js'
 import { isExplicitClose } from '../../src/session-lease.js'
 import { closeSession, heartbeatSession, openSession } from '../../src/session-lifecycle.js'
@@ -70,6 +74,21 @@ async function setRow(id: string, patch: Record<string, unknown>): Promise<void>
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const result = await ownerPool.query('SELECT * FROM agent_sessions WHERE id = $1', [id])
   return result.rows[0] as Record<string, unknown>
+}
+
+/**
+ * A live commitment-type memory for this tenant, so a `commitments` row and a
+ * `memory_events` row can hang off something real (both carry composite FKs).
+ * Inserted with the owner pool: this is fixture setup, not a path under test.
+ */
+async function seedCommitmentMemory(userId: string): Promise<string> {
+  const result = await ownerPool.query(
+    `INSERT INTO memories (user_id, content, memory_type, topic, scope)
+     VALUES ($1, 'fixture commitment', 'commitment', 'fixture', 'work')
+     RETURNING id`,
+    [userId],
+  )
+  return (result.rows[0] as { id: string }).id
 }
 
 beforeEach(async () => {
@@ -415,11 +434,21 @@ describe('finishSessionTriage', () => {
 })
 
 describe('expireStaleExcerpts', () => {
-  it('clears excerpts on completed and overflowed rows past the TTL', async () => {
+  const expire = (userId: string, limit = 100) =>
+    withTenant(userId, (tx) => expireStaleExcerpts(tx, userId, NOW, limit))
+
+  it('clears excerpts on EVERY closed row past the TTL, whatever its status', async () => {
+    // Scoping this to completed/overflowed leaves a hole with no bottom: a
+    // closed, still-eligible row is only consumed if a closer actually runs, and
+    // it may never run (flag off, gateway unconfigured). Those excerpts would be
+    // retained forever, which is the one thing the retention rule exists to stop.
     const ids: string[] = []
     for (const [sessionId, status] of [
       ['conv-done', 'completed'],
       ['conv-over', 'overflowed'],
+      ['conv-idle', 'idle'],
+      ['conv-pending', 'pending'],
+      ['conv-expired', 'expired'],
     ] as const) {
       const opened = await open(uid, sessionId)
       ids.push(opened.row.id)
@@ -431,30 +460,46 @@ describe('expireStaleExcerpts', () => {
       })
     }
 
-    const cleared = await withTenant(uid, (tx) => expireStaleExcerpts(tx, uid, NOW))
-
-    expect(cleared).toBe(2)
+    expect(await expire(uid)).toBe(5)
     for (const id of ids) expect((await rawRow(id)).last_message_excerpt).toBeNull()
   })
 
-  it('NEVER clears an excerpt the closer still needs, however old', async () => {
-    // idle/pending/expired rows are closer-eligible; dropping the excerpt would
-    // silently remove the closer's only input in the common case.
-    for (const [sessionId, status] of [
-      ['conv-idle', 'idle'],
-      ['conv-pending', 'pending'],
-      ['conv-expired', 'expired'],
-    ] as const) {
-      const opened = await open(uid, sessionId)
+  it('NEVER clears an OPEN row — its excerpt is current turn state', async () => {
+    const opened = await open(uid, 'conv-live')
+    await setRow(opened.row.id, {
+      last_seen_at: SWEEPABLE,
+      last_message_excerpt: 'this turn',
+    })
+
+    expect(await expire(uid)).toBe(0)
+    expect((await rawRow(opened.row.id)).last_message_excerpt).toBe('this turn')
+  })
+
+  it('leaves a closed row that is still INSIDE the TTL alone', async () => {
+    const opened = await open(uid, 'conv-recent')
+    await setRow(opened.row.id, {
+      closed_at: NOW,
+      triage_status: 'idle',
+      last_message_excerpt: 'still fresh',
+    })
+
+    expect(await expire(uid)).toBe(0)
+    expect((await rawRow(opened.row.id)).last_message_excerpt).toBe('still fresh')
+  })
+
+  it('is bounded by the batch limit', async () => {
+    for (const id of ['x', 'y', 'z']) {
+      const opened = await open(uid, `conv-ttl-${id}`)
       await setRow(opened.row.id, {
         closed_at: NOW,
-        triage_status: status,
+        triage_status: 'completed',
         last_seen_at: SWEEPABLE,
-        last_message_excerpt: 'still needed',
+        last_message_excerpt: 'leftover',
       })
     }
 
-    expect(await withTenant(uid, (tx) => expireStaleExcerpts(tx, uid, NOW))).toBe(0)
+    expect(await expire(uid, 2)).toBe(2)
+    expect(await expire(uid, 2)).toBe(1)
   })
 
   it('never crosses a tenant boundary', async () => {
@@ -466,7 +511,7 @@ describe('expireStaleExcerpts', () => {
       last_message_excerpt: 'theirs',
     })
 
-    expect(await withTenant(uid, (tx) => expireStaleExcerpts(tx, uid, NOW))).toBe(0)
+    expect(await expire(uid)).toBe(0)
     expect((await rawRow(theirs.row.id)).last_message_excerpt).toBe('theirs')
   })
 })
@@ -503,5 +548,180 @@ describe('runtime grants', () => {
     const privileges = granted.rows.map((row) => (row as { privilege_type: string }).privilege_type)
     expect(privileges).toContain('UPDATE')
     expect(privileges).not.toContain('DELETE')
+  })
+})
+
+describe('the sweep loses to a concurrent heartbeat (Codex db/session-closer.ts:132)', () => {
+  it('does NOT close a row a heartbeat refreshed between the SELECT and the UPDATE', async () => {
+    // The SELECT picks the row while it is stale; the UPDATE must re-check
+    // staleness, not just `closed_at IS NULL`. Otherwise the sweep closes a
+    // session that has just come back to life and enqueues it for an LLM-driven
+    // resolve pass against a LIVE run — the mid-conversation debrief the grace
+    // exists to prevent. Provoked deterministically by refreshing the row
+    // between the two statements, which is exactly what the race produces.
+    const opened = await open(uid, 'conv-race')
+    await setRow(opened.row.id, { last_seen_at: SWEEPABLE })
+
+    // Run the sweep's two statements by hand with the heartbeat interleaved.
+    const stale = await withTenant(uid, (tx) =>
+      // The same predicate the sweep's SELECT uses.
+      tx
+        .select({ id: agentSessions.id })
+        .from(agentSessions)
+        .where(
+          and(
+            eq(agentSessions.userId, uid),
+            isNull(agentSessions.closedAt),
+            lt(agentSessions.lastSeenAt, sweepFloor(NOW)),
+          ),
+        ),
+    )
+    expect(stale).toHaveLength(1)
+
+    // The user comes back.
+    await withTenant(uid, (tx) =>
+      heartbeatSession(tx, uid, { agent: 'claude-code', sessionId: 'conv-race' }, NOW),
+    )
+
+    // Now the sweep runs for real. It must find nothing.
+    expect(await sweep(uid)).toEqual([])
+    expect((await rawRow(opened.row.id)).closed_at).toBeNull()
+  })
+})
+
+describe('listCloserCandidates includes re-armed completed runs (Codex db/session-closer.ts:164)', () => {
+  it('selects a completed run holding an event id outside the watermark', async () => {
+    // A memory-event row takes its uuidv7 at INSERT and becomes visible at
+    // COMMIT, so a transaction straddling the closer's final listing holds an id
+    // the watermark never saw. Nothing re-arms `triage_status` for that late
+    // commit, so without this leg the event is missed permanently.
+    const opened = await open(uid, 'conv-rearm')
+    const memoryId = await seedCommitmentMemory(uid)
+    await setRow(opened.row.id, { closed_at: NOW, triage_status: 'completed' })
+
+    // An event for this run that the watermark does not contain.
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, opened.row.id],
+    )
+
+    const ids = (await candidates(uid)).map((row) => row.sessionRunId)
+    expect(ids).toContain(opened.row.id)
+  })
+
+  it('does NOT select a completed run whose events are all in the watermark', async () => {
+    const opened = await open(uid, 'conv-settled')
+    const memoryId = await seedCommitmentMemory(uid)
+    const inserted = await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))
+       RETURNING id`,
+      [uid, memoryId, opened.row.id],
+    )
+    const eventId = (inserted.rows[0] as { id: string }).id
+    await setRow(opened.row.id, {
+      closed_at: NOW,
+      triage_status: 'completed',
+      last_triaged_event_ids: JSON.stringify([eventId]),
+    })
+
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(opened.row.id)
+  })
+
+  it('still never selects an overflowed run, however many untriaged events it holds', async () => {
+    const opened = await open(uid, 'conv-over')
+    const memoryId = await seedCommitmentMemory(uid)
+    await setRow(opened.row.id, { closed_at: NOW, triage_status: 'overflowed' })
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, opened.row.id],
+    )
+
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(opened.row.id)
+  })
+
+  it('keeps another tenant events out of this tenant re-arm check', async () => {
+    const mine = await open(uid, 'conv-mine-rearm')
+    const theirMemory = await seedCommitmentMemory(other)
+    await setRow(mine.row.id, { closed_at: NOW, triage_status: 'completed' })
+    // An event owned by the OTHER tenant that names this tenant's run id.
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [other, theirMemory, mine.row.id],
+    )
+
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(mine.row.id)
+  })
+})
+
+describe('stamped provenance never resurrects the run (audit P2)', () => {
+  it('leaves closed_at and activation_epoch untouched on a closed row', async () => {
+    // The whole reason `stampedSessionRunId` exists. Routing the closer's
+    // resolve through the normal attach path would take the resurrect branch on
+    // a lease-expired row — clearing closed_at, bumping the epoch, and failing
+    // the closer's own fenced write-back.
+    const opened = await open(uid, 'conv-stamp')
+    await setRow(opened.row.id, { last_seen_at: SWEEPABLE })
+    await sweep(uid)
+    const before = await rawRow(opened.row.id)
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+      stampedSessionRunId: opened.row.id,
+    })
+
+    const after = await rawRow(opened.row.id)
+    expect(after.closed_at).toEqual(before.closed_at)
+    expect(after.activation_epoch).toBe(before.activation_epoch)
+    expect(after.last_seen_at).toEqual(before.last_seen_at)
+
+    // And the provenance really did land on the audit event.
+    const events = await ownerPool.query(
+      `SELECT payload->>'sessionRunId' AS run FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect(events.rows).toHaveLength(1)
+    expect((events.rows[0] as { run: string }).run).toBe(opened.row.id)
+  })
+
+  it('the compare-and-set makes a lost race write NOTHING', async () => {
+    // Codex core/write/commitments.ts:240. Two callers both observe 'open'; the
+    // second must not append a duplicate resolve event under its own provenance.
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+    })
+
+    await expect(
+      transitionCommitment({
+        userId: uid,
+        commitmentId: commitment.id,
+        to: 'resolved',
+        actorKind: 'worker',
+        expectedFrom: 'open',
+      }),
+    ).rejects.toMatchObject({ name: 'CommitmentStateChangedError' })
+
+    const events = await ownerPool.query(
+      `SELECT count(*)::int AS n FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect((events.rows[0] as { n: number }).n).toBe(1)
   })
 })
