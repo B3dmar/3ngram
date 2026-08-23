@@ -160,7 +160,12 @@ export const agentSessionOpenResponseSchema = z
     source: agentSessionSourceSchema,
     /** This call inserted the row. */
     created: z.boolean(),
-    /** This call cleared `closed_at` (implicit or explicit close). */
+    /**
+     * This call revived a row that was closed OR past its lease, and advanced
+     * `activation_epoch`. Implicit close is evaluated on read and write, not
+     * only after a sweeper has stamped `closed_at`, so a lease-expired row with
+     * `closed_at` still null reopens too.
+     */
     reopened: z.boolean(),
     openedAt: z.iso.datetime(),
     lastSeenAt: z.iso.datetime(),
