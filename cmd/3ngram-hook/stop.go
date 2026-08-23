@@ -88,5 +88,8 @@ func runStop(args []string) int {
 	if !stopNudgeEnabled() {
 		return 0
 	}
-	return runStopNudge(key, input, deriveProject(cwd))
+	// No facets are passed: the debrief render resolves `scope` and `project`
+	// from the session row, which holds the EFFECTIVE values the run was briefed
+	// under. A cwd- or env-derived guess here can disagree with them.
+	return runStopNudge(key, input)
 }

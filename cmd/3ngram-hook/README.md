@@ -26,7 +26,7 @@ The nudge does not change that: it asks the *model* to call `remember` /
 |---------|-----------|-------------|
 | `3ngram-hook briefing` | SessionStart | Fetch `GET /api/v1/briefing?mode=full`, render + locally truncate the markdown briefing, open/refresh the session row, and inject the `sessionRunId` |
 | `3ngram-hook stop` | Stop | Refresh the session lease and snapshot a bounded `last_assistant_message` (`POST /api/v1/agent-sessions/heartbeat`). With `THREENGRAM_STOP_NUDGE=1` it additionally runs the [debrief nudge](#stop-nudge-default-off); without it, never blocks, never prints, always exits 0 |
-| `3ngram-hook heartbeat` | Stop | **Alias for `stop`** — identical behavior. Kept so existing registrations keep working; the nudge is gated by the flag, not by the subcommand name |
+| `3ngram-hook heartbeat` | Stop | **Alias for `stop`** — identical behavior. Kept so existing registrations keep working; the nudge is gated by the flag, not by the subcommand name. **Register one or the other, never both** (see below) |
 | `3ngram-hook close` | SessionEnd | Stamp `closed_at` by natural key (`POST /api/v1/agent-sessions/close`). One POST with a 1 s timeout, fire-and-forget |
 | `3ngram-hook precheck` | PreToolUse | Surface related memories before Write/Edit/apply_patch (`POST /api/v1/search`) |
 | `3ngram-hook sync [--push\|--pull\|--both]` | (none) | **Deferred** — a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet. SessionEnd now runs `close` instead |
@@ -118,6 +118,22 @@ the `maxInjectionsPerAttempt` comment in `nudge.go`.
 prompt all exit 0 with nothing on stdout. A blank `reason` is a hook *failure* on
 Codex, so the hook declines to inject rather than emit one — and hands the armed
 attempt back so the closer still picks the session up.
+
+<!-- markdownlint-disable-next-line -->
+> **Register `stop` OR `heartbeat` — never both.** They are the same command,
+> and a harness runs every matching hook for an event **concurrently**. Two
+> processes for one Stop means one of them can arm an attempt while the other
+> sees it as `pending` and finalizes it before the first has emitted its
+> envelope; that continuation's writes then land outside the stamped watermark
+> and a later Stop can nudge a second time for the same work. One registration
+> makes this unreachable. Tracked for a server-side age guard in
+> [issue #188](https://github.com/B3dmar/3ngram/issues/188).
+
+**Facets come from the session row, not from this process.** The hook sends only
+the natural key to `GET /api/v1/prompts/debrief`; the server fills `scope` and
+`project` from `agent_sessions`. That matters when a tenant retrieval policy
+narrows a `kind=all` briefing to a default scope — the row records the scope the
+agent was actually briefed under, and `THREENGRAM_SCOPE` may not even be set.
 
 ### Validation checkpoint — do this before relying on it
 

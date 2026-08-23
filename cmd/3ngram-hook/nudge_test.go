@@ -601,11 +601,19 @@ func TestStopNudgeStillHeartbeats(t *testing.T) {
 	}
 }
 
-// TestDebriefPromptQueryCarriesTheRunAndItsFacets pins what the prompt render is
-// asked for. `agent` + `sessionId` are what inline `briefed_memories` as the
-// id -> topic/status mapping — without them the model gets "resolve what you
-// completed" and no ids, which is the failure the mapping exists to fix.
-func TestDebriefPromptQueryCarriesTheRunAndItsFacets(t *testing.T) {
+// TestDebriefPromptQueryIsTheNaturalKeyOnly pins the facet fix.
+//
+// The hook must NOT rebuild `scope` / `project` from its own environment. The
+// session row records the EFFECTIVE facets the run was briefed under — a tenant
+// retrieval policy can narrow a `kind=all` briefing to a default scope that
+// THREENGRAM_SCOPE never mentions — and the debrief route resolves them from
+// that row by natural key. A hook-side guess can only disagree with it, and the
+// disagreement is silent: an omitted `scope` on `remember` defaults to
+// `personal`, filing the debrief outside the briefing that surfaced the work.
+//
+// THREENGRAM_SCOPE is deliberately SET here: the assertion is that it is
+// ignored, not merely that it is absent.
+func TestDebriefPromptQueryIsTheNaturalKeyOnly(t *testing.T) {
 	var captured atomicQuery
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -636,49 +644,13 @@ func TestDebriefPromptQueryCarriesTheRunAndItsFacets(t *testing.T) {
 	if query.Get("agent") != "claude-code" || query.Get("sessionId") != "sess-query" {
 		t.Fatalf("prompt query natural key = %q/%q", query.Get("agent"), query.Get("sessionId"))
 	}
-	if query.Get("scope") != "work" {
-		t.Fatalf("scope = %q, want work", query.Get("scope"))
-	}
-	// The project facet is derived from cwd and must never be the literal
-	// "unknown" deriveProject returns for an empty one.
-	if project := query.Get("project"); project == "" || project == "unknown" {
-		t.Fatalf("project facet = %q", project)
-	}
-}
-
-// TestDebriefPromptQueryOmitsAnUnsetScope: an operator who never set
-// THREENGRAM_SCOPE must not have an empty string sent as a facet — the prompt
-// renders an absent key as "use the scope the work belonged to", while
-// `scope=""` is a 400.
-func TestDebriefPromptQueryOmitsAnUnsetScope(t *testing.T) {
-	var captured atomicQuery
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/prompts/debrief":
-			captured.set(r.URL.Query())
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(promptBody(testPrompt)))
-		default:
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprintf(w, `{"sessionRunId":%q,"armed":true,"attemptId":%q,"triageStatus":"pending",`+
-				`"activationEpoch":1,"lastSeenAt":"2026-08-23T00:00:00Z","resurrected":false}`,
-				testRunID, testAttemptID)
+	for _, facet := range []string{"scope", "project"} {
+		if value, present := query[facet]; present {
+			t.Fatalf("the hook sent %s=%v; the session row owns that facet", facet, value)
 		}
-	}))
-	t.Cleanup(srv.Close)
-
-	isolateCwd(t)
-	t.Setenv("THREENGRAM_API_BASE", srv.URL)
-	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
-	t.Setenv("THREENGRAM_HOOK_ROLE", "")
-	t.Setenv("THREENGRAM_AGENT", "claude-code")
-	t.Setenv("THREENGRAM_STOP_NUDGE", "1")
-	t.Setenv("THREENGRAM_SCOPE", "   ")
-
-	captureHook(t, stopPayload("sess-noscope", false), func() int { return runStop(nil) })
-
-	if _, present := captured.get()["scope"]; present {
-		t.Fatalf("an unset scope was sent: %v", captured.get())
+	}
+	if len(query) != 2 {
+		t.Fatalf("prompt query carries more than the natural key: %v", query)
 	}
 }
 

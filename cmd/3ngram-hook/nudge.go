@@ -191,7 +191,7 @@ type stopDecision struct {
 //	stop_hook_active=true   FINALIZE ONLY, never inject
 //	begin declines          exit silently (`complete` first if an attempt exists)
 //	begin arms              fetch the words, emit the envelope
-func runStopNudge(key agentSessionKey, input stopInput, project string) int {
+func runStopNudge(key agentSessionKey, input stopInput) int {
 	// `stop_hook_active=true` means a previous Stop already blocked this turn.
 	// The page is unambiguous: it "never injects a new prompt; it only finalizes
 	// or expires". This branch is a BELT, not the cap — the cap is the server's
@@ -211,7 +211,30 @@ func runStopNudge(key agentSessionKey, input stopInput, project string) int {
 
 	// THE SELF-CAP IN ONE BRANCH. An attempt is already in flight for this run,
 	// so this Stop is the finalize of the injection a previous one made — even
-	// on a harness that never set `stop_hook_active` to tell us so.
+	// on a harness that never set `stop_hook_active` to tell us so. Finalizing
+	// on an ordinary Stop is the page's own rule: "a later ordinary Stop that
+	// finds triage_status=pending applies the same complete-or-expire rule and
+	// does not inject again".
+	//
+	// KNOWN RACE, and the reason the README forbids registering both `stop` and
+	// its `heartbeat` alias. If two processes handle ONE Stop concurrently
+	// (which is what a duplicate registration produces — a harness runs every
+	// matching hook for an event in parallel), process A can arm and still be
+	// fetching the prompt while process B lands here, reads A's attempt as
+	// `pending`, and completes it. A then injects anyway; the continuation's
+	// writes commit after B's watermark and a later Stop re-arms, so one turn's
+	// work draws two nudges.
+	//
+	// THE FIX IS AN AGE GUARD, AND IT NEEDS SERVER STATE THIS ROW DOES NOT
+	// CARRY. "Only finalize an attempt older than ~30s" cleanly separates a
+	// sibling process (milliseconds old) from a genuine later Stop (a whole
+	// model turn later), but `agent_sessions` has no arm timestamp:
+	// `armAttempt` writes only the status, the token and the begin watermark,
+	// and the token is a v4 uuid, so nothing on the row or in the response
+	// dates the attempt. Deriving it would mean a new column — a migration to a
+	// table that shipped in step 7a — which is why this ships as a documented
+	// residual plus the registration rule that makes it unreachable, rather
+	// than as a guess. Tracked in issue #188.
 	if begun.Reason == triageReasonPending {
 		completeTriage(key, begun.AttemptID)
 		return 0
@@ -221,7 +244,7 @@ func runStopNudge(key agentSessionKey, input stopInput, project string) int {
 		return 0
 	}
 
-	prompt, ok := fetchDebriefPrompt(key, project)
+	prompt, ok := fetchDebriefPrompt(key)
 	if !ok || strings.TrimSpace(prompt) == "" {
 		// A BLANK `reason` IS A HOOK FAILURE on Codex, and a content-free block
 		// on Claude is just a wasted turn. Decline to inject and hand the
@@ -317,27 +340,27 @@ func triageBegin(key agentSessionKey) (triageBeginResponse, bool) {
 	return resp, true
 }
 
-// fetchDebriefPrompt renders the words for this run. `agent` + `sessionId` are
-// what inline the run's `briefed_memories` as the id -> topic/status mapping:
-// the SessionStart briefing renders topics and omits ids, so without the mapping
-// the model cannot tell which of several open commitments to resolve.
+// fetchDebriefPrompt renders the words for this run.
 //
-// The facets ride along because the prompt asks for them by name — "a memory
-// with no project never appears in that project briefing". A facet the server
-// rejects is a 400 and the hook declines to inject, which is the right
-// direction: better no nudge than a nudge whose writes land unfiled.
-func fetchDebriefPrompt(key agentSessionKey, project string) (string, bool) {
+// THE NATURAL KEY IS THE WHOLE REQUEST, deliberately. `agent` + `sessionId`
+// inline the run's `briefed_memories` as the id -> topic/status mapping — the
+// SessionStart briefing renders topics and omits ids, so without the mapping the
+// model cannot tell which of several open commitments to resolve — and they are
+// ALSO how the server resolves the `scope` and `project` facets, from the row.
+//
+// The hook used to send those facets itself, rebuilt from THREENGRAM_SCOPE and
+// the cwd. That was wrong, and subtly: when SessionStart asks for a `kind=all`
+// briefing and a tenant retrieval policy narrows it to a default scope,
+// `fetchBriefing` records the EFFECTIVE scope on the row while
+// THREENGRAM_SCOPE stays unset. The prompt would then omit the one name the
+// model cannot infer, and an omitted `scope` on `remember` defaults to
+// `personal` — filing the debrief outside the scope whose briefing surfaced the
+// work, where the next scoped briefing will not find it. The row knows the
+// answer; the environment only knows what this shell was told.
+func fetchDebriefPrompt(key agentSessionKey) (string, bool) {
 	query := url.Values{}
 	query.Set("agent", key.Agent)
 	query.Set("sessionId", key.SessionID)
-	// Never the literal "unknown" deriveProject returns for an empty cwd — the
-	// same rule the open body follows. A fake facet is worse than no facet.
-	if project != "" && project != "unknown" {
-		query.Set("project", project)
-	}
-	if scope := strings.TrimSpace(os.Getenv("THREENGRAM_SCOPE")); scope != "" {
-		query.Set("scope", scope)
-	}
 
 	body, status, err := apiRequest("GET", "/api/v1/prompts/debrief?"+query.Encode(), nil, debriefPromptTimeout)
 	if err != nil || status >= 400 {
