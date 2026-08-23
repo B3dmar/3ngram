@@ -82,9 +82,12 @@ async function rawRow(id: string): Promise<Record<string, unknown>> {
  * Inserted with the owner pool: this is fixture setup, not a path under test.
  */
 async function seedCommitmentMemory(userId: string): Promise<string> {
+  // `content_hash` is NOT NULL with no default (it backs the duplicate guard), so
+  // the fixture supplies one. Made unique per row: two fixtures in one test would
+  // otherwise collide on the tenant's duplicate index.
   const result = await ownerPool.query(
-    `INSERT INTO memories (user_id, content, memory_type, topic, scope)
-     VALUES ($1, 'fixture commitment', 'commitment', 'fixture', 'work')
+    `INSERT INTO memories (user_id, content, memory_type, topic, scope, content_hash)
+     VALUES ($1, 'fixture commitment', 'commitment', 'fixture', 'work', md5(random()::text))
      RETURNING id`,
     [userId],
   )
