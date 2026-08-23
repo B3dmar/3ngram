@@ -612,6 +612,253 @@
         "summary": "Open or re-activate an agent session by its natural key (SessionStart). Idempotent: startup inserts, resume reuses the row and advances activation_epoch, and neither restamps the briefing."
       }
     },
+    "/api/v1/agent-sessions/triage/begin": {
+      "post": {
+        "operationId": "beginAgentSessionTriage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "agent": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$",
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "turnCount": {
+                    "maximum": 100000,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "sessionId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "armed": {
+                      "type": "boolean"
+                    },
+                    "attemptId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "not-live",
+                        "terminal",
+                        "pending",
+                        "no-signal",
+                        "debounce",
+                        "overflowed"
+                      ],
+                      "type": "string"
+                    },
+                    "sessionRunId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "triageStatus": {
+                      "enum": [
+                        "idle",
+                        "pending",
+                        "completed",
+                        "expired",
+                        "overflowed"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionRunId",
+                    "armed",
+                    "triageStatus"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "enum": [
+                        "not_found"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "This tenant owns no session with that natural key"
+          }
+        },
+        "summary": "Ask whether a Stop should inject the debrief nudge for this run (natural key). The server evaluates the entry rule and the debounce and answers `armed`; a decline is a 200 carrying a content-free reason, and only an unknown natural key is a 404."
+      }
+    },
+    "/api/v1/agent-sessions/triage/complete": {
+      "post": {
+        "operationId": "completeAgentSessionTriage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "agent": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$",
+                    "type": "string"
+                  },
+                  "attemptId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "sessionId",
+                  "attemptId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "eventCount": {
+                      "maximum": 500,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sessionRunId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "sinceBeginCount": {
+                      "maximum": 500,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "triageStatus": {
+                      "enum": [
+                        "completed",
+                        "expired",
+                        "overflowed"
+                      ],
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "sessionRunId",
+                    "triageStatus",
+                    "eventCount",
+                    "sinceBeginCount",
+                    "truncated"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "enum": [
+                        "not_found"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "This tenant owns no session with that natural key"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "enum": [
+                        "conflict"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row"
+          }
+        },
+        "summary": "Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark."
+      }
+    },
     "/api/v1/agent-sessions/{sessionRunId}/events": {
       "get": {
         "operationId": "listSessionEvents",

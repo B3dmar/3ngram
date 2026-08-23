@@ -20,6 +20,7 @@ export {
   loadMcpAllowedOrigins,
   loadOAuthConfig,
   loadSessionCloserConfig,
+  loadSessionTriageConfig,
   loadSmtpConfig,
   OAUTH_RESOURCE_PATH,
   type OAuthConfig,
@@ -27,6 +28,7 @@ export {
   parseEnv,
   resetEnvCache,
   type SessionCloserConfig,
+  type SessionTriageConfig,
   type SmtpConfig,
 } from './env.js'
 export { contextBindings, createLogger, log, logger, setLogDestination } from './logger.js'

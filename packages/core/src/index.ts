@@ -224,19 +224,29 @@ export {
   setRetrievalDefault,
   setScopeAliases,
 } from './scope/index.js'
-// --- hook-facing agent-session bookkeeping: open / close / heartbeat ---
+// --- hook-facing agent-session bookkeeping: open / close / heartbeat / triage ---
 export {
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   type AgentSessionRecord,
+  AgentSessionTriageConflictError,
+  type BeginTriageFacadeOptions,
+  type BeginTriageOptions,
+  type BeginTriageResult,
+  beginAgentSessionTriage,
   type CloseSessionResult,
+  type CompleteTriageResult,
   closeAgentSession,
+  completeAgentSessionTriage,
+  evaluateTriageEntry,
   getAgentSession,
   type HeartbeatSessionResult,
   heartbeatAgentSession,
   type OpenSessionResult,
   openAgentSession,
   type SessionClockOptions,
+  type TriageDebounceThresholds,
+  type TriageEntryDecision,
 } from './session/index.js'
 export {
   archiveMemory,

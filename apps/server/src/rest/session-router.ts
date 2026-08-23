@@ -15,13 +15,17 @@
 // or misspelled key is a 400 rather than a silently-ignored field (the same rule
 // the session-events query rides). Logs stay ids and counts: `briefedMemories`
 // topics and `lastMessageExcerpt` never enter one (hard rule 6).
+import { loadSessionTriageConfig } from '@3ngram/config'
 import {
   type AccessGate,
+  beginAgentSessionTriage,
   closeAgentSession,
+  completeAgentSessionTriage,
   getAgentSession,
   heartbeatAgentSession,
   openAgentSession,
   renderDebriefPrompt,
+  type TriageDebounceThresholds,
 } from '@3ngram/core'
 import {
   agentSessionCloseBodySchema,
@@ -35,6 +39,12 @@ import { defined, guard, tenant } from './route-helpers.js'
 export interface SessionRouterOptions {
   /** Access gate — asserts read/write access. Undefined → no guard (test/back-compat). */
   access?: AccessGate | undefined
+  /**
+   * Stop-nudge debounce floors. Undefined → resolved from the environment
+   * (`loadSessionTriageConfig`). Injectable so a test pins the thresholds
+   * instead of mutating process env, the same shape `access` uses.
+   */
+  triageThresholds?: TriageDebounceThresholds | undefined
 }
 
 export function sessionRouter(options: SessionRouterOptions): Router {
@@ -96,6 +106,70 @@ export function sessionRouter(options: SessionRouterOptions): Router {
         activationEpoch: beat.row.activationEpoch,
         lastSeenAt: beat.row.lastSeenAt.toISOString(),
         resurrected: beat.resurrected,
+      })
+    })
+  })
+
+  // POST /api/v1/agent-sessions/triage/begin — Stop, first half. The SERVER
+  // decides: it evaluates the entry rule (which triage_status may re-enter, and
+  // on what signal) and the debounce, then answers `armed`. The hook injects the
+  // debrief only when armed, so the rule is identical across harnesses — the
+  // same division of labour that keeps 3ngram owning the words and the hook
+  // owning the trigger.
+  //
+  // A DECLINE IS A 200, not an error: "no nudge this turn" is the expected
+  // answer on most Stops, and `reason` is the content-free tag that says which
+  // rule declined. Only an unknown natural key is a 404 — Stop never creates a
+  // missing row, and a decline would hide a broken SessionStart.
+  router.post('/api/v1/agent-sessions/triage/begin', (req, res) => {
+    void guard('agent-sessions.triage.begin', res, async () => {
+      // RAW BODY, NOT PRE-PARSED. `beginAgentSessionTriage` is THE validation
+      // boundary and parses this once (hard rule 2), the same contract
+      // `remember` has. A transport only re-parses when it must echo a
+      // NORMALIZED value in the response — the `open` route does, to report
+      // `source`; this response is built entirely from what core returns, so a
+      // second parse would buy nothing and be a second boundary. A malformed
+      // body still surfaces as 400: core's ZodError maps there.
+      //
+      // ACCESS GUARD: arming WRITES the row (status, attempt token, watermark).
+      // It runs before the parse now, so an unauthorised caller sending junk
+      // gets 403 rather than 400 — the right order anyway, since the shape of a
+      // request they may not make is none of their business.
+      if (options.access) await options.access.assertWrite(tenant(req))
+      const begun = await beginAgentSessionTriage(tenant(req), req.body, {
+        thresholds: options.triageThresholds ?? loadSessionTriageConfig(),
+      })
+      res.status(200).json(
+        defined({
+          sessionRunId: begun.sessionRunId,
+          armed: begun.armed,
+          attemptId: begun.attemptId,
+          triageStatus: begun.triageStatus,
+          reason: begun.reason,
+        }),
+      )
+    })
+  })
+
+  // POST /api/v1/agent-sessions/triage/complete — Stop, second half. Absorbs the
+  // continuation's writes: `completed` when it produced provenance, `expired`
+  // when it produced none (so the closer still runs), `overflowed` past the
+  // per-run ceiling — and stamps the CUMULATIVE watermark.
+  //
+  // A stale attempt is a 409, not a silent no-op: a crashed hook, a second Stop
+  // or a closer that re-claimed the row after the lease expired mid-handshake
+  // must learn that its attempt is over rather than retry forever.
+  router.post('/api/v1/agent-sessions/triage/complete', (req, res) => {
+    void guard('agent-sessions.triage.complete', res, async () => {
+      // Raw body for the same reason `begin` passes raw: core parses once.
+      if (options.access) await options.access.assertWrite(tenant(req))
+      const done = await completeAgentSessionTriage(tenant(req), req.body)
+      res.status(200).json({
+        sessionRunId: done.sessionRunId,
+        triageStatus: done.triageStatus,
+        eventCount: done.eventCount,
+        sinceBeginCount: done.sinceBeginCount,
+        truncated: done.truncated,
       })
     })
   })

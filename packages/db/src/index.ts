@@ -369,6 +369,19 @@ export {
   readAgentSession,
 } from './session-lifecycle.js'
 export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
+// --- Stop-nudge handshake: arm an attempt, then absorb the continuation ---
+export {
+  AgentSessionTriageConflictError,
+  type BeginTriageOptions,
+  type BeginTriageResult,
+  beginSessionTriage,
+  type CompleteTriageOptions,
+  type CompleteTriageResult,
+  completeSessionTriage,
+  evaluateTriageEntry,
+  type TriageDebounceThresholds,
+  type TriageEntryDecision,
+} from './session-triage.js'
 export {
   getUserProfileAttributes,
   upsertUserProfileAttributes,

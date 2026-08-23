@@ -621,6 +621,7 @@ jobs:
               test/integration/session-events-read.int.test.ts
               test/integration/session-closer.int.test.ts
               test/integration/session-lifecycle.int.test.ts
+              test/integration/session-triage.int.test.ts
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts
               test/integration/retrieval-policy.int.test.ts

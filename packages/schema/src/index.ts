@@ -12,6 +12,10 @@ export type {
   AgentSessionOpenResponse,
   AgentSessionRow,
   AgentSessionSource,
+  AgentSessionTriageBeginInput,
+  AgentSessionTriageBeginResponse,
+  AgentSessionTriageCompleteInput,
+  AgentSessionTriageCompleteResponse,
   AgentSessionTriageStatus,
   BriefedMemory,
   CloserVerdict,
@@ -23,6 +27,8 @@ export type {
   SessionEventsQueryInput,
   SessionEventsResponse,
   SessionProvenancePayload,
+  TriageDeclineReason,
+  TriageOutcomeStatus,
 } from './agent-sessions.js'
 export {
   agentNameSchema,
@@ -35,6 +41,10 @@ export {
   agentSessionOpenResponseSchema,
   agentSessionRowSchema,
   agentSessionSourceSchema,
+  agentSessionTriageBeginBodySchema,
+  agentSessionTriageBeginResponseSchema,
+  agentSessionTriageCompleteBodySchema,
+  agentSessionTriageCompleteResponseSchema,
   agentSessionTriageStatusSchema,
   briefedMemorySchema,
   closerVerdictSchema,
@@ -47,6 +57,7 @@ export {
   MAX_SESSION_EVENTS_LIMIT,
   MAX_SESSION_EXCERPT_LENGTH,
   MAX_SESSION_SWEEP_BATCH,
+  MAX_TRIAGE_TURN_COUNT,
   SESSION_EXCERPT_TTL_MS,
   SESSION_LEASE_MS,
   SESSION_SWEEP_GRACE_MS,
@@ -56,6 +67,8 @@ export {
   sessionEventsQuerySchema,
   sessionEventsResponseSchema,
   sessionProvenancePayloadSchema,
+  triageDeclineReasonSchema,
+  triageOutcomeStatusSchema,
 } from './agent-sessions.js'
 export type {
   ApiKeyId,

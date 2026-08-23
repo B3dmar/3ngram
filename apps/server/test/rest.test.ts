@@ -15,6 +15,10 @@ import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+// The REAL ZodError: the triage routes no longer pre-parse, so a rejected body
+// reaches the mapper as a throw FROM core, and only the real class matches the
+// `instanceof` ladder in rest/errors.ts.
+import { ZodError } from 'zod'
 import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
@@ -42,6 +46,9 @@ const openAgentSession = vi.fn()
 const closeAgentSession = vi.fn()
 const heartbeatAgentSession = vi.fn()
 const getAgentSession = vi.fn()
+// --- the Stop-nudge handshake (issue #166 step 7a) ---
+const beginAgentSessionTriage = vi.fn()
+const completeAgentSessionTriage = vi.fn()
 const describeEnvironment = vi.fn()
 const getCurrentUser = vi.fn()
 const exportUserData = vi.fn()
@@ -180,6 +187,18 @@ class AgentSessionParamsConflictError extends Error {
     this.sessionId = key.sessionId
   }
 }
+class AgentSessionTriageConflictError extends Error {
+  readonly agent: string
+  readonly sessionId: string
+  readonly attemptId: string
+  constructor(key: { agent: string; sessionId: string }, attemptId: string) {
+    super('triage attempt is not the current one')
+    this.name = 'AgentSessionTriageConflictError'
+    this.agent = key.agent
+    this.sessionId = key.sessionId
+    this.attemptId = attemptId
+  }
+}
 const getBudgetStatus = vi.fn()
 
 // ASYNC factory so the ONE real export this suite needs can be pulled through
@@ -216,8 +235,11 @@ vi.mock('@3ngram/core', async () => ({
   closeAgentSession,
   heartbeatAgentSession,
   getAgentSession,
+  beginAgentSessionTriage,
+  completeAgentSessionTriage,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
+  AgentSessionTriageConflictError,
   describeEnvironment,
   getCurrentUser,
   deleteAccount,
@@ -364,6 +386,8 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
     ['POST', '/api/v1/agent-sessions/open'],
     ['POST', '/api/v1/agent-sessions/close'],
     ['POST', '/api/v1/agent-sessions/heartbeat'],
+    ['POST', '/api/v1/agent-sessions/triage/begin'],
+    ['POST', '/api/v1/agent-sessions/triage/complete'],
     ['GET', '/api/v1/prompts/debrief'],
     ['GET', '/api/v1/scopes'],
     ['GET', '/api/v1/stats'],
@@ -2820,6 +2844,226 @@ describe('agent-session lifecycle routes', () => {
       })
       expect(res.status).toBe(404)
       expect(await res.json()).toEqual({ error: 'not_found' })
+    })
+  })
+
+  // The Stop-nudge handshake (issue #166 step 7a). Thin-adapter contract only:
+  // the entry rule, the debounce arithmetic, the two watermarks and the
+  // attempt-id fence are core/db's and are pinned in packages/db. Here: strict
+  // parsing, the armed / armed-false / 404 / 409 shapes, and that the router
+  // passes validated args straight through.
+  describe('POST /api/v1/agent-sessions/triage/begin', () => {
+    const ATTEMPT = crypto.randomUUID()
+
+    it('returns the armed attempt so the hook knows to inject', async () => {
+      beginAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        armed: true,
+        attemptId: ATTEMPT,
+        triageStatus: 'pending',
+      })
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, turnCount: 4 },
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        sessionRunId: RUN,
+        armed: true,
+        attemptId: ATTEMPT,
+        triageStatus: 'pending',
+      })
+      expect(beginAgentSessionTriage).toHaveBeenCalledWith(
+        TENANT,
+        { ...KEY, turnCount: 4 },
+        expect.objectContaining({
+          thresholds: expect.objectContaining({ minTurns: expect.any(Number) }),
+        }),
+      )
+    })
+
+    it('is a 200 with armed:false and a reason when the server declines', async () => {
+      // "No nudge this turn" is the expected answer on most Stops, so it is not
+      // an error status — `reason` is the content-free tag that says which rule
+      // declined, and `attemptId` is simply absent.
+      beginAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        armed: false,
+        triageStatus: 'idle',
+        reason: 'debounce',
+      })
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json).toEqual({
+        sessionRunId: RUN,
+        armed: false,
+        triageStatus: 'idle',
+        reason: 'debounce',
+      })
+      expect('attemptId' in json).toBe(false)
+    })
+
+    it('hands back the in-flight attempt on a pending decline', async () => {
+      // armed:false + attemptId is the "finish it, do not inject again" answer.
+      beginAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        armed: false,
+        attemptId: ATTEMPT,
+        triageStatus: 'pending',
+        reason: 'pending',
+      })
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(await res.json()).toMatchObject({ armed: false, attemptId: ATTEMPT })
+    })
+
+    it('404s an unknown natural key rather than declining', async () => {
+      // Stop never creates the row; a decline would hide a broken SessionStart.
+      beginAgentSessionTriage.mockRejectedValue(new AgentSessionNotFoundError(KEY))
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not_found' })
+    })
+
+    it('forwards the body VERBATIM — core is the single validation boundary', async () => {
+      // The route does not pre-parse (hard rule 2, the `remember` contract), so
+      // the thin-adapter assertion here is that nothing is reshaped, dropped or
+      // defaulted on the way through. The strict-parsing rules themselves are
+      // pinned where the parse lives: packages/schema/test/agent-sessions.test.ts.
+      beginAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        armed: false,
+        triageStatus: 'idle',
+        reason: 'debounce',
+      })
+      const body = { ...KEY, turnCount: 0 }
+      await call('/api/v1/agent-sessions/triage/begin', { method: 'POST', key: VALID_KEY, body })
+      expect(beginAgentSessionTriage).toHaveBeenCalledWith(TENANT, body, expect.anything())
+    })
+
+    it('400s a body core rejects', async () => {
+      // End to end the behaviour is unchanged by moving the parse: core throws a
+      // ZodError and the shared mapper still returns 400 invalid_input.
+      beginAgentSessionTriage.mockRejectedValue(new ZodError([]))
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, turnCount: -1 },
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    })
+  })
+
+  describe('POST /api/v1/agent-sessions/triage/complete', () => {
+    const ATTEMPT = crypto.randomUUID()
+    const BODY = { ...KEY, attemptId: ATTEMPT }
+
+    it('reports the outcome as counts only', async () => {
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'completed',
+        eventCount: 3,
+        sinceBeginCount: 2,
+        truncated: false,
+      })
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        sessionRunId: RUN,
+        triageStatus: 'completed',
+        eventCount: 3,
+        sinceBeginCount: 2,
+        truncated: false,
+      })
+      expect(completeAgentSessionTriage).toHaveBeenCalledWith(TENANT, BODY)
+    })
+
+    it('reports a zero-write continuation as expired', async () => {
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'expired',
+        eventCount: 1,
+        sinceBeginCount: 0,
+        truncated: false,
+      })
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(await res.json()).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 0 })
+    })
+
+    it('409s a stale attempt', async () => {
+      // A crashed hook, a second Stop, or a closer that re-claimed the row after
+      // the lease expired mid-handshake. The caller must learn its attempt is
+      // over rather than retry forever.
+      completeAgentSessionTriage.mockRejectedValue(
+        new AgentSessionTriageConflictError(KEY, ATTEMPT),
+      )
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'conflict' })
+    })
+
+    it('404s an unknown natural key', async () => {
+      completeAgentSessionTriage.mockRejectedValue(new AgentSessionNotFoundError(KEY))
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(res.status).toBe(404)
+    })
+
+    it('forwards the body VERBATIM and 400s what core rejects', async () => {
+      // Same pass-through contract as `begin`: core owns the parse, so the
+      // route's job is to hand it the body unchanged and map the throw. The
+      // attemptId/strictness rules live in the schema suite.
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'expired',
+        eventCount: 0,
+        sinceBeginCount: 0,
+        truncated: false,
+      })
+      await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(completeAgentSessionTriage).toHaveBeenCalledWith(TENANT, BODY)
+
+      completeAgentSessionTriage.mockRejectedValue(new ZodError([]))
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
     })
   })
 })

@@ -13,3 +13,15 @@ export {
   openAgentSession,
   type SessionClockOptions,
 } from './lifecycle.js'
+export {
+  AgentSessionTriageConflictError,
+  type BeginTriageFacadeOptions,
+  type BeginTriageOptions,
+  type BeginTriageResult,
+  beginAgentSessionTriage,
+  type CompleteTriageResult,
+  completeAgentSessionTriage,
+  evaluateTriageEntry,
+  type TriageDebounceThresholds,
+  type TriageEntryDecision,
+} from './triage.js'
