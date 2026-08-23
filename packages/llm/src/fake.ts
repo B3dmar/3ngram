@@ -4,7 +4,13 @@
 // same vector, similar texts do NOT map to similar vectors (this is a
 // wiring fake, not a semantic model; semantic quality is the eval harness's
 // job, never a unit test's).
-import { EMBEDDING_DIMENSIONS, type EmbedResult, type Gateway } from './types.js'
+import {
+  type CompleteOptions,
+  type CompletionResult,
+  EMBEDDING_DIMENSIONS,
+  type EmbedResult,
+  type Gateway,
+} from './types.js'
 
 /** Model name the fake reports — matches the real default so cost-rate lookups
  * resolve in tests (the fake is a wiring stand-in, not a cost source). */
@@ -45,6 +51,10 @@ export function fakeEmbedding(text: string, dims: number = EMBEDDING_DIMENSIONS)
   return v.map((x) => x / norm)
 }
 
+/** Model name the fake reports for completions — matches the real default so
+ * cost-rate lookups resolve in tests. */
+export const FAKE_COMPLETION_MODEL = 'gpt-4o-mini'
+
 export interface FakeGatewayOptions {
   /** Canned completion per operation key; default echoes the operation. */
   completions?: Record<string, string>
@@ -53,12 +63,16 @@ export interface FakeGatewayOptions {
 export function createFakeGateway(opts: FakeGatewayOptions = {}): Gateway & {
   calls: {
     embed: Array<{ texts: readonly string[]; operation: string }>
-    complete: Array<{ prompt: string; operation: string }>
+    complete: Array<{ prompt: string; operation: string; options?: CompleteOptions | undefined }>
   }
 } {
   const calls = {
     embed: [] as Array<{ texts: readonly string[]; operation: string }>,
-    complete: [] as Array<{ prompt: string; operation: string }>,
+    complete: [] as Array<{
+      prompt: string
+      operation: string
+      options?: CompleteOptions | undefined
+    }>,
   }
   return {
     calls,
@@ -70,9 +84,17 @@ export function createFakeGateway(opts: FakeGatewayOptions = {}): Gateway & {
         model: FAKE_EMBEDDING_MODEL,
       })
     },
-    complete(prompt, operation) {
-      calls.complete.push({ prompt, operation })
-      return Promise.resolve(opts.completions?.[operation] ?? `fake:${operation}`)
+    complete(prompt, operation, options): Promise<CompletionResult> {
+      calls.complete.push({ prompt, operation, options })
+      const text = opts.completions?.[operation] ?? `fake:${operation}`
+      return Promise.resolve({
+        text,
+        usage: {
+          inputTokens: fakeTokenCount([prompt]),
+          outputTokens: fakeTokenCount([text]),
+        },
+        model: FAKE_COMPLETION_MODEL,
+      })
     },
   }
 }

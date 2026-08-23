@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type { FakeGatewayOptions } from './fake.js'
-export { createFakeGateway, FAKE_EMBEDDING_MODEL, fakeEmbedding } from './fake.js'
+export {
+  createFakeGateway,
+  FAKE_COMPLETION_MODEL,
+  FAKE_EMBEDDING_MODEL,
+  fakeEmbedding,
+} from './fake.js'
 export type { OpenAIGatewayConfig } from './openai.js'
 export {
   COMPLETION_MODEL,
@@ -28,5 +33,12 @@ export {
   maxCostUsdForOperation,
   maxRegisteredCostUsd,
 } from './operations.js'
-export type { EmbedResult, EmbedUsage, Gateway } from './types.js'
+export type {
+  CompleteOptions,
+  CompletionResult,
+  CompletionUsage,
+  EmbedResult,
+  EmbedUsage,
+  Gateway,
+} from './types.js'
 export { EMBEDDING_DIMENSIONS } from './types.js'

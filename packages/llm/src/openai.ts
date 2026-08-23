@@ -20,7 +20,13 @@
 // Observability (hard rule 6): NO key material and NO text content enters any
 // log or error message. This module logs nothing; the only error it raises names
 // the HTTP status, never the request/response body.
-import { EMBEDDING_DIMENSIONS, type EmbedResult, type Gateway } from './types.js'
+import {
+  type CompleteOptions,
+  type CompletionResult,
+  EMBEDDING_DIMENSIONS,
+  type EmbedResult,
+  type Gateway,
+} from './types.js'
 
 /** The embedding model + dimensionality the schema is built around. */
 export const EMBEDDING_MODEL = 'text-embedding-3-large'
@@ -123,6 +129,8 @@ function stripTrailingSlashes(value: string): string {
 
 interface CompletionResponse {
   choices?: Array<{ message?: { content?: unknown } }>
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  model?: string
 }
 
 interface EmbeddingResponse {
@@ -209,12 +217,21 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
    * so neither it nor the completion nor the response body may enter a log line
    * or an error message. {@link GatewayRequestError} names the status only.
    */
-  async function complete(prompt: string, _operation: string): Promise<string> {
+  async function complete(
+    prompt: string,
+    _operation: string,
+    options?: CompleteOptions,
+  ): Promise<CompletionResult> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
-    let response: Response
+    // The timer stays armed until the BODY is consumed, not just until headers
+    // arrive. A gateway that answers with headers and then stalls mid-stream
+    // would otherwise hold this worker forever: `fetch` has already resolved, so
+    // clearing the timeout there disarms the only thing that could interrupt
+    // `response.json()`, and BullMQ's retry policy never gets a chance to run.
+    // Hence one try/finally around the whole exchange.
     try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -224,24 +241,44 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
           model: completionModel,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0,
+          // Bound the OUTPUT. Without it a looping model turns a bounded
+          // classification into an unbounded bill, and the registered
+          // worst-case cost the budget gate reserves against becomes fiction.
+          ...(options?.maxOutputTokens === undefined
+            ? {}
+            : { max_tokens: options.maxOutputTokens }),
+          // Ask for a JSON object where the provider supports it. Belt to the
+          // caller's strict parse, never a replacement for it: plenty of
+          // OpenAI-compatible gateways ignore this field entirely.
+          ...(options?.jsonObject === true ? { response_format: { type: 'json_object' } } : {}),
         }),
         signal: controller.signal,
       })
+      if (!response.ok) {
+        // Drain so the socket can be reused; discard it (never logged).
+        await response.text().catch(() => undefined)
+        throw new GatewayRequestError('complete', response.status)
+      }
+      const payload = (await response.json()) as CompletionResponse
+      const text = payload.choices?.[0]?.message?.content
+      if (typeof text !== 'string') {
+        throw new InvalidCompletionResponseError(
+          `completion response has ${payload.choices?.length ?? 0} choices with no text content`,
+        )
+      }
+      // Counts only, never content. A gateway that omits usage yields 0, which
+      // records the call at zero cost rather than guessing a token count.
+      return {
+        text,
+        usage: {
+          inputTokens: payload.usage?.prompt_tokens ?? 0,
+          outputTokens: payload.usage?.completion_tokens ?? 0,
+        },
+        model: payload.model ?? completionModel,
+      }
     } finally {
       clearTimeout(timer)
     }
-    if (!response.ok) {
-      await response.text().catch(() => undefined)
-      throw new GatewayRequestError('complete', response.status)
-    }
-    const payload = (await response.json()) as CompletionResponse
-    const text = payload.choices?.[0]?.message?.content
-    if (typeof text !== 'string') {
-      throw new InvalidCompletionResponseError(
-        `completion response has ${payload.choices?.length ?? 0} choices with no text content`,
-      )
-    }
-    return text
   }
 
   return { embed, complete }
