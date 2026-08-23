@@ -67,10 +67,16 @@ type recordedRequest struct {
 // answers each route with the shape the REST surface ships.
 type lifecycleServer struct {
 	*httptest.Server
-	mu            sync.Mutex
-	requests      []recordedRequest
-	briefingBody  string
+	mu           sync.Mutex
+	requests     []recordedRequest
+	briefingBody string
+	// briefingCode / heartbeatCode let a test make one route fail while the
+	// others stay healthy — the case both the briefing-failure and the
+	// clear-probe-failure rules are about.
+	briefingCode  int
 	heartbeatCode int
+	// heartbeatResurrected is echoed back on the heartbeat response.
+	heartbeatResurrected bool
 }
 
 // isolateCwd moves the test into a directory that is NOT a linked git worktree,
@@ -85,28 +91,38 @@ func isolateCwd(t *testing.T) {
 func newLifecycleServer(t *testing.T, briefingBody string) *lifecycleServer {
 	t.Helper()
 	isolateCwd(t)
-	ls := &lifecycleServer{briefingBody: briefingBody, heartbeatCode: http.StatusOK}
+	ls := &lifecycleServer{
+		briefingBody:  briefingBody,
+		briefingCode:  http.StatusOK,
+		heartbeatCode: http.StatusOK,
+	}
 	ls.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		ls.mu.Lock()
 		ls.requests = append(ls.requests, recordedRequest{path: r.URL.Path, body: body})
-		code := ls.heartbeatCode
+		beatCode, briefCode, resurrected := ls.heartbeatCode, ls.briefingCode, ls.heartbeatResurrected
 		ls.mu.Unlock()
 
 		switch r.URL.Path {
 		case "/api/v1/briefing":
+			if briefCode != http.StatusOK {
+				http.Error(w, "briefing unavailable", briefCode)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(ls.briefingBody))
 		case "/api/v1/agent-sessions/open":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"sessionRunId":"` + testRunID + `","activationEpoch":1,"created":true,"reopened":false}`))
 		case "/api/v1/agent-sessions/heartbeat":
-			if code != http.StatusOK {
-				http.Error(w, "not found", code)
+			if beatCode != http.StatusOK {
+				http.Error(w, "heartbeat unavailable", beatCode)
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"sessionRunId":"` + testRunID + `","activationEpoch":2,"lastSeenAt":"2026-08-21T00:00:00Z","resurrected":false}`))
+			_, _ = fmt.Fprintf(w,
+				`{"sessionRunId":%q,"activationEpoch":2,"lastSeenAt":"2026-08-21T00:00:00Z","resurrected":%t}`,
+				testRunID, resurrected)
 		case "/api/v1/agent-sessions/close":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"sessionRunId":"` + testRunID + `","activationEpoch":1,"closedAt":"2026-08-21T00:00:00Z","alreadyClosed":false}`))
@@ -151,12 +167,17 @@ func (ls *lifecycleServer) bodyFor(t *testing.T, path string) map[string]any {
 	return nil
 }
 
-// briefingWith renders a briefing body carrying `n` open commitments with
-// predictable ids and padded topics, so a test can force the local truncate to
-// cut the section at a known point.
+// briefingWith renders a briefing body carrying the given open commitments,
+// echoing the axis-free `all` selector the hook requested.
 func briefingWith(items []briefingCommitment) string {
+	return briefingWithSelector(map[string]any{"kind": "all"}, items)
+}
+
+// briefingWithSelector is the same body with an explicit selector echo, so a
+// test can stand in for a tenant retrieval policy narrowing `all` to a scope.
+func briefingWithSelector(selector map[string]any, items []briefingCommitment) string {
 	body := map[string]any{
-		"selector":        map[string]any{"kind": "all"},
+		"selector":        selector,
 		"mode":            "full",
 		"generatedAt":     "2026-08-21T00:00:00Z",
 		"commitments":     map[string]any{"count": len(items), "items": items},
@@ -254,29 +275,45 @@ func TestRenderBriefingCollectsCommitmentOffsets(t *testing.T) {
 	}
 }
 
-// TestBriefedCollectorRejectsUnstampableRows pins the local enforcement of the
-// server's briefedMemorySchema bounds. One bad row must not 400 the open and
-// cost the whole session its sessionRunId.
-func TestBriefedCollectorRejectsUnstampableRows(t *testing.T) {
+// TestBriefedCollectorCapsAndDedupes pins the only two things the collector is
+// allowed to enforce. Field shapes are NOT re-checked here: the server's Zod
+// parse is the single validator (AGENTS.md hard rule 2), and the rows come from
+// this server's own typed briefing output.
+func TestBriefedCollectorCapsAndDedupes(t *testing.T) {
 	var c briefedCollector
-	c.add(briefingCommitment{MemoryID: "not-a-uuid", Topic: "x", Status: "open"}, 1)
-	c.add(briefingCommitment{MemoryID: testRunID, Topic: "", Status: "open"}, 2)
-	c.add(briefingCommitment{MemoryID: testRunID, Topic: "x", Status: ""}, 3)
-	if len(c.rows) != 0 {
-		t.Fatalf("collected %d unstampable rows, want 0", len(c.rows))
+
+	// Values a Go-side validator would have dropped ride through untouched —
+	// the server is the one that gets to reject them.
+	long := strings.Repeat("t", 400)
+	c.add(briefingCommitment{MemoryID: "not-a-uuid", Topic: long, Status: "open"}, 1)
+	if len(c.rows) != 1 || c.rows[0].memory.Topic != long || c.rows[0].memory.ID != "not-a-uuid" {
+		t.Fatalf("collector rewrote or dropped a row it does not own: %+v", c.rows)
 	}
 
-	c.add(briefingCommitment{MemoryID: testRunID, Topic: strings.Repeat("t", 400), Status: "open"}, 4)
-	if len(c.rows) != 1 {
-		t.Fatalf("valid row not collected: %+v", c.rows)
-	}
-	if len(c.rows[0].memory.Topic) != maxBriefedTopic {
-		t.Fatalf("topic length %d, want the %d cap", len(c.rows[0].memory.Topic), maxBriefedTopic)
-	}
 	// The overdue split re-lists commitments; the stamp is a set.
-	c.add(briefingCommitment{MemoryID: testRunID, Topic: "again", Status: "open"}, 5)
+	c.add(briefingCommitment{MemoryID: "not-a-uuid", Topic: "again", Status: "open"}, 2)
 	if len(c.rows) != 1 {
 		t.Fatalf("duplicate memoryId collected twice: %+v", c.rows)
+	}
+
+	// The list cap is generated from MAX_BRIEFED_MEMORIES: past it the whole
+	// open 400s, so the collector stops rather than trading every row for the
+	// last one.
+	for _, item := range commitmentFixtures(maxBriefedMemories+10, 2) {
+		c.add(item, 3)
+	}
+	if len(c.rows) != maxBriefedMemories {
+		t.Fatalf("collected %d rows, want the %d cap", len(c.rows), maxBriefedMemories)
+	}
+}
+
+// TestGeneratedContractConstants guards the generated file against being
+// hand-edited to nonsense. The byte-for-byte freshness gate lives in the
+// docs-reference CI lane; this only asserts the values are present and sane.
+func TestGeneratedContractConstants(t *testing.T) {
+	if maxSessionExcerptLength <= 0 || maxBriefedMemories <= 0 {
+		t.Fatalf("generated bounds are not positive: excerpt=%d briefed=%d",
+			maxSessionExcerptLength, maxBriefedMemories)
 	}
 }
 
@@ -391,10 +428,10 @@ func TestRunBriefingResumeNeverRestamps(t *testing.T) {
 
 // TestRunBriefingClearResolvesAgainstTheServer pins the `clear` conditional. The
 // harness may or may not mint a new session_id, and the hook keeps no local
-// state — so the natural key is the discriminator: a heartbeat 404 means a new
-// conversation (startup), a 200 means the same one (resume).
+// state — so the natural key is the discriminator, and ONLY a definitive 404
+// answers it.
 func TestRunBriefingClearResolvesAgainstTheServer(t *testing.T) {
-	t.Run("unknown session id opens as startup", func(t *testing.T) {
+	t.Run("404 opens as startup", func(t *testing.T) {
 		ls := newLifecycleServer(t, briefingWith(commitmentFixtures(1, 4)))
 		ls.heartbeatCode = http.StatusNotFound
 
@@ -411,21 +448,153 @@ func TestRunBriefingClearResolvesAgainstTheServer(t *testing.T) {
 		}
 	})
 
-	t.Run("known session id opens as resume", func(t *testing.T) {
+	// A reused conversation id needs no second call: the probe already returned
+	// the sessionRunId and floored the lease. Posting `source=resume` on top
+	// would spend another round trip and double-bump `activation_epoch` on a row
+	// the probe just resurrected.
+	t.Run("200 reuses the probe result without a second call", func(t *testing.T) {
 		ls := newLifecycleServer(t, briefingWith(commitmentFixtures(1, 4)))
 
-		captureHook(t, `{"session_id":"sess-known","source":"clear"}`, func() int {
+		out := captureHook(t, `{"session_id":"sess-known","source":"clear"}`, func() int {
 			return runBriefing(nil)
 		})
 
-		body := ls.bodyFor(t, "/api/v1/agent-sessions/open")
-		if body["source"] != "resume" {
-			t.Fatalf("source = %v, want resume for a known session id", body["source"])
+		for _, path := range ls.paths() {
+			if path == "/api/v1/agent-sessions/open" {
+				t.Fatalf("a known clear opened a session; the probe already answered")
+			}
 		}
-		if _, present := body["briefedMemories"]; present {
-			t.Fatalf("a clear-as-resume must not restamp: %v", body)
+		lifecycleCalls := 0
+		for _, path := range ls.paths() {
+			if strings.HasPrefix(path, "/api/v1/agent-sessions/") {
+				lifecycleCalls++
+			}
+		}
+		if lifecycleCalls != 1 {
+			t.Fatalf("clear made %d lifecycle calls, want exactly the probe: %v", lifecycleCalls, ls.paths())
+		}
+		if !strings.Contains(out, testRunID) {
+			t.Fatalf("clear did not inject the probed sessionRunId:\n%s", out)
 		}
 	})
+
+	// A probe that FAILED is not an existence answer. Guessing `startup` here
+	// would 409 against a live row whose stored params differ and cost the
+	// session its reinjection outright.
+	t.Run("a failed probe never masquerades as startup", func(t *testing.T) {
+		for _, code := range []int{http.StatusInternalServerError, http.StatusUnauthorized} {
+			ls := newLifecycleServer(t, briefingWith(commitmentFixtures(1, 4)))
+			ls.heartbeatCode = code
+
+			var stderr strings.Builder
+			orig := stderrWriter
+			stderrWriter = &stderr
+			out := captureHook(t, `{"session_id":"sess-flaky","source":"clear"}`, func() int {
+				return runBriefing(nil)
+			})
+			stderrWriter = orig
+
+			for _, path := range ls.paths() {
+				if path == "/api/v1/agent-sessions/open" {
+					t.Fatalf("a %d probe opened a session", code)
+				}
+			}
+			if strings.Contains(out, testRunID) {
+				t.Fatalf("a %d probe injected a run id it never got:\n%s", code, out)
+			}
+			if !strings.Contains(out, "**Commitments**") {
+				t.Fatalf("a %d probe suppressed the briefing:\n%s", code, out)
+			}
+			if !strings.Contains(stderr.String(), "agent-sessions/heartbeat") {
+				t.Fatalf("a %d probe failure was not logged: %q", code, stderr.String())
+			}
+		}
+	})
+}
+
+// TestRunBriefingOpensWhenTheBriefingFails is the other half of the
+// degrade rule: the briefing read and the lifecycle write are independent
+// calls. The Stop heartbeat deliberately never creates a missing row, so
+// skipping the open here would leave the whole session unattributed because one
+// read went wrong.
+func TestRunBriefingOpensWhenTheBriefingFails(t *testing.T) {
+	ls := newLifecycleServer(t, "")
+	ls.briefingCode = http.StatusInternalServerError
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	out := captureHook(t, `{"session_id":"sess-nobrief","source":"startup"}`, func() int {
+		return runBriefing(nil)
+	})
+
+	body := ls.bodyFor(t, "/api/v1/agent-sessions/open")
+	if body["source"] != "startup" {
+		t.Fatalf("source = %v, want startup", body["source"])
+	}
+	// No briefing was DELIVERED, so the key is omitted: an empty array would
+	// tell the server to stamp briefing_delivered_at for a delivery that never
+	// happened.
+	if _, present := body["briefedMemories"]; present {
+		t.Fatalf("stamped a delivery that never happened: %v", body)
+	}
+	if !strings.Contains(out, "Run /briefing for") {
+		t.Fatalf("fallback text not printed:\n%s", out)
+	}
+	if !strings.Contains(out, testRunID) {
+		t.Fatalf("sessionRunId not injected after a failed briefing:\n%s", out)
+	}
+	if !strings.Contains(stderr.String(), "briefing") {
+		t.Fatalf("briefing failure was not logged: %q", stderr.String())
+	}
+}
+
+// TestRunBriefingMalformedBodyStillOpens is the same rule for a 200 whose body
+// does not parse.
+func TestRunBriefingMalformedBodyStillOpens(t *testing.T) {
+	ls := newLifecycleServer(t, `{"selector":`)
+
+	out := captureHook(t, `{"session_id":"sess-garbled","source":"startup"}`, func() int {
+		return runBriefing(nil)
+	})
+
+	body := ls.bodyFor(t, "/api/v1/agent-sessions/open")
+	if _, present := body["briefedMemories"]; present {
+		t.Fatalf("stamped a delivery from an unparseable body: %v", body)
+	}
+	if !strings.Contains(out, "Run /briefing for") {
+		t.Fatalf("fallback text not printed:\n%s", out)
+	}
+}
+
+// TestRunBriefingStoresTheEffectiveSelector pins the selector echo. A tenant
+// retrieval policy can narrow a requested `kind=all` to its default scope; the
+// row must record the lens the agent actually read through, not the one the
+// hook asked for, or later selector-based processing works off wrong metadata.
+func TestRunBriefingStoresTheEffectiveSelector(t *testing.T) {
+	narrowed := map[string]any{"kind": "scope", "scope": "work"}
+	ls := newLifecycleServer(t, briefingWithSelector(narrowed, commitmentFixtures(1, 4)))
+	// The hook REQUESTED the axis-free selector.
+	t.Setenv("THREENGRAM_BRIEFING_KIND", "all")
+
+	captureHook(t, `{"session_id":"sess-narrow","source":"startup"}`, func() int {
+		return runBriefing(nil)
+	})
+
+	body := ls.bodyFor(t, "/api/v1/agent-sessions/open")
+	selector, ok := body["selector"].(map[string]any)
+	if !ok {
+		t.Fatalf("selector missing from open body: %v", body)
+	}
+	if selector["kind"] != "scope" || selector["scope"] != "work" {
+		t.Fatalf("persisted the requested selector %v, want the echoed {scope, work}", selector)
+	}
+	// The row's scope facet is derived from the same effective selector.
+	if body["scope"] != "work" {
+		t.Fatalf("scope = %v, want work", body["scope"])
+	}
 }
 
 // TestRunBriefingWithoutSessionIdSkipsLifecycle pins the tolerant path: a manual
@@ -471,7 +640,7 @@ func runSessionStartForTest(sessionID, source, project string) int {
 		nil,
 		project,
 		briefingSelector{Kind: "all"},
-		[]briefedMemory{},
+		&[]briefedMemory{},
 	)
 	return 0
 }
@@ -665,21 +834,102 @@ func TestDeriveAgent(t *testing.T) {
 			t.Fatalf("deriveAgent = %q, want codex", got)
 		}
 	})
-	t.Run("rejects a name the server would reject", func(t *testing.T) {
+	// An operator-supplied name is normalized but NOT validated: a name the
+	// server rejects is a loud 400, where silently swapping in a detected
+	// harness would split one operator's sessions across two natural keys.
+	t.Run("passes an operator name through for the server to judge", func(t *testing.T) {
 		t.Setenv("THREENGRAM_AGENT", "not a name!")
 		t.Setenv("CLAUDECODE", "1")
-		if got := deriveAgent(nil); got != "claude-code" {
-			t.Fatalf("deriveAgent = %q, want the detected claude-code", got)
+		if got := deriveAgent(nil); got != "not a name!" {
+			t.Fatalf("deriveAgent = %q, want the operator's name verbatim", got)
 		}
 	})
-	t.Run("falls back to the placeholder", func(t *testing.T) {
+	t.Run("falls back to the placeholder and says so once", func(t *testing.T) {
 		t.Setenv("THREENGRAM_AGENT", "")
 		t.Setenv("CLAUDECODE", "")
 		t.Setenv("CLAUDE_CODE_ENTRYPOINT", "")
 		t.Setenv("CODEX_HOME", "")
 		t.Setenv("CODEX_SANDBOX", "")
+
+		var stderr strings.Builder
+		orig := stderrWriter
+		stderrWriter = &stderr
+		t.Cleanup(func() { stderrWriter = orig })
+		unknownAgentOnce = sync.Once{}
+		t.Cleanup(func() { unknownAgentOnce = sync.Once{} })
+
 		if got := deriveAgent(nil); got != unknownAgent {
 			t.Fatalf("deriveAgent = %q, want %q", got, unknownAgent)
 		}
+		if !strings.Contains(stderr.String(), unknownAgent) {
+			t.Fatalf("placeholder was not announced: %q", stderr.String())
+		}
+		// Once per process: the hook runs on every session event.
+		deriveAgent(nil)
+		if strings.Count(stderr.String(), "harness not detected") != 1 {
+			t.Fatalf("placeholder diagnostic repeated: %q", stderr.String())
+		}
 	})
+}
+
+// TestSessionHeartbeatReportsResurrection pins the tri-state's third field: the
+// server tells us when a refresh revived a closed or lease-expired row and
+// advanced the epoch, and a call made to ASK a question should not mutate state
+// invisibly.
+func TestSessionHeartbeatReportsResurrection(t *testing.T) {
+	ls := newLifecycleServer(t, briefingWith(nil))
+	ls.heartbeatResurrected = true
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	got := sessionHeartbeat(agentSessionKey{Agent: "claude-code", SessionID: "sess-dead"}, "", time.Second)
+	if got.outcome != heartbeatOK || !got.resurrected || got.sessionRunID != testRunID {
+		t.Fatalf("heartbeat result = %+v, want a resurrected OK carrying the run id", got)
+	}
+	if !strings.Contains(stderr.String(), "resurrected") {
+		t.Fatalf("resurrection was not announced: %q", stderr.String())
+	}
+	_ = ls
+}
+
+// TestSessionHeartbeatOutcomes pins the tri-state itself: only a 404 is an
+// existence answer, and heartbeatFailed is the ZERO value so a result nobody
+// filled in can never read as one.
+func TestSessionHeartbeatOutcomes(t *testing.T) {
+	if (heartbeatResult{}).outcome != heartbeatFailed {
+		t.Fatal("the zero heartbeatResult must be heartbeatFailed")
+	}
+
+	key := agentSessionKey{Agent: "claude-code", SessionID: "sess-probe"}
+	cases := []struct {
+		code int
+		want heartbeatOutcome
+	}{
+		{http.StatusOK, heartbeatOK},
+		{http.StatusNotFound, heartbeatNoRow},
+		{http.StatusUnauthorized, heartbeatFailed},
+		{http.StatusInternalServerError, heartbeatFailed},
+		{http.StatusServiceUnavailable, heartbeatFailed},
+	}
+	for _, tc := range cases {
+		ls := newLifecycleServer(t, briefingWith(nil))
+		ls.heartbeatCode = tc.code
+
+		var stderr strings.Builder
+		orig := stderrWriter
+		stderrWriter = &stderr
+		got := sessionHeartbeat(key, "", time.Second)
+		stderrWriter = orig
+
+		if got.outcome != tc.want {
+			t.Fatalf("status %d gave outcome %d, want %d", tc.code, got.outcome, tc.want)
+		}
+		// A 404 is an ANSWER, not a failure — it must not be logged as one.
+		if tc.want == heartbeatNoRow && stderr.Len() != 0 {
+			t.Fatalf("a 404 probe logged a failure: %q", stderr.String())
+		}
+	}
 }
