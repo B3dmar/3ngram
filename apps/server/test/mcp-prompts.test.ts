@@ -13,6 +13,7 @@ import { Client as McpClient } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PROMPTS, registerPrompts } from '../src/mcp/prompts.js'
+import { renderDebriefPrompt } from '../src/prompts/debrief.js'
 
 /** A connected SDK client wired to a server with only the prompts registered. */
 async function connectPromptsClient(): Promise<McpClient> {
@@ -113,10 +114,22 @@ describe('prompts/get debrief', () => {
     expect(text).toContain('resolve')
     expect(text).toContain('decision')
     expect(text).toContain('commitment')
-    // The optional scope arg interpolates into the persist instruction.
+    // The optional scope arg rides the DELIMITED DATA block, not the imperative
+    // sentences — `scopeSchema`/`projectSchema` values reach a tool-capable turn
+    // (docs/concepts/session-continuity.mdx layer 4).
     expect(text).toContain('work')
+    expect(text).toMatch(/```json\n[\s\S]*"scope": "work"[\s\S]*\n```/)
+    expect(text).not.toContain('Tag each memory with scope "work"')
     expect(text).toContain(String(MAX_CONTENT_LENGTH))
     expect(text).toMatch(/ONE typed atom|split/i)
+  })
+
+  it('carries NO tenant data — briefedCommitments is the REST render input only', () => {
+    // An MCP prompt never queries and never touches the DB (src/mcp/prompts.ts).
+    // The hook path is the one with a session row to read briefed rows from.
+    const text = renderDebriefPrompt({ scope: 'work' })
+    const payload = /```json\n([\s\S]*?)\n```/.exec(text)
+    expect(JSON.parse((payload as RegExpExecArray)[1] as string)).toEqual({ scope: 'work' })
   })
 
   it('renders without the optional scope argument', async () => {

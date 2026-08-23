@@ -38,12 +38,12 @@
 import {
   briefingModeSchema,
   briefingSelectorSchema,
-  MAX_CONTENT_LENGTH,
   projectSchema,
   scopeSchema,
 } from '@3ngram/schema'
 import { completable, type GetPromptResult, type McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
+import { renderDebriefPrompt } from '../prompts/debrief.js'
 import { facetCompleter } from './completions.js'
 import type { ToolContext } from './tools.js'
 
@@ -216,36 +216,16 @@ const debriefPrompt = definePrompt({
       ).optional(),
     }),
   },
+  // THE SAME renderer GET /api/v1/prompts/debrief serves
+  // (src/prompts/debrief.ts): 3ngram owns the words and the hook owns the
+  // trigger, so the two transports cannot drift. `scope`/`project` are rendered
+  // as DELIMITED DATA inside a fenced JSON block rather than interpolated into
+  // the imperative sentences — `projectSchema` permits a repo directory name
+  // that reads as a command, and this text reaches a tool-capable turn. No
+  // tenant data is passed: `briefedCommitments` is the REST render's input, and
+  // an MCP prompt carries none (see the module header).
   render({ scope, project }) {
-    const scopeLine =
-      scope === undefined
-        ? 'Tag each memory with the scope the work belonged to.'
-        : `Tag each memory with scope "${scope}".`
-    const projectLine =
-      project === undefined
-        ? 'If the work belonged to a project, pass `project` on each remember — a memory with no project never appears in that project briefing.'
-        : `Pass project "${project}" on each remember — a memory with no project never appears in that project briefing.`
-    return userMessage(
-      [
-        'Debrief this session before closing. Review the conversation and extract what a',
-        'future session needs, then PERSIST each item by calling the `remember` TOOL:',
-        '',
-        '- Decisions: architectural choices and resolved tradeoffs (memoryType "decision").',
-        '- Commitments: things promised for later, with a due date if known (memoryType "commitment").',
-        '- Follow-ups & notes: blockers and handoff state to continue from (memoryType "note").',
-        '- Preferences & patterns: conventions or gotchas worth reusing.',
-        '',
-        scopeLine,
-        projectLine,
-        '',
-        `Each remember is ONE typed atom. Content is capped at ${MAX_CONTENT_LENGTH} characters.`,
-        'If a recap would exceed that, split it across several remember calls. Never stuff a',
-        'session transcript into a single memory.',
-        '',
-        'For any commitment COMPLETED this session, call the `resolve` TOOL on its memory id.',
-        'Keep each memory atomic and self-contained; do not persist secrets or raw credentials.',
-      ].join('\n'),
-    )
+    return userMessage(renderDebriefPrompt({ scope, project }))
   },
 })
 

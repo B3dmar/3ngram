@@ -69,6 +69,7 @@ import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 import { SERVER_VERSION } from '../version.js'
 import { defined, guard, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
+import { sessionRouter } from './session-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
 // malformed id the same as an unknown id (404) instead of letting Postgres raise
@@ -178,6 +179,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // mountable independent of the MCP Bearer mount.
   router.use('/api/v1', apiOrSessionAuth)
   router.use(searchRouter(options))
+  // Hook-facing session lifecycle (open/close/heartbeat + the debrief render).
+  // Its own module for the same reason search has one: these routes share a
+  // concern with each other, not with the memory mirror.
+  router.use(sessionRouter(options))
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the

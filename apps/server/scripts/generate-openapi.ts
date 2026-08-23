@@ -19,6 +19,12 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   accountDeleteBodySchema,
+  agentSessionCloseBodySchema,
+  agentSessionCloseResponseSchema,
+  agentSessionHeartbeatBodySchema,
+  agentSessionHeartbeatResponseSchema,
+  agentSessionOpenBodySchema,
+  agentSessionOpenResponseSchema,
   archiveMemoryBodySchema,
   asOfSchema,
   BRIEFING_SECTION_NAMES,
@@ -29,6 +35,8 @@ import {
   budgetStatusResponseSchema,
   dashboardSearchQuerySchema,
   dashboardSearchResponseV2Schema,
+  debriefPromptQuerySchema,
+  debriefPromptResponseSchema,
   factsQueryInputV2Schema,
   factsRangeSchema,
   factsToolOutputSchema,
@@ -65,6 +73,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROUTER_SOURCES = [
   resolve(HERE, '../src/rest/router.ts'),
   resolve(HERE, '../src/rest/search-router.ts'),
+  resolve(HERE, '../src/rest/session-router.ts'),
 ] as const
 const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
@@ -423,6 +432,10 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded)', query: proposalsListQuerySchema, status: 200, response: proposalsList },
   { method: 'post', path: '/api/v1/proposals/:id/apply', operationId: 'applyProposal', summary: 'Accept a consolidation proposal', status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/proposals/:id/reject', operationId: 'rejectProposal', summary: 'Reject a consolidation proposal', body: proposalRejectBodySchema, optionalBody: true, status: 200, response: proposalDecision },
+  { method: 'post', path: '/api/v1/agent-sessions/open', operationId: 'openAgentSession', summary: 'Open or re-activate an agent session by its natural key (SessionStart). Idempotent: startup inserts, resume reuses the row and advances activation_epoch, and neither restamps the briefing.', body: agentSessionOpenBodySchema, status: 200, response: agentSessionOpenResponseSchema, errors: [{ status: 409, description: 'A startup open reused a natural key already opened with different project, scope or selector', reasons: ['conflict'] }] },
+  { method: 'post', path: '/api/v1/agent-sessions/close', operationId: 'closeAgentSession', summary: 'Close an agent session by natural key (SessionEnd). Carries no activation_epoch and is idempotent — a repeat close echoes the first close timestamp.', body: agentSessionCloseBodySchema, status: 200, response: agentSessionCloseResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }] },
+  { method: 'post', path: '/api/v1/agent-sessions/heartbeat', operationId: 'heartbeatAgentSession', summary: 'Refresh an agent session lease by natural key (Stop), resurrecting a closed or lease-expired row and optionally snapshotting the turn\'s bounded last assistant message.', body: agentSessionHeartbeatBodySchema, status: 200, response: agentSessionHeartbeatResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }] },
+  { method: 'get', path: '/api/v1/prompts/debrief', operationId: 'getDebriefPrompt', summary: 'Render the debrief prompt the MCP debrief registrar serves, so a Stop hook can inject it. Instructions are server-authored; the scope and project facets and the run\'s briefed commitments render as delimited data, never as imperative sentences.', query: debriefPromptQuerySchema, status: 200, response: debriefPromptResponseSchema, errors: [{ status: 404, description: 'A natural key was supplied but this tenant owns no session with it', reasons: ['not_found'] }] },
   { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId/events', operationId: 'listSessionEvents', summary: 'List the audit events one agent-session run produced (bounded, keyset-paginated). Each page is its own read-committed snapshot, so a write that commits after a page was read may be absent from that walk even if its id sorts earlier; treat one walk as a bounded observation, not the complete record of a run.', query: sessionEventsQuerySchema, status: 200, response: sessionEventsResponseSchema, errors: [{ status: 400, description: 'Malformed run id, cursor or limit, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/scopes', operationId: 'listScopes', summary: 'List the tenant\'s registered scope names', status: 200, response: scopesList },
   { method: 'get', path: '/api/v1/stats', operationId: 'getStats', summary: 'Bounded count aggregates (counts only, never content)', status: 200, response: statsResponseSchema },

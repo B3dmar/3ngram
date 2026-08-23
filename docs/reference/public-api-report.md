@@ -174,6 +174,9 @@ its row here even when its name and kind are unchanged.
 | `AccessGate` | interface | `68f4e3b0905f` |
 | `AccountDeletionResult` | interface | `8e3595b94fe4` |
 | `AccountErasureResult` | interface | `93d351d3d44b` |
+| `AgentSessionNotFoundError` | class | `8ea3b43ae438` |
+| `AgentSessionParamsConflictError` | class | `5af2884d892c` |
+| `AgentSessionRecord` | interface | `1994b0eb0a13` |
 | `AllProposals` | interface | `b7eb6b725249` |
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
 | `AsOf` | interface | `7ff84f49ed40` |
@@ -191,6 +194,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetLogger` | interface | `1bb4d4e1b6bf` |
 | `BudgetReservationHandle` | interface | `94d674619f11` |
 | `BudgetStatus` | interface | `5ce09136bfd0` |
+| `CloseSessionResult` | interface | `2c5e8ac191a6` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `ConsolidateOptions` | interface | `dfd95b906bcb` |
@@ -243,6 +247,7 @@ its row here even when its name and kind are unchanged.
 | `HandoffCommitment` | interface | `8ac891c45f15` |
 | `HandoffMemory` | interface | `10bc457226a3` |
 | `HandoffQuery` | interface | `60d6286784d3` |
+| `HeartbeatSessionResult` | interface | `2f2f116773fa` |
 | `IMPORT_EMBED_OPERATION` | const | `1f1d8b94f597` |
 | `IllegalCommitmentTransitionError` | class | `f0d748c08600` |
 | `ImportTargetNotFoundError` | class | `dd4231ee3dc0` |
@@ -269,6 +274,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryNotFoundError` | class | `91f7c6ef54ac` |
 | `MissingSelectorError` | class | `a60398202990` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
+| `OpenSessionResult` | interface | `8bc9849332ff` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalNotFoundError` | class | `c3368d4608c3` |
@@ -293,6 +299,7 @@ its row here even when its name and kind are unchanged.
 | `ScopedSearchResult` | interface | `8d05fb7299e8` |
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
+| `SessionClockOptions` | interface | `93ae54bf425c` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
@@ -313,6 +320,7 @@ its row here even when its name and kind are unchanged.
 | `assertWithinBudget` | function | `adfdb8f8723b` |
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
+| `closeAgentSession` | function | `3010834f16c1` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
 | `createScope` | function | `1e8f58a54fe9` |
@@ -326,6 +334,7 @@ its row here even when its name and kind are unchanged.
 | `exportUserData` | function | `8b186867c06b` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
+| `getAgentSession` | function | `340a1f97bda6` |
 | `getBudgetStatus` | function | `12b4019ba940` |
 | `getCurrentUser` | function | `91b1696ca909` |
 | `getFacts` | function | `e4962000fb84` |
@@ -334,6 +343,7 @@ its row here even when its name and kind are unchanged.
 | `getMemoryHistory` | function | `5bec4c08ade8` |
 | `handoff` | function | `e5bc072664c7` |
 | `hashPassword` | function | `f2db7abeaf84` |
+| `heartbeatAgentSession` | function | `952816b8fcca` |
 | `importEdge` | function | `5c370e995340` |
 | `importEvent` | function | `b646608824c0` |
 | `importFact` | function | `de183450645f` |
@@ -344,6 +354,7 @@ its row here even when its name and kind are unchanged.
 | `listProposals` | function | `dd919a6bcedd` |
 | `listScopes` | function | `569a98d16b90` |
 | `listSessionEvents` | function | `ebd96679d1c9` |
+| `openAgentSession` | function | `b68a07f2cef6` |
 | `rejectProposal` | function | `33be71cbec7e` |
 | `rejectProposalAnyKind` | function | `e5eb76037fc2` |
 | `releaseBudgetReservation` | function | `391df079ae05` |
@@ -477,6 +488,9 @@ its row here even when its name and kind are unchanged.
 | `AccountDeletedError` | class | `f886d02839f5` |
 | `AccountErasureResult` | interface | `93d351d3d44b` |
 | `ActiveMemoryNotFoundError` | class | `6ee34ec19971` |
+| `AgentSessionNotFoundError` | class | `8ea3b43ae438` |
+| `AgentSessionParamsConflictError` | class | `5af2884d892c` |
+| `AgentSessionRecord` | interface | `1994b0eb0a13` |
 | `ApiKeyMetadata` | interface | `79f070aa6a83` |
 | `AppliedFactProposal` | interface | `9ad3015726f8` |
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
@@ -493,6 +507,7 @@ its row here even when its name and kind are unchanged.
 | `CANDIDATE_POOL_FLOOR` | const | `3b7d2bf7b2b3` |
 | `ChronologicalCursor` | interface | `4dfd48aba7e8` |
 | `ChronologicalPage` | interface | `3a81f7904b73` |
+| `CloseSessionResult` | interface | `2c5e8ac191a6` |
 | `CommitmentCreate` | interface | `b29fe27da0fc` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
@@ -535,6 +550,7 @@ its row here even when its name and kind are unchanged.
 | `FactWrite` | interface | `373a924698db` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
+| `HeartbeatSessionResult` | interface | `2f2f116773fa` |
 | `IllegalCommitmentTransitionError` | class | `f0d748c08600` |
 | `ImportTargetNotFoundError` | class | `dd4231ee3dc0` |
 | `ImportedEdgeWrite` | interface | `e31ea8866a74` |
@@ -571,6 +587,7 @@ its row here even when its name and kind are unchanged.
 | `NewPasswordResetToken` | interface | `2ba6c8796e81` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OAuthClientRow` | interface | `1a2affe71574` |
+| `OpenSessionResult` | interface | `8bc9849332ff` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalNotFoundError` | class | `c3368d4608c3` |
@@ -621,6 +638,7 @@ its row here even when its name and kind are unchanged.
 | `auditLogEntryExists` | function | `bab2ee9b3919` |
 | `budgetReservations` | const | `2323c0409991` |
 | `closeDb` | function | `07b382de379c` |
+| `closeSession` | function | `0f12d1991868` |
 | `commitments` | const | `a414b2f62ba1` |
 | `consolidationProposals` | const | `c87ade1c93dc` |
 | `consumeOauthCode` | function | `60c538284d80` |
@@ -655,6 +673,7 @@ its row here even when its name and kind are unchanged.
 | `getUserIdentityById` | function | `53d8765b14c3` |
 | `getUserPasswordHashById` | function | `2521258de060` |
 | `getUserProfileAttributes` | function | `673f97623df1` |
+| `heartbeatSession` | function | `f792e4d2366f` |
 | `insertApiKey` | function | `e0020f05cd8f` |
 | `insertAuditLog` | function | `5ab559d1a0ae` |
 | `insertEdge` | function | `5b307f86e993` |
@@ -693,11 +712,13 @@ its row here even when its name and kind are unchanged.
 | `oauthCodes` | const | `bfa4d83807b7` |
 | `oauthTokens` | const | `5309b692908e` |
 | `openCommitments` | function | `975f07cab2e4` |
+| `openSession` | function | `c072d7f13ab4` |
 | `overdueCommitments` | function | `5f5a8fb770ca` |
 | `passwordResetTokens` | const | `101cda488038` |
 | `peekEmailVerificationToken` | function | `12dd669b9f76` |
 | `peekResetToken` | function | `2536f5228240` |
 | `planTiers` | const | `4a0f287afe02` |
+| `readAgentSession` | function | `6cbc302058a4` |
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
 | `recentDecisions` | function | `386c29c370a3` |
@@ -808,6 +829,13 @@ its row here even when its name and kind are unchanged.
 | `AccountDeleteBody` | type | `67b6affde4b2` |
 | `ActorKind` | type | `0e0517b76c62` |
 | `AgentName` | type | `11a9a370f4c8` |
+| `AgentSessionCloseInput` | type | `38f02c9083c6` |
+| `AgentSessionCloseResponse` | type | `533bb354fb16` |
+| `AgentSessionHeartbeatInput` | type | `63bf87b6c2b9` |
+| `AgentSessionHeartbeatResponse` | type | `5a2c76ef9572` |
+| `AgentSessionNaturalKey` | type | `9c54e89e2045` |
+| `AgentSessionOpenInput` | type | `c2f97caee2f9` |
+| `AgentSessionOpenResponse` | type | `a97b73ebdc2a` |
 | `AgentSessionRow` | type | `d4d5b03da60f` |
 | `AgentSessionSource` | type | `8c3ffb08f101` |
 | `AgentSessionTriageStatus` | type | `c575ca6b65f7` |
@@ -864,6 +892,8 @@ its row here even when its name and kind are unchanged.
 | `DashboardSearchQuery` | type | `92b1deb29f63` |
 | `DashboardSearchResponse` | type | `dc267af1c201` |
 | `DashboardSearchResponseV2` | type | `57933df18751` |
+| `DebriefPromptQueryInput` | type | `d743e009fcb6` |
+| `DebriefPromptResponse` | type | `036c7c9cfe5b` |
 | `DescribeEnvironmentInput` | type | `ccbb4620ed2f` |
 | `DescribeEnvironmentOutput` | type | `0b7acee1f097` |
 | `DescribeEnvironmentOutputV2` | type | `a84de5a9077c` |
@@ -1041,6 +1071,13 @@ its row here even when its name and kind are unchanged.
 | `accountDeleteBodySchema` | const | `3de27a9bbf59` |
 | `actorKindSchema` | const | `768f5910467d` |
 | `agentNameSchema` | const | `1e4eae0c30ad` |
+| `agentSessionCloseBodySchema` | const | `399ac64e367e` |
+| `agentSessionCloseResponseSchema` | const | `1241b9a85651` |
+| `agentSessionHeartbeatBodySchema` | const | `907e165a2728` |
+| `agentSessionHeartbeatResponseSchema` | const | `b57ac58d443e` |
+| `agentSessionNaturalKeySchema` | const | `efdc49fde04d` |
+| `agentSessionOpenBodySchema` | const | `aa40eb93736b` |
+| `agentSessionOpenResponseSchema` | const | `84ea2b031ba9` |
 | `agentSessionRowSchema` | const | `4459480e2172` |
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
@@ -1086,6 +1123,8 @@ its row here even when its name and kind are unchanged.
 | `dashboardSearchQuerySchema` | const | `968e7138ed47` |
 | `dashboardSearchResponseSchema` | const | `9dfb11d7363f` |
 | `dashboardSearchResponseV2Schema` | const | `dc81d8e8a9c5` |
+| `debriefPromptQuerySchema` | const | `44588f54a0d4` |
+| `debriefPromptResponseSchema` | const | `51bab335e242` |
 | `describeEnvironmentInputSchema` | const | `38dfd6c1a221` |
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |

@@ -37,6 +37,11 @@ const applyProposal = vi.fn()
 const rejectProposal = vi.fn()
 const listScopes = vi.fn()
 const listSessionEvents = vi.fn()
+// --- hook-facing session lifecycle (issue #166 step 5a) ---
+const openAgentSession = vi.fn()
+const closeAgentSession = vi.fn()
+const heartbeatAgentSession = vi.fn()
+const getAgentSession = vi.fn()
 const describeEnvironment = vi.fn()
 const getCurrentUser = vi.fn()
 const exportUserData = vi.fn()
@@ -155,6 +160,26 @@ class UnknownSessionRunError extends Error {
     this.sessionRunId = sessionRunId
   }
 }
+class AgentSessionNotFoundError extends Error {
+  readonly agent: string
+  readonly sessionId: string
+  constructor(key: { agent: string; sessionId: string }) {
+    super('no agent session for this natural key')
+    this.name = 'AgentSessionNotFoundError'
+    this.agent = key.agent
+    this.sessionId = key.sessionId
+  }
+}
+class AgentSessionParamsConflictError extends Error {
+  readonly agent: string
+  readonly sessionId: string
+  constructor(key: { agent: string; sessionId: string }) {
+    super('agent session already opened with different parameters')
+    this.name = 'AgentSessionParamsConflictError'
+    this.agent = key.agent
+    this.sessionId = key.sessionId
+  }
+}
 const getBudgetStatus = vi.fn()
 
 vi.mock('@3ngram/core', () => ({
@@ -181,6 +206,12 @@ vi.mock('@3ngram/core', () => ({
   rejectProposal,
   listScopes,
   listSessionEvents,
+  openAgentSession,
+  closeAgentSession,
+  heartbeatAgentSession,
+  getAgentSession,
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
   describeEnvironment,
   getCurrentUser,
   deleteAccount,
@@ -324,6 +355,10 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
     ['POST', `/api/v1/proposals/${NEW_ID}/apply`],
     ['POST', `/api/v1/proposals/${NEW_ID}/reject`],
     ['GET', `/api/v1/agent-sessions/${NEW_ID}/events`],
+    ['POST', '/api/v1/agent-sessions/open'],
+    ['POST', '/api/v1/agent-sessions/close'],
+    ['POST', '/api/v1/agent-sessions/heartbeat'],
+    ['GET', '/api/v1/prompts/debrief'],
     ['GET', '/api/v1/scopes'],
     ['GET', '/api/v1/stats'],
     ['GET', '/api/v1/me'],
@@ -2470,6 +2505,362 @@ describe('GET /api/v1/agent-sessions/:sessionRunId/events', () => {
     const res = await call(`/api/v1/agent-sessions/${RUN}/events`, { key: VALID_KEY })
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'invalid_input' })
+  })
+})
+
+// The hook-facing session lifecycle (docs/concepts/session-continuity.mdx
+// layers 1, 4, 6; issue #166 step 5a). Thin-adapter contract only — the lease
+// arithmetic, the epoch fence and the idempotency rules are core/db's job and
+// are pinned in packages/db. Here: the natural key rides the BODY, unknown keys
+// are 400, the typed errors map to 404/409, and timestamps serialise to ISO.
+describe('agent-session lifecycle routes', () => {
+  const RUN = crypto.randomUUID()
+  const OPENED = new Date('2026-08-23T10:00:00.000Z')
+  const SEEN = new Date('2026-08-23T10:05:00.000Z')
+  const CLOSED = new Date('2026-08-23T10:09:00.000Z')
+  const KEY = { agent: 'claude-code', sessionId: 'conv-abc' }
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: RUN,
+    agent: KEY.agent,
+    sessionId: KEY.sessionId,
+    source: 'startup',
+    project: '3ngram',
+    scope: 'work',
+    selector: { kind: 'all' },
+    activationEpoch: 1,
+    openedAt: OPENED,
+    closedAt: null,
+    lastSeenAt: SEEN,
+    briefingDeliveredAt: OPENED,
+    briefedMemories: [],
+    ...over,
+  })
+
+  describe('POST /api/v1/agent-sessions/open', () => {
+    it('inserts on startup and echoes the resolved state', async () => {
+      openAgentSession.mockResolvedValue({ row: row(), created: true, reopened: false })
+      const body = {
+        agent: KEY.agent,
+        sessionId: KEY.sessionId,
+        source: 'startup',
+        project: '3ngram',
+        scope: 'work',
+        briefedMemories: [{ id: NEW_ID, topic: 'ship 5a', status: 'open' }],
+      }
+      const res = await call('/api/v1/agent-sessions/open', {
+        method: 'POST',
+        key: VALID_KEY,
+        body,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        sessionRunId: RUN,
+        activationEpoch: 1,
+        source: 'startup',
+        created: true,
+        reopened: false,
+        openedAt: OPENED.toISOString(),
+        lastSeenAt: SEEN.toISOString(),
+        briefingDeliveredAt: OPENED.toISOString(),
+      })
+      // The selector default is applied at the ONE boundary, so core sees it.
+      expect(openAgentSession).toHaveBeenCalledWith(TENANT, {
+        ...body,
+        selector: { kind: 'all' },
+      })
+    })
+
+    it('reports a resume that reopened the row and advanced the epoch', async () => {
+      openAgentSession.mockResolvedValue({
+        row: row({ activationEpoch: 4 }),
+        created: false,
+        reopened: true,
+      })
+      const res = await call('/api/v1/agent-sessions/open', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { agent: KEY.agent, sessionId: KEY.sessionId, source: 'resume' },
+      })
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json).toMatchObject({ activationEpoch: 4, created: false, reopened: true })
+      expect(json.source).toBe('resume')
+    })
+
+    it('serialises a never-briefed row as briefingDeliveredAt null', async () => {
+      openAgentSession.mockResolvedValue({
+        row: row({ briefingDeliveredAt: null }),
+        created: true,
+        reopened: false,
+      })
+      const res = await call('/api/v1/agent-sessions/open', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { agent: KEY.agent, sessionId: KEY.sessionId, source: 'resume' },
+      })
+      expect((await res.json()).briefingDeliveredAt).toBeNull()
+    })
+
+    it('409s a startup reusing the natural key with changed params', async () => {
+      // "request token; reuse with changed params is 409" — the natural key IS
+      // the request token, so a recycled conversation id cannot silently
+      // overwrite the row a live session is leasing.
+      openAgentSession.mockRejectedValue(new AgentSessionParamsConflictError(KEY))
+      const res = await call('/api/v1/agent-sessions/open', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { agent: KEY.agent, sessionId: KEY.sessionId, source: 'startup', project: 'other' },
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'conflict' })
+    })
+
+    it('400s a bad source, a non-kebab agent and an over-cap briefing list', async () => {
+      const bodies = [
+        { agent: KEY.agent, sessionId: KEY.sessionId, source: 'compact' },
+        { agent: 'Claude Code', sessionId: KEY.sessionId, source: 'startup' },
+        { agent: KEY.agent, sessionId: '', source: 'startup' },
+        {
+          agent: KEY.agent,
+          sessionId: KEY.sessionId,
+          source: 'startup',
+          briefedMemories: Array.from({ length: 101 }, () => ({
+            id: NEW_ID,
+            topic: 't',
+            status: 'open',
+          })),
+        },
+        {
+          agent: KEY.agent,
+          sessionId: KEY.sessionId,
+          source: 'startup',
+          briefedMemories: [{ id: 'not-a-uuid', topic: 't', status: 'open' }],
+        },
+      ]
+      for (const body of bodies) {
+        const res = await call('/api/v1/agent-sessions/open', {
+          method: 'POST',
+          key: VALID_KEY,
+          body,
+        })
+        expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400)
+        expect(await res.json()).toEqual({ error: 'invalid_input' })
+      }
+      expect(openAgentSession).not.toHaveBeenCalled()
+    })
+
+    it('400s an unknown body key rather than silently dropping it', async () => {
+      // The body is parsed WHOLE through the strict schema: a client-supplied
+      // `briefingDeliveredAt` or `activationEpoch` is rejected, not ignored —
+      // the server stamps the first and owns the second.
+      for (const extra of [
+        { briefingDeliveredAt: OPENED.toISOString() },
+        { activationEpoch: 7 },
+        { sessionRunId: RUN },
+        { sessionid: KEY.sessionId },
+      ]) {
+        const res = await call('/api/v1/agent-sessions/open', {
+          method: 'POST',
+          key: VALID_KEY,
+          body: { agent: KEY.agent, sessionId: KEY.sessionId, source: 'startup', ...extra },
+        })
+        expect(res.status, JSON.stringify(extra)).toBe(400)
+        expect(await res.json()).toEqual({ error: 'invalid_input' })
+      }
+      expect(openAgentSession).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('POST /api/v1/agent-sessions/close', () => {
+    it('closes by natural key and reports the close timestamp', async () => {
+      closeAgentSession.mockResolvedValue({
+        row: row({ closedAt: CLOSED }),
+        alreadyClosed: false,
+      })
+      const res = await call('/api/v1/agent-sessions/close', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        sessionRunId: RUN,
+        activationEpoch: 1,
+        closedAt: CLOSED.toISOString(),
+        alreadyClosed: false,
+      })
+      expect(closeAgentSession).toHaveBeenCalledWith(TENANT, KEY)
+    })
+
+    it('is idempotent: a repeat close echoes the FIRST timestamp', async () => {
+      closeAgentSession.mockResolvedValue({ row: row({ closedAt: CLOSED }), alreadyClosed: true })
+      const res = await call('/api/v1/agent-sessions/close', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(await res.json()).toMatchObject({
+        alreadyClosed: true,
+        closedAt: CLOSED.toISOString(),
+      })
+    })
+
+    it('404s a natural key this tenant owns no row for', async () => {
+      closeAgentSession.mockRejectedValue(new AgentSessionNotFoundError(KEY))
+      const res = await call('/api/v1/agent-sessions/close', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not_found' })
+    })
+
+    it('400s an activationEpoch on the body — close must never take one', async () => {
+      // SessionEnd has the conversation id and nothing else; looking the epoch
+      // up would close a resumed activation.
+      const res = await call('/api/v1/agent-sessions/close', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, activationEpoch: 2 },
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+      expect(closeAgentSession).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('POST /api/v1/agent-sessions/heartbeat', () => {
+    it('refreshes the lease and reports no resurrection for a live row', async () => {
+      heartbeatAgentSession.mockResolvedValue({ row: row(), resurrected: false })
+      const res = await call('/api/v1/agent-sessions/heartbeat', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        sessionRunId: RUN,
+        activationEpoch: 1,
+        lastSeenAt: SEEN.toISOString(),
+        resurrected: false,
+      })
+    })
+
+    it('passes the bounded excerpt through and reports a resurrection', async () => {
+      heartbeatAgentSession.mockResolvedValue({
+        row: row({ activationEpoch: 2 }),
+        resurrected: true,
+      })
+      const body = { ...KEY, lastMessageExcerpt: 'shipped the router' }
+      const res = await call('/api/v1/agent-sessions/heartbeat', {
+        method: 'POST',
+        key: VALID_KEY,
+        body,
+      })
+      expect(await res.json()).toMatchObject({ resurrected: true, activationEpoch: 2 })
+      expect(heartbeatAgentSession).toHaveBeenCalledWith(TENANT, body)
+    })
+
+    it('400s an excerpt past the cap — the hook truncates locally, the server does not', async () => {
+      const res = await call('/api/v1/agent-sessions/heartbeat', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, lastMessageExcerpt: 'x'.repeat(4001) },
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+      expect(heartbeatAgentSession).not.toHaveBeenCalled()
+    })
+
+    it('accepts an excerpt exactly at the cap', async () => {
+      heartbeatAgentSession.mockResolvedValue({ row: row(), resurrected: false })
+      const res = await call('/api/v1/agent-sessions/heartbeat', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, lastMessageExcerpt: 'x'.repeat(4000) },
+      })
+      expect(res.status).toBe(200)
+    })
+
+    it('404s an unknown natural key', async () => {
+      heartbeatAgentSession.mockRejectedValue(new AgentSessionNotFoundError(KEY))
+      const res = await call('/api/v1/agent-sessions/heartbeat', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not_found' })
+    })
+  })
+})
+
+// GET /api/v1/prompts/debrief — the MCP debrief registrar over REST, so a Stop
+// hook can inject the SAME words without an MCP client.
+describe('GET /api/v1/prompts/debrief', () => {
+  const KEY = { agent: 'claude-code', sessionId: 'conv-abc' }
+
+  it('renders the prompt with no facets and no session lookup', async () => {
+    const res = await call('/api/v1/prompts/debrief', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const { prompt } = await res.json()
+    expect(prompt).toContain('remember')
+    expect(prompt).toContain('resolve')
+    expect(getAgentSession).not.toHaveBeenCalled()
+  })
+
+  it('inlines the run briefed_memories as an id -> topic/status mapping', async () => {
+    getAgentSession.mockResolvedValue({
+      id: crypto.randomUUID(),
+      briefedMemories: [{ id: NEW_ID, topic: 'ship step 5a', status: 'open' }],
+    })
+    const res = await call(
+      `/api/v1/prompts/debrief?scope=work&project=3ngram&agent=${KEY.agent}&sessionId=${KEY.sessionId}`,
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    const { prompt } = await res.json()
+    expect(getAgentSession).toHaveBeenCalledWith(TENANT, KEY)
+    expect(prompt).toContain(NEW_ID)
+    expect(prompt).toContain('ship step 5a')
+    // Facets and briefed rows ride a fenced JSON block, never an imperative
+    // sentence — projectSchema permits a directory name that reads as a command.
+    const fenced = /```json\n([\s\S]*?)\n```/.exec(prompt)
+    expect(fenced).not.toBeNull()
+    expect(JSON.parse((fenced as RegExpExecArray)[1] as string)).toEqual({
+      scope: 'work',
+      project: '3ngram',
+      briefedCommitments: [{ id: NEW_ID, topic: 'ship step 5a', status: 'open' }],
+    })
+  })
+
+  it('404s a natural key this tenant owns no row for', async () => {
+    getAgentSession.mockRejectedValue(new AgentSessionNotFoundError(KEY))
+    const res = await call(
+      `/api/v1/prompts/debrief?agent=${KEY.agent}&sessionId=${KEY.sessionId}`,
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not_found' })
+  })
+
+  it('400s half a natural key — the two params move together', async () => {
+    for (const query of ['?agent=claude-code', '?sessionId=conv-abc']) {
+      const res = await call(`/api/v1/prompts/debrief${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(getAgentSession).not.toHaveBeenCalled()
+  })
+
+  it('400s an unknown or repeated query key rather than ignoring it', async () => {
+    for (const query of ['?scopes=work', '?scope=Work%20Notes', '?scope=work&scope=personal']) {
+      const res = await call(`/api/v1/prompts/debrief${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
   })
 })
 
