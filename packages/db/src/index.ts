@@ -334,6 +334,19 @@ export {
   type ChronologicalPage,
   searchList,
 } from './search-list.js'
+// --- lease-expiry sweep + the closer's claim/complete statements ---
+export {
+  CLOSER_ELIGIBLE_STATUSES,
+  type CloserCandidate,
+  type CloserSessionRow,
+  claimSessionTriage,
+  expireStaleExcerpts,
+  finishSessionTriage,
+  listCloserCandidates,
+  readCloserSession,
+  sweepExpiredLeases,
+  sweepFloor,
+} from './session-closer.js'
 // --- typed provenance read: one run's audit events, payload-narrow ---
 export {
   type ListSessionEventsOptions,

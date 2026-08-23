@@ -283,6 +283,25 @@ export interface CommitmentTransition {
   /** Actor class recorded on the lifecycle audit event. */
   actorKind: ActorKind
   sessionRunId?: string | undefined
+  /**
+   * Provenance the caller has ALREADY resolved: stamp exactly this run id and do
+   * NOT run the attach decision. Mutually exclusive with `sessionRunId`.
+   *
+   * This exists for the session closer, and only for it. The closer's rows are
+   * closed or lease-expired BY CONSTRUCTION — that is its eligibility rule — so
+   * routing its writes through `resolveSessionProvenance` would take the one
+   * branch that must never fire here: a stale-lease row RESURRECTS, clearing
+   * `closed_at` and incrementing `activation_epoch`. The closer would then fail
+   * its own epoch-fenced write-back, leave the dead session looking live, and be
+   * swept again on the next pass — an unbounded loop that spends an LLM call
+   * each time. The other branch is no better: an explicitly closed row attaches
+   * NOTHING, so the resolve would land unattributed and drop out of the run's
+   * own event set.
+   *
+   * The closer is not a write "arriving at" a session; it is the session's own
+   * bookkeeping being consumed. It holds the row, so the id needs no resolution.
+   */
+  stampedSessionRunId?: string | undefined
   now?: Date | undefined
 }
 
@@ -329,11 +348,16 @@ export async function transitionCommitment(
         .from(memories)
         .where(and(eq(memories.userId, input.userId), eq(memories.id, existing.memoryId)))
         .limit(1)
-      const runId = await resolveSessionProvenance(tx, input.userId, {
-        sessionRunId: input.sessionRunId,
-        project: memory?.project,
-        now: input.now ?? new Date(),
-      })
+      // A pre-resolved id bypasses the attach decision entirely (see
+      // `stampedSessionRunId`): no lock, no heartbeat, no resurrect, no epoch
+      // change — just the stamp.
+      const runId =
+        input.stampedSessionRunId ??
+        (await resolveSessionProvenance(tx, input.userId, {
+          sessionRunId: input.sessionRunId,
+          project: memory?.project,
+          now: input.now ?? new Date(),
+        }))
 
       const [row] = await tx
         .update(commitments)
