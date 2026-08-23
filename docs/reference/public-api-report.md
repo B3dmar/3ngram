@@ -253,6 +253,7 @@ its row here even when its name and kind are unchanged.
 | `LimitsResolver` | type | `e9184939e253` |
 | `ListOptions` | interface | `99ab60efc9f2` |
 | `ListPage` | interface | `48d6bfc64866` |
+| `ListSessionEventsOptions` | interface | `180b2adf3aa9` |
 | `MAX_BRIEFING_SECTION` | const | `e987fcd58710` |
 | `MAX_BRIEFING_SECTION_CEILING` | const | `9cc0a36f612c` |
 | `MAX_HANDOFF_SECTION` | const | `04647fd81d07` |
@@ -292,6 +293,8 @@ its row here even when its name and kind are unchanged.
 | `ScopedSearchResult` | interface | `8d05fb7299e8` |
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
+| `SessionEventRow` | interface | `9f8644041030` |
+| `SessionEventsPage` | interface | `c712271609d4` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
@@ -340,6 +343,7 @@ its row here even when its name and kind are unchanged.
 | `listMemoryFacets` | function | `cbc8e4234f68` |
 | `listProposals` | function | `dd919a6bcedd` |
 | `listScopes` | function | `569a98d16b90` |
+| `listSessionEvents` | function | `ebd96679d1c9` |
 | `rejectProposal` | function | `33be71cbec7e` |
 | `rejectProposalAnyKind` | function | `e5eb76037fc2` |
 | `releaseBudgetReservation` | function | `391df079ae05` |
@@ -538,6 +542,7 @@ its row here even when its name and kind are unchanged.
 | `ImportedFactWrite` | type | `926ded5b48b2` |
 | `ImportedMemoryWrite` | interface | `7cb30c1000a5` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `ListSessionEventsOptions` | interface | `180b2adf3aa9` |
 | `LlmUsageWrite` | interface | `0947a39fb65a` |
 | `MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT` | const | `89cb5f176193` |
 | `MEMORY_HISTORY_EVENT_LIMIT` | const | `6e5a4f90bae3` |
@@ -586,6 +591,8 @@ its row here even when its name and kind are unchanged.
 | `SearchAsOf` | interface | `dd0fe1ef2631` |
 | `SearchFilters` | interface | `8131acb3c156` |
 | `SearchHit` | interface | `6decb1397014` |
+| `SessionEventRow` | interface | `9f8644041030` |
+| `SessionEventsPage` | interface | `c712271609d4` |
 | `SignupEmailVerificationToken` | interface | `d97e5d87001a` |
 | `SimilarPair` | interface | `4acfe8cd4a10` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
@@ -674,6 +681,7 @@ its row here even when its name and kind are unchanged.
 | `listMemoryFacets` | function | `4d9d7a2bb1ae` |
 | `listProposals` | function | `ca00070826cc` |
 | `listScopes` | function | `38d9a9aee782` |
+| `listSessionEvents` | function | `38bf91400471` |
 | `listTenantIds` | function | `71356a9ecac7` |
 | `llmUsage` | const | `084a998527f0` |
 | `lockRetrievalScopePolicy` | function | `1048c1340fef` |
@@ -851,6 +859,7 @@ its row here even when its name and kind are unchanged.
 | `DEFAULT_REST_PROPOSALS_LIMIT` | const | `e154de213acd` |
 | `DEFAULT_SCOPES` | const | `bdddfc854069` |
 | `DEFAULT_SEARCH_LIMIT` | const | `0a1ec6ec0ca4` |
+| `DEFAULT_SESSION_EVENTS_LIMIT` | const | `931ec8f2d29e` |
 | `DashboardSearchHit` | type | `f158c8e75ebb` |
 | `DashboardSearchQuery` | type | `92b1deb29f63` |
 | `DashboardSearchResponse` | type | `dc267af1c201` |
@@ -923,6 +932,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_REST_PROPOSALS_LIMIT` | const | `f1509546a975` |
 | `MAX_SCOPE_ALIASES` | const | `2dab13b8d48c` |
 | `MAX_SEARCH_LIMIT` | const | `3b4be4f038c1` |
+| `MAX_SESSION_EVENTS_LIMIT` | const | `83a104e42c17` |
 | `MAX_SESSION_EVENT_IDS` | const | `c08d9546e185` |
 | `MAX_SESSION_EXCERPT_LENGTH` | const | `7bfe77fc6dec` |
 | `MAX_TAGS` | const | `1e28dd3d6556` |
@@ -1012,6 +1022,9 @@ its row here even when its name and kind are unchanged.
 | `SearchToolOutput` | type | `404e58875256` |
 | `SearchToolOutputV2` | type | `633a17f87ee4` |
 | `SearchToolOutputV3` | type | `3da64c60f572` |
+| `SessionEvent` | type | `a3653cf7de46` |
+| `SessionEventsQueryInput` | type | `74701d783e24` |
+| `SessionEventsResponse` | type | `34a69709f5fc` |
 | `SessionProvenancePayload` | type | `9c58c89b1038` |
 | `SetRetrievalDefaultInput` | type | `7bdf14e37d90` |
 | `SignupInput` | type | `27484a57f0f4` |
@@ -1135,7 +1148,7 @@ its row here even when its name and kind are unchanged.
 | `oauthClientIdParamSchema` | const | `13dbe689b959` |
 | `oauthClientRegistrationMethodSchema` | const | `9fbe195ac6eb` |
 | `planTierSchema` | const | `6eb47fe4ea0c` |
-| `profileAiToolSchema` | const | `176e8dea918f` |
+| `profileAiToolSchema` | const | `af28ef9d259d` |
 | `profileReferralSourceSchema` | const | `c961963c840c` |
 | `profileRoleSchema` | const | `54ba45481760` |
 | `profileUseCaseSchema` | const | `95a03e3a6d0c` |
@@ -1195,6 +1208,9 @@ its row here even when its name and kind are unchanged.
 | `searchToolOutputSchema` | const | `9d19c5269b35` |
 | `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
 | `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
+| `sessionEventSchema` | const | `380c2a93e5e9` |
+| `sessionEventsQuerySchema` | const | `adb21c3b000a` |
+| `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |
 | `sessionProvenancePayloadSchema` | const | `1f6f03db6b5d` |
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
@@ -1203,7 +1219,7 @@ its row here even when its name and kind are unchanged.
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
 | `userCredentialsSchema` | const | `39a616eb6d60` |
-| `userProfileAttributesSchema` | const | `52e833aa6cb7` |
+| `userProfileAttributesSchema` | const | `6d3b282d63ce` |
 | `verifyEmailInputSchema` | const | `1e61e8ac32ad` |
 | `versionResponseSchema` | const | `95603c3e8e8b` |
 | `writtenMemorySchema` | const | `3da9a2062563` |

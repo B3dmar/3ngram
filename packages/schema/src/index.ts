@@ -7,6 +7,9 @@ export type {
   AgentSessionTriageStatus,
   BriefedMemory,
   HarnessSessionId,
+  SessionEvent,
+  SessionEventsQueryInput,
+  SessionEventsResponse,
   SessionProvenancePayload,
 } from './agent-sessions.js'
 export {
@@ -15,11 +18,16 @@ export {
   agentSessionSourceSchema,
   agentSessionTriageStatusSchema,
   briefedMemorySchema,
+  DEFAULT_SESSION_EVENTS_LIMIT,
   harnessSessionIdSchema,
   MAX_BRIEFED_MEMORIES,
   MAX_SESSION_EVENT_IDS,
+  MAX_SESSION_EVENTS_LIMIT,
   MAX_SESSION_EXCERPT_LENGTH,
   SESSION_LEASE_MS,
+  sessionEventSchema,
+  sessionEventsQuerySchema,
+  sessionEventsResponseSchema,
   sessionProvenancePayloadSchema,
 } from './agent-sessions.js'
 export type {

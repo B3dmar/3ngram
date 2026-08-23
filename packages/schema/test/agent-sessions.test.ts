@@ -5,10 +5,16 @@ import {
   agentSessionSourceSchema,
   agentSessionTriageStatusSchema,
   briefedMemorySchema,
+  DEFAULT_SESSION_EVENTS_LIMIT,
+  MAX_SESSION_EVENTS_LIMIT,
+  sessionEventsQuerySchema,
+  sessionEventsResponseSchema,
   sessionProvenancePayloadSchema,
 } from '../src/index.js'
 
 const RUN = '01890b6e-0000-7000-8000-000000000001'
+const EVENT = '01890b6e-0000-7000-8000-0000000000e1'
+const MEMORY = '01890b6e-0000-7000-8000-0000000000c1'
 
 describe('sessionProvenancePayloadSchema', () => {
   it('accepts only sessionRunId', () => {
@@ -86,5 +92,92 @@ describe('briefedMemorySchema', () => {
       status: 'open',
     })
     expect(briefedMemorySchema.safeParse({ id: RUN }).success).toBe(false)
+  })
+})
+
+describe('sessionEventsQuerySchema', () => {
+  it('defaults limit and omits cursor on the first page', () => {
+    expect(sessionEventsQuerySchema.parse({})).toEqual({ limit: DEFAULT_SESSION_EVENTS_LIMIT })
+  })
+
+  it('bounds limit to [1, MAX_SESSION_EVENTS_LIMIT]', () => {
+    expect(sessionEventsQuerySchema.safeParse({ limit: 0 }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ limit: 1.5 }).success).toBe(false)
+    expect(
+      sessionEventsQuerySchema.safeParse({ limit: MAX_SESSION_EVENTS_LIMIT + 1 }).success,
+    ).toBe(false)
+    expect(sessionEventsQuerySchema.parse({ limit: MAX_SESSION_EVENTS_LIMIT }).limit).toBe(
+      MAX_SESSION_EVENTS_LIMIT,
+    )
+  })
+
+  it('rejects a non-uuid cursor and unknown keys', () => {
+    expect(sessionEventsQuerySchema.safeParse({ cursor: 'not-a-uuid' }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ cursor: RUN, after: RUN }).success).toBe(false)
+  })
+
+  it('round-trips a page-2 cursor as the previous page last item id', () => {
+    const page = sessionEventsResponseSchema.parse({
+      items: [
+        {
+          id: EVENT,
+          memoryId: MEMORY,
+          eventKind: 'create',
+          actorKind: 'user_mcp',
+          sessionRunId: RUN,
+          createdAt: '2026-08-21T12:00:00.000Z',
+        },
+      ],
+      nextCursor: EVENT,
+      truncated: false,
+    })
+    expect(page.nextCursor).toBe(page.items.at(-1)?.id)
+    expect(sessionEventsQuerySchema.parse({ cursor: page.nextCursor })).toEqual({
+      cursor: EVENT,
+      limit: DEFAULT_SESSION_EVENTS_LIMIT,
+    })
+  })
+})
+
+describe('sessionEventsResponseSchema', () => {
+  const item = {
+    id: EVENT,
+    memoryId: MEMORY,
+    eventKind: 'supersede',
+    actorKind: 'user_api',
+    sessionRunId: RUN,
+    createdAt: '2026-08-21T12:00:00.000Z',
+  }
+
+  it('accepts a truncated final page with no cursor', () => {
+    expect(sessionEventsResponseSchema.parse({ items: [item], truncated: true })).toEqual({
+      items: [item],
+      truncated: true,
+    })
+  })
+
+  it('rejects an unknown event kind, a raw payload, or an over-long page', () => {
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: [{ ...item, eventKind: 'session_end' }],
+        truncated: false,
+      }).success,
+    ).toBe(false)
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: [{ ...item, payload: { sessionRunId: RUN } }],
+        truncated: false,
+      }).success,
+    ).toBe(false)
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: Array.from({ length: MAX_SESSION_EVENTS_LIMIT + 1 }, () => item),
+        truncated: false,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('requires truncated — an absent flag is not a silent false', () => {
+    expect(sessionEventsResponseSchema.safeParse({ items: [] }).success).toBe(false)
   })
 })

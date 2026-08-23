@@ -5,6 +5,7 @@
 // nativeRememberInputSchema (packages/schema/src/write.ts).
 import { z } from 'zod'
 import { briefingSelectorV2Schema } from './briefing-bounds.js'
+import { actorKindSchema, eventKindSchema } from './memory.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema } from './write.js'
 
@@ -82,3 +83,74 @@ export const agentSessionRowSchema = z
   })
   .strict()
 export type AgentSessionRow = z.infer<typeof agentSessionRowSchema>
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/agent-sessions/:sessionRunId/events — typed provenance read
+// ---------------------------------------------------------------------------
+
+/** Hard per-call page size. The per-run ceiling is MAX_SESSION_EVENT_IDS. */
+export const MAX_SESSION_EVENTS_LIMIT = 100
+export const DEFAULT_SESSION_EVENTS_LIMIT = 50
+
+/**
+ * Query contract for the typed provenance read.
+ *
+ * `cursor` is the `id` of the last item of the previous page, echoed back
+ * verbatim. It is NOT base64-wrapped: unlike the search cursor
+ * (packages/schema/src/cursor.ts) there is no frozen ordering, no query
+ * fingerprint and no scores to hide — the value is already published as
+ * `items[].id` in the same response, so wrapping it would buy opacity the
+ * response gives away anyway. Keyset on uuidv7 `id` over an append-only log
+ * cannot duplicate or skip, so the token needs no drift guard. Numeric `limit`
+ * arrives as a string over a GET; the transport coerces it before parse
+ * (same as proposalsListQuerySchema).
+ */
+export const sessionEventsQuerySchema = z
+  .object({
+    cursor: z.uuid().optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_SESSION_EVENTS_LIMIT)
+      .default(DEFAULT_SESSION_EVENTS_LIMIT),
+  })
+  .strict()
+export type SessionEventsQueryInput = z.infer<typeof sessionEventsQuerySchema>
+
+/**
+ * One provenance event for a run. This is the NARROWING of the history rule
+ * (packages/schema/src/rest.ts: never raw payload values or arbitrary payload
+ * keys): exactly one payload key, `sessionRunId`, is projected — read with a
+ * jsonb operator and parsed through {@link sessionProvenancePayloadSchema},
+ * never `payload` as a blob. No memory content, topic, or tags.
+ */
+export const sessionEventSchema = z
+  .object({
+    id: z.uuid(),
+    memoryId: z.uuid(),
+    eventKind: eventKindSchema,
+    actorKind: actorKindSchema,
+    sessionRunId: z.uuid(),
+    createdAt: z.iso.datetime(),
+  })
+  .strict()
+export type SessionEvent = z.infer<typeof sessionEventSchema>
+
+/**
+ * One page of a run's provenance events, in uuidv7 `id` order.
+ *
+ * `nextCursor` is present exactly when another page exists WITHIN the per-run
+ * ceiling. `truncated` is the separate, terminal signal that the run holds more
+ * than {@link MAX_SESSION_EVENT_IDS} events at all — the closer must not
+ * re-claim such a run (it is `overflowed`), so the two flags are not
+ * interchangeable and a truncated run's last page still carries no cursor.
+ */
+export const sessionEventsResponseSchema = z
+  .object({
+    items: z.array(sessionEventSchema).max(MAX_SESSION_EVENTS_LIMIT),
+    nextCursor: z.uuid().optional(),
+    truncated: z.boolean(),
+  })
+  .strict()
+export type SessionEventsResponse = z.infer<typeof sessionEventsResponseSchema>
