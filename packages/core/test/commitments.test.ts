@@ -486,3 +486,103 @@ describe('resolveForClosedRun compare-and-set', () => {
     expect(dbTransitionCommitment).toHaveBeenCalledOnce()
   })
 })
+
+// The ASYMMETRIC race the delta audit found: the closer's path was guarded by
+// the compare-and-set while the interactive paths (transition / resolveByMemoryId,
+// i.e. the MCP + REST user surfaces) were not. A commitment briefed into a closed
+// session AND open in a live one could therefore be resolved twice — the closer's
+// guarded write landing first, the user's unguarded UPDATE still matching, the
+// FSM trigger waving resolved -> resolved through, and a second resolve event
+// appended under the user's provenance.
+describe('user path vs closer race (delta audit P1)', () => {
+  it('guards the USER path with expectedFrom too', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
+
+    await resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR)
+
+    const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(call.expectedFrom).toBe('open')
+  })
+
+  it('guards the id-keyed transition() surface too', async () => {
+    getCommitment.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'waiting' })
+
+    await transition(USER, COMMITMENT, 'waiting', ACTOR)
+
+    const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(call.expectedFrom).toBe('open')
+  })
+
+  it('the user LOSING to the closer gets idempotent success, and writes no second event', async () => {
+    // Both saw 'open'. The closer resolved first. The user's CAS matches zero
+    // rows; the re-read shows the row already in the status they asked for, so
+    // they get the ordinary success shape — not a 500, and not a duplicate
+    // resolve event.
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    getCommitment.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'resolved' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR)).resolves.toEqual({
+      id: COMMITMENT,
+      status: 'resolved',
+    })
+    // Exactly one write attempt: the loop head sees the row already reached the
+    // target and returns without trying again.
+    expect(dbTransitionCommitment).toHaveBeenCalledOnce()
+  })
+
+  it('reports the REAL from-status when the winner moved it somewhere unreachable', async () => {
+    // e.g. the surfacing sweep expired it. Reporting the stale 'open' would send
+    // the caller chasing a transition that was never the problem.
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    getCommitment.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'expired' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR)).rejects.toMatchObject({
+      name: 'InvalidCommitmentTransitionError',
+      from: 'expired',
+      to: 'resolved',
+    })
+  })
+
+  it('retries once when the new state still permits the target', async () => {
+    getCommitment.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'waiting' })
+    dbTransitionCommitment
+      .mockRejectedValueOnce(new CommitmentStateChangedError(COMMITMENT, 'open'))
+      .mockResolvedValueOnce({ id: COMMITMENT, status: 'resolved' })
+
+    await expect(transition(USER, COMMITMENT, 'resolved', ACTOR)).resolves.toEqual({
+      id: COMMITMENT,
+      status: 'resolved',
+    })
+
+    expect(dbTransitionCommitment).toHaveBeenCalledTimes(2)
+    const second = dbTransitionCommitment.mock.calls[1]?.[0] as Record<string, unknown>
+    // The retry CASes from the REFRESHED status, not the stale one.
+    expect(second.expectedFrom).toBe('waiting')
+  })
+
+  it('surfaces a persistent conflict as CommitmentStateChangedError, not a fake illegal transition', async () => {
+    // Bounded: it does not retry forever, and it does not mislabel a write
+    // conflict as a bad request. Both transports map this to 409.
+    getCommitment.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'waiting' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(transition(USER, COMMITMENT, 'resolved', ACTOR)).rejects.toMatchObject({
+      name: 'CommitmentStateChangedError',
+    })
+    expect(dbTransitionCommitment).toHaveBeenCalledTimes(3)
+  })
+
+  it('maps a vanished commitment to not-found rather than looping', async () => {
+    getCommitment.mockResolvedValue(undefined)
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR)).rejects.toMatchObject({
+      name: 'CommitmentNotFoundError',
+    })
+  })
+})

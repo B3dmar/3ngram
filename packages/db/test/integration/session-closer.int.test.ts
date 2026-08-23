@@ -728,3 +728,83 @@ describe('stamped provenance never resurrects the run (audit P2)', () => {
     expect((events.rows[0] as { n: number }).n).toBe(1)
   })
 })
+
+describe('closer vs user race, against real Postgres (delta audit P1)', () => {
+  it('appends exactly ONE resolve event when both paths resolve the same commitment', async () => {
+    // The asymmetric race: the closer's write was guarded, the interactive
+    // MCP/REST path was not. The FSM trigger returns early on
+    // OLD.status = NEW.status, so the unguarded UPDATE matched an
+    // already-resolved row, re-stamped resolved_at, and appended a SECOND
+    // resolve event under the user's provenance — a duplicated audit trail that
+    // also double-counts the commitment-recall metric the closer is measured on.
+    const opened = await open(uid, 'conv-race-user')
+    await setRow(opened.row.id, { last_seen_at: SWEEPABLE })
+    await sweep(uid)
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    // The closer wins: guarded CAS from 'open', stamping the run's provenance.
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+      stampedSessionRunId: opened.row.id,
+    })
+
+    // The user's request, which observed 'open' before the closer committed.
+    // It must not write; it loses the CAS.
+    await expect(
+      transitionCommitment({
+        userId: uid,
+        commitmentId: commitment.id,
+        to: 'resolved',
+        actorKind: 'user_mcp',
+        expectedFrom: 'open',
+      }),
+    ).rejects.toMatchObject({ name: 'CommitmentStateChangedError' })
+
+    const events = await ownerPool.query(
+      `SELECT actor_kind, payload->>'sessionRunId' AS run FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect(events.rows).toHaveLength(1)
+    // The single surviving event belongs to the winner, with its provenance.
+    expect(events.rows[0]).toMatchObject({ actor_kind: 'worker', run: opened.row.id })
+  })
+
+  it('does not bump resolved_at when the loser is rejected', async () => {
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+    })
+    const first = await ownerPool.query(
+      'SELECT resolved_at, updated_at FROM commitments WHERE id = $1',
+      [commitment.id],
+    )
+
+    await expect(
+      transitionCommitment({
+        userId: uid,
+        commitmentId: commitment.id,
+        to: 'resolved',
+        actorKind: 'user_mcp',
+        expectedFrom: 'open',
+      }),
+    ).rejects.toMatchObject({ name: 'CommitmentStateChangedError' })
+
+    const after = await ownerPool.query(
+      'SELECT resolved_at, updated_at FROM commitments WHERE id = $1',
+      [commitment.id],
+    )
+    expect(after.rows[0]).toEqual(first.rows[0])
+  })
+})

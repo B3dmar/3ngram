@@ -284,6 +284,15 @@ export async function resolveForClosedRun(
 }
 
 /**
+ * How many times {@link applyTransition} will re-read and re-decide after losing
+ * its compare-and-set. Three is a backstop, not a tuning knob: the realistic
+ * races resolve on the FIRST re-read, because the competing writer has almost
+ * always moved the row either to the status we wanted (idempotent success) or to
+ * one we cannot reach (a clean 409).
+ */
+const MAX_TRANSITION_ATTEMPTS = 3
+
+/**
  * Shared FSM-validated transition body for both id- and memory-keyed surfaces. A
  * same-state transition is a no-op success; an illegal pair throws BEFORE any DB
  * write (core is the primary guard, the DB trigger is the backstop).
@@ -304,12 +313,59 @@ async function applyTransition(
   actorKind: ActorKind,
   sessionRunId?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
-  if (current.status === to) {
-    if (sessionRunId !== undefined) await assertSessionRunOwned(userId, sessionRunId)
-    return { id: current.id, status: current.status }
+  let observed = current
+  let lastRace: CommitmentStateChangedError | undefined
+  for (let attempt = 0; attempt < MAX_TRANSITION_ATTEMPTS; attempt++) {
+    if (observed.status === to) {
+      if (sessionRunId !== undefined) await assertSessionRunOwned(userId, sessionRunId)
+      return { id: observed.id, status: observed.status }
+    }
+    if (!canTransition(observed.status, to)) {
+      throw new InvalidCommitmentTransitionError(observed.status, to)
+    }
+    try {
+      return await dbTransitionCommitment({
+        userId,
+        commitmentId: observed.id,
+        to,
+        actorKind,
+        // The guard the interactive paths were missing. `getCommitment` /
+        // `getCommitmentByMemoryId` run in their OWN transaction, so without a
+        // status predicate the UPDATE below matches whatever the row has become
+        // — and since the FSM trigger returns early on `OLD.status =
+        // NEW.status`, a `resolved -> resolved` write succeeds. The concrete
+        // race: a commitment briefed into a closed session the closer is
+        // triaging, and open in a live session where the user calls `resolve`.
+        // The closer's guarded CAS commits first; the user's unguarded UPDATE
+        // then appended a SECOND `resolve` event under the user's provenance,
+        // re-stamping `resolved_at`. That is a duplicated audit trail, and it
+        // double-counts the commitment-recall metric the closer is measured on.
+        expectedFrom: observed.status,
+        sessionRunId,
+      })
+    } catch (error) {
+      if (!(error instanceof CommitmentStateChangedError)) throw error
+      // Lost the CAS. Re-read and re-decide from what the row ACTUALLY holds
+      // now; the loop head then resolves this into one of the outcomes callers
+      // already understand:
+      //   - it reached `to` anyway  -> idempotent success (the common case, and
+      //     exactly what a user racing the closer should see: their resolve is
+      //     honoured, without a second event);
+      //   - it moved somewhere `to` is unreachable from (a surfacing sweep
+      //     expiring it, say) -> InvalidCommitmentTransitionError, reporting the
+      //     REAL from-status rather than the stale one;
+      //   - it moved but `to` is still legal -> one more attempt.
+      lastRace = error
+      const latest = await getCommitment(userId, observed.id)
+      if (!latest) throw new CommitmentNotFoundError(observed.id)
+      observed = latest
+    }
   }
-  if (!canTransition(current.status, to)) {
-    throw new InvalidCommitmentTransitionError(current.status, to)
-  }
-  return dbTransitionCommitment({ userId, commitmentId: current.id, to, actorKind, sessionRunId })
+  // Losing the CAS this many times running needs several concurrent writers
+  // each moving the row to a DIFFERENT status that still permits `to` — the
+  // loop head already absorbs the case where one of them set `to` itself. It is
+  // a genuine write conflict rather than a bad request, so it surfaces as one
+  // (409 at both transports) instead of being retried forever or mislabelled as
+  // an illegal transition, which it is not.
+  throw lastRace ?? new InvalidCommitmentTransitionError(observed.status, to)
 }

@@ -244,6 +244,7 @@ export {
   type ClosedRunResolveOutcome,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   type CreateCommitmentOptions,
   createCommitment,
   DuplicateMemoryError,

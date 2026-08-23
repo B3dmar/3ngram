@@ -215,6 +215,7 @@ its row here even when its name and kind are unchanged.
 | `CloserVerdictError` | class | `644008da0f76` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
+| `CommitmentStateChangedError` | class | `c3012a9a11d0` |
 | `ConsolidateOptions` | interface | `dfd95b906bcb` |
 | `ConsolidateRepo` | interface | `9f9746b1c59a` |
 | `ConsolidateResult` | interface | `be7d0edf740f` |
