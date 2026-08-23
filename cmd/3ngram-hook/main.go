@@ -16,13 +16,22 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|precheck|sync|verify|version>")
+		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|heartbeat|close|precheck|sync|verify|version> [--agent <name>]")
 		os.Exit(1)
 	}
 
+	// Subcommand arguments (today only `--agent <name>`, the harness name for the
+	// session natural key) are passed through rather than parsed here, so a hook
+	// registration names the harness that will run it.
+	args := os.Args[2:]
+
 	switch os.Args[1] {
 	case "briefing":
-		os.Exit(runBriefing())
+		os.Exit(runBriefing(args))
+	case "heartbeat":
+		os.Exit(runHeartbeat(args))
+	case "close":
+		os.Exit(runClose(args))
 	case "precheck":
 		os.Exit(runPrecheck())
 	case "sync":
