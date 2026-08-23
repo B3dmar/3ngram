@@ -179,9 +179,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // mountable independent of the MCP Bearer mount.
   router.use('/api/v1', apiOrSessionAuth)
   router.use(searchRouter(options))
-  // Hook-facing session lifecycle (open/close/heartbeat + the debrief render).
-  // Its own module for the same reason search has one: these routes share a
-  // concern with each other, not with the memory mirror.
+  // Hook-facing session lifecycle (open/close/heartbeat + the debrief render)
+  // and the Stop-nudge handshake (triage/begin + triage/complete). Its own
+  // module for the same reason search has one: these routes share a concern
+  // with each other, not with the memory mirror.
   router.use(sessionRouter(options))
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core

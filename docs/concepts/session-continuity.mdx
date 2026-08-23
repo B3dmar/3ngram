@@ -544,10 +544,23 @@ uuidv7 (assigned at insert, visible after complete), which is exactly the race
 the set exists to catch. Persist the full bounded set of ids **visible at
 complete**. Re-arm is an event id not in that set.
 
-`expired` is closer-eligible and **not** a handshake entry status. A zero-write
-continuation must not re-inject on every later Stop — the numeric cap bounds
-within-turn continuations, not cross-turn nags. Re-nudge only from `idle`, which
-a new event id (not in the watermark) restores from `completed` or `expired`.
+`expired` is closer-eligible, and neither `expired` nor `completed` is a handshake
+entry status **on its own**. A zero-write continuation must not re-inject on every
+later Stop — the numeric cap bounds within-turn continuations, not cross-turn
+nags. Both re-enter on exactly one signal: an event id for the run that is **not**
+in `last_triaged_event_ids`. Where that signal is *applied* differs, and the
+difference is not observable to a hook:
+
+| status | how the signal re-admits it |
+|---|---|
+| `completed` | the attaching write **atomically** flips it to `idle` (see [Debounce](#debounce)), and `begin` then arms from `idle` |
+| `expired` | the status is left alone; `begin` evaluates the same signal as its entry rule |
+
+Leaving `expired` in place is deliberate: flipping it to `idle` would let the
+*debounce* re-admit it on elapsed time alone, which is precisely the cross-turn
+nag on an unresponsive session this paragraph rules out. Either way, `begin`
+arms only when new provenance exists, and both statuses stay closer-eligible
+throughout — declining a *nudge* is never declining a *debrief*.
 
 `stop_hook_active=true` never injects a new prompt; it only finalizes or expires.
 Claude's eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
@@ -559,6 +572,15 @@ applies the same complete-or-expire rule and does not inject again. A live sessi
 keeps refreshing the lease, so "expire pending after the lease" cannot fire while
 the user is working — that expiry is only for a dead session the closer will pick
 up. Interrupted triage in a live session is the next Stop, not the lease.
+
+**`pending` means an interactive attempt is in flight, and nothing else.** The
+handshake's fence is `(triage_status = 'pending', triage_attempt_id)`, and
+`triage_attempt_id` has a second writer — the closer's claim (layer 5). So when
+the closer takes over a closed row that is still `pending`, its claim also
+retires the abandoned handshake to `expired` in the same statement. Without that,
+a resurrection (which preserves both columns) would republish a closer-owned
+token through `begin`'s `pending` reply, and the hook would finalize an attempt
+whose session had already died.
 
 ### Debounce
 
@@ -620,7 +642,12 @@ Three implementation decisions the page left open:
   stale-claim recovery. Postgres serializes two UPDATEs of one row, so the CAS is
   equally atomic. The trade is that the claim fences rather than excludes: two
   in-flight passes are possible, and are harmless only because v1 is
-  resolve-only. Physical table count stays **27**.
+  resolve-only. Physical table count stays **27**. The claim also **retires a
+  `pending` handshake to `expired`** in the same statement, and only ever runs on
+  a row with `closed_at` set: a closed row still marked `pending` is an attempt
+  whose session ended before `triage/complete`, so the closer is taking it over,
+  and leaving the status behind would publish this token into the interactive
+  fence (layer 4).
 - **The closer's writes carry PRE-RESOLVED provenance.** They never enter the
   write-time attach path: the closer's rows are closed or lease-expired by
   construction, so `resolveSessionProvenance` would take the resurrect branch —
