@@ -27,11 +27,58 @@ func TestRunBriefingSubagentRoleSkipsAutoPull(t *testing.T) {
 	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
 	t.Setenv("THREENGRAM_HOOK_ROLE", "subagent")
 
-	if rc := runBriefing(); rc != 0 {
-		t.Fatalf("runBriefing() returned %d, want 0", rc)
-	}
+	captureHook(t, `{"session_id":"sess-sub","source":"startup"}`, func() int {
+		return runBriefing(nil)
+	})
 	if got := hits.Load(); got != 0 {
 		t.Fatalf("expected no auto-pull requests, got %d", got)
+	}
+}
+
+// TestRunHeartbeatSubagentRoleSkips pins the SAME filter on the new Stop hook:
+// a Task-dispatched sub-agent must not refresh (or resurrect) the main agent's
+// lease, and SubagentStop is never registered at all.
+func TestRunHeartbeatSubagentRoleSkips(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("THREENGRAM_API_BASE", srv.URL)
+	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
+	t.Setenv("THREENGRAM_HOOK_ROLE", "subagent")
+
+	captureHook(t, `{"session_id":"sess-sub","last_assistant_message":"done"}`, func() int {
+		return runHeartbeat(nil)
+	})
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("expected no heartbeat requests, got %d", got)
+	}
+}
+
+// TestRunCloseSubagentRoleSkips pins the same filter on SessionEnd: a sub-agent
+// finishing must not close the main agent's session row.
+func TestRunCloseSubagentRoleSkips(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("THREENGRAM_API_BASE", srv.URL)
+	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
+	t.Setenv("THREENGRAM_HOOK_ROLE", "subagent")
+
+	captureHook(t, `{"session_id":"sess-sub","reason":"exit"}`, func() int {
+		return runClose(nil)
+	})
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("expected no close requests, got %d", got)
 	}
 }
 
@@ -67,14 +114,18 @@ func TestDeriveBriefingSelector(t *testing.T) {
 	})
 }
 
+// TestBuildBriefingQuery pins `mode=full` onto EVERY selector. The default
+// `brief` slice is counts plus a small top slice, so a startup that stamped
+// briefed_memories from it would record a subset the closer then treats as
+// everything the agent saw. Bounding is the LOCAL truncate's job.
 func TestBuildBriefingQuery(t *testing.T) {
 	cases := []struct {
 		sel  briefingSelector
 		want string
 	}{
-		{briefingSelector{Kind: "all"}, "?kind=all"},
-		{briefingSelector{Kind: "project", Project: "3ngram"}, "?kind=project&project=3ngram"},
-		{briefingSelector{Kind: "scope", Scope: "work"}, "?kind=scope&scope=work"},
+		{briefingSelector{Kind: "all"}, "?kind=all&mode=full"},
+		{briefingSelector{Kind: "project", Project: "3ngram"}, "?kind=project&mode=full&project=3ngram"},
+		{briefingSelector{Kind: "scope", Scope: "work"}, "?kind=scope&mode=full&scope=work"},
 	}
 	for _, tc := range cases {
 		if got := buildBriefingQuery(tc.sel); got != tc.want {
@@ -149,26 +200,42 @@ func TestRunBriefingRendersRichOutput(t *testing.T) {
 		"preferences": {"count": 0, "items": []}
 	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/briefing" {
+		switch r.URL.Path {
+		case "/api/v1/briefing":
+			if r.URL.Query().Get("kind") == "" {
+				http.Error(w, "missing kind selector", http.StatusBadRequest)
+				return
+			}
+			if r.URL.Query().Get("mode") != "full" {
+				http.Error(w, "missing mode=full", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		case "/api/v1/agent-sessions/open":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"sessionRunId":"` + testRunID + `","activationEpoch":1,"created":true,"reopened":false}`))
+		default:
 			http.Error(w, "wrong path", http.StatusBadRequest)
-			return
 		}
-		if r.URL.Query().Get("kind") == "" {
-			http.Error(w, "missing kind selector", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 
+	isolateCwd(t)
 	t.Setenv("THREENGRAM_API_BASE", srv.URL)
 	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
 	t.Setenv("THREENGRAM_HOOK_ROLE", "")
 	t.Setenv("THREENGRAM_BRIEFING_KIND", "all")
+	t.Setenv("THREENGRAM_AGENT", "claude-code")
 
-	if rc := runBriefing(); rc != 0 {
-		t.Fatalf("runBriefing() returned %d, want 0", rc)
+	out := captureHook(t, `{"session_id":"sess-rich","source":"startup"}`, func() int {
+		return runBriefing(nil)
+	})
+	if !strings.Contains(out, "**Blockers**") {
+		t.Fatalf("briefing render missing from stdout:\n%s", out)
+	}
+	if !strings.Contains(out, testRunID) {
+		t.Fatalf("sessionRunId not injected into stdout:\n%s", out)
 	}
 }
 
