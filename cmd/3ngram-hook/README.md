@@ -40,8 +40,15 @@ Nothing here writes a memory.
   `BRIEFING_MAX_TOKENS` truncation; `resume` reuses the row and never restamps;
   `compact` is neither an open nor a restamp — it heartbeats the row to recover
   the `sessionRunId` that compaction discarded with the context; `clear` asks the
-  server which of the two it is (an unknown natural key means the harness minted
-  a new conversation id, so it opens as `startup`).
+  server which of the two it is — a `404` means the harness minted a new
+  conversation id, so it opens as `startup`, while a `200` is already the answer
+  (the probe returned the run id and refreshed the lease, so no second call is
+  made). Any other probe result is not an existence answer: the briefing is still
+  delivered, the lifecycle is skipped, and one line goes to stderr.
+- A failed or unparseable briefing does **not** skip the open. The read and the
+  bookkeeping write are independent calls, and Stop never creates a missing row —
+  so the session would otherwise run unattributed because one read went wrong.
+  `briefedMemories` is omitted in that case, since no briefing was delivered.
 - The `sessionRunId` and an instruction to pass it on `remember` / `revise` /
   `resolve` are appended to the injected briefing. Propagation is
   **model-mediated and best-effort** — a write that omits it falls back to the
@@ -61,6 +68,15 @@ main-agent `Stop` only — never `SubagentStop`.
 cd cmd/3ngram-hook
 CGO_ENABLED=0 go build -ldflags="-s -w" -o 3ngram-hook .
 ```
+
+`contract_gen.go` is generated and committed, so a source build needs no Node
+toolchain. It carries the two bounds the hook must honour before it builds a
+request body (`MAX_SESSION_EXCERPT_LENGTH`, `MAX_BRIEFED_MEMORIES`), mirrored
+from `packages/schema` by `scripts/gen-hook-contract.mjs`. Regenerate with
+`pnpm run docs:generate` from the repo root; CI's `docs-reference` lane diffs it
+byte for byte, so a schema change that is not regenerated goes red. Nothing else
+from the Zod boundary is mirrored — the server's parse is the single validator
+for shapes.
 
 Cross-compile:
 
@@ -237,7 +253,7 @@ definition.
 | `THREENGRAM_API_KEY` | (none) | API key for `X-API-Key` auth |
 | `THREENGRAM_SCOPE` | `personal` | Scope for briefing/search (`personal`/`work`/…) |
 | `THREENGRAM_BRIEFING_KIND` | (auto) | Briefing selector: `all`, `scope`, or `project` |
-| `THREENGRAM_AGENT` | (auto) | Harness name for the session natural key (kebab-case). `--agent` on the subcommand wins; Claude Code is auto-detected; anything else falls back to `unknown-agent` |
+| `THREENGRAM_AGENT` | (auto) | Harness name for the session natural key (kebab-case). `--agent` on the subcommand wins; Claude Code is auto-detected; anything else falls back to `unknown-agent` with a one-time stderr note |
 | `THREENGRAM_HOOK_ROLE` | (none) | Set to `subagent` to suppress the briefing auto-pull and every session-lifecycle call |
 | `THREENGRAM_HOOK_DEBUG` | `0` | Set to `1` to dump payloads to `/tmp/3ngram-hook-debug/` |
 | `THREENGRAM_PRECHECK_DISABLE` | `0` | Set to `1` to disable the PreToolUse surfacing |
