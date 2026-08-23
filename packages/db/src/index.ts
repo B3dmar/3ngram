@@ -341,6 +341,19 @@ export {
   type SessionEventRow,
   type SessionEventsPage,
 } from './session-events-read.js'
+// --- hook-facing session lifecycle: open / close / heartbeat (natural key) ---
+export {
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
+  type AgentSessionRecord,
+  type CloseSessionResult,
+  closeSession,
+  type HeartbeatSessionResult,
+  heartbeatSession,
+  type OpenSessionResult,
+  openSession,
+  readAgentSession,
+} from './session-lifecycle.js'
 export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
 export {
   getUserProfileAttributes,

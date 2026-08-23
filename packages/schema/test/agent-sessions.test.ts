@@ -2,13 +2,19 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  agentSessionCloseBodySchema,
+  agentSessionHeartbeatBodySchema,
+  agentSessionOpenBodySchema,
   agentSessionRowSchema,
   agentSessionSourceSchema,
   agentSessionTriageStatusSchema,
   archiveMemoryBodySchema,
   briefedMemorySchema,
   DEFAULT_SESSION_EVENTS_LIMIT,
+  debriefPromptQuerySchema,
+  MAX_BRIEFED_MEMORIES,
   MAX_SESSION_EVENTS_LIMIT,
+  MAX_SESSION_EXCERPT_LENGTH,
   nativeRememberInputSchema,
   resolveToolInputSchema,
   sessionEventSchema,
@@ -283,5 +289,147 @@ describe('sessionEventsQuerySchema over a raw Express query object', () => {
   it('parses a null-prototype object (what Express actually hands the route)', () => {
     const query = Object.assign(Object.create(null), { limit: '3' })
     expect(sessionEventsQuerySchema.parse(query)).toEqual({ limit: 3 })
+  })
+})
+
+// --- hook-facing lifecycle contracts (issue #166 step 5a) ---
+
+const KEY = { agent: 'claude-code', sessionId: 'conv-abc' }
+
+describe('agentSessionOpenBodySchema', () => {
+  it('defaults the selector to the axis-free `all` and leaves the facets absent', () => {
+    expect(agentSessionOpenBodySchema.parse({ ...KEY, source: 'startup' })).toEqual({
+      ...KEY,
+      source: 'startup',
+      selector: { kind: 'all' },
+    })
+  })
+
+  it('accepts the surviving briefed rows the hook reports after its local truncate', () => {
+    const briefedMemories = [{ id: RUN, topic: 'ship 5a', status: 'open' }]
+    const parsed = agentSessionOpenBodySchema.parse({
+      ...KEY,
+      source: 'startup',
+      project: '3ngram',
+      scope: 'work',
+      briefedMemories,
+    })
+    expect(parsed.briefedMemories).toEqual(briefedMemories)
+  })
+
+  it('distinguishes an empty briefing from no briefing at all', () => {
+    // An empty array is a delivery that surfaced nothing — the server still
+    // stamps briefing_delivered_at; an absent key is no delivery.
+    expect(
+      agentSessionOpenBodySchema.parse({ ...KEY, source: 'startup', briefedMemories: [] })
+        .briefedMemories,
+    ).toEqual([])
+    expect(
+      agentSessionOpenBodySchema.parse({ ...KEY, source: 'startup' }).briefedMemories,
+    ).toBeUndefined()
+  })
+
+  it('bounds the briefed list at MAX_BRIEFED_MEMORIES', () => {
+    const row = { id: RUN, topic: 't', status: 'open' }
+    const atCap = Array.from({ length: MAX_BRIEFED_MEMORIES }, () => row)
+    expect(
+      agentSessionOpenBodySchema.safeParse({ ...KEY, source: 'startup', briefedMemories: atCap })
+        .success,
+    ).toBe(true)
+    expect(
+      agentSessionOpenBodySchema.safeParse({
+        ...KEY,
+        source: 'startup',
+        briefedMemories: [...atCap, row],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects `compact` and `clear` — neither is an open (compact is never stored)', () => {
+    expect(agentSessionOpenBodySchema.safeParse({ ...KEY, source: 'compact' }).success).toBe(false)
+    expect(agentSessionOpenBodySchema.safeParse({ ...KEY, source: 'clear' }).success).toBe(false)
+  })
+
+  it('rejects a non-kebab agent and an empty harness session id', () => {
+    expect(
+      agentSessionOpenBodySchema.safeParse({ ...KEY, agent: 'Claude Code', source: 'startup' })
+        .success,
+    ).toBe(false)
+    expect(
+      agentSessionOpenBodySchema.safeParse({ ...KEY, sessionId: '', source: 'startup' }).success,
+    ).toBe(false)
+  })
+
+  it('rejects server-owned fields on the wire', () => {
+    // The briefing stamp is the POST, not a client clock; the epoch and the run
+    // id are the server's to assign.
+    for (const extra of [
+      { briefingDeliveredAt: '2026-08-23T10:00:00.000Z' },
+      { activationEpoch: 2 },
+      { sessionRunId: RUN },
+      { userId: RUN },
+      { lastMessageExcerpt: 'x' },
+    ]) {
+      expect(
+        agentSessionOpenBodySchema.safeParse({ ...KEY, source: 'startup', ...extra }).success,
+        JSON.stringify(extra),
+      ).toBe(false)
+    }
+  })
+})
+
+describe('agentSessionCloseBodySchema', () => {
+  it('is the natural key and nothing else — close never carries an epoch', () => {
+    expect(agentSessionCloseBodySchema.parse(KEY)).toEqual(KEY)
+    expect(agentSessionCloseBodySchema.safeParse({ ...KEY, activationEpoch: 3 }).success).toBe(
+      false,
+    )
+    expect(agentSessionCloseBodySchema.safeParse({ ...KEY, sessionRunId: RUN }).success).toBe(false)
+  })
+})
+
+describe('agentSessionHeartbeatBodySchema', () => {
+  it('bounds the excerpt at MAX_SESSION_EXCERPT_LENGTH', () => {
+    const atCap = 'x'.repeat(MAX_SESSION_EXCERPT_LENGTH)
+    expect(
+      agentSessionHeartbeatBodySchema.parse({ ...KEY, lastMessageExcerpt: atCap })
+        .lastMessageExcerpt,
+    ).toHaveLength(MAX_SESSION_EXCERPT_LENGTH)
+    expect(
+      agentSessionHeartbeatBodySchema.safeParse({ ...KEY, lastMessageExcerpt: `${atCap}x` })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rejects an empty excerpt rather than storing a meaningless snapshot', () => {
+    expect(
+      agentSessionHeartbeatBodySchema.safeParse({ ...KEY, lastMessageExcerpt: '' }).success,
+    ).toBe(false)
+  })
+
+  it('takes the natural key with no excerpt at all', () => {
+    expect(agentSessionHeartbeatBodySchema.parse(KEY)).toEqual(KEY)
+  })
+})
+
+describe('debriefPromptQuerySchema', () => {
+  it('accepts no arguments at all', () => {
+    expect(debriefPromptQuerySchema.parse({})).toEqual({})
+  })
+
+  it('requires agent and sessionId to move together', () => {
+    expect(debriefPromptQuerySchema.safeParse(KEY).success).toBe(true)
+    expect(debriefPromptQuerySchema.safeParse({ agent: 'claude-code' }).success).toBe(false)
+    expect(debriefPromptQuerySchema.safeParse({ sessionId: 'conv-abc' }).success).toBe(false)
+  })
+
+  it('rejects an unknown key and a repeated param', () => {
+    expect(debriefPromptQuerySchema.safeParse({ scopes: 'work' }).success).toBe(false)
+    expect(debriefPromptQuerySchema.safeParse({ scope: ['work', 'personal'] }).success).toBe(false)
+  })
+
+  it('validates scope against the same constraint the remember TOOL enforces', () => {
+    expect(debriefPromptQuerySchema.safeParse({ scope: 'Work Notes' }).success).toBe(false)
+    expect(debriefPromptQuerySchema.parse({ scope: 'work' })).toEqual({ scope: 'work' })
   })
 })

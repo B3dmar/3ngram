@@ -26,6 +26,8 @@
 import { log } from '@3ngram/config'
 import {
   AccessDeniedError,
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
@@ -163,6 +165,17 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     log().warn({ route, err: err.name }, 'rest: memory not found')
     return { status: 404, reason: 'not_found' }
   }
+  // Close / heartbeat / debrief-render named a natural key this tenant owns no
+  // row for (RLS makes not-found and not-owned one answer). The hook treats it
+  // as "nothing to close" — SessionEnd correctness never depended on it (the
+  // lease + sweep do). Only the bounded key is logged, never briefing rows.
+  if (err instanceof AgentSessionNotFoundError) {
+    log().warn(
+      { route, err: err.name, agent: err.agent, session_id: err.sessionId },
+      'rest: agent session not found',
+    )
+    return { status: 404, reason: 'not_found' }
+  }
   // Documented domain CONFLICTS (409): already superseded, edge conflict, a
   // commitment already rides the memory, an illegal FSM transition, a scope-name
   // collision. Names the class / a bounded id or enum state only, never content.
@@ -172,7 +185,11 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     err instanceof CommitmentExistsError ||
     err instanceof ScopeNameConflictError ||
     err instanceof EpisodicSupersessionError ||
-    err instanceof SuccessorNotLiveError
+    err instanceof SuccessorNotLiveError ||
+    // A `startup` open reusing a natural key that already names a row opened
+    // with different identity params — "request token; reuse with changed
+    // params is 409" (docs/concepts/session-continuity.mdx, REST surface).
+    err instanceof AgentSessionParamsConflictError
   ) {
     log().warn({ route, err: err.name }, 'rest: conflict')
     return { status: 409, reason: 'conflict' }

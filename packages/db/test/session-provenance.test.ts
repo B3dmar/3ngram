@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit tests — no DB. attachKnownRun's RE-READ UNDER THE LOCK (Codex P2).
+// Unit tests — no DB. attachKnownRun's RE-READ UNDER THE LOCK (Codex P2), and
+// the ROW lock that re-read takes (SELECT ... FOR UPDATE) so a concurrent close
+// cannot commit between the resurrect decision and the resurrect itself.
 //
 // The pre-lock read decides "stale lease -> resurrect", but two concurrent
 // writes carrying the SAME stale run id both take that read before either holds
@@ -47,25 +49,45 @@ const stale = (closedAt: Date | null = null, project: string | null = PROJECT) =
   lastSeenAt: new Date(NOW.getTime() - SESSION_LEASE_MS - 60_000),
 })
 
-type SessionRead = Record<string, unknown> | undefined
+type SessionRead = Record<string, unknown> | Record<string, unknown>[] | undefined
 
 /**
  * Fake tenant tx replaying one row per SELECT (FIFO — the pre-lock read, then
  * the re-read under the lock) and recording every UPDATE's `set` values, which
  * is what separates a heartbeat (lastSeenAt only) from a resurrect (closedAt +
  * activationEpoch).
+ *
+ * `rowLocks` records, per SELECT in order, whether it asked for `FOR UPDATE`.
+ * A drizzle select is a thenable, so awaiting the builder directly runs the
+ * plain read while `.for('update')` runs the row-locking one — the fake mirrors
+ * that so a test can assert WHICH read takes the row lock, not merely that some
+ * read did.
  */
 function makeTx(reads: SessionRead[]) {
   const updates: Record<string, unknown>[] = []
+  const rowLocks: boolean[] = []
   const queue = [...reads]
+  const read = async (rowLocked: boolean) => {
+    rowLocks.push(rowLocked)
+    const row = queue.shift()
+    // A queue entry may be an ARRAY to script a multi-row result — the
+    // single-open probe selects up to two rows and branches on the count.
+    if (Array.isArray(row)) return row
+    return row === undefined ? [] : [row]
+  }
   const tx = {
     select: () => ({
       from: () => ({
         where: () => ({
-          limit: async () => {
-            const row = queue.shift()
-            return row === undefined ? [] : [row]
-          },
+          limit: () => ({
+            for: (strength: string) => read(strength === 'update'),
+            // A drizzle select IS a thenable: awaiting the builder runs the
+            // plain read while `.for('update')` runs the row-locking one. The
+            // fake must be one too, or it cannot tell those two calls apart.
+            // biome-ignore lint/suspicious/noThenProperty: mirrors drizzle's thenable select builder
+            then: (onOk: (rows: unknown) => unknown, onErr?: (err: unknown) => unknown) =>
+              read(false).then(onOk, onErr),
+          }),
         }),
       }),
     }),
@@ -78,7 +100,7 @@ function makeTx(reads: SessionRead[]) {
     }),
   }
   currentTx = tx
-  return { tx: tx as unknown as Parameters<typeof resolveSessionProvenance>[0], updates }
+  return { tx: tx as unknown as Parameters<typeof resolveSessionProvenance>[0], updates, rowLocks }
 }
 
 type FakeTx = ReturnType<typeof makeTx>['tx']
@@ -172,6 +194,28 @@ describe('attachKnownRun re-reads under the attach lock', () => {
 
     await expect(attach(tx)).rejects.toBeInstanceOf(UnknownSessionRunError)
     expect(updates).toHaveLength(0)
+  })
+
+  it('row-locks the re-read (SELECT ... FOR UPDATE), never the pre-lock read', async () => {
+    // The advisory lock only serializes attachers. Close is a bare UPDATE of
+    // closed_at that never takes it, so the re-read must hold the ROW lock or a
+    // close can commit between the decision and the resurrect it justified —
+    // reopening a session the tenant explicitly closed. The pre-lock read stays
+    // unlocked so a live session's writes do not queue behind one row lock.
+    const { tx, rowLocks } = makeTx([stale(), stale()])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    expect(rowLocks).toEqual([false, true])
+  })
+
+  it('row-locks every re-read when the project moved under the lock', async () => {
+    const { tx, rowLocks } = makeTx([stale(), stale(null, null), stale(null, null)])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    // Pre-lock read unlocked; both re-reads under an advisory lock row-locked.
+    expect(rowLocks).toEqual([false, true, true])
   })
 })
 
@@ -269,13 +313,61 @@ describe('assertSessionRunOwned', () => {
   })
 })
 
+describe('attachSingleOpen (omitted sessionRunId)', () => {
+  const attachOmitted = (tx: FakeTx, now = NOW) =>
+    resolveSessionProvenance(tx, USER, { project: PROJECT, now })
+
+  it('row-locks the single-open probe, then heartbeats and attaches', async () => {
+    // Same read->write gap the attachKnownRun re-read closes: close is a bare
+    // UPDATE of closed_at that never takes the advisory lock, so without the row
+    // lock this write could attribute itself to a session just ended.
+    const { tx, updates, rowLocks } = makeTx([[leased()]])
+
+    await expect(attachOmitted(tx)).resolves.toBe(RUN)
+
+    expect(lockSessionAttach).toHaveBeenCalledTimes(1)
+    expect(rowLocks).toEqual([true])
+    expect(updates).toHaveLength(1)
+    expectMonotonicLastSeen(updates[0] as Record<string, unknown>, NOW)
+  })
+
+  it('leaves the write unattributed when the locked row turns out closed', async () => {
+    // Belt to the planner's braces: state the decision in code rather than rely
+    // on EvalPlanQual having excluded the row from the result.
+    const { tx, updates } = makeTx([[leased(NOW)]])
+
+    await expect(attachOmitted(tx)).resolves.toBeUndefined()
+
+    expect(updates).toHaveLength(0)
+  })
+
+  it('leaves the write unattributed when the locked row lease has expired', async () => {
+    const { tx, updates } = makeTx([[stale()]])
+
+    await expect(attachOmitted(tx)).resolves.toBeUndefined()
+
+    expect(updates).toHaveLength(0)
+  })
+
+  it('leaves the write unattributed on zero or many open sessions', async () => {
+    for (const rows of [[], [leased(), { ...leased(), id: 'other' }]]) {
+      const { tx, updates } = makeTx([rows])
+      await expect(attachOmitted(tx)).resolves.toBeUndefined()
+      expect(updates).toHaveLength(0)
+    }
+  })
+})
+
 describe('attachKnownRun fast paths (no lock taken)', () => {
   it('heartbeats a leased-open row without touching the attach lock', async () => {
-    const { tx, updates } = makeTx([leased()])
+    const { tx, updates, rowLocks } = makeTx([leased()])
 
     await expect(attach(tx)).resolves.toBe(RUN)
 
     expect(lockSessionAttach).not.toHaveBeenCalled()
+    // No advisory lock means no row lock either — advisory BEFORE row is the
+    // repo-wide order, so a fast path that row-locked first could invert it.
+    expect(rowLocks).toEqual([false])
     expect(updates).toHaveLength(1)
     expectMonotonicLastSeen(updates[0] as Record<string, unknown>, NOW)
   })

@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: Apache-2.0
+// Thin REST transports for the hook-facing session lifecycle
+// (docs/concepts/session-continuity.mdx layers 1, 4 and 6). Authentication is
+// mounted by restRouter before this child router; the lease arithmetic, the
+// epoch fence and the locking stay in core/db — these routes validate, call,
+// and shape ISO timestamps.
+//
+// NATURAL KEY, not sessionRunId. Stop and SessionEnd are separate processes
+// holding the harness conversation id only, and the page forbids a local
+// mapping file — so `(agent, sessionId)` rides the BODY (or the query, for the
+// debrief render) and the tenant comes from the API key. Close carries no
+// `activation_epoch` on purpose.
+//
+// Every body and query is parsed WHOLE through its strict schema, so an unknown
+// or misspelled key is a 400 rather than a silently-ignored field (the same rule
+// the session-events query rides). Logs stay ids and counts: `briefedMemories`
+// topics and `lastMessageExcerpt` never enter one (hard rule 6).
+import {
+  type AccessGate,
+  closeAgentSession,
+  getAgentSession,
+  heartbeatAgentSession,
+  openAgentSession,
+} from '@3ngram/core'
+import {
+  agentSessionCloseBodySchema,
+  agentSessionHeartbeatBodySchema,
+  agentSessionOpenBodySchema,
+  debriefPromptQuerySchema,
+} from '@3ngram/schema'
+import { Router } from 'express'
+import { renderDebriefPrompt } from '../prompts/debrief.js'
+import { defined, guard, tenant } from './route-helpers.js'
+
+export interface SessionRouterOptions {
+  /** Access gate — asserts read/write access. Undefined → no guard (test/back-compat). */
+  access?: AccessGate | undefined
+}
+
+export function sessionRouter(options: SessionRouterOptions): Router {
+  const router = Router()
+
+  // POST /api/v1/agent-sessions/open — SessionStart. Idempotent by the natural
+  // key, which doubles as the request token: a duplicate `startup` delivery with
+  // the same identity params changes nothing, one with CHANGED params is a 409.
+  router.post('/api/v1/agent-sessions/open', (req, res) => {
+    void guard('agent-sessions.open', res, async () => {
+      const input = agentSessionOpenBodySchema.parse(req.body)
+      // ACCESS GUARD: this WRITES tenant bookkeeping, so write access is
+      // asserted before the row is touched (self-host allowAllAccess allows all).
+      if (options.access) await options.access.assertWrite(tenant(req))
+      const opened = await openAgentSession(tenant(req), input)
+      res.status(200).json({
+        sessionRunId: opened.row.id,
+        activationEpoch: opened.row.activationEpoch,
+        source: input.source,
+        created: opened.created,
+        reopened: opened.reopened,
+        openedAt: opened.row.openedAt.toISOString(),
+        lastSeenAt: opened.row.lastSeenAt.toISOString(),
+        briefingDeliveredAt: opened.row.briefingDeliveredAt?.toISOString() ?? null,
+      })
+    })
+  })
+
+  // POST /api/v1/agent-sessions/close — SessionEnd. Sets `closed_at` by natural
+  // key. Idempotent: a repeat close echoes the FIRST close's timestamp, which is
+  // what keeps `closed_at <= last_seen_at + lease` identifying an explicit close.
+  router.post('/api/v1/agent-sessions/close', (req, res) => {
+    void guard('agent-sessions.close', res, async () => {
+      const input = agentSessionCloseBodySchema.parse(req.body)
+      if (options.access) await options.access.assertWrite(tenant(req))
+      const closed = await closeAgentSession(tenant(req), input)
+      res.status(200).json({
+        sessionRunId: closed.row.id,
+        activationEpoch: closed.row.activationEpoch,
+        // Core's non-null `closedAt`, never a value invented from another
+        // column: the close decision and the timestamp come from the same
+        // row-locked read, so there is nothing left to guess.
+        closedAt: closed.closedAt.toISOString(),
+        alreadyClosed: closed.alreadyClosed,
+      })
+    })
+  })
+
+  // POST /api/v1/agent-sessions/heartbeat — Stop. Monotonic lease refresh that
+  // resurrects a closed or lease-expired row, optionally snapshotting the turn's
+  // bounded `last_assistant_message` for the closer.
+  router.post('/api/v1/agent-sessions/heartbeat', (req, res) => {
+    void guard('agent-sessions.heartbeat', res, async () => {
+      const input = agentSessionHeartbeatBodySchema.parse(req.body)
+      if (options.access) await options.access.assertWrite(tenant(req))
+      const beat = await heartbeatAgentSession(tenant(req), input)
+      res.status(200).json({
+        sessionRunId: beat.row.id,
+        activationEpoch: beat.row.activationEpoch,
+        lastSeenAt: beat.row.lastSeenAt.toISOString(),
+        resurrected: beat.resurrected,
+      })
+    })
+  })
+
+  // GET /api/v1/prompts/debrief — the MCP debrief registrar over REST. MCP
+  // prompts are user-invoked and a server cannot push one, so the hook fetches
+  // the text here and injects it as a Stop continuation. It renders THE SAME
+  // function src/mcp/prompts.ts renders (src/prompts/debrief.ts) — duplicating
+  // the words into the hook would forfeit cross-harness parity.
+  //
+  // `agent` + `sessionId` name the run whose `briefed_memories` get inlined as
+  // the id -> topic/status mapping: the shipped SessionStart briefing renders
+  // topics and omits ids, so without the mapping the model cannot tell which of
+  // several open commitments to resolve. Instructions are server-authored; the
+  // facets and the briefed rows render as delimited data.
+  router.get('/api/v1/prompts/debrief', (req, res) => {
+    void guard('prompts.debrief', res, async () => {
+      const query = debriefPromptQuerySchema.parse(req.query)
+      // ACCESS GUARD: the briefed rows are tenant data (topics), so read access
+      // is asserted BEFORE the read (self-host allowAllAccess allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      const key =
+        query.agent === undefined || query.sessionId === undefined
+          ? undefined
+          : { agent: query.agent, sessionId: query.sessionId }
+      // An unknown natural key throws AgentSessionNotFoundError -> 404 rather
+      // than rendering a prompt that quietly dropped the mapping it was asked
+      // for — "resolve what you completed" with no ids is the failure the
+      // mapping exists to fix.
+      const session = key === undefined ? undefined : await getAgentSession(tenant(req), key)
+      res.status(200).json({
+        prompt: renderDebriefPrompt(
+          defined({
+            scope: query.scope,
+            project: query.project,
+            briefedCommitments: session?.briefedMemories,
+          }),
+        ),
+      })
+    })
+  })
+
+  return router
+}

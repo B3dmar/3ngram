@@ -4,10 +4,11 @@
 // hands it here inside withTenant. Import never calls this. The one exception to
 // "caller owns the tx" is assertSessionRunOwned, which core's idempotent no-op
 // path calls without a transaction of its own.
-import { SESSION_LEASE_MS, type SessionProvenancePayload } from '@3ngram/schema'
+import type { SessionProvenancePayload } from '@3ngram/schema'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import { lockSessionAttach, type TenantTx, withTenant } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
+import { isExplicitClose, isLeased, leaseFloor, monotonicLastSeen } from './session-lease.js'
 
 /** A syntactically valid sessionRunId that is not a tenant-owned row. */
 export class UnknownSessionRunError extends Error {
@@ -25,22 +26,8 @@ export function sessionPayload(
   return sessionRunId === undefined ? undefined : { sessionRunId }
 }
 
-function leaseFloor(now: Date): Date {
-  return new Date(now.getTime() - SESSION_LEASE_MS)
-}
-
-/** Explicit SessionEnd: closed while the lease was still live. Durable — lastSeenAt freezes at close. */
-function isExplicitClose(closedAt: Date | null, lastSeenAt: Date): boolean {
-  return closedAt !== null && closedAt.getTime() <= lastSeenAt.getTime() + SESSION_LEASE_MS
-}
-
 function projectPredicate(project: string | null | undefined) {
   return project == null ? isNull(agentSessions.project) : eq(agentSessions.project, project)
-}
-
-/** Lease still live at `now` (a stale lease is the resurrect trigger). */
-function isLeased(lastSeenAt: Date, now: Date): boolean {
-  return lastSeenAt.getTime() > leaseFloor(now).getTime()
 }
 
 /**
@@ -57,12 +44,31 @@ interface SessionRow {
   lastSeenAt: Date
 }
 
+/**
+ * Read one session row.
+ *
+ * `forUpdate` takes a ROW lock for the rest of the transaction. The advisory
+ * attach lock alone serializes attachers against each other, but close
+ * (`POST /api/v1/agent-sessions/close`) is a bare UPDATE of `closed_at` that
+ * never takes it — so without the row lock a close can commit BETWEEN the
+ * re-read under the advisory lock and the resurrect UPDATE that read decided on,
+ * and the resurrect then silently reopens a session the tenant just closed
+ * explicitly. `FOR UPDATE` makes that close queue behind the attaching
+ * transaction instead, so the decision and the write it justifies see the same
+ * row state.
+ *
+ * LOCK ORDER: only ever taken AFTER {@link lockSessionAttach} (advisory -> row,
+ * the repo-wide order). The pre-lock read stays unlocked on purpose: the fast
+ * path (leased-open row) must not serialize every concurrent write of a live
+ * session behind one row lock.
+ */
 async function readSession(
   tx: TenantTx,
   userId: string,
   sessionRunId: string,
+  opts?: { forUpdate?: boolean },
 ): Promise<SessionRow | undefined> {
-  const [row] = await tx
+  const query = tx
     .select({
       id: agentSessions.id,
       project: agentSessions.project,
@@ -72,23 +78,8 @@ async function readSession(
     .from(agentSessions)
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
     .limit(1)
+  const [row] = opts?.forUpdate === true ? await query.for('update') : await query
   return row
-}
-
-/**
- * MONOTONIC lease refresh: never move `last_seen_at` backwards.
- *
- * `now` is captured in the caller's process before the statement runs, so a
- * slow attacher can reach its UPDATE after a later attacher already committed a
- * NEWER heartbeat. A bare `SET last_seen_at = now` would then overwrite the
- * fresher timestamp with the older captured one, SHORTENING the lease — enough
- * for the next write to read the run as stale and resurrect it for no reason.
- * GREATEST makes a successful heartbeat a floor, never a rollback. The
- * `::timestamptz` cast is the repo's convention for an interpolated timestamp
- * param (search.ts, search-list.ts) — without it the param arrives untyped.
- */
-function monotonicLastSeen(now: Date) {
-  return sql`GREATEST(${agentSessions.lastSeenAt}, ${now.toISOString()}::timestamptz)`
 }
 
 async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
@@ -134,7 +125,10 @@ async function attachKnownRun(
   // serialized with omitted-id attach.
   //
   // INVARIANT: the resurrect/heartbeat decision is made under the attach lock
-  // keyed by the row's CURRENT project. Two things force the loop below.
+  // keyed by the row's CURRENT project, AND under a row lock on the row itself
+  // (readSession's `forUpdate`) so a close committing mid-decision cannot make
+  // the resurrect reopen an explicitly closed session. Two things force the loop
+  // below.
   //
   // (1) RE-READ under the lock. The first read was taken BEFORE the lock, so two
   //     concurrent writes carrying the SAME stale run id both saw it stale; the
@@ -161,7 +155,7 @@ async function attachKnownRun(
     const lockedProject = observed.project
     await lockSessionAttach(tx, userId, lockedProject)
 
-    const fresh = await readSession(tx, userId, sessionRunId)
+    const fresh = await readSession(tx, userId, sessionRunId, { forUpdate: true })
     if (fresh === undefined) throw new UnknownSessionRunError(sessionRunId)
     if (isExplicitClose(fresh.closedAt, fresh.lastSeenAt)) return undefined
     if (isLeased(fresh.lastSeenAt, now)) {
@@ -188,8 +182,18 @@ async function attachSingleOpen(
   // not on project. Skipping the lock when a pre-count ≠ 1 races a concurrent
   // open or resurrect.
   await lockSessionAttach(tx, userId, project)
+  // ROW-LOCKED, for the same reason attachKnownRun's re-read is: close is a bare
+  // UPDATE of `closed_at` that never takes the advisory lock, so between this
+  // SELECT and the heartbeat+attach below it could commit and this write would
+  // attribute itself to — and refresh the lease of — a session the tenant just
+  // ended. FOR UPDATE makes that close queue behind this transaction. Advisory
+  // lock first, then the row lock: the repo-wide order, preserved.
   const open = await tx
-    .select({ id: agentSessions.id })
+    .select({
+      id: agentSessions.id,
+      closedAt: agentSessions.closedAt,
+      lastSeenAt: agentSessions.lastSeenAt,
+    })
     .from(agentSessions)
     .where(
       and(
@@ -200,9 +204,16 @@ async function attachSingleOpen(
       ),
     )
     .limit(2)
-  const id = open.length === 1 ? open[0]?.id : undefined
-  if (id !== undefined) await heartbeat(tx, userId, id, now)
-  return id
+    .for('update')
+  const candidate = open.length === 1 ? open[0] : undefined
+  if (candidate === undefined) return undefined
+  // Re-check on the LOCKED row. Postgres re-evaluates the qual against the new
+  // version under READ COMMITTED, so a row closed in the gap is normally already
+  // excluded — this is the explicit belt to that braces, and the one place the
+  // decision is stated in code rather than inferred from the planner.
+  if (candidate.closedAt !== null || !isLeased(candidate.lastSeenAt, now)) return undefined
+  await heartbeat(tx, userId, candidate.id, now)
+  return candidate.id
 }
 
 /**
