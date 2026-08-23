@@ -296,6 +296,18 @@ export const envSchema = z
     // account creation when the corpus is down. The toggle and the fail-open
     // behaviour are separate axes (data-model D4).
     PASSWORD_BREACH_CHECK_ENABLED: z.stringbool().default(false),
+    // Session closer (docs/concepts/session-continuity.mdx layer 5). When true,
+    // the worker registers the lease-expiry sweep and processes closer jobs: a
+    // background LLM pass that auto-RESOLVES briefed commitments a closed
+    // session completed. Nothing else — it never writes new memories.
+    //
+    // DEFAULT OFF, and it stays off until measured. The page's validation bar is
+    // a positive commitment-recall improvement over the 0% baseline, judged by a
+    // dogfood audit rather than by CI, plus a spurious rate near the curated
+    // path's zero. Flipping this default is that later decision, not this one.
+    // With the flag off the sweep is never scheduled, so no row is implicitly
+    // closed and no generation is billed.
+    SESSION_CLOSER_ENABLED: z.stringbool().default(false),
     // SMTP delivery for password-reset emails (self-host hardening). ALL OPTIONAL and env-GATED: when SMTP_HOST +
     // SMTP_FROM are both set the app constructs a real nodemailer transport and
     // emails the reset link; when either is absent the forgot-password route
@@ -693,6 +705,24 @@ export function loadLlmGatewayConfig(): LlmGatewayConfig | undefined {
     return undefined
   }
   return { baseUrl: env.LLM_GATEWAY_URL, apiKey: env.LLM_GATEWAY_API_KEY }
+}
+
+/** Resolved session-closer config (docs/concepts/session-continuity.mdx layer 5). */
+export interface SessionCloserConfig {
+  /** Register the lease-expiry sweep and process closer jobs. Default off. */
+  enabled: boolean
+}
+
+/**
+ * Resolve the session-closer config. Always returns a value — the flag has a
+ * bounded default (false), so a worker boots with the closer inert unless the
+ * deployment opts in. Deliberately NOT folded into the gateway config: "a
+ * gateway is configured" and "the closer may run" are different decisions, and
+ * a deployment that embeds should not acquire a background LLM pass by
+ * side effect.
+ */
+export function loadSessionCloserConfig(): SessionCloserConfig {
+  return { enabled: loadEnv().SESSION_CLOSER_ENABLED }
 }
 
 /**

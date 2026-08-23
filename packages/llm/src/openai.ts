@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-// OpenAI-compatible embedding Gateway ("bring your own gateway").
+// OpenAI-compatible Gateway ("bring your own gateway").
 //
 // A minimal, REAL implementation of the {@link Gateway} interface over the
-// OpenAI `/embeddings` REST shape (which every self-hostable gateway — LiteLLM,
-// vLLM, the OpenAI API itself — speaks). fetch-based (node builtin): ZERO new
-// dependencies, honouring the supply-chain posture (AGENTS.md hard rule 7).
+// OpenAI `/embeddings` and `/chat/completions` REST shapes (which every
+// self-hostable gateway — LiteLLM, vLLM, the OpenAI API itself — speaks).
+// fetch-based (node builtin): ZERO new dependencies, honouring the supply-chain
+// posture (AGENTS.md hard rule 7).
 //
-// SCOPE (Phase 2D D0): only embed() is implemented — it is what core search()
-// needs to function. complete() throws NotImplementedError; it lands when a tool
-// needs generation (consolidation/judge are eval-side). Constructed by the app
-// ONLY when the gateway env is configured (env-gated, like OAuth); when absent
-// the MCP search tool surfaces a typed "embedding gateway not configured" error
-// and remember() runs with embedding off.
+// SCOPE. embed() is what core search() needs to function. complete() was a
+// NotImplementedError stub until a tool needed generation; the session closer
+// (docs/concepts/session-continuity.mdx layer 5) is that tool, so it is
+// implemented here rather than duplicated into apps/worker — a provider call
+// outside packages/llm is a build failure (scripts/check-no-direct-provider.sh).
+// Constructed by the app ONLY when the gateway env is configured (env-gated,
+// like OAuth); when absent the MCP search tool surfaces a typed "embedding
+// gateway not configured" error, remember() runs with embedding off, and the
+// closer stays inert.
 //
 // Observability (hard rule 6): NO key material and NO text content enters any
 // log or error message. This module logs nothing; the only error it raises names
@@ -21,6 +25,15 @@ import { EMBEDDING_DIMENSIONS, type EmbedResult, type Gateway } from './types.js
 /** The embedding model + dimensionality the schema is built around. */
 export const EMBEDDING_MODEL = 'text-embedding-3-large'
 
+/**
+ * Default generation model for {@link Gateway.complete}. Small and cheap on
+ * purpose: the only production generation caller is the session closer, whose
+ * job is a bounded classification ("which of these briefed ids did the work
+ * complete?"), not open-ended prose. Overridable per deployment via
+ * `completionModel`.
+ */
+export const COMPLETION_MODEL = 'gpt-4o-mini'
+
 /** Resolved config for the OpenAI-compatible gateway. */
 export interface OpenAIGatewayConfig {
   /** Base URL of the gateway (no trailing slash), e.g. https://api.openai.com/v1. */
@@ -29,15 +42,37 @@ export interface OpenAIGatewayConfig {
   apiKey: string
   /** Override the embedding model; defaults to {@link EMBEDDING_MODEL}. */
   model?: string
+  /** Override the generation model; defaults to {@link COMPLETION_MODEL}. */
+  completionModel?: string
   /** Request timeout in ms (HTTP calls must be bounded). Defaults to 30s. */
   timeoutMs?: number
 }
 
-/** Raised when a not-yet-implemented gateway operation is invoked (D0: complete). */
+/**
+ * Raised when a not-yet-implemented gateway operation is invoked. No operation
+ * on this gateway raises it today ({@link createOpenAIGateway} implements both
+ * `embed` and `complete`); it is kept as the typed shape a future operation
+ * declares itself unimplemented with, and because callers already discriminate
+ * on it.
+ */
 export class NotImplementedError extends Error {
   constructor(operation: string) {
     super(`gateway operation not implemented: ${operation}`)
     this.name = 'NotImplementedError'
+  }
+}
+
+/**
+ * Raised when a generation response is structurally wrong — no choice, or a
+ * choice with no text. Counts only in the message, never the prompt or the
+ * partial completion (hard rule 6). A caller that strict-parses the completion
+ * must be able to tell "the gateway returned nothing" from "the model returned
+ * something I rejected"; collapsing both into an empty string hid the first.
+ */
+export class InvalidCompletionResponseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidCompletionResponseError'
   }
 }
 
@@ -86,6 +121,10 @@ function stripTrailingSlashes(value: string): string {
   return value.slice(0, end)
 }
 
+interface CompletionResponse {
+  choices?: Array<{ message?: { content?: unknown } }>
+}
+
 interface EmbeddingResponse {
   data?: Array<{ embedding?: number[] }>
   // Token accounting for cost tracking. Carries no content —
@@ -102,6 +141,7 @@ interface EmbeddingResponse {
 export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
   const baseUrl = stripTrailingSlashes(config.baseUrl)
   const model = config.model ?? EMBEDDING_MODEL
+  const completionModel = config.completionModel ?? COMPLETION_MODEL
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   async function embed(texts: readonly string[], _operation: string): Promise<EmbedResult> {
@@ -156,8 +196,52 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
     }
   }
 
-  function complete(_prompt: string, _operation: string): Promise<string> {
-    return Promise.reject(new NotImplementedError('complete'))
+  /**
+   * One generation round-trip over the OpenAI-compatible `/chat/completions`
+   * shape — the same REST surface every self-hostable gateway (LiteLLM, vLLM,
+   * the OpenAI API) speaks, so "bring your own gateway" still holds.
+   *
+   * `temperature: 0` because the only production caller is a classification
+   * pass whose output is strict-parsed against a schema; sampling variance
+   * there is not creativity, it is flake.
+   *
+   * Same observability contract as embed(): the prompt carries tenant content,
+   * so neither it nor the completion nor the response body may enter a log line
+   * or an error message. {@link GatewayRequestError} names the status only.
+   */
+  async function complete(prompt: string, _operation: string): Promise<string> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: Response
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: completionModel,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0,
+        }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!response.ok) {
+      await response.text().catch(() => undefined)
+      throw new GatewayRequestError('complete', response.status)
+    }
+    const payload = (await response.json()) as CompletionResponse
+    const text = payload.choices?.[0]?.message?.content
+    if (typeof text !== 'string') {
+      throw new InvalidCompletionResponseError(
+        `completion response has ${payload.choices?.length ?? 0} choices with no text content`,
+      )
+    }
+    return text
   }
 
   return { embed, complete }
