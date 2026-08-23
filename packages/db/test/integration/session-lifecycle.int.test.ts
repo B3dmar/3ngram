@@ -389,7 +389,7 @@ describe('heartbeatSession', () => {
     // revoked mid-flight — must not restore user content onto the tombstone.
     const opened = await open(uid, { ...KEY, source: 'startup' })
     await beat(uid, { ...KEY, lastMessageExcerpt: 'before erasure' })
-    await withTenant(uid, (tx) => eraseAccountData(tx, uid))
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
     const erased = (await rawRow(opened.row.id)).last_message_excerpt
 
     const after = await beat(uid, { ...KEY, lastMessageExcerpt: 'after erasure' }, LATER)
