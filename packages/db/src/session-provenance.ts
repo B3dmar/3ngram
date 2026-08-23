@@ -57,12 +57,31 @@ interface SessionRow {
   lastSeenAt: Date
 }
 
+/**
+ * Read one session row.
+ *
+ * `forUpdate` takes a ROW lock for the rest of the transaction. The advisory
+ * attach lock alone serializes attachers against each other, but close
+ * (`POST /api/v1/agent-sessions/close`) is a bare UPDATE of `closed_at` that
+ * never takes it — so without the row lock a close can commit BETWEEN the
+ * re-read under the advisory lock and the resurrect UPDATE that read decided on,
+ * and the resurrect then silently reopens a session the tenant just closed
+ * explicitly. `FOR UPDATE` makes that close queue behind the attaching
+ * transaction instead, so the decision and the write it justifies see the same
+ * row state.
+ *
+ * LOCK ORDER: only ever taken AFTER {@link lockSessionAttach} (advisory -> row,
+ * the repo-wide order). The pre-lock read stays unlocked on purpose: the fast
+ * path (leased-open row) must not serialize every concurrent write of a live
+ * session behind one row lock.
+ */
 async function readSession(
   tx: TenantTx,
   userId: string,
   sessionRunId: string,
+  opts?: { forUpdate?: boolean },
 ): Promise<SessionRow | undefined> {
-  const [row] = await tx
+  const query = tx
     .select({
       id: agentSessions.id,
       project: agentSessions.project,
@@ -72,6 +91,7 @@ async function readSession(
     .from(agentSessions)
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
     .limit(1)
+  const [row] = opts?.forUpdate === true ? await query.for('update') : await query
   return row
 }
 
@@ -134,7 +154,10 @@ async function attachKnownRun(
   // serialized with omitted-id attach.
   //
   // INVARIANT: the resurrect/heartbeat decision is made under the attach lock
-  // keyed by the row's CURRENT project. Two things force the loop below.
+  // keyed by the row's CURRENT project, AND under a row lock on the row itself
+  // (readSession's `forUpdate`) so a close committing mid-decision cannot make
+  // the resurrect reopen an explicitly closed session. Two things force the loop
+  // below.
   //
   // (1) RE-READ under the lock. The first read was taken BEFORE the lock, so two
   //     concurrent writes carrying the SAME stale run id both saw it stale; the
@@ -161,7 +184,7 @@ async function attachKnownRun(
     const lockedProject = observed.project
     await lockSessionAttach(tx, userId, lockedProject)
 
-    const fresh = await readSession(tx, userId, sessionRunId)
+    const fresh = await readSession(tx, userId, sessionRunId, { forUpdate: true })
     if (fresh === undefined) throw new UnknownSessionRunError(sessionRunId)
     if (isExplicitClose(fresh.closedAt, fresh.lastSeenAt)) return undefined
     if (isLeased(fresh.lastSeenAt, now)) {

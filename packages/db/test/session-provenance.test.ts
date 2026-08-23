@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit tests — no DB. attachKnownRun's RE-READ UNDER THE LOCK (Codex P2).
+// Unit tests — no DB. attachKnownRun's RE-READ UNDER THE LOCK (Codex P2), and
+// the ROW lock that re-read takes (SELECT ... FOR UPDATE) so a concurrent close
+// cannot commit between the resurrect decision and the resurrect itself.
 //
 // The pre-lock read decides "stale lease -> resurrect", but two concurrent
 // writes carrying the SAME stale run id both take that read before either holds
@@ -54,18 +56,31 @@ type SessionRead = Record<string, unknown> | undefined
  * the re-read under the lock) and recording every UPDATE's `set` values, which
  * is what separates a heartbeat (lastSeenAt only) from a resurrect (closedAt +
  * activationEpoch).
+ *
+ * `rowLocks` records, per SELECT in order, whether it asked for `FOR UPDATE`.
+ * A drizzle select is a thenable, so awaiting the builder directly runs the
+ * plain read while `.for('update')` runs the row-locking one — the fake mirrors
+ * that so a test can assert WHICH read takes the row lock, not merely that some
+ * read did.
  */
 function makeTx(reads: SessionRead[]) {
   const updates: Record<string, unknown>[] = []
+  const rowLocks: boolean[] = []
   const queue = [...reads]
+  const read = async (rowLocked: boolean) => {
+    rowLocks.push(rowLocked)
+    const row = queue.shift()
+    return row === undefined ? [] : [row]
+  }
   const tx = {
     select: () => ({
       from: () => ({
         where: () => ({
-          limit: async () => {
-            const row = queue.shift()
-            return row === undefined ? [] : [row]
-          },
+          limit: () => ({
+            for: (strength: string) => read(strength === 'update'),
+            then: (onOk: (rows: unknown) => unknown, onErr?: (err: unknown) => unknown) =>
+              read(false).then(onOk, onErr),
+          }),
         }),
       }),
     }),
@@ -78,7 +93,7 @@ function makeTx(reads: SessionRead[]) {
     }),
   }
   currentTx = tx
-  return { tx: tx as unknown as Parameters<typeof resolveSessionProvenance>[0], updates }
+  return { tx: tx as unknown as Parameters<typeof resolveSessionProvenance>[0], updates, rowLocks }
 }
 
 type FakeTx = ReturnType<typeof makeTx>['tx']
@@ -172,6 +187,28 @@ describe('attachKnownRun re-reads under the attach lock', () => {
 
     await expect(attach(tx)).rejects.toBeInstanceOf(UnknownSessionRunError)
     expect(updates).toHaveLength(0)
+  })
+
+  it('row-locks the re-read (SELECT ... FOR UPDATE), never the pre-lock read', async () => {
+    // The advisory lock only serializes attachers. Close is a bare UPDATE of
+    // closed_at that never takes it, so the re-read must hold the ROW lock or a
+    // close can commit between the decision and the resurrect it justified —
+    // reopening a session the tenant explicitly closed. The pre-lock read stays
+    // unlocked so a live session's writes do not queue behind one row lock.
+    const { tx, rowLocks } = makeTx([stale(), stale()])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    expect(rowLocks).toEqual([false, true])
+  })
+
+  it('row-locks every re-read when the project moved under the lock', async () => {
+    const { tx, rowLocks } = makeTx([stale(), stale(null, null), stale(null, null)])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    // Pre-lock read unlocked; both re-reads under an advisory lock row-locked.
+    expect(rowLocks).toEqual([false, true, true])
   })
 })
 
@@ -271,11 +308,14 @@ describe('assertSessionRunOwned', () => {
 
 describe('attachKnownRun fast paths (no lock taken)', () => {
   it('heartbeats a leased-open row without touching the attach lock', async () => {
-    const { tx, updates } = makeTx([leased()])
+    const { tx, updates, rowLocks } = makeTx([leased()])
 
     await expect(attach(tx)).resolves.toBe(RUN)
 
     expect(lockSessionAttach).not.toHaveBeenCalled()
+    // No advisory lock means no row lock either — advisory BEFORE row is the
+    // repo-wide order, so a fast path that row-locked first could invert it.
+    expect(rowLocks).toEqual([false])
     expect(updates).toHaveLength(1)
     expectMonotonicLastSeen(updates[0] as Record<string, unknown>, NOW)
   })
