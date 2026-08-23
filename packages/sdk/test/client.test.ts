@@ -173,6 +173,17 @@ describe('ThreengramClient request shape', () => {
     expect(result).toEqual(payload)
   })
 
+  it('resolve forwards optional sessionRunId in the body', async () => {
+    const id = crypto.randomUUID()
+    const runId = crypto.randomUUID()
+    const { fetch, calls } = stubFetch(200, { commitmentId: id, status: 'resolved' })
+    const client = new ThreengramClient(CONFIG, fetch)
+
+    await client.resolve(id, 'resolved', { sessionRunId: runId })
+
+    expect(only(calls).body).toEqual({ status: 'resolved', sessionRunId: runId })
+  })
+
   it('strips trailing slashes from baseUrl so paths never double up', async () => {
     const { fetch, calls } = stubFetch(200, { hits: [], count: 0 })
     const client = new ThreengramClient({ ...CONFIG, baseUrl: 'https://api.example.com///' }, fetch)

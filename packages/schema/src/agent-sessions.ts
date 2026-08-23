@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Session-control contracts (docs/concepts/session-continuity.mdx).
 // One validation boundary: enums and payload shape live HERE. Native write
-// plumbing (sessionRunId on remember) is a later step; this module is the
-// table + provenance payload.
+// table + provenance payload. Native write plumbing lives on
+// nativeRememberInputSchema (packages/schema/src/write.ts).
 import { z } from 'zod'
 import { briefingSelectorV2Schema } from './briefing-bounds.js'
 import { scopeSchema } from './scope.js'
@@ -32,6 +32,9 @@ export const agentSessionTriageStatusSchema = z.enum([
   'overflowed',
 ])
 export type AgentSessionTriageStatus = z.infer<typeof agentSessionTriageStatusSchema>
+
+/** Lease duration: overnight idle must still count as open. Evaluated on read/write. */
+export const SESSION_LEASE_MS = 24 * 60 * 60 * 1000
 
 /** Closed native-write payload. JSON keys are spelling-sensitive — the index uses the same spelling. */
 export const sessionProvenancePayloadSchema = z

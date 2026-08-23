@@ -40,9 +40,10 @@ export async function archiveMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
+  sessionRunId?: string,
 ): Promise<{ id: string; status: 'archived' }> {
   try {
-    return await dbArchiveMemory(userId, memoryId, actorKind)
+    return await dbArchiveMemory(userId, memoryId, actorKind, sessionRunId)
   } catch (error) {
     if (error instanceof ActiveMemoryNotFoundError) throw new MemoryNotFoundError(memoryId)
     throw error

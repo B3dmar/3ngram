@@ -19,6 +19,7 @@ export {
   MAX_BRIEFED_MEMORIES,
   MAX_SESSION_EVENT_IDS,
   MAX_SESSION_EXCERPT_LENGTH,
+  SESSION_LEASE_MS,
   sessionProvenancePayloadSchema,
 } from './agent-sessions.js'
 export type {
@@ -313,6 +314,7 @@ export { resourceLimitKindSchema, resourceLimitsSchema } from './resource-limits
 // --- REST /api/v1 dashboard contract — appended block ---
 export type {
   AccountDeleteBody,
+  ArchiveMemoryBody,
   DashboardSearchHit,
   DashboardSearchQuery,
   DashboardSearchResponse,
@@ -337,6 +339,7 @@ export type {
 } from './rest.js'
 export {
   accountDeleteBodySchema,
+  archiveMemoryBodySchema,
   DEFAULT_DASHBOARD_SEARCH_LIMIT,
   DEFAULT_MEMORIES_LIMIT,
   DEFAULT_REST_PROPOSALS_LIMIT,
@@ -438,6 +441,8 @@ export {
 export type {
   EdgeInput,
   FactWriteInput,
+  NativeRememberInput,
+  NativeReviseInput,
   Project,
   RememberInput,
   RememberWithFactsInput,
@@ -454,6 +459,8 @@ export {
   MAX_TAG_LENGTH,
   MAX_TAGS,
   MAX_TOPIC_LENGTH,
+  nativeRememberInputSchema,
+  nativeReviseInputSchema,
   projectSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,

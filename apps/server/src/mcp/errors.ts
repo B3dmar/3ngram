@@ -30,6 +30,7 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnknownSessionRunError,
   UnscopedRetrievalError,
 } from '@3ngram/core'
 import type { CallToolResult } from '@modelcontextprotocol/server'
@@ -80,7 +81,8 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     err instanceof InvalidEmbeddingError ||
     // A missing/empty orientation selector is the no-firehose guard (docs/concepts/mcp-design.mdx):
     // a 400-class caller mistake, not a server fault. Counted as invalid_input.
-    err instanceof MissingSelectorError
+    err instanceof MissingSelectorError ||
+    err instanceof UnknownSessionRunError
   ) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: tool input rejected')

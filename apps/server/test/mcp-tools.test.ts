@@ -245,6 +245,14 @@ class SuccessorNotLiveError extends Error {
     this.fromId = fromId
   }
 }
+class UnknownSessionRunError extends Error {
+  readonly sessionRunId: string
+  constructor(sessionRunId: string) {
+    super('session run is not owned by this tenant')
+    this.name = 'UnknownSessionRunError'
+    this.sessionRunId = sessionRunId
+  }
+}
 vi.mock('@3ngram/core', () => ({
   applyPolicyToScopeFilter,
   remember,
@@ -267,6 +275,7 @@ vi.mock('@3ngram/core', () => ({
   CommitmentNotFoundError,
   CommitmentExistsError,
   NotCommitmentMemoryError,
+  UnknownSessionRunError,
   InvalidCommitmentTransitionError,
   IllegalCommitmentTransitionError,
   MissingSelectorError,

@@ -146,6 +146,14 @@ class ResourceLimitExceededError extends Error {
     this.name = 'ResourceLimitExceededError'
   }
 }
+class UnknownSessionRunError extends Error {
+  readonly sessionRunId: string
+  constructor(sessionRunId: string) {
+    super('session run is not owned by this tenant')
+    this.name = 'UnknownSessionRunError'
+    this.sessionRunId = sessionRunId
+  }
+}
 const getBudgetStatus = vi.fn()
 
 vi.mock('@3ngram/core', () => ({
@@ -185,6 +193,7 @@ vi.mock('@3ngram/core', () => ({
   InvalidEmbeddingError,
   MissingSelectorError,
   NotCommitmentMemoryError,
+  UnknownSessionRunError,
   resolveRetrievalPolicy,
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
@@ -1265,7 +1274,13 @@ describe('POST /api/v1/memories/:id/resolve', () => {
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ commitmentId: COMMIT_ID, status: 'resolved' })
-    expect(resolveByMemoryId).toHaveBeenCalledWith(TENANT, NEW_ID, 'resolved', 'user_api')
+    expect(resolveByMemoryId).toHaveBeenCalledWith(
+      TENANT,
+      NEW_ID,
+      'resolved',
+      'user_api',
+      undefined,
+    )
   })
 
   it('409s an illegal FSM transition (invalid_transition -> HTTP)', async () => {
@@ -1309,7 +1324,7 @@ describe('POST /api/v1/memories/:id/archive', () => {
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ id: NEW_ID, status: 'archived' })
-    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api')
+    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api', undefined)
   })
 
   it('404s an unknown id (typed MemoryNotFoundError -> not_found)', async () => {
@@ -1347,6 +1362,17 @@ describe('POST /api/v1/memories/:id/archive', () => {
     const res = await call(`/api/v1/memories/${NEW_ID}/archive`, { method: 'POST' })
     expect(res.status).toBe(401)
     expect(archiveMemory).not.toHaveBeenCalled()
+  })
+
+  it('forwards optional sessionRunId from the body', async () => {
+    archiveMemory.mockResolvedValue({ id: NEW_ID, status: 'archived' })
+    const res = await call(`/api/v1/memories/${NEW_ID}/archive`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { sessionRunId: NEW_ID },
+    })
+    expect(res.status).toBe(200)
+    expect(archiveMemory).toHaveBeenCalledWith(TENANT, NEW_ID, 'user_api', NEW_ID)
   })
 })
 

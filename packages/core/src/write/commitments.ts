@@ -12,6 +12,7 @@
 // Observability (hard rule 6): ids/status only — never memory content.
 import {
   archiveBlockerMemory,
+  assertSessionRunOwned,
   BlockerNotFoundError,
   CommitmentNotFoundError,
   type CommitmentState,
@@ -155,9 +156,10 @@ export async function resolveByMemoryId(
   memoryId: string,
   to: CommitmentStatus,
   actorKind: ActorKind,
+  sessionRunId?: string,
 ): Promise<{ id: string; status: ResolveStatus }> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
-  if (current) return applyTransition(userId, current, to, actorKind)
+  if (current) return applyTransition(userId, current, to, actorKind, sessionRunId)
 
   // No commitment rides the memory. A blocker is MEMORY-ONLY: it
   // leaves the active set by archiving its OWN status, not via a commitment FSM.
@@ -167,7 +169,7 @@ export async function resolveByMemoryId(
   const memory = await withTenant(userId, (tx) => getMemoryById(tx, userId, memoryId))
   if (memory?.memoryType === 'blocker') {
     try {
-      return await archiveBlockerMemory(userId, memoryId, actorKind)
+      return await archiveBlockerMemory(userId, memoryId, actorKind, sessionRunId)
     } catch (error) {
       // A live blocker that lost a concurrent archive race (already archived /
       // superseded between the read and the UPDATE) collapses to the same
@@ -187,16 +189,29 @@ export async function resolveByMemoryId(
  * Shared FSM-validated transition body for both id- and memory-keyed surfaces. A
  * same-state transition is a no-op success; an illegal pair throws BEFORE any DB
  * write (core is the primary guard, the DB trigger is the backstop).
+ *
+ * The no-op branch still VALIDATES a supplied sessionRunId. Idempotency is about
+ * the commitment's state, not about which inputs get checked: the native-write
+ * contract is that a run id this tenant does not own fails the request, and the
+ * early return would otherwise let a foreign or nonexistent id come back 200
+ * purely because the commitment already held the requested status — the one
+ * request shape where a bad id was silently accepted. The check is ownership
+ * only: it never attaches, heartbeats, or stamps an event, so a no-op resolve
+ * cannot be used to keep a session's lease alive.
  */
 async function applyTransition(
   userId: string,
   current: CommitmentState,
   to: CommitmentStatus,
   actorKind: ActorKind,
+  sessionRunId?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
-  if (current.status === to) return { id: current.id, status: current.status }
+  if (current.status === to) {
+    if (sessionRunId !== undefined) await assertSessionRunOwned(userId, sessionRunId)
+    return { id: current.id, status: current.status }
+  }
   if (!canTransition(current.status, to)) {
     throw new InvalidCommitmentTransitionError(current.status, to)
   }
-  return dbTransitionCommitment({ userId, commitmentId: current.id, to, actorKind })
+  return dbTransitionCommitment({ userId, commitmentId: current.id, to, actorKind, sessionRunId })
 }

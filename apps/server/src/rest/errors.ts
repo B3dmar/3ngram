@@ -46,6 +46,7 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnknownSessionRunError,
   UnscopedRetrievalError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
@@ -105,6 +106,7 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     err instanceof InvalidEmbeddingError ||
     err instanceof MissingSelectorError ||
     err instanceof NotCommitmentMemoryError ||
+    err instanceof UnknownSessionRunError ||
     // A continuation cursor replayed against a different query/filter set —
     // the caller's mistake, named honestly (never a silent re-page of the old
     // search's frozen ordering). No query text is logged, only the class name.

@@ -21,11 +21,11 @@ import {
   type WrittenMemory,
   writeMemory,
 } from '@3ngram/db'
-import { type ActorKind, type FactWriteInput, rememberWithFactsInputSchema } from '@3ngram/schema'
+import { type ActorKind, type FactWriteInput, nativeRememberInputSchema } from '@3ngram/schema'
 import { assertWithinBudget, resolveResourceLimits } from '../budget/index.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 
-export { DuplicateMemoryError, type WrittenMemory } from '@3ngram/db'
+export { DuplicateMemoryError, UnknownSessionRunError, type WrittenMemory } from '@3ngram/db'
 export type { EmbedOptions } from './embed.js'
 
 /**
@@ -73,7 +73,7 @@ function contentHash(content: string): string {
  *
  * This is the single validation boundary for the write path (the same
  * convention as createUser): callers pass the RAW payload and `remember`
- * validates it exactly once via rememberWithFactsInputSchema. Transports must
+ * validates it exactly once via nativeRememberInputSchema. Transports must
  * NOT pre-validate — they hand the unparsed request body straight through.
  *
  * Structured facts: an optional `facts` list on the payload is persisted in the
@@ -104,7 +104,7 @@ export async function remember(
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
 ): Promise<WriteResult> {
-  const parsed = rememberWithFactsInputSchema.parse(input)
+  const parsed = nativeRememberInputSchema.parse(input)
   // PRE-PERSIST GUARDS (before writeMemory so a denied write never lands a row):
   //   1. ACCESS: the injected access gate denies a write when the platform policy
   //      forbids it (self-host allowAllAccess allows all). It is resolved
@@ -134,6 +134,7 @@ export async function remember(
       tags: parsed.tags,
       contentHash: contentHash(parsed.content),
       actorKind,
+      sessionRunId: parsed.sessionRunId,
     },
     maxLiveMemories,
     // Same transaction as the memory (packages/db): a fact whose source memory

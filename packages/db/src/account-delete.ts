@@ -176,6 +176,11 @@ export async function eraseAccountData(
   // and the users row is tombstoned rather than deleted, so the FK cascade
   // never fires. No DELETE grant — redact in place, keep the structural
   // skeleton (id, natural key, lease, triage).
+  // INVARIANT: this is the ONLY writer of agent_sessions.project, and it only
+  // moves it old→NULL, once. The re-lock loop in session-provenance.ts
+  // (attachKnownRun) keys its advisory lock on project and depends on that
+  // one-way, one-time mutation for lock-order convergence — any new writer of
+  // project must revisit that locking first.
   const erasedAgentSessions = await tx
     .update(agentSessions)
     .set({

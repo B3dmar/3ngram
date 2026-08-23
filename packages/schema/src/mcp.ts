@@ -29,7 +29,7 @@ import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.j
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
-import { projectSchema, rememberInputSchema, reviseInputSchema } from './write.js'
+import { nativeReviseInputSchema, projectSchema, rememberInputSchema } from './write.js'
 
 /** Upper bound on a search result window — the no-firehose ceiling (docs/concepts/mcp-design.mdx). */
 export const MAX_SEARCH_LIMIT = 25
@@ -144,14 +144,14 @@ export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 // ---------------------------------------------------------------------------
 
 /**
- * `revise` input. A thin MCP-facing alias of the canonical revise contract
- * ({@link reviseInputSchema}: a full successor memory + `predecessorId` + the
- * supersession-family `edgeIntent`, 'supersedes' | 'updates') so the tool, REST,
+ * `revise` input. A thin MCP-facing alias of the canonical native revise
+ * contract ({@link nativeReviseInputSchema}: successor memory + `predecessorId`
+ * + supersession-family `edgeIntent` + optional sessionRunId) so the tool, REST,
  * and SDK validate the SAME shape. The MCP transport hands the parsed value
  * straight to core revise(); the edge intent is NOT widened beyond what core
  * admits ('extends'/'derives' are additive edges, not a revision).
  */
-export const reviseToolInputSchema = reviseInputSchema
+export const reviseToolInputSchema = nativeReviseInputSchema
 export type ReviseToolInput = z.infer<typeof reviseToolInputSchema>
 /**
  * Caller-side (pre-parse) shape: `z.input` where server-defaulted fields
@@ -204,6 +204,12 @@ export const resolveToolInputSchema = z
   .object({
     memoryId: z.uuid(),
     status: commitmentStatusSchema,
+    sessionRunId: z
+      .uuid()
+      .optional()
+      .describe(
+        'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.',
+      ),
   })
   .strict()
 export type ResolveToolInput = z.infer<typeof resolveToolInputSchema>

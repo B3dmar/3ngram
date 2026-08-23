@@ -17,8 +17,8 @@ import type {
   CommitmentStatus,
   FactsQueryArgs,
   FactsToolOutput,
-  RememberToolArgs,
-  RememberToolOutput,
+  RememberToolArgsV2,
+  RememberToolOutputV2,
   ResolveToolOutput,
   RestErrorResponse,
   ReviseToolArgs,
@@ -77,8 +77,8 @@ export class ThreengramClient {
   }
 
   /** POST /api/v1/memories — write a memory (commitmentId present only for commitments). */
-  remember(input: RememberToolArgs): Promise<RememberToolOutput> {
-    return this.#send<RememberToolOutput>('POST', '/api/v1/memories', input)
+  remember(input: RememberToolArgsV2): Promise<RememberToolOutputV2> {
+    return this.#send<RememberToolOutputV2>('POST', '/api/v1/memories', input)
   }
 
   /** POST /api/v1/search — semantic search over the wider query+filters body. */
@@ -105,9 +105,13 @@ export class ThreengramClient {
   }
 
   /** POST /api/v1/memories/:id/resolve — transition the commitment riding a memory. */
-  resolve(memoryId: string, status: CommitmentStatus): Promise<ResolveToolOutput> {
+  resolve(
+    memoryId: string,
+    status: CommitmentStatus,
+    opts?: { sessionRunId?: string },
+  ): Promise<ResolveToolOutput> {
     const path = `/api/v1/memories/${encodeURIComponent(memoryId)}/resolve`
-    return this.#send<ResolveToolOutput>('POST', path, { status })
+    return this.#send<ResolveToolOutput>('POST', path, { status, ...opts })
   }
 
   /** Issue one request: attach the key header, body, and map both failure shapes. */

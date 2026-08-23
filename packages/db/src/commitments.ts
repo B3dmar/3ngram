@@ -28,6 +28,7 @@ import {
   isUniqueViolation,
 } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
+import { resolveSessionProvenance, sessionPayload } from './session-provenance.js'
 
 /**
  * Thrown when a commitment already exists for the given memory — the
@@ -281,6 +282,8 @@ export interface CommitmentTransition {
   to: CommitmentStatus
   /** Actor class recorded on the lifecycle audit event. */
   actorKind: ActorKind
+  sessionRunId?: string | undefined
+  now?: Date | undefined
 }
 
 /** The audit event_kind recorded for each terminal/lifecycle target status. */
@@ -321,6 +324,17 @@ export async function transitionCommitment(
         .limit(1)
       if (!existing) throw new CommitmentNotFoundError(input.commitmentId)
 
+      const [memory] = await tx
+        .select({ project: memories.project })
+        .from(memories)
+        .where(and(eq(memories.userId, input.userId), eq(memories.id, existing.memoryId)))
+        .limit(1)
+      const runId = await resolveSessionProvenance(tx, input.userId, {
+        sessionRunId: input.sessionRunId,
+        project: memory?.project,
+        now: input.now ?? new Date(),
+      })
+
       const [row] = await tx
         .update(commitments)
         .set({ status: input.to, resolvedAt, updatedAt: sql`now()` })
@@ -333,6 +347,7 @@ export async function transitionCommitment(
         memoryId: existing.memoryId,
         eventKind: TRANSITION_EVENT_KIND[input.to],
         actorKind: input.actorKind,
+        payload: sessionPayload(runId),
       })
 
       return { id: row.id, status: row.status as CommitmentStatus }
