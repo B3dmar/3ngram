@@ -4,11 +4,18 @@
 //
 // A PASS-THROUGH by design, like the rest of this module. The entry rule, the
 // debounce arithmetic, the begin/complete watermarks and the attempt-id fence
-// all live in packages/db; core adds the single parse at the validation boundary
-// (hard rule 2 — the transport hands the raw body straight here), the
-// withTenant() wrapper that puts RLS around the statements, and the two INJECTED
-// dependencies a pure db function must not invent for itself: the clock and the
-// attempt-id minter.
+// all live in packages/db; core adds the withTenant() wrapper that puts RLS
+// around the statements, and the two INJECTED dependencies a pure db function
+// must not invent for itself: the clock and the attempt-id minter.
+//
+// ONE VALIDATION BOUNDARY, AND IT IS HERE (hard rule 2). Both facades take
+// `unknown` and parse once, exactly as `remember` does
+// (packages/core/src/write/remember.ts) — the transports hand the raw body
+// straight through and never pre-parse. The repo's one sanctioned exception is a
+// transport that re-parses to shape a NORMALIZED response (the `remember` route
+// echoing the scope default; the `open` route echoing `source`); neither triage
+// route needs it, because both responses are built entirely from what these
+// functions return. So there is nothing to buy with a second parse.
 //
 // THRESHOLDS ARE INJECTED, NOT READ. `@3ngram/core` deliberately does not depend
 // on `@3ngram/config` (see packages/core/package.json), so the composition root
@@ -16,7 +23,6 @@
 // for the default values — the env schema — instead of a core-side copy free to
 // drift from it.
 import {
-  AgentSessionTriageConflictError,
   type BeginTriageResult,
   beginSessionTriage as beginSessionTriageDb,
   type CompleteTriageResult,
@@ -25,8 +31,6 @@ import {
   withTenant,
 } from '@3ngram/db'
 import {
-  type AgentSessionTriageBeginInput,
-  type AgentSessionTriageCompleteInput,
   agentSessionTriageBeginBodySchema,
   agentSessionTriageCompleteBodySchema,
 } from '@3ngram/schema'
@@ -67,7 +71,10 @@ export interface BeginTriageFacadeOptions extends SessionClockOptions {
  */
 export async function beginAgentSessionTriage(
   userId: string,
-  input: AgentSessionTriageBeginInput,
+  // `unknown`, not the parsed type: this IS the validation boundary, so it takes
+  // what a transport actually holds — a raw body. Same signature shape as
+  // `remember`, and the reason no caller can hand it a half-checked object.
+  input: unknown,
   options: BeginTriageFacadeOptions,
 ): Promise<BeginTriageResult> {
   const parsed = agentSessionTriageBeginBodySchema.parse(input)
@@ -101,7 +108,8 @@ export async function beginAgentSessionTriage(
  */
 export async function completeAgentSessionTriage(
   userId: string,
-  input: AgentSessionTriageCompleteInput,
+  /** Raw, for the same reason `begin` takes raw: the parse below is the boundary. */
+  input: unknown,
 ): Promise<CompleteTriageResult> {
   const parsed = agentSessionTriageCompleteBodySchema.parse(input)
   return withTenant(userId, (tx) =>

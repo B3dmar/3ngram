@@ -354,12 +354,12 @@ its row here even when its name and kind are unchanged.
 | `archiveMemory` | function | `9207c7f19fa9` |
 | `assertRlsInForce` | function | `d2c61c280d14` |
 | `assertWithinBudget` | function | `adfdb8f8723b` |
-| `beginAgentSessionTriage` | function | `a95411e80794` |
+| `beginAgentSessionTriage` | function | `9170ffcea114` |
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
 | `closeSessionRun` | function | `7be3707051e7` |
-| `completeAgentSessionTriage` | function | `3766fb0aa333` |
+| `completeAgentSessionTriage` | function | `38adb8d26ab2` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
 | `createScope` | function | `1e8f58a54fe9` |

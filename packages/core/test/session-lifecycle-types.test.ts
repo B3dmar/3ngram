@@ -12,7 +12,11 @@
 // would not type-check at all.
 import type { AgentSessionOpenBodyInput } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
-import type { beginAgentSessionTriage, openAgentSession } from '../src/session/index.js'
+import type {
+  beginAgentSessionTriage,
+  completeAgentSessionTriage,
+  openAgentSession,
+} from '../src/session/index.js'
 
 type OpenArg = Parameters<typeof openAgentSession>[1]
 
@@ -67,38 +71,40 @@ describe('openAgentSession input type', () => {
   })
 })
 
-// The triage facade's layering contract (issue #166 step 7a). `@3ngram/core`
-// deliberately does not depend on `@3ngram/config`, so the debounce thresholds
-// are INJECTED by the composition root rather than read here — which only holds
-// if the type makes them mandatory. A `thresholds?:` would let a transport
-// silently fall through to a core-side copy of the defaults, giving the env
-// schema a second, driftable owner.
+// The triage facade's layering contract (issue #166 step 7a). Two properties,
+// and they pull in opposite directions, which is why both are pinned:
+//
+//   1. The BODY is `unknown`. These facades are THE validation boundary and
+//      parse once, so they must accept what a transport actually holds — a raw
+//      body — exactly like `remember`. A parsed input type here would force the
+//      route to pre-parse, which is the second boundary hard rule 2 forbids.
+//   2. The OPTIONS are fully typed and `thresholds` is MANDATORY. `@3ngram/core`
+//      deliberately does not depend on `@3ngram/config`, so the composition root
+//      injects the debounce floors; an optional field would let a transport
+//      silently fall through to a core-side copy of the defaults, giving the env
+//      schema a second, driftable owner.
 type BeginOptions = Parameters<typeof beginAgentSessionTriage>[2]
-type BeginBody = Parameters<typeof beginAgentSessionTriage>[1]
 
 const _requiresThresholds: BeginOptions = { thresholds: { minTurns: 3, minElapsedMs: 600_000 } }
 
 // @ts-expect-error thresholds are not optional: the transport must supply them.
 const _rejectsMissingThresholds: BeginOptions = {}
 
-/** The turn count is a HINT the hook may omit; the other two disjuncts still apply. */
-const _acceptsOmittedTurnCount: BeginBody = { agent: 'claude-code', sessionId: 'conv-abc' }
+/** The body is unvalidated by contract — a raw Express body must type-check. */
+const _acceptsARawBody: Parameters<typeof beginAgentSessionTriage>[1] = JSON.parse('{"any":1}')
+const _completeAcceptsARawBody: Parameters<typeof completeAgentSessionTriage>[1] =
+  JSON.parse('{"any":1}')
 
-const _rejectsServerOwnedTriageFields: BeginBody = {
-  agent: 'claude-code',
-  sessionId: 'conv-abc',
-  // @ts-expect-error the server mints the attempt token; a client may not name it.
-  attemptId: '01890b6e-0000-7000-8000-0000000000bb',
-}
-
-describe('beginAgentSessionTriage input types', () => {
+describe('triage facade signatures', () => {
   it('requires injected debounce thresholds', () => {
     expect(_requiresThresholds.thresholds.minTurns).toBe(3)
     expect(_rejectsMissingThresholds).toBeDefined()
   })
 
-  it('treats the turn-count hint as optional and rejects server-owned fields', () => {
-    expect('turnCount' in _acceptsOmittedTurnCount).toBe(false)
-    expect(_rejectsServerOwnedTriageFields).toBeDefined()
+  it('takes the body raw, so the single parse can live inside', () => {
+    // The strict-parsing rules themselves are pinned at the schema, which is
+    // where they are now the only copy: packages/schema/test/agent-sessions.test.ts.
+    expect(_acceptsARawBody).toEqual({ any: 1 })
+    expect(_completeAcceptsARawBody).toEqual({ any: 1 })
   })
 })

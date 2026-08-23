@@ -7,6 +7,8 @@ import {
   agentSessionOpenBodySchema,
   agentSessionRowSchema,
   agentSessionSourceSchema,
+  agentSessionTriageBeginBodySchema,
+  agentSessionTriageCompleteBodySchema,
   agentSessionTriageStatusSchema,
   archiveMemoryBodySchema,
   briefedMemorySchema,
@@ -431,5 +433,88 @@ describe('debriefPromptQuerySchema', () => {
   it('validates scope against the same constraint the remember TOOL enforces', () => {
     expect(debriefPromptQuerySchema.safeParse({ scope: 'Work Notes' }).success).toBe(false)
     expect(debriefPromptQuerySchema.parse({ scope: 'work' })).toEqual({ scope: 'work' })
+  })
+})
+
+// The Stop-nudge handshake bodies (issue #166 step 7a). These schemas are THE
+// validation boundary for both triage routes: the transports pass the raw body
+// and `beginAgentSessionTriage` / `completeAgentSessionTriage` parse once, so
+// the strict-parsing contract belongs here — against the real schemas — rather
+// than against a transport that no longer pre-parses.
+describe('agentSessionTriageBeginBodySchema', () => {
+  it('takes the natural key alone — the turn count is an optional hint', () => {
+    expect(agentSessionTriageBeginBodySchema.parse(KEY)).toEqual(KEY)
+    expect(agentSessionTriageBeginBodySchema.parse({ ...KEY, turnCount: 4 }).turnCount).toBe(4)
+  })
+
+  it('bounds the turn count and refuses a non-integer or a string', () => {
+    // A sanity bound on a number the hook counts out of harness stdin. It does
+    // NOT coerce: this is a JSON body, not a query string, so `'4'` is a client
+    // bug worth surfacing rather than a value to guess at.
+    for (const turnCount of [-1, 1.5, 100_001, '4', null]) {
+      expect(
+        agentSessionTriageBeginBodySchema.safeParse({ ...KEY, turnCount }).success,
+        String(turnCount),
+      ).toBe(false)
+    }
+    expect(agentSessionTriageBeginBodySchema.safeParse({ ...KEY, turnCount: 0 }).success).toBe(true)
+    expect(
+      agentSessionTriageBeginBodySchema.safeParse({ ...KEY, turnCount: 100_000 }).success,
+    ).toBe(true)
+  })
+
+  it('rejects server-owned triage state a client must never name', () => {
+    // The server mints the attempt token, owns the status, and owns the
+    // watermark. `.strict()` is what makes a client that tries to set one a 400
+    // rather than a silently-ignored field.
+    for (const extra of [
+      { attemptId: RUN },
+      { triageStatus: 'idle' },
+      { lastTriagedEventIds: [] },
+      { armed: true },
+      { turncount: 4 },
+    ]) {
+      expect(
+        agentSessionTriageBeginBodySchema.safeParse({ ...KEY, ...extra }).success,
+        JSON.stringify(extra),
+      ).toBe(false)
+    }
+  })
+
+  it('holds the natural key to the same constraints every other hook route uses', () => {
+    expect(agentSessionTriageBeginBodySchema.safeParse({ agent: 'Claude Code' }).success).toBe(
+      false,
+    )
+    expect(agentSessionTriageBeginBodySchema.safeParse({ agent: 'claude-code' }).success).toBe(
+      false,
+    )
+    expect(agentSessionTriageBeginBodySchema.safeParse({ ...KEY, sessionId: '' }).success).toBe(
+      false,
+    )
+  })
+})
+
+describe('agentSessionTriageCompleteBodySchema', () => {
+  it('requires the attempt id — it is the fence, not an optional hint', () => {
+    expect(agentSessionTriageCompleteBodySchema.parse({ ...KEY, attemptId: RUN })).toEqual({
+      ...KEY,
+      attemptId: RUN,
+    })
+    expect(agentSessionTriageCompleteBodySchema.safeParse(KEY).success).toBe(false)
+  })
+
+  it('rejects a malformed attempt id and unknown keys', () => {
+    for (const body of [
+      { ...KEY, attemptId: 'not-a-uuid' },
+      { ...KEY, attemptId: null },
+      { ...KEY, attemptId: RUN, triageStatus: 'completed' },
+      { ...KEY, attemptId: RUN, turnCount: 4 },
+      { ...KEY, attemptid: RUN },
+    ]) {
+      expect(
+        agentSessionTriageCompleteBodySchema.safeParse(body).success,
+        JSON.stringify(body).slice(0, 60),
+      ).toBe(false)
+    }
   })
 })

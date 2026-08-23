@@ -31,8 +31,6 @@ import {
   agentSessionCloseBodySchema,
   agentSessionHeartbeatBodySchema,
   agentSessionOpenBodySchema,
-  agentSessionTriageBeginBodySchema,
-  agentSessionTriageCompleteBodySchema,
   debriefPromptQuerySchema,
 } from '@3ngram/schema'
 import { Router } from 'express'
@@ -125,10 +123,20 @@ export function sessionRouter(options: SessionRouterOptions): Router {
   // missing row, and a decline would hide a broken SessionStart.
   router.post('/api/v1/agent-sessions/triage/begin', (req, res) => {
     void guard('agent-sessions.triage.begin', res, async () => {
-      const input = agentSessionTriageBeginBodySchema.parse(req.body)
+      // RAW BODY, NOT PRE-PARSED. `beginAgentSessionTriage` is THE validation
+      // boundary and parses this once (hard rule 2), the same contract
+      // `remember` has. A transport only re-parses when it must echo a
+      // NORMALIZED value in the response — the `open` route does, to report
+      // `source`; this response is built entirely from what core returns, so a
+      // second parse would buy nothing and be a second boundary. A malformed
+      // body still surfaces as 400: core's ZodError maps there.
+      //
       // ACCESS GUARD: arming WRITES the row (status, attempt token, watermark).
+      // It runs before the parse now, so an unauthorised caller sending junk
+      // gets 403 rather than 400 — the right order anyway, since the shape of a
+      // request they may not make is none of their business.
       if (options.access) await options.access.assertWrite(tenant(req))
-      const begun = await beginAgentSessionTriage(tenant(req), input, {
+      const begun = await beginAgentSessionTriage(tenant(req), req.body, {
         thresholds: options.triageThresholds ?? loadSessionTriageConfig(),
       })
       res.status(200).json(
@@ -153,9 +161,9 @@ export function sessionRouter(options: SessionRouterOptions): Router {
   // must learn that its attempt is over rather than retry forever.
   router.post('/api/v1/agent-sessions/triage/complete', (req, res) => {
     void guard('agent-sessions.triage.complete', res, async () => {
-      const input = agentSessionTriageCompleteBodySchema.parse(req.body)
+      // Raw body for the same reason `begin` passes raw: core parses once.
       if (options.access) await options.access.assertWrite(tenant(req))
-      const done = await completeAgentSessionTriage(tenant(req), input)
+      const done = await completeAgentSessionTriage(tenant(req), req.body)
       res.status(200).json({
         sessionRunId: done.sessionRunId,
         triageStatus: done.triageStatus,

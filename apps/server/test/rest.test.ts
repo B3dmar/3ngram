@@ -15,6 +15,10 @@ import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+// The REAL ZodError: the triage routes no longer pre-parse, so a rejected body
+// reaches the mapper as a throw FROM core, and only the real class matches the
+// `instanceof` ladder in rest/errors.ts.
+import { ZodError } from 'zod'
 import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
@@ -2934,29 +2938,33 @@ describe('agent-session lifecycle routes', () => {
       expect(await res.json()).toEqual({ error: 'not_found' })
     })
 
-    it('400s malformed input and unknown body keys', async () => {
-      for (const body of [
-        { ...KEY, turnCount: -1 },
-        { ...KEY, turnCount: 1.5 },
-        { ...KEY, turnCount: 100_001 },
-        { ...KEY, turnCount: '4' },
-        { agent: 'Claude Code', sessionId: KEY.sessionId },
-        { agent: KEY.agent },
-        // Server-owned state a client must never be able to name.
-        { ...KEY, attemptId: ATTEMPT },
-        { ...KEY, triageStatus: 'idle' },
-        { ...KEY, lastTriagedEventIds: [] },
-        { ...KEY, turncount: 4 },
-      ]) {
-        const res = await call('/api/v1/agent-sessions/triage/begin', {
-          method: 'POST',
-          key: VALID_KEY,
-          body,
-        })
-        expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400)
-        expect(await res.json()).toEqual({ error: 'invalid_input' })
-      }
-      expect(beginAgentSessionTriage).not.toHaveBeenCalled()
+    it('forwards the body VERBATIM — core is the single validation boundary', async () => {
+      // The route does not pre-parse (hard rule 2, the `remember` contract), so
+      // the thin-adapter assertion here is that nothing is reshaped, dropped or
+      // defaulted on the way through. The strict-parsing rules themselves are
+      // pinned where the parse lives: packages/schema/test/agent-sessions.test.ts.
+      beginAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        armed: false,
+        triageStatus: 'idle',
+        reason: 'debounce',
+      })
+      const body = { ...KEY, turnCount: 0 }
+      await call('/api/v1/agent-sessions/triage/begin', { method: 'POST', key: VALID_KEY, body })
+      expect(beginAgentSessionTriage).toHaveBeenCalledWith(TENANT, body, expect.anything())
+    })
+
+    it('400s a body core rejects', async () => {
+      // End to end the behaviour is unchanged by moving the parse: core throws a
+      // ZodError and the shared mapper still returns 400 invalid_input.
+      beginAgentSessionTriage.mockRejectedValue(new ZodError([]))
+      const res = await call('/api/v1/agent-sessions/triage/begin', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { ...KEY, turnCount: -1 },
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
     })
   })
 
@@ -3030,23 +3038,32 @@ describe('agent-session lifecycle routes', () => {
       expect(res.status).toBe(404)
     })
 
-    it('400s a missing or malformed attemptId and unknown keys', async () => {
-      for (const body of [
-        KEY,
-        { ...KEY, attemptId: 'not-a-uuid' },
-        { ...KEY, attemptId: null },
-        { ...BODY, triageStatus: 'completed' },
-        { ...BODY, attemptid: ATTEMPT },
-      ]) {
-        const res = await call('/api/v1/agent-sessions/triage/complete', {
-          method: 'POST',
-          key: VALID_KEY,
-          body,
-        })
-        expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400)
-        expect(await res.json()).toEqual({ error: 'invalid_input' })
-      }
-      expect(completeAgentSessionTriage).not.toHaveBeenCalled()
+    it('forwards the body VERBATIM and 400s what core rejects', async () => {
+      // Same pass-through contract as `begin`: core owns the parse, so the
+      // route's job is to hand it the body unchanged and map the throw. The
+      // attemptId/strictness rules live in the schema suite.
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'expired',
+        eventCount: 0,
+        sinceBeginCount: 0,
+        truncated: false,
+      })
+      await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: BODY,
+      })
+      expect(completeAgentSessionTriage).toHaveBeenCalledWith(TENANT, BODY)
+
+      completeAgentSessionTriage.mockRejectedValue(new ZodError([]))
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
     })
   })
 })
