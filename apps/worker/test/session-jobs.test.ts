@@ -260,20 +260,42 @@ describe('the flag is a KILL SWITCH, not just a first-boot default', () => {
 })
 
 describe('closer job removal policy', () => {
-  it('frees the job id on both completion and failure', async () => {
+  it('frees the job id IMMEDIATELY on both terminal states', async () => {
     // The id is deterministic on (run, epoch) and BullMQ keeps terminal jobs by
     // default — and a kept job keeps its id RESERVED, so `add()` is silently
     // ignored. Without a removal policy the first pass over a run would burn
     // that id forever: a pass that returned `no-gateway`, or one that exhausted
     // its retries, would block every later attempt on the same run and epoch,
     // and configuring the gateway on the next deploy would not rescue it.
+    //
+    // `true`, NOT a count. A count policy retains the newest n terminal jobs
+    // with their ids still reserved, and evicts only when ANOTHER job finishes
+    // (no background timer) — so on a low-volume deployment the window never
+    // rotates and the bug survives. Pinned exactly, because `{ count: n }` is
+    // the plausible-looking regression.
     const { processor, sweepRun, added } = await bootQueues(true)
     await processor?.({ name: 'session-sweep' })
     const enqueue = sweepRun.mock.calls[0]?.[0] as (r: typeof DATA) => Promise<void>
     await enqueue(DATA)
 
-    expect(added[0]?.opts.removeOnComplete).toBeDefined()
-    expect(added[0]?.opts.removeOnFail).toBeDefined()
+    expect(added[0]?.opts.removeOnComplete).toBe(true)
+    expect(added[0]?.opts.removeOnFail).toBe(true)
+    unmountQueues()
+  })
+
+  it('still retries before the id is freed — removal is terminal-only', async () => {
+    // `removeOnFail` reaches moveToFailedArgs only on the non-retry branch of
+    // Job.moveToFailed, so an intermediate attempt keeps the job in the retry
+    // chain. The retry policy has to survive alongside immediate removal, or a
+    // transient DB blip would burn the pass instead of retrying it.
+    const { processor, sweepRun, added } = await bootQueues(true)
+    await processor?.({ name: 'session-sweep' })
+    const enqueue = sweepRun.mock.calls[0]?.[0] as (r: typeof DATA) => Promise<void>
+    await enqueue(DATA)
+
+    const opts = added[0]?.opts as { attempts?: number; backoff?: unknown }
+    expect(opts.attempts).toBeGreaterThan(1)
+    expect(opts.backoff).toBeDefined()
     unmountQueues()
   })
 })

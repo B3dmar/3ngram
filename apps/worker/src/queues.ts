@@ -75,25 +75,42 @@ export interface WorkerHandles {
 }
 
 /**
- * Removal policy for the DEDUPLICATED closer job.
+ * Removal policy for the DEDUPLICATED closer job: IMMEDIATE on both terminal
+ * states.
  *
  * The job id is deterministic on `(run, epoch)` so the sweep's two producers
  * collapse into one job. BullMQ keeps completed and failed jobs by default, and
  * a kept job KEEPS ITS ID RESERVED: `add()` with an existing id is silently
  * ignored (addStandardJob's duplicate branch). Without a removal policy the
- * first pass over a run would therefore burn that id forever — and a pass that
- * legitimately did no work, such as one that returned `no-gateway`, or one that
- * exhausted its retries, would block every later attempt on the same run and
- * epoch. Configuring the gateway on the next deploy would not rescue those
- * sessions; nothing would.
+ * first pass over a run burns that id forever.
  *
- * So terminal jobs free their id. A small bounded `count` keeps the most recent
- * ones inspectable without re-reserving the ids the sweep needs to reuse.
+ * `true`, NOT `{ count: n }`. A count policy only bounds the retained set — the
+ * newest n terminal jobs keep their ids, and eviction is evaluated on a
+ * best-effort basis only when ANOTHER job finishes (BullMQ runs no background
+ * timer for it). On a low-volume deployment that window never rotates, so the
+ * bug the policy was meant to fix survives: a pass that returned `no-gateway`
+ * still blocks its run after the gateway is configured, and even a SUCCESSFUL
+ * pass blocks the late-event reprocessing path for the same epoch. A count only
+ * ever mitigated the high-volume case.
+ *
+ * TERMINAL ONLY. `removeOnFail` reaches `moveToFailedArgs` exclusively on the
+ * non-retry branch of `Job.moveToFailed` (bullmq 5.78.0), so a job failing
+ * attempt 1 of 3 stays in the retry chain untouched — the id is freed once, when
+ * the attempts are exhausted.
+ *
+ * WORST CASE, and why it is acceptable: a row that keeps failing is re-enqueued
+ * once per sweep tick instead of once ever. That is bounded churn on a 20-minute
+ * cadence, it is SELF-HEALING (the moment the cause clears, the next tick
+ * succeeds), and the generation behind it is budget-capped, so a permanently
+ * broken row cannot run up spend. Losing the failed-set entry is a real cost;
+ * the `worker: job failed` handler below is the observability story that
+ * replaces it, and it carries the deterministic job id — which encodes the run
+ * and epoch — precisely so a vanished job is still traceable.
  */
 export const CLOSER_JOB_OPTS = {
   ...JOB_RETRY_OPTS,
-  removeOnComplete: { count: 100 },
-  removeOnFail: { count: 100 },
+  removeOnComplete: true,
+  removeOnFail: true,
 } as const
 
 /**
@@ -200,8 +217,23 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   )
 
   worker.on('failed', (job, err) => {
-    // ids + error name only — never job data / memory content (hard rule 6).
-    log().error({ jobId: job?.id, jobName: job?.name, err: err.name }, 'worker: job failed')
+    // ids + counts + error name only — never job data / memory content (hard
+    // rule 6). This is now the ONLY durable trace of a failed closer pass:
+    // CLOSER_JOB_OPTS removes terminal jobs immediately, so nothing survives in
+    // Redis to inspect afterwards. `jobId` carries the run and epoch for the
+    // closer (the id is derived from them), and `attemptsMade` distinguishes a
+    // transient blip that later succeeded from a run that exhausted its retries
+    // and was then re-enqueued by the next sweep tick.
+    log().error(
+      {
+        jobId: job?.id,
+        jobName: job?.name,
+        attemptsMade: job?.attemptsMade,
+        attemptsAllowed: job?.opts.attempts,
+        err: err.name,
+      },
+      'worker: job failed',
+    )
   })
 
   await queue.upsertJobScheduler(
