@@ -4,13 +4,16 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** (table, native `sessionRunId` plumbing, and the
-typed provenance read exist; hook / closer do not).
-`agent_sessions` and the `memory_events` session expression index shipped in
+**Status: design, not built** (table, native `sessionRunId` plumbing, the typed
+provenance read, and the session-lifecycle REST surface exist; hook / closer do
+not). `agent_sessions` and the `memory_events` session expression index shipped in
 migration 0032. Native remember / revise / resolve accept optional `sessionRunId`
 and stamp `{ sessionRunId }` on the audit events those writes emit, and
-`GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. No Stop nudge, no
-session-closer worker. Tracked as
+`GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. `POST
+/api/v1/agent-sessions/open|close|heartbeat` and `GET /api/v1/prompts/debrief`
+ship the hook-facing half of step 5; the Go hook that calls them (step 5b) does
+not exist yet, so nothing drives them in production. No triage routes, no Stop
+nudge, no session-closer worker. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -467,14 +470,15 @@ over REST and injects `{"decision":"block","reason": <text>}`. **3ngram owns the
 words, the hook owns the trigger.**
 
 <Warning>
-**The prompt text is not reachable over REST today.** Add
-`GET /api/v1/prompts/debrief` that renders the same registrar. Instructions are
-**server-authored**. Facets (`scope`, `project`) and briefed rows are rendered as
-delimited data (for example a fenced JSON block), not interpolated into the
-imperative sentences. `JSON.stringify` is structure-escaping, not injection
-defense — `projectSchema` permits a repo directory name that can reach a
-tool-capable turn. Duplicating the prompt into the hook forfeits cross-harness
-parity.
+**Shipped.** `GET /api/v1/prompts/debrief` renders the same registrar — one
+renderer, two transports, so the MCP prompt and the hook injection cannot drift.
+Instructions are **server-authored**. Facets (`scope`, `project`) and briefed
+rows render as delimited data (a fenced JSON block), not interpolated into the
+imperative sentences — the MCP `debrief` prompt changed to match. `JSON.stringify`
+is structure-escaping, not injection defense: `projectSchema` permits a repo
+directory name that can reach a tool-capable turn, so the fence grows past the
+longest backtick run in the payload and cannot be closed from inside.
+Duplicating the prompt into the hook would forfeit cross-harness parity.
 </Warning>
 
 The injected prompt inlines a **bounded id → topic/status mapping** from
@@ -618,20 +622,29 @@ lease + sweep do).
 
 ## REST surface (hook-facing, API-key)
 
-All of these are new, thin, idempotent (request token; reuse with changed params is
+All of these are thin, idempotent (request token; reuse with changed params is
 `409`), tenant-scoped, no memory content in logs. Hook routes take the natural key
 `(agent, session_id)` in the body; tenant from the API key. `sessionRunId` is not
 required on heartbeat/close/triage — Stop does not have it.
 
+**The natural key IS the request token** on the shipped routes. It is what a
+duplicate hook delivery repeats and what a recycled conversation id would
+collide on, so a repeat `startup` carrying the same `project` / `scope` /
+`selector` changes nothing, and one carrying different values is the `409`. No
+separate token column exists or is needed. `resume` is exempt: it is an
+activation rather than a retry, it may legitimately arrive from a moved cwd with
+`project` omitted, and the row's identity is frozen at open anyway — comparing
+there would `409` every resume of a live session instead of refreshing its lease.
+
 | Method | Path | Job |
 |---|---|---|
-| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate |
-| `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch |
-| `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key |
+| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate (shipped) |
+| `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch (shipped) |
+| `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key; optional bounded `last_message_excerpt` (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | pending attempt |
 | `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
-| `GET` | `/api/v1/prompts/debrief` | render the same registrar |
+| `GET` | `/api/v1/prompts/debrief` | render the same registrar (shipped) |
 
 No new MCP tool.
 
@@ -648,7 +661,7 @@ Existing tools cover the jobs. The reason not to add one is the JTBD test.
 | Native-only `sessionRunId` on `rememberWithFactsInputSchema` | Must not ride `rememberInputSchema` (import extends it); core's strict parse must accept the extend |
 | `payload` through `writeMemory` and `transitionCommitment` | Native path hardcodes `undefined` / omits payload |
 | Typed provenance read | History redacts payload values by design |
-| REST prompt render + session open/close/heartbeat/triage | Prompts are MCP-only; the hook has no MCP client |
+| REST prompt render + session open/close/heartbeat (shipped) + triage | Prompts are MCP-only; the hook has no MCP client |
 | Closer job + lease-expiry sweep on the worker | Crash path never enqueues without a producer; v1 resolve-only |
 | Worker image + Compose service | `docker-compose.yml` has no worker; self-host would enqueue into a void |
 
@@ -712,7 +725,8 @@ prose here.
 | 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema + import-boundary `sessionRunId` reject | Table count 26 → 27 |
 | 3 | ~~Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor~~ | Attribution is server-validated; hooked path is not "always" |
 | 4 | ~~Typed provenance read (bounded, paginated)~~ | Closer and nudge can list this run's writes |
-| 5 | REST open / close (natural key, no epoch) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
+| 5a | ~~REST open / close (natural key, no epoch) / heartbeat / prompt render~~ | Natural-key addressing, idempotency and the lease/epoch rules hold under RLS |
+| 5b | Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |
 | 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |
 
