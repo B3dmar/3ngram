@@ -122,8 +122,10 @@ jobs:
             go:
               - 'cmd/3ngram-hook/**'
               - '.github/workflows/ci.yml'
-      # Build the distributable server image whenever its runtime closure or
-      # container/release contract changes. This is an OR of positive patterns.
+      # Build the distributable server AND worker images whenever their runtime
+      # closure or the container/release contract changes. This is an OR of
+      # positive patterns; the two images share every workspace package below,
+      # so one filter drives both builds.
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: container
         with:
@@ -136,7 +138,9 @@ jobs:
               - 'LICENSE'
               - 'NOTICE'
               - 'apps/server/**'
+              - 'apps/worker/**'
               - 'compose.selfhost.yml'
+              - 'docker-compose.yml'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -473,6 +477,33 @@ jobs:
 
           echo "container did not become healthy" >&2
           exit 1
+      # The worker is the second deployable (docs/concepts/session-continuity.mdx
+      # layer 5: the closer cannot run for self-host without it). The smallest
+      # honest gate is BUILD + the same runtime contract the server image is held
+      # to — a broken pnpm deploy filter, a dropped license file, or a root user
+      # all fail here. Booting it is deliberately NOT probed: the worker has no
+      # HTTP surface and no degraded mode, so a boot needs a live Redis, which
+      # would make this lane a compose test rather than an image test.
+      - name: Build worker runner
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        run: |
+          docker build \
+            --pull \
+            --platform linux/amd64 \
+            --target runner \
+            --file apps/worker/Dockerfile \
+            --tag "3ngram-worker-ci:${GITHUB_SHA}" \
+            .
+      - name: Inspect worker runtime contract
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
+        run: |
+          image="3ngram-worker-ci:${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "node"
+          license=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' "$image")
+          test "$license" = "Apache-2.0"
+          docker run --rm --entrypoint sh "$image" -c \
+            'test -s /usr/share/licenses/3ngram/LICENSE && test -s /usr/share/licenses/3ngram/NOTICE'
+          docker run --rm --entrypoint sh "$image" -c 'test -s /app/dist/index.js'
 
   check:
     needs: [changes, quality, container-smoke]
@@ -588,6 +619,7 @@ jobs:
               test/integration/facts-write.int.test.ts
               test/integration/session-provenance.int.test.ts
               test/integration/session-events-read.int.test.ts
+              test/integration/session-closer.int.test.ts
               test/integration/session-lifecycle.int.test.ts
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts

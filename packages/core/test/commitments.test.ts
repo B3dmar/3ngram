@@ -77,8 +77,10 @@ const {
   BlockerNotFoundError,
   CommitmentNotFoundError,
   createCommitment,
+  IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
   resolveByMemoryId,
+  resolveForClosedRun,
   transition,
 } = await import('../src/write/commitments.js')
 
@@ -315,5 +317,94 @@ describe('resolveByMemoryId (memory-keyed transition for the resolve tool)', () 
       sessionRunId: RUN,
     })
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+})
+
+// The session closer's ONLY write surface (docs/concepts/session-continuity.mdx
+// layer 5). Two properties carry the whole design:
+//
+//   1. it is RESOLVE-ONLY and it SKIPS rather than throws, so one stale
+//      candidate cannot abort a batch;
+//   2. it stamps provenance as PRE-RESOLVED. The closer's rows are closed or
+//      lease-expired by construction, so routing them through the normal attach
+//      path would resurrect the very session the pass is closing — clearing
+//      closed_at, bumping activation_epoch, and failing the closer's own fenced
+//      write-back. That is not a style preference; it is an unbounded re-sweep
+//      loop that spends an LLM call each time round.
+describe('resolveForClosedRun (session closer)', () => {
+  const RUN_ID = '00000000-0000-7000-8000-0000000000cc'
+
+  it('resolves a live open commitment with STAMPED provenance, never the attach path', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe('resolved')
+
+    const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(call.stampedSessionRunId).toBe(RUN_ID)
+    // The attach-path field must be ABSENT, not merely different: passing both
+    // would re-enter resolveSessionProvenance and resurrect the row.
+    expect(call.sessionRunId).toBeUndefined()
+    expect(call).toMatchObject({ to: 'resolved', actorKind: 'worker' })
+  })
+
+  it('re-reads LIVE and skips a commitment another session already resolved', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({
+      id: COMMITMENT,
+      memoryId: MEMORY,
+      status: 'resolved',
+    })
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'already-resolved',
+    )
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+
+  it('skips an illegal transition without writing (expired -> resolved is not an edge)', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({
+      id: COMMITMENT,
+      memoryId: MEMORY,
+      status: 'expired',
+    })
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'illegal-transition',
+    )
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+
+  it('skips a memory no commitment rides — a blocker or a note is not a closer target', async () => {
+    getCommitmentByMemoryId.mockResolvedValue(undefined)
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'not-a-commitment',
+    )
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+    // Deliberately does NOT fall through to archiveBlockerMemory the way
+    // resolveByMemoryId does: v1 resolves briefed COMMITMENTS and nothing else.
+    expect(archiveBlockerMemory).not.toHaveBeenCalled()
+  })
+
+  it('maps the DB FSM backstop to a skip — the re-read narrows the race, it does not close it', async () => {
+    // A concurrent session expires the commitment between the SELECT and the
+    // UPDATE. The trigger rejects it; the batch must survive.
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockRejectedValue(
+      new IllegalCommitmentTransitionError('expired', 'resolved'),
+    )
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'illegal-transition',
+    )
+  })
+
+  it('propagates an unexpected failure so BullMQ retries rather than reporting green', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockRejectedValue(new Error('connection terminated'))
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).rejects.toThrow(
+      'connection terminated',
+    )
   })
 })
