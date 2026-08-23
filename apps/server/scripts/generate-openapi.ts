@@ -54,6 +54,8 @@ import {
   scopeNameSchema,
   searchQuerySchema,
   searchRestResponseV2Schema,
+  sessionEventsQuerySchema,
+  sessionEventsResponseSchema,
   statsResponseSchema,
   versionResponseSchema,
 } from '@3ngram/schema'
@@ -421,6 +423,7 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded)', query: proposalsListQuerySchema, status: 200, response: proposalsList },
   { method: 'post', path: '/api/v1/proposals/:id/apply', operationId: 'applyProposal', summary: 'Accept a consolidation proposal', status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/proposals/:id/reject', operationId: 'rejectProposal', summary: 'Reject a consolidation proposal', body: proposalRejectBodySchema, optionalBody: true, status: 200, response: proposalDecision },
+  { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId/events', operationId: 'listSessionEvents', summary: 'List the audit events one agent-session run produced (bounded, keyset-paginated). Each page is its own read-committed snapshot, so a write that commits after a page was read may be absent from that walk even if its id sorts earlier; treat one walk as a bounded observation, not the complete record of a run.', query: sessionEventsQuerySchema, status: 200, response: sessionEventsResponseSchema, errors: [{ status: 400, description: 'Malformed run id, cursor or limit, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/scopes', operationId: 'listScopes', summary: 'List the tenant\'s registered scope names', status: 200, response: scopesList },
   { method: 'get', path: '/api/v1/stats', operationId: 'getStats', summary: 'Bounded count aggregates (counts only, never content)', status: 200, response: statsResponseSchema },
   { method: 'get', path: '/api/v1/me', operationId: 'getMe', summary: 'The authenticated identity', status: 200, response: meResponseSchema },

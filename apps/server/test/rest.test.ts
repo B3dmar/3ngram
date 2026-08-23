@@ -36,6 +36,7 @@ const listProposals = vi.fn()
 const applyProposal = vi.fn()
 const rejectProposal = vi.fn()
 const listScopes = vi.fn()
+const listSessionEvents = vi.fn()
 const describeEnvironment = vi.fn()
 const getCurrentUser = vi.fn()
 const exportUserData = vi.fn()
@@ -179,6 +180,7 @@ vi.mock('@3ngram/core', () => ({
   applyProposal,
   rejectProposal,
   listScopes,
+  listSessionEvents,
   describeEnvironment,
   getCurrentUser,
   deleteAccount,
@@ -321,6 +323,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
     ['GET', '/api/v1/proposals'],
     ['POST', `/api/v1/proposals/${NEW_ID}/apply`],
     ['POST', `/api/v1/proposals/${NEW_ID}/reject`],
+    ['GET', `/api/v1/agent-sessions/${NEW_ID}/events`],
     ['GET', '/api/v1/scopes'],
     ['GET', '/api/v1/stats'],
     ['GET', '/api/v1/me'],
@@ -2352,6 +2355,121 @@ describe('GET /api/v1/scopes', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ scopes: [], count: 0 })
     expect(listScopes).toHaveBeenCalledWith(TENANT)
+  })
+})
+
+// GET /api/v1/agent-sessions/:sessionRunId/events: the typed provenance read
+// (docs/concepts/session-continuity.mdx layer 3). Thin-adapter contract only —
+// the paging, the ceiling and the payload projection are core/db's job; the
+// route validates, calls core, and shapes ISO timestamps.
+describe('GET /api/v1/agent-sessions/:sessionRunId/events', () => {
+  const RUN = crypto.randomUUID()
+  const EVENT = crypto.randomUUID()
+  const events = (nextCursor?: string) => ({
+    items: [
+      {
+        id: EVENT,
+        memoryId: NEW_ID,
+        eventKind: 'create',
+        actorKind: 'user_mcp',
+        sessionRunId: RUN,
+        createdAt: new Date('2026-08-21T12:00:00.000Z'),
+      },
+    ],
+    nextCursor,
+    truncated: false,
+  })
+
+  it('happy path: shapes items and defaults the limit', async () => {
+    listSessionEvents.mockResolvedValue(events())
+    const res = await call(`/api/v1/agent-sessions/${RUN}/events`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      items: [
+        {
+          id: EVENT,
+          memoryId: NEW_ID,
+          eventKind: 'create',
+          actorKind: 'user_mcp',
+          sessionRunId: RUN,
+          createdAt: '2026-08-21T12:00:00.000Z',
+        },
+      ],
+      truncated: false,
+    })
+    // No nextCursor key at all on a final page — not a null.
+    expect(
+      await (await call(`/api/v1/agent-sessions/${RUN}/events`, { key: VALID_KEY })).text(),
+    ).not.toContain('nextCursor')
+    expect(listSessionEvents).toHaveBeenCalledWith(TENANT, RUN, { limit: 50 })
+  })
+
+  it('passes a validated cursor and coerced limit through to core', async () => {
+    listSessionEvents.mockResolvedValue(events(EVENT))
+    const res = await call(`/api/v1/agent-sessions/${RUN}/events?cursor=${EVENT}&limit=2`, {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    expect((await res.json()).nextCursor).toBe(EVENT)
+    expect(listSessionEvents).toHaveBeenCalledWith(TENANT, RUN, { cursor: EVENT, limit: 2 })
+  })
+
+  it('400s a malformed cursor and an out-of-range limit', async () => {
+    for (const query of ['?cursor=nope', '?limit=0', '?limit=101', '?limit=abc', '?limit=1.5']) {
+      const res = await call(`/api/v1/agent-sessions/${RUN}/events${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('400s an unknown query key instead of silently restarting at page 1', async () => {
+    // The route hands req.query through WHOLE, so .strict() sees the typo. If it
+    // rebuilt a { cursor, limit } object the misspelling would vanish and the
+    // caller would get page 1 again — a duplicate-results bug, not a 400.
+    for (const query of ['?cursro=x', `?cursor=${EVENT}&offset=1`, '?limit=2&projection=compact']) {
+      const res = await call(`/api/v1/agent-sessions/${RUN}/events${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('400s a repeated param (Express yields an array) rather than crashing', async () => {
+    for (const query of ['?limit=1&limit=2', `?cursor=${EVENT}&cursor=${EVENT}`]) {
+      const res = await call(`/api/v1/agent-sessions/${RUN}/events${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('400s a malformed run id before core is reached', async () => {
+    const res = await call('/api/v1/agent-sessions/not-a-uuid/events', { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('canonicalizes an uppercase run id so the run’s events are returned, not an empty page', async () => {
+    // The reader compares payload->>'sessionRunId' as TEXT. An uppercase id
+    // clears the uuid-typed ownership check, so without canonicalization at the
+    // boundary core would be handed the uppercase spelling and return nothing.
+    listSessionEvents.mockResolvedValue(events())
+    const res = await call(`/api/v1/agent-sessions/${RUN.toUpperCase()}/events`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect((await res.json()).items).toHaveLength(1)
+    expect(listSessionEvents).toHaveBeenCalledWith(TENANT, RUN, { limit: 50 })
+  })
+
+  it('maps a foreign/unknown run id to 400 invalid_input, matching the write path', async () => {
+    // Deliberately NOT 404: UnknownSessionRunError is the same error the native
+    // write path raises for the same mistake, and rest/errors.ts already maps it
+    // to 400. Consistency with the write path beats REST purism here.
+    listSessionEvents.mockRejectedValue(new UnknownSessionRunError(RUN))
+    const res = await call(`/api/v1/agent-sessions/${RUN}/events`, { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
   })
 })
 

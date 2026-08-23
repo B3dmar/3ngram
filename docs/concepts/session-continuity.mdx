@@ -4,12 +4,13 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** (table and native `sessionRunId` plumbing exist;
-hook / closer / typed read do not).
+**Status: design, not built** (table, native `sessionRunId` plumbing, and the
+typed provenance read exist; hook / closer do not).
 `agent_sessions` and the `memory_events` session expression index shipped in
 migration 0032. Native remember / revise / resolve accept optional `sessionRunId`
-and stamp `{ sessionRunId }` on the audit events those writes emit. No typed
-provenance read, no Stop nudge, no session-closer worker. Tracked as
+and stamp `{ sessionRunId }` on the audit events those writes emit, and
+`GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. No Stop nudge, no
+session-closer worker. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -441,7 +442,7 @@ The history endpoint does **not** start returning payload.
 This is a **narrowing of that rule**, not an exception:
 
 ```text
-GET /api/v1/agent-sessions/events?cursor&limit  // natural key or sessionRunId
+GET /api/v1/agent-sessions/{sessionRunId}/events?cursor&limit
   -> { items: [{ id, memoryId, eventKind, actorKind, sessionRunId, createdAt }],
        nextCursor?, truncated }
 ```
@@ -629,7 +630,7 @@ required on heartbeat/close/triage — Stop does not have it.
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | pending attempt |
 | `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark |
-| `GET` | `/api/v1/agent-sessions/events` | typed provenance read (natural key or `sessionRunId`) |
+| `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
 | `GET` | `/api/v1/prompts/debrief` | render the same registrar |
 
 No new MCP tool.
@@ -710,7 +711,7 @@ prose here.
 | 1 | ~~Settle stores vs trigger vs closer~~ | **This page** (converged 2026-08-21) |
 | 2 | Migration: `agent_sessions` (lease, unique `(user_id, agent, session_id)`, RLS) + `sessionRunId` expression index + payload schema + import-boundary `sessionRunId` reject | Table count 26 → 27 |
 | 3 | ~~Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor~~ | Attribution is server-validated; hooked path is not "always" |
-| 4 | Typed provenance read (bounded, paginated) | Closer and nudge can list this run's writes |
+| 4 | ~~Typed provenance read (bounded, paginated)~~ | Closer and nudge can list this run's writes |
 | 5 | REST open / close (natural key, no epoch) / heartbeat / prompt render. Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |
 | 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |

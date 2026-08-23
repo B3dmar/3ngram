@@ -334,6 +334,13 @@ export {
   type ChronologicalPage,
   searchList,
 } from './search-list.js'
+// --- typed provenance read: one run's audit events, payload-narrow ---
+export {
+  type ListSessionEventsOptions,
+  listSessionEvents,
+  type SessionEventRow,
+  type SessionEventsPage,
+} from './session-events-read.js'
 export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
 export {
   getUserProfileAttributes,

@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   agentSessionRowSchema,
   agentSessionSourceSchema,
   agentSessionTriageStatusSchema,
+  archiveMemoryBodySchema,
   briefedMemorySchema,
+  DEFAULT_SESSION_EVENTS_LIMIT,
+  MAX_SESSION_EVENTS_LIMIT,
+  nativeRememberInputSchema,
+  resolveToolInputSchema,
+  sessionEventSchema,
+  sessionEventsQuerySchema,
+  sessionEventsResponseSchema,
   sessionProvenancePayloadSchema,
+  sessionRunIdSchema,
 } from '../src/index.js'
 
 const RUN = '01890b6e-0000-7000-8000-000000000001'
+const EVENT = '01890b6e-0000-7000-8000-0000000000e1'
+const MEMORY = '01890b6e-0000-7000-8000-0000000000c1'
 
 describe('sessionProvenancePayloadSchema', () => {
   it('accepts only sessionRunId', () => {
@@ -86,5 +98,190 @@ describe('briefedMemorySchema', () => {
       status: 'open',
     })
     expect(briefedMemorySchema.safeParse({ id: RUN }).success).toBe(false)
+  })
+})
+
+describe('sessionEventsQuerySchema', () => {
+  it('defaults limit and omits cursor on the first page', () => {
+    expect(sessionEventsQuerySchema.parse({})).toEqual({ limit: DEFAULT_SESSION_EVENTS_LIMIT })
+  })
+
+  it('bounds limit to [1, MAX_SESSION_EVENTS_LIMIT]', () => {
+    expect(sessionEventsQuerySchema.safeParse({ limit: 0 }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ limit: 1.5 }).success).toBe(false)
+    expect(
+      sessionEventsQuerySchema.safeParse({ limit: MAX_SESSION_EVENTS_LIMIT + 1 }).success,
+    ).toBe(false)
+    expect(sessionEventsQuerySchema.parse({ limit: MAX_SESSION_EVENTS_LIMIT }).limit).toBe(
+      MAX_SESSION_EVENTS_LIMIT,
+    )
+  })
+
+  it('rejects a non-uuid cursor and unknown keys', () => {
+    expect(sessionEventsQuerySchema.safeParse({ cursor: 'not-a-uuid' }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ cursor: RUN, after: RUN }).success).toBe(false)
+  })
+
+  it('round-trips a page-2 cursor as the previous page last item id', () => {
+    const page = sessionEventsResponseSchema.parse({
+      items: [
+        {
+          id: EVENT,
+          memoryId: MEMORY,
+          eventKind: 'create',
+          actorKind: 'user_mcp',
+          sessionRunId: RUN,
+          createdAt: '2026-08-21T12:00:00.000Z',
+        },
+      ],
+      nextCursor: EVENT,
+      truncated: false,
+    })
+    expect(page.nextCursor).toBe(page.items.at(-1)?.id)
+    expect(sessionEventsQuerySchema.parse({ cursor: page.nextCursor })).toEqual({
+      cursor: EVENT,
+      limit: DEFAULT_SESSION_EVENTS_LIMIT,
+    })
+  })
+})
+
+describe('sessionEventsResponseSchema', () => {
+  const item = {
+    id: EVENT,
+    memoryId: MEMORY,
+    eventKind: 'supersede',
+    actorKind: 'user_api',
+    sessionRunId: RUN,
+    createdAt: '2026-08-21T12:00:00.000Z',
+  }
+
+  it('accepts a truncated final page with no cursor', () => {
+    expect(sessionEventsResponseSchema.parse({ items: [item], truncated: true })).toEqual({
+      items: [item],
+      truncated: true,
+    })
+  })
+
+  it('rejects an unknown event kind, a raw payload, or an over-long page', () => {
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: [{ ...item, eventKind: 'session_end' }],
+        truncated: false,
+      }).success,
+    ).toBe(false)
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: [{ ...item, payload: { sessionRunId: RUN } }],
+        truncated: false,
+      }).success,
+    ).toBe(false)
+    expect(
+      sessionEventsResponseSchema.safeParse({
+        items: Array.from({ length: MAX_SESSION_EVENTS_LIMIT + 1 }, () => item),
+        truncated: false,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('requires truncated — an absent flag is not a silent false', () => {
+    expect(sessionEventsResponseSchema.safeParse({ items: [] }).success).toBe(false)
+  })
+})
+
+describe('sessionRunIdSchema canonicalization', () => {
+  const UPPER = '01890B6E-0000-7000-8000-0000000000AA'
+  const LOWER = '01890b6e-0000-7000-8000-0000000000aa'
+
+  it('lowercases an uppercase spelling of a valid uuid', () => {
+    expect(sessionRunIdSchema.parse(UPPER)).toBe(LOWER)
+    expect(sessionRunIdSchema.parse('01890B6e-0000-7000-8000-0000000000aA')).toBe(LOWER)
+  })
+
+  it('leaves an already-canonical id untouched', () => {
+    expect(sessionRunIdSchema.parse(LOWER)).toBe(LOWER)
+  })
+
+  it('still rejects a non-uuid, whatever its casing', () => {
+    expect(sessionRunIdSchema.safeParse('NOT-A-UUID').success).toBe(false)
+    expect(sessionRunIdSchema.safeParse('ZZ890B6E-0000-7000-8000-0000000000AA').success).toBe(false)
+  })
+
+  it('canonicalizes through EVERY contract that accepts a run id', () => {
+    // One shared boundary (hard rule 2): the payload written, the DTO read back,
+    // and the native write inputs must not disagree about spelling, or an
+    // uppercase query would clear the uuid-typed ownership check and then match
+    // nothing in the text comparison the reader and its index use.
+    expect(sessionProvenancePayloadSchema.parse({ sessionRunId: UPPER })).toEqual({
+      sessionRunId: LOWER,
+    })
+    expect(
+      sessionEventSchema.parse({
+        id: EVENT,
+        memoryId: MEMORY,
+        eventKind: 'create',
+        actorKind: 'user_mcp',
+        sessionRunId: UPPER,
+        createdAt: '2026-08-21T12:00:00.000Z',
+      }).sessionRunId,
+    ).toBe(LOWER)
+    expect(
+      nativeRememberInputSchema.parse({
+        memoryType: 'note',
+        topic: 't',
+        content: 'c',
+        sessionRunId: UPPER,
+      }).sessionRunId,
+    ).toBe(LOWER)
+    expect(
+      resolveToolInputSchema.parse({
+        memoryId: MEMORY,
+        status: 'resolved',
+        sessionRunId: UPPER,
+      }).sessionRunId,
+    ).toBe(LOWER)
+    expect(archiveMemoryBodySchema.parse({ sessionRunId: UPPER }).sessionRunId).toBe(LOWER)
+  })
+
+  it('stays representable in JSON Schema in BOTH io directions', () => {
+    // A `.transform()` would throw "Transforms cannot be represented in JSON
+    // Schema" on io:'output', which is how the MCP reference and tools/list
+    // surfaces are generated. `.toLowerCase()` is a type-preserving overwrite.
+    for (const io of ['input', 'output'] as const) {
+      const json = z.toJSONSchema(resolveToolInputSchema, { target: 'draft-2020-12', io }) as {
+        properties: { sessionRunId: { type: string; format: string } }
+      }
+      expect(json.properties.sessionRunId.type).toBe('string')
+      expect(json.properties.sessionRunId.format).toBe('uuid')
+    }
+  })
+})
+
+describe('sessionEventsQuerySchema over a raw Express query object', () => {
+  // The route hands req.query through UNMODIFIED so .strict() can see a
+  // misspelled key; these cases pin the wire shapes that reaches it.
+  it('coerces a string limit and applies the default when absent', () => {
+    expect(sessionEventsQuerySchema.parse({ limit: '2' })).toEqual({ limit: 2 })
+    expect(sessionEventsQuerySchema.parse({})).toEqual({ limit: DEFAULT_SESSION_EVENTS_LIMIT })
+  })
+
+  it('rejects a misspelled pagination key instead of silently restarting at page 1', () => {
+    expect(sessionEventsQuerySchema.safeParse({ cursro: EVENT }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ cursor: EVENT, offset: '1' }).success).toBe(false)
+  })
+
+  it('rejects a repeated param (Express yields an array) rather than coercing it', () => {
+    expect(sessionEventsQuerySchema.safeParse({ limit: ['1', '2'] }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ cursor: [EVENT, EVENT] }).success).toBe(false)
+  })
+
+  it('rejects the empty string and a non-integer rather than coercing to 0/1.5', () => {
+    expect(sessionEventsQuerySchema.safeParse({ limit: '' }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ limit: '1.5' }).success).toBe(false)
+    expect(sessionEventsQuerySchema.safeParse({ limit: 'abc' }).success).toBe(false)
+  })
+
+  it('parses a null-prototype object (what Express actually hands the route)', () => {
+    const query = Object.assign(Object.create(null), { limit: '3' })
+    expect(sessionEventsQuerySchema.parse(query)).toEqual({ limit: 3 })
   })
 })

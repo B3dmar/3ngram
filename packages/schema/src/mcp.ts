@@ -29,6 +29,7 @@ import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.j
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
+import { sessionRunIdSchema } from './session-run-id.js'
 import { nativeReviseInputSchema, projectSchema, rememberInputSchema } from './write.js'
 
 /** Upper bound on a search result window — the no-firehose ceiling (docs/concepts/mcp-design.mdx). */
@@ -204,8 +205,7 @@ export const resolveToolInputSchema = z
   .object({
     memoryId: z.uuid(),
     status: commitmentStatusSchema,
-    sessionRunId: z
-      .uuid()
+    sessionRunId: sessionRunIdSchema
       .optional()
       .describe(
         'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.',

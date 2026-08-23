@@ -95,3 +95,10 @@ export {
   searchDashboardPage,
 } from './search.js'
 export { type ListOptions, type ListPage, searchChronological } from './search-list.js'
+// --- typed provenance read for one agent-session run (issue #166 step 4) ---
+export {
+  type ListSessionEventsOptions,
+  listSessionEvents,
+  type SessionEventRow,
+  type SessionEventsPage,
+} from './session-events.js'
