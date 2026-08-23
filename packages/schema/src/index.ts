@@ -446,6 +446,8 @@ export {
   searchQueryV4RelevanceSchema,
   searchQueryV4Schema,
 } from './search-list.js'
+export type { SessionRunId } from './session-run-id.js'
+export { sessionRunIdSchema } from './session-run-id.js'
 export type {
   EdgeInput,
   FactWriteInput,

@@ -95,6 +95,23 @@ async function ceilingBoundary(
  * List the audit events a run produced, oldest first, keyset-paginated on the
  * uuidv7 `id`. Events whose payload lacks the key are not in the index and
  * cannot match the equality, so they never appear.
+ *
+ * CONSISTENCY: each page is its own READ COMMITTED snapshot, so a single walk is
+ * not a point-in-time snapshot of the run. A transaction that assigned its
+ * uuidv7 `id` before page 1 was read but COMMITTED after it returned holds an id
+ * that sorts before the cursor, so that walk will not show it. This is accepted
+ * BY DESIGN, not an oversight: stateless REST pagination has no snapshot to hold
+ * across requests, and the protocol above this reader is already built for it.
+ * The triage handshake watermarks with the SET of event ids VISIBLE AT COMPLETE
+ * and re-arms on set MEMBERSHIP, precisely because "a late-committing write can
+ * hold an EARLIER uuidv7 (assigned at insert, visible after complete), which is
+ * exactly the race the set exists to catch"
+ * (docs/concepts/session-continuity.mdx, "Pending vs complete"). That section
+ * also forbids the alternative a snapshot would invite: do not watermark with
+ * `max(createdAt)` and do not fall back to "ids greater than X".
+ *
+ * Consumers must therefore treat one walk as a bounded observation, never as the
+ * complete and final record of a run.
  */
 export async function listSessionEvents(
   tx: TenantTx,

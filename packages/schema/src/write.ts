@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { actorKindSchema, edgeTypeSchema, memoryTypeSchema } from './memory.js'
 import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
+import { sessionRunIdSchema } from './session-run-id.js'
 
 /**
  * Write-path input contracts. These are the validated
@@ -202,8 +203,7 @@ export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema
  * (docs/concepts/session-continuity.mdx). JSON key spelling matches
  * sessionProvenancePayloadSchema.
  */
-const sessionRunIdField = z
-  .uuid()
+const sessionRunIdField = sessionRunIdSchema
   .optional()
   .describe(
     'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.',

@@ -301,7 +301,7 @@
             "description": "Malformed run id, cursor or limit, or a run id this tenant does not own"
           }
         },
-        "summary": "List the audit events one agent-session run produced (bounded, keyset-paginated)"
+        "summary": "List the audit events one agent-session run produced (bounded, keyset-paginated). Each page is its own read-committed snapshot, so a write that commits after a page was read may be absent from that walk even if its id sorts earlier; treat one walk as a bounded observation, not the complete record of a run."
       }
     },
     "/api/v1/briefing": {

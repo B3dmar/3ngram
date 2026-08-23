@@ -1026,6 +1026,7 @@ its row here even when its name and kind are unchanged.
 | `SessionEventsQueryInput` | type | `74701d783e24` |
 | `SessionEventsResponse` | type | `34a69709f5fc` |
 | `SessionProvenancePayload` | type | `9c58c89b1038` |
+| `SessionRunId` | type | `617e063c9e39` |
 | `SetRetrievalDefaultInput` | type | `7bdf14e37d90` |
 | `SignupInput` | type | `27484a57f0f4` |
 | `StatsResponse` | type | `b434990c3408` |
@@ -1209,9 +1210,10 @@ its row here even when its name and kind are unchanged.
 | `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
 | `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |
-| `sessionEventsQuerySchema` | const | `adb21c3b000a` |
+| `sessionEventsQuerySchema` | const | `064d55e63511` |
 | `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |
 | `sessionProvenancePayloadSchema` | const | `1f6f03db6b5d` |
+| `sessionRunIdSchema` | const | `f3fe775e7cde` |
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
 | `statsResponseSchema` | const | `8bf52ea1e959` |

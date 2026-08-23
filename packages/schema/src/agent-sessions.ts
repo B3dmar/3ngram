@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { briefingSelectorV2Schema } from './briefing-bounds.js'
 import { actorKindSchema, eventKindSchema } from './memory.js'
 import { scopeSchema } from './scope.js'
+import { sessionRunIdSchema } from './session-run-id.js'
 import { projectSchema } from './write.js'
 
 /** Harness that opened the row. Open vocabulary — new harnesses must not need a migration. */
@@ -37,10 +38,15 @@ export type AgentSessionTriageStatus = z.infer<typeof agentSessionTriageStatusSc
 /** Lease duration: overnight idle must still count as open. Evaluated on read/write. */
 export const SESSION_LEASE_MS = 24 * 60 * 60 * 1000
 
-/** Closed native-write payload. JSON keys are spelling-sensitive — the index uses the same spelling. */
+/**
+ * Closed native-write payload. JSON keys are spelling-sensitive — the index uses
+ * the same spelling — and so is the VALUE: it is compared as `text` by
+ * `payload->>'sessionRunId' = $1`, so the id rides the canonical
+ * {@link sessionRunIdSchema} rather than a bare `z.uuid()`.
+ */
 export const sessionProvenancePayloadSchema = z
   .object({
-    sessionRunId: z.uuid(),
+    sessionRunId: sessionRunIdSchema,
   })
   .strict()
 export type SessionProvenancePayload = z.infer<typeof sessionProvenancePayloadSchema>
@@ -101,14 +107,22 @@ export const DEFAULT_SESSION_EVENTS_LIMIT = 50
  * fingerprint and no scores to hide — the value is already published as
  * `items[].id` in the same response, so wrapping it would buy opacity the
  * response gives away anyway. Keyset on uuidv7 `id` over an append-only log
- * cannot duplicate or skip, so the token needs no drift guard. Numeric `limit`
- * arrives as a string over a GET; the transport coerces it before parse
- * (same as proposalsListQuerySchema).
+ * cannot duplicate or skip, so the token needs no drift guard. It needs no
+ * case-canonicalization either, unlike `sessionRunId`: the cursor is compared
+ * against `memory_events.id`, a `uuid` COLUMN, so Postgres parses either
+ * spelling to the same value (see session-run-id.ts).
+ *
+ * `limit` COERCES because the whole `req.query` object is handed to this schema
+ * unmodified — the route must not hand-pick `{ cursor, limit }` into a fresh
+ * object, or `.strict()` never sees a misspelled key like `?cursro=` and the
+ * request silently succeeds as page 1. Query values arrive as strings (and as
+ * an ARRAY when a param is repeated, `?limit=1&limit=2`), which coercion turns
+ * into NaN and the int/min/max checks then reject.
  */
 export const sessionEventsQuerySchema = z
   .object({
     cursor: z.uuid().optional(),
-    limit: z
+    limit: z.coerce
       .number()
       .int()
       .min(1)
@@ -131,7 +145,7 @@ export const sessionEventSchema = z
     memoryId: z.uuid(),
     eventKind: eventKindSchema,
     actorKind: actorKindSchema,
-    sessionRunId: z.uuid(),
+    sessionRunId: sessionRunIdSchema,
     createdAt: z.iso.datetime(),
   })
   .strict()

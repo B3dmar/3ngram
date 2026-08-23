@@ -2423,11 +2423,43 @@ describe('GET /api/v1/agent-sessions/:sessionRunId/events', () => {
     expect(listSessionEvents).not.toHaveBeenCalled()
   })
 
+  it('400s an unknown query key instead of silently restarting at page 1', async () => {
+    // The route hands req.query through WHOLE, so .strict() sees the typo. If it
+    // rebuilt a { cursor, limit } object the misspelling would vanish and the
+    // caller would get page 1 again — a duplicate-results bug, not a 400.
+    for (const query of ['?cursro=x', `?cursor=${EVENT}&offset=1`, '?limit=2&projection=compact']) {
+      const res = await call(`/api/v1/agent-sessions/${RUN}/events${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('400s a repeated param (Express yields an array) rather than crashing', async () => {
+    for (const query of ['?limit=1&limit=2', `?cursor=${EVENT}&cursor=${EVENT}`]) {
+      const res = await call(`/api/v1/agent-sessions/${RUN}/events${query}`, { key: VALID_KEY })
+      expect(res.status, query).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
   it('400s a malformed run id before core is reached', async () => {
     const res = await call('/api/v1/agent-sessions/not-a-uuid/events', { key: VALID_KEY })
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'invalid_input' })
     expect(listSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('canonicalizes an uppercase run id so the run’s events are returned, not an empty page', async () => {
+    // The reader compares payload->>'sessionRunId' as TEXT. An uppercase id
+    // clears the uuid-typed ownership check, so without canonicalization at the
+    // boundary core would be handed the uppercase spelling and return nothing.
+    listSessionEvents.mockResolvedValue(events())
+    const res = await call(`/api/v1/agent-sessions/${RUN.toUpperCase()}/events`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect((await res.json()).items).toHaveLength(1)
+    expect(listSessionEvents).toHaveBeenCalledWith(TENANT, RUN, { limit: 50 })
   })
 
   it('maps a foreign/unknown run id to 400 invalid_input, matching the write path', async () => {

@@ -60,6 +60,7 @@ import {
   resolveToolInputSchema,
   reviseToolInputSchema,
   sessionEventsQuerySchema,
+  sessionRunIdSchema,
 } from '@3ngram/schema'
 import { Router } from 'express'
 import { z } from 'zod'
@@ -313,17 +314,21 @@ export function restRouter(options: RestRouterOptions): Router {
   // tenant-owned, so an unknown/foreign id raises UnknownSessionRunError ->
   // 400 invalid_input — the same status the write path gives the same mistake.
   // The path id is parsed with the SAME uuid boundary so a malformed id gets
-  // that status too rather than the 404 :id routes use. Logs carry ids and
-  // counts only, never payload (hard rule 6).
+  // that status too rather than the 404 :id routes use — and through
+  // sessionRunIdSchema, which canonicalizes the spelling: the reader compares
+  // payload->>'sessionRunId' as TEXT, so an uppercase id would clear the
+  // uuid-typed ownership check and then match nothing (session-run-id.ts).
+  //
+  // req.query is passed WHOLE to the strict schema rather than hand-picked into
+  // a fresh { cursor, limit } object: rebuilding the object would discard a
+  // misspelled key such as `?cursro=` before `.strict()` could reject it, and
+  // the caller would silently get page 1 again instead of a 400. The schema
+  // coerces `limit` because query values are strings (or an array on a repeated
+  // param). Logs carry ids and counts only, never payload (hard rule 6).
   router.get('/api/v1/agent-sessions/:sessionRunId/events', (req, res) => {
     void guard('agent-sessions.events', res, async () => {
-      const sessionRunId = pathIdSchema.parse(req.params.sessionRunId)
-      const query = sessionEventsQuerySchema.parse(
-        defined({
-          cursor: req.query.cursor,
-          limit: req.query.limit === undefined ? undefined : Number(req.query.limit),
-        }),
-      )
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      const query = sessionEventsQuerySchema.parse(req.query)
       // ACCESS GUARD: provenance is per-tenant audit data, so read access is
       // asserted BEFORE the read (self-host allowAllAccess allows all).
       if (options.access) await options.access.assertRead(tenant(req))

@@ -8,6 +8,7 @@
 //
 // Runtime role, so every assertion here is an RLS assertion too: the owner role
 // bypasses RLS and would prove nothing about tenant isolation.
+import { sessionRunIdSchema } from '@3ngram/schema'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   assertSessionRunOwned,
@@ -152,6 +153,28 @@ describe('listSessionEvents', () => {
       [unattributed],
     )
     expect(raw.rows[0]?.payload ?? null).toBeNull()
+  })
+
+  it('stamps the canonical id, so only a canonicalized query matches', async () => {
+    await write(uidA, { sessionRunId: RUN_A })
+    const upper = RUN_A.toUpperCase()
+
+    // The stamp is the row id READ BACK from Postgres, never the caller's
+    // string, so the corpus is uniform lowercase whatever the writer passed.
+    const stamped = await ownerPool.query(
+      `SELECT payload->>'sessionRunId' AS run FROM memory_events
+       WHERE user_id = $1 AND payload->>'sessionRunId' IS NOT NULL`,
+      [uidA],
+    )
+    expect(stamped.rows.map((r) => r.run)).toEqual([RUN_A])
+
+    // Ownership is a uuid-typed comparison, so the uppercase spelling passes it…
+    await expect(assertSessionRunOwned(uidA, upper)).resolves.toBeUndefined()
+    // …but payload->>'sessionRunId' is TEXT, so the raw uppercase id matches
+    // nothing. This is exactly why sessionRunIdSchema canonicalizes at the
+    // boundary instead of the reader wrapping the indexed expression in lower().
+    expect((await read(uidA, upper, { limit: 10 })).items).toEqual([])
+    expect((await read(uidA, sessionRunIdSchema.parse(upper), { limit: 10 })).items).toHaveLength(1)
   })
 
   it('rejects another tenant’s run id and never leaks its events', async () => {
