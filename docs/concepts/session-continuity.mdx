@@ -4,8 +4,14 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** for the remaining step — the Stop nudge (step 7)
-does not exist. Everything else on this page ships. `agent_sessions` and the
+**Status: design, not built** for the remaining step — the Stop nudge HOOK
+(step 7b) does not exist. Everything else on this page ships, including the
+server half of the handshake (step 7a): `POST
+/api/v1/agent-sessions/triage/begin|complete` implement the entry rule, the
+debounce, the pending/complete/expire/overflow outcomes, the cumulative
+event-id watermark and the write-time re-arm. Nothing calls them yet — no hook
+is registered for a blocking `Stop`, which is what keeps the nudge default-off
+until the validation bar holds. `agent_sessions` and the
 `memory_events` session expression index shipped in migration 0032. Native
 remember / revise / resolve accept optional `sessionRunId` and stamp
 `{ sessionRunId }` on the audit events those writes emit, and
@@ -16,7 +22,7 @@ ship the hook-facing half of step 5, and `3ngram-hook briefing|heartbeat|close`
 **lease-expiry sweep and the resolve-only closer worker** (plus the worker image
 and Compose service), so the bookkeeping is now CONSUMED — but the closer is
 **default-off** (`SESSION_CLOSER_ENABLED`) until the validation bar below is
-measured, and there are still no triage routes and no Stop nudge. Tracked as
+measured, and there is still no Stop nudge hook. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -238,7 +244,7 @@ agent_sessions (
   activation_epoch     int not null,         -- incremented on startup/resume/resurrect; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
-  last_triaged_event_ids jsonb not null default '[]', -- all event ids for the run visible at last complete/expire, not since-attempt-begin
+  last_triaged_event_ids jsonb not null default '[]', -- event ids ACCOUNTED FOR by triage: all ids visible at the last complete/expire, and the ids visible when the current attempt began — never a since-attempt-begin slice
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
   last_message_excerpt text null,            -- bounded; closer input; cleared only after closer consumes; TTL sweep leftovers
@@ -501,6 +507,7 @@ debrief). Handshake:
 ```text
 Stop(stop_hook_active=false, triage_status=idle)
   → persist triage_status=pending (idempotent attempt id)
+  → last_triaged_event_ids = event ids visible NOW   // the begin stamp
   → inject prompt
         ↓
   model writes (ordinary MCP, actor user_mcp)
@@ -513,6 +520,16 @@ Stop(stop_hook_active=true)  OR  numeric self-cap hit
   → else if since_begin is empty: triage_status=expired   // closer-eligible
   → else: triage_status=completed
 ```
+
+`since_begin` is a **set difference against the begin stamp**, not a timestamp or
+an id comparison — the same column, advanced twice per attempt. Stamping at begin
+is what makes it recoverable from the single listing `complete` already takes,
+and it is not a widening: the events that armed *this* attempt are the ones the
+injected debrief is about, so they must not re-arm the *next* one. Every terminal
+state still holds exactly what the rule below says it holds, because visibility
+only grows and `complete` replaces the set with a superset. An attempt that never
+completes leaves the row `pending`, which is unconditionally closer-eligible, so
+the early stamp strands nothing.
 
 Those are two different listings. **Zero-write check** is `since_begin` — complete
 only when the continuation produced provenance; otherwise expire so the closer
@@ -553,8 +570,13 @@ is not optional.
 
 Signal for re-arm after a *completed* or *expired* attempt: a later provenance
 event of create / supersede / resolve / **unresolve** / **archive** whose id is
-not in `last_triaged_event_ids`. That write **atomically** sets `triage_status`
-back to `idle` (neither status is a handshake entry). The closer still selects
+not in `last_triaged_event_ids`. On a `completed` row that write **atomically**
+sets `triage_status` back to `idle`, folded into the same UPDATE the attach
+already runs — no rescan, because a brand-new uuidv7 event id cannot be in a set
+stamped before it existed. An `expired` row keeps its status and re-enters
+through the same signal at `triage/begin` instead; both statuses stay
+closer-eligible either way, and neither is a handshake entry without that signal.
+The closer still selects
 every `expired` row (zero-write: run even with no new signal) and `completed`
 rows whose event ids are not in `last_triaged_event_ids`, so a session that ends
 before the next Stop is not skipped.
@@ -708,8 +730,8 @@ there would `409` every resume of a live session instead of refreshing its lease
 | `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate (shipped) |
 | `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch (shipped) |
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key; optional bounded `last_message_excerpt` (shipped) |
-| `POST` | `/api/v1/agent-sessions/triage/begin` | pending attempt |
-| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark |
+| `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |
+| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
 | `GET` | `/api/v1/prompts/debrief` | render the same registrar (shipped) |
 
@@ -795,7 +817,8 @@ prose here.
 | 5a | ~~REST open / close (natural key, no epoch) / heartbeat / prompt render~~ | Natural-key addressing, idempotency and the lease/epoch rules hold under RLS |
 | 5b | ~~Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId`~~ | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | ~~Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve~~ | **Shipped default-off.** Commitment-recall **improvement** vs 0% is the bar for default-on; no new-atom `remember` |
-| 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |
+| 7a | ~~Triage routes: server-side entry rule + debounce, pending/complete/expire/overflow, cumulative event-id watermark, write-time re-arm~~ | **Shipped.** Complete only with provenance since attempt begin; a stale attempt cannot clobber a newer one, including a closer's |
+| 7b | Gated Stop nudge hook, one project, one harness, default-off | The hook injects only on `armed`; numeric self-cap; `stop_hook_active` finalizes |
 
 **Validation bar** (go/no-go for default-on, closer and nudge separately):
 
@@ -808,15 +831,21 @@ prose here.
 
 A recall-only pass would contradict this page's own thesis.
 
-**Do not ship step 7 ungated on Codex. Do not ship it default-on until the bar holds.**
+**Do not ship step 7b ungated on Codex. Do not ship it default-on until the bar
+holds.** The 7a routes are inert on their own: nothing calls them until a hook is
+registered for a blocking `Stop`, and they only ever answer `armed` — the
+injection decision stays with the hook.
 
 ## Open questions
 
 These are not the P1s.
 
-- **Debounce thresholds (step 7).** Tunable; pick defaults at implementation and
-  pin them with tests (resume, compact, concurrent windows, failed close,
-  same-timestamp events, missing MCP, duplicate hook delivery, malicious run id).
+- ~~**Debounce thresholds (step 7).**~~ Settled at implementation (7a):
+  `SESSION_TRIAGE_MIN_TURNS` defaults to **3** and
+  `SESSION_TRIAGE_MIN_ELAPSED_MINUTES` to **10**, and the third disjunct — an
+  untriaged provenance event — has no knob because it is a fact about the run
+  rather than a threshold. The matrix is pinned in
+  `packages/db/test/session-triage.test.ts`.
   The lease is settled at 24h, with a **1h sweep grace** on top: the lease
   already covers the overnight gap, so the grace only debounces the instant of
   expiry — and being non-zero is what keeps a swept `closed_at` outside the
