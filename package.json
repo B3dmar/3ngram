@@ -18,7 +18,7 @@
     "check": "biome ci . && turbo run check",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration --concurrency=1",
-    "docs:generate": "turbo run build --filter=\"...@3ngram/server\" && turbo run docs:generate && node scripts/report-public-api.mjs",
+    "docs:generate": "turbo run build --filter=\"...@3ngram/server\" && turbo run docs:generate && node scripts/report-public-api.mjs && node scripts/gen-hook-contract.mjs",
     "db:migrate": "pnpm --filter @3ngram/db exec drizzle-kit migrate",
     "seed": "pnpm --filter @3ngram/db run seed"
   },
