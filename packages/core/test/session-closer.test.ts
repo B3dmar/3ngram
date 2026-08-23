@@ -758,3 +758,48 @@ describe('selectResolvable — uuid case', () => {
     expect(rejected).toBe(1)
   })
 })
+
+describe('closer accounting when the gateway omits usage', () => {
+  /** A gateway that returns no `usage` object at all, as some OpenAI-compatible ones do. */
+  function usagelessGateway(reply: string): Gateway {
+    return {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.resolve({ text: reply, model: 'gpt-4o-mini' }),
+    }
+  }
+
+  it('records the row UNPRICED rather than at zero cost', async () => {
+    // Zero tokens would price the call at $0, and because the reservation is
+    // released once the call settles, the tenant's committed consumption would
+    // never move — so every later pass passes the cap check no matter what was
+    // really spent. A NULL cost_usd is the existing "unpriced" signal, which the
+    // budget gate charges at the max registered operation cost instead.
+    const repo = fakeRepo()
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: usagelessGateway(JSON.stringify({ completed: [] })) },
+    )
+
+    expect(repo.usages).toHaveLength(1)
+    expect(repo.usages[0]?.costUsd).toBeNull()
+    expect(repo.usages[0]?.inputTokens).toBe(0)
+  })
+
+  it('still prices a call whose gateway DID report usage', async () => {
+    const repo = fakeRepo()
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [] })) },
+    )
+    expect(repo.usages[0]?.costUsd).toBeGreaterThan(0)
+  })
+
+  it('prices a genuine zero-token report as zero, not unpriced', () => {
+    // "The gateway said zero" and "the gateway said nothing" must stay distinct.
+    expect(completionCostUsd('gpt-4o-mini', 0, 0)).toBe(0)
+  })
+})

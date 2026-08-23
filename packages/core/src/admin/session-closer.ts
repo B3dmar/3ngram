@@ -593,17 +593,23 @@ export async function closeSessionRun(
     // The spend was incurred the moment the call returned, so record it before
     // anything downstream can throw. Best-effort by contract: a failure to write
     // the accounting row must not lose the resolves the pass is about to make.
+    // UNPRICED when the gateway reported no usage. Recording zero tokens at
+    // $0 would leave the tenant's consumption flat, and since the reservation is
+    // released once the call settles, every later pass would pass the cap check
+    // no matter how much was really spent — a cap that looks enforced and is
+    // not. A NULL `cost_usd` is the existing signal for "unpriced", which the
+    // budget gate charges at the max registered operation cost instead.
+    const usage = completion.usage
     await repo
       .recordUsage(userId, {
         operation: CLOSER_OPERATION,
         model: completion.model,
-        inputTokens: completion.usage.inputTokens,
-        outputTokens: completion.usage.outputTokens,
-        costUsd: completionCostUsd(
-          completion.model,
-          completion.usage.inputTokens,
-          completion.usage.outputTokens,
-        ),
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+        costUsd:
+          usage === undefined
+            ? null
+            : completionCostUsd(completion.model, usage.inputTokens, usage.outputTokens),
       })
       .catch(() => undefined)
   } finally {

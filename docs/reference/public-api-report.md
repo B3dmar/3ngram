@@ -833,7 +833,7 @@ its row here even when its name and kind are unchanged.
 | `COMPLETION_MODEL` | const | `a14b5e07a163` |
 | `CapabilityClass` | type | `582b5c4aa189` |
 | `CompleteOptions` | interface | `6eb3f45aa363` |
-| `CompletionResult` | interface | `b7763e6c5919` |
+| `CompletionResult` | interface | `c3d28cdb9440` |
 | `CompletionUsage` | interface | `ad691865547f` |
 | `EMBEDDING_DIMENSIONS` | const | `4322ea3332b0` |
 | `EMBEDDING_MODEL` | const | `56d3da0b927a` |

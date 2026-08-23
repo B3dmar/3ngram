@@ -266,14 +266,23 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
           `completion response has ${payload.choices?.length ?? 0} choices with no text content`,
         )
       }
-      // Counts only, never content. A gateway that omits usage yields 0, which
-      // records the call at zero cost rather than guessing a token count.
+      // Counts only, never content. A gateway that OMITS usage yields no usage
+      // at all rather than a zeroed one: zero tokens would price the call at $0,
+      // and since a reservation is released once the call settles, the caller's
+      // budget would never accrue — a usage-omitting gateway could then generate
+      // without limit under a cap that appears to be enforced. Absent usage makes
+      // the caller record the row unpriced, where the conservative
+      // max-registered-cost fallback applies instead.
+      const usage =
+        payload.usage === undefined
+          ? undefined
+          : {
+              inputTokens: payload.usage.prompt_tokens ?? 0,
+              outputTokens: payload.usage.completion_tokens ?? 0,
+            }
       return {
         text,
-        usage: {
-          inputTokens: payload.usage?.prompt_tokens ?? 0,
-          outputTokens: payload.usage?.completion_tokens ?? 0,
-        },
+        ...(usage === undefined ? {} : { usage }),
         model: payload.model ?? completionModel,
       }
     } finally {

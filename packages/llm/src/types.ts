@@ -35,7 +35,16 @@ export interface CompletionUsage {
 export interface CompletionResult {
   /** The model's reply. Derived from tenant input: never logged. */
   text: string
-  usage: CompletionUsage
+  /**
+   * Token accounting, ABSENT when the gateway reported none.
+   *
+   * Optional on purpose: "the gateway said zero" and "the gateway said nothing"
+   * must not collapse into the same value. Defaulting a missing `usage` to zero
+   * would price the call at $0 and let a usage-omitting gateway run without ever
+   * accruing against a budget cap. A caller that cannot see real counts should
+   * record the row UNPRICED so the conservative fallback applies.
+   */
+  usage?: CompletionUsage | undefined
   /** The model that served it (used for the cost-rate lookup). */
   model: string
 }
