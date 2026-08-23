@@ -4,14 +4,14 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** no longer describes any STEP of the plan below —
-every one of them, step 7b included, is now implemented. The marker stays
-because what this page argues for is a *default* behavior, and that does not
-exist: the Stop nudge ships **default-off** behind `THREENGRAM_STOP_NUDGE=1`
-(`cmd/3ngram-hook/nudge.go`), registered for one harness, and the closer ships
-default-off behind `SESSION_CLOSER_ENABLED`. Nothing on this page runs for a
-user who has not opted in, and the **validation bar below has not been
-measured**. Read it as built-but-unvalidated design until it has.
+**Status: shipped, default-off — the mechanism is built; the default-on
+behavior this page argues for is unmeasured and gated on the validation bar.**
+Every step of the plan below is implemented, step 7b included. Nothing here
+runs for a user who has not opted in: the Stop nudge ships behind
+`THREENGRAM_STOP_NUDGE=1` (`cmd/3ngram-hook/nudge.go`), registered for one
+harness, and the closer ships behind `SESSION_CLOSER_ENABLED`. Read the
+mechanism as shipped contract and the DEFAULT as an open proposal until the bar
+at the bottom of this page is measured.
 
 Step 7b is the gated Stop nudge hook: `3ngram-hook stop` heartbeats
 unconditionally and, behind the flag, calls the handshake and emits the
@@ -501,8 +501,18 @@ Three implementation decisions this section left open:
   hardcoded false) need. Re-arming requires a provenance event outside the
   stamped watermark, so a zero-write continuation cannot re-arm (nothing new
   exists) and a productive one cannot re-arm on its own writes (`complete`
-  absorbed them). The honest residual bound is **one nudge per turn that
-  produced new provenance** — not "never twice in a session".
+  absorbed them). **Three residuals, stated rather than hidden.** (1) The bound
+  is *one nudge per turn that produced new provenance*, not "never twice in a
+  session" — a user who keeps working keeps qualifying. (2) A write that
+  COMMITS after `complete` took its listing holds an id outside the watermark
+  and re-arms the next Stop; MCP writes are synchronous, so this needs a
+  genuinely concurrent async writer. (3) Concurrent Stop deliveries — in
+  practice a duplicate registration of both `stop` and its `heartbeat` alias —
+  let a sibling process finalize an attempt before the arming process emits its
+  envelope, so that continuation's writes land outside the watermark and a
+  later Stop re-arms. The README forbids the duplicate registration; closing it
+  properly needs an arm timestamp the row does not carry
+  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)).
 - **The attempt id round-trips through `begin`.** There is no natural-key read
   on the row, so the finalize Stop recovers the in-flight attempt from `begin`'s
   `pending` decline. That means the finalize path calls a route that COULD arm;
