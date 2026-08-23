@@ -571,10 +571,19 @@ Default-off until the validation bar in the plan says otherwise.
 **Shipped, default-off (step 6).** `apps/worker` runs the `session-sweep`
 repeatable job and the `session-closer` on-demand job on the existing
 `admin-maintenance` queue. Both are behind `SESSION_CLOSER_ENABLED` (default
-`false`): with the flag unset the sweep scheduler is never registered, so nothing
-implicitly closes a row and no generation is billed. Turning it on is the
-measured decision the validation bar below governs, not a config convenience.
-`apps/worker/Dockerfile` and the `worker` Compose service ship with it.
+`false`), which is a **kill switch, not just a first-boot default**: BullMQ job
+schedulers are durable in Redis, so turning the flag off REMOVES the registered
+sweep scheduler and additionally makes both processors no-op, and a deployment
+that once ran with it on stops closing rows and stops billing generation.
+Turning it on is the measured decision the validation bar below governs, not a
+config convenience. `apps/worker/Dockerfile` plus the `worker` service in BOTH
+`docker-compose.yml` and `compose.selfhost.yml` ship with it.
+
+The generation is **metered**: `session.closer` is a registered
+`generation`-class operation, so the pass reserves against the tenant's budget
+before the call, records one `llm_usage` row after it, and releases the
+reservation — the same seam every embed call site uses. Over cap, the pass is
+rejected rather than billed. Output tokens are bounded per call.
 
 Three implementation decisions the page left open:
 
@@ -624,9 +633,27 @@ session may already have resolved or superseded the row. Immediately before each
 do not persist a failing batch.
 
 **Epoch fence on the claim, not on every memory insert.** Claim the session row
-at `activation_epoch`. If resurrection has incremented the epoch, the job is a
-no-op — and the epoch is re-checked on the final write-back too, so an in-flight
-generation whose epoch moved abandons rather than landing on a resumed session.
+at `activation_epoch`. If resurrection has incremented the epoch, the claim
+fails and the job is a no-op.
+
+The fence is checked in three places, and it is worth being precise about what
+each one buys, because they are not equally strong:
+
+1. **at claim time** — a run resurrected before the pass starts is never touched;
+2. **before each `resolve`** — a cheap read, so a resurrection during a slow
+   generation stops the batch at the next candidate rather than at the end;
+3. **on the final write-back**, together with the attempt token — the bookkeeping
+   (terminal status, watermark, excerpt clear) is all-or-nothing.
+
+(2) narrows the window; it does not close it. A resurrection can still land
+between the check and the `resolve` that follows it, so **an individual resolve
+may commit against a session that has just become active again**. That is a
+deliberate, disclosed trade rather than an oversight: the fence gates the
+BOOKKEEPING atomically, while individual resolves are reversible. A commitment
+closed a moment too early is undone with `unresolve` — which is the whole reason
+v1 is resolve-only. A closer that could `remember` would need a real transaction
+boundary here instead, and that is one of the costs the page rejects it for.
+
 Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
 `worker` (settled above) — never `capture_hook`.
 

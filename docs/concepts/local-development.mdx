@@ -20,7 +20,7 @@ cp .env.example .env                       # defaults work as-is for local Docke
 docker compose --profile init up migrations   # runs to completion, then exits
 
 # 2. Bring up the data plane + server
-docker compose up -d postgres redis server
+docker compose up -d postgres redis server worker
 
 # 3. Seed the dev user + golden set AND mint a demo API key (printed once)
 set -a; source .env; set +a                # see step 2 of the manual setup below

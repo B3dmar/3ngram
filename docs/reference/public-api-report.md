@@ -208,7 +208,7 @@ its row here even when its name and kind are unchanged.
 | `CloserEventPage` | interface | `c5968370e704` |
 | `CloserEventSummary` | interface | `db5d75a9adca` |
 | `CloserFinish` | interface | `7cecec3fd92c` |
-| `CloserOptions` | interface | `b2e6b120c3b0` |
+| `CloserOptions` | interface | `f1a105e8c328` |
 | `CloserResult` | interface | `6f1996e181d0` |
 | `CloserSessionInput` | interface | `8f8f533b59f2` |
 | `CloserSkipReason` | type | `c378f5605331` |
@@ -320,11 +320,11 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
-| `SessionCloserRepo` | interface | `bf1ab7ec148a` |
+| `SessionCloserRepo` | interface | `8be036a03caf` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
-| `SessionSweepRepo` | interface | `412f17b23e42` |
+| `SessionSweepRepo` | interface | `139be6accf62` |
 | `SessionSweepResult` | interface | `e114e7717b5e` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
@@ -393,7 +393,6 @@ its row here even when its name and kind are unchanged.
 | `requireSelector` | function | `9939360dd211` |
 | `reserveBudgetSlot` | function | `f23fa3966c48` |
 | `resolveByMemoryId` | function | `161dbd9b5527` |
-| `resolveForClosedRun` | function | `64a28bb0cd9d` |
 | `resolveResourceLimits` | function | `a4a0b13ca9fa` |
 | `resolveRetrievalPolicy` | function | `8d2d78bd62d8` |
 | `retryFailedEmbeds` | function | `814fcebeb911` |
@@ -548,7 +547,8 @@ its row here even when its name and kind are unchanged.
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
-| `CommitmentTransition` | interface | `a9e3e355d86b` |
+| `CommitmentStateChangedError` | class | `c3012a9a11d0` |
+| `CommitmentTransition` | interface | `a4ff7abf1023` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
 | `DEFAULT_RECENCY_HALF_LIFE_DAYS` | const | `f8e82bdcf21b` |
@@ -691,7 +691,7 @@ its row here even when its name and kind are unchanged.
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
 | `evalRuns` | const | `1f1bdc3ebc7f` |
-| `expireStaleExcerpts` | function | `360f7da0790d` |
+| `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
 | `facts` | const | `8609a897374c` |
 | `fetchHitsByIds` | function | `567078eac51f` |
@@ -831,13 +831,17 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `COMPLETION_MODEL` | const | `a14b5e07a163` |
 | `CapabilityClass` | type | `582b5c4aa189` |
+| `CompleteOptions` | interface | `6eb3f45aa363` |
+| `CompletionResult` | interface | `b7763e6c5919` |
+| `CompletionUsage` | interface | `ad691865547f` |
 | `EMBEDDING_DIMENSIONS` | const | `4322ea3332b0` |
 | `EMBEDDING_MODEL` | const | `56d3da0b927a` |
 | `EmbedResult` | interface | `2472da3d8c8c` |
 | `EmbedUsage` | interface | `9cc5fef52cb8` |
+| `FAKE_COMPLETION_MODEL` | const | `ff50ed8a9dda` |
 | `FAKE_EMBEDDING_MODEL` | const | `84f1a240df95` |
 | `FakeGatewayOptions` | interface | `8a760be672f7` |
-| `Gateway` | interface | `efae9b0cbe48` |
+| `Gateway` | interface | `45f76cc04812` |
 | `GatewayRequestError` | class | `82ab00ddbdb8` |
 | `InvalidCompletionResponseError` | class | `55a9078e7a67` |
 | `InvalidEmbeddingResponseError` | class | `623ecdfc5a4f` |
@@ -851,7 +855,7 @@ its row here even when its name and kind are unchanged.
 | `OpenAIGatewayConfig` | interface | `ce4a89cfa11e` |
 | `assertMeteredOperationsRegistered` | function | `5e131617f985` |
 | `capabilityClassForOperation` | function | `1c6469597a5a` |
-| `createFakeGateway` | function | `94e1b06a4303` |
+| `createFakeGateway` | function | `1b6488631dd9` |
 | `createOpenAIGateway` | function | `9314da14b6b4` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 | `llmOperations` | const | `149d1a02f26a` |
@@ -862,9 +866,10 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
+| `FAKE_COMPLETION_MODEL` | const | `ff50ed8a9dda` |
 | `FAKE_EMBEDDING_MODEL` | const | `84f1a240df95` |
 | `FakeGatewayOptions` | interface | `8a760be672f7` |
-| `createFakeGateway` | function | `94e1b06a4303` |
+| `createFakeGateway` | function | `1b6488631dd9` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
 ## `@3ngram/schema` 0.7.3
@@ -1104,6 +1109,7 @@ its row here even when its name and kind are unchanged.
 | `SearchToolOutput` | type | `404e58875256` |
 | `SearchToolOutputV2` | type | `633a17f87ee4` |
 | `SearchToolOutputV3` | type | `3da64c60f572` |
+| `SessionCloserJobData` | type | `4fe334cbd5d6` |
 | `SessionEvent` | type | `a3653cf7de46` |
 | `SessionEventsQueryInput` | type | `74701d783e24` |
 | `SessionEventsResponse` | type | `34a69709f5fc` |
@@ -1301,6 +1307,8 @@ its row here even when its name and kind are unchanged.
 | `searchToolOutputSchema` | const | `9d19c5269b35` |
 | `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
 | `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
+| `sessionCloserJobDataSchema` | const | `d8b375861c64` |
+| `sessionCloserJobId` | function | `d84e5b9d3442` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |
 | `sessionEventsQuerySchema` | const | `064d55e63511` |
 | `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |
