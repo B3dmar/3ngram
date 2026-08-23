@@ -25,8 +25,13 @@ describe('FakeGateway', () => {
     expect(result.usage.inputTokens).toBeGreaterThan(0)
     expect(result.model).toBe('text-embedding-3-large')
     const out = await gw.complete('p', 'classify')
-    expect(out).toBe('note')
-    expect(await gw.complete('p', 'other')).toBe('fake:other')
+    expect(out.text).toBe('note')
+    // A completion bills BOTH directions, so the fake reports the pair — the
+    // closer prices its `llm_usage` row from it.
+    expect(out.usage.inputTokens).toBeGreaterThan(0)
+    expect(out.usage.outputTokens).toBeGreaterThan(0)
+    expect(out.model).toBe('gpt-4o-mini')
+    expect((await gw.complete('p', 'other')).text).toBe('fake:other')
     expect(gw.calls.embed[0]?.operation).toBe('memory_embed')
     expect(gw.calls.complete).toHaveLength(2)
   })

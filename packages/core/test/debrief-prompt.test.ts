@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// The ONE debrief renderer both transports serve (src/prompts/debrief.ts).
+// The ONE debrief renderer both transports and the closer serve
+// (src/prompts/debrief.ts).
 //
 // The property under test is the prompt-injection rule from
 // docs/concepts/session-continuity.mdx layer 4: instructions are SERVER-AUTHORED

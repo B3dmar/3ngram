@@ -132,6 +132,12 @@ importers:
       '@3ngram/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@3ngram/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      '@3ngram/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
       bullmq:
         specifier: 5.78.0
         version: 5.78.0

@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-// THE debrief prompt text — one renderer, two transports.
+// THE debrief prompt text — one renderer, three consumers.
 //
-// The MCP `debrief` prompt (src/mcp/prompts.ts) and
-// `GET /api/v1/prompts/debrief` (src/rest/router.ts) render THIS function.
-// Duplicating the words into the hook or into a second route forfeits
-// cross-harness parity: 3ngram owns the words, the hook owns the trigger
-// (docs/concepts/session-continuity.mdx layer 4).
+// The MCP `debrief` prompt (apps/server/src/mcp/prompts.ts),
+// `GET /api/v1/prompts/debrief` (apps/server/src/rest/session-router.ts), and
+// the session closer's LLM pass (../admin/session-closer.ts) all render THIS
+// function. Duplicating the words into the hook, into a second route, or into
+// the worker forfeits cross-harness parity: 3ngram owns the words, the hook
+// owns the trigger (docs/concepts/session-continuity.mdx layer 4).
+//
+// WHY IT LIVES IN CORE. It started in apps/server, which was fine while both
+// consumers were transports of that app. The closer is a THIRD consumer in a
+// different app (apps/worker), and `apps/* -> packages/core -> packages/db`
+// (hard rule 5) forbids one app importing another. The prompt text is the
+// product's words, not an HTTP concern; core is where both transports and the
+// worker can read the same copy. The rendered string is byte-identical to what
+// apps/server shipped — this was a move, not a rewrite.
 //
 // PROMPT INJECTION — the rule this module exists to enforce. Instructions are
 // SERVER-AUTHORED. Every caller-supplied or tenant-supplied value (`scope`,

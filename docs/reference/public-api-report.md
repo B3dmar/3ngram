@@ -42,6 +42,7 @@ its row here even when its name and kind are unchanged.
 | `REDACTED` | const | `4a6e93923c89` |
 | `REDACTED_FIELDS` | const | `48e36111cfc1` |
 | `RequestContext` | interface | `7b9320e0e681` |
+| `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `Surface` | type | `ec490e7783d6` |
 | `bindContext` | function | `d9a0d26e17cf` |
@@ -53,7 +54,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `d29b5cda113e` |
+| `envSchema` | const | `095b8c031066` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -63,6 +64,7 @@ its row here even when its name and kind are unchanged.
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
 | `log` | function | `4ac742b7b963` |
 | `logger` | const | `dac2f188ebee` |
@@ -102,14 +104,16 @@ its row here even when its name and kind are unchanged.
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
+| `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
-| `envSchema` | const | `d29b5cda113e` |
+| `envSchema` | const | `095b8c031066` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
 | `parseEnv` | function | `6fb096f7581e` |
 | `resetEnvCache` | function | `a1660e0fd58c` |
@@ -194,9 +198,24 @@ its row here even when its name and kind are unchanged.
 | `BudgetLogger` | interface | `1bb4d4e1b6bf` |
 | `BudgetReservationHandle` | interface | `94d674619f11` |
 | `BudgetStatus` | interface | `5ce09136bfd0` |
+| `CLOSER_ACTOR_KIND` | const | `b270e412f086` |
+| `CLOSER_EVENTS_PAGE_SIZE` | const | `81782d897653` |
+| `CLOSER_OPERATION` | const | `05cd81237d6f` |
 | `CloseSessionResult` | interface | `9ce31e28018e` |
+| `ClosedRunResolveOutcome` | type | `74e9c71fed1b` |
+| `CloserClaim` | interface | `67269cd81a6e` |
+| `CloserEnqueueRequest` | interface | `833bcf729143` |
+| `CloserEventPage` | interface | `c5968370e704` |
+| `CloserEventSummary` | interface | `db5d75a9adca` |
+| `CloserFinish` | interface | `7cecec3fd92c` |
+| `CloserOptions` | interface | `f1a105e8c328` |
+| `CloserResult` | interface | `6f1996e181d0` |
+| `CloserSessionInput` | interface | `8f8f533b59f2` |
+| `CloserSkipReason` | type | `c378f5605331` |
+| `CloserVerdictError` | class | `644008da0f76` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
+| `CommitmentStateChangedError` | class | `c3012a9a11d0` |
 | `ConsolidateOptions` | interface | `dfd95b906bcb` |
 | `ConsolidateRepo` | interface | `9f9746b1c59a` |
 | `ConsolidateResult` | interface | `be7d0edf740f` |
@@ -208,6 +227,8 @@ its row here even when its name and kind are unchanged.
 | `DEFAULT_SEARCH_WEIGHTS` | const | `84e50dffd060` |
 | `DashboardPageOptions` | interface | `699c20bdddb0` |
 | `DashboardSearchPage` | interface | `77168fc773d5` |
+| `DebriefBriefedMemory` | interface | `82f24b49a983` |
+| `DebriefPromptContext` | interface | `8ca9a0260c74` |
 | `DecidedProposal` | type | `86ca009e9275` |
 | `DeleteAccountOptions` | interface | `fd986a00ec9a` |
 | `DuplicateEmailError` | class | `4f7a078f9631` |
@@ -300,8 +321,12 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
+| `SessionCloserRepo` | interface | `8be036a03caf` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
+| `SessionSweepOptions` | interface | `2a8490ec42eb` |
+| `SessionSweepRepo` | interface | `139be6accf62` |
+| `SessionSweepResult` | interface | `e114e7717b5e` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
@@ -321,12 +346,15 @@ its row here even when its name and kind are unchanged.
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
+| `closeSessionRun` | function | `7be3707051e7` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
 | `createScope` | function | `1e8f58a54fe9` |
 | `createUser` | function | `41cb089db439` |
 | `dbConsolidateRepo` | const | `d157d777ed45` |
 | `dbGcClientsRepo` | const | `9758cf7041e4` |
+| `dbSessionCloserRepo` | const | `0d7316e7ffee` |
+| `dbSessionSweepRepo` | function | `a35dac85f439` |
 | `dbSurfacingRepo` | const | `bd42a3f284fd` |
 | `deleteAccount` | function | `43aafd3f76ea` |
 | `deleteScope` | function | `8e460c0839b0` |
@@ -348,6 +376,7 @@ its row here even when its name and kind are unchanged.
 | `importEvent` | function | `b646608824c0` |
 | `importFact` | function | `de183450645f` |
 | `importMemory` | function | `94b80cc5a793` |
+| `isCloserEligible` | function | `5ba2c96e3393` |
 | `listAllProposals` | function | `a406e03c4581` |
 | `listMemories` | function | `949fe93c7c39` |
 | `listMemoryFacets` | function | `cbc8e4234f68` |
@@ -360,6 +389,8 @@ its row here even when its name and kind are unchanged.
 | `releaseBudgetReservation` | function | `391df079ae05` |
 | `remember` | function | `a923202cffe6` |
 | `renameScope` | function | `de255c44bf53` |
+| `renderCloserPrompt` | function | `ad5dae66bbde` |
+| `renderDebriefPrompt` | function | `1ee4c92ee5d0` |
 | `requireSelector` | function | `9939360dd211` |
 | `reserveBudgetSlot` | function | `f23fa3966c48` |
 | `resolveByMemoryId` | function | `161dbd9b5527` |
@@ -370,9 +401,11 @@ its row here even when its name and kind are unchanged.
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
+| `selectResolvable` | function | `6026659c6ba3` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
 | `surface` | function | `38e1713a17b6` |
+| `sweepSessions` | function | `2a9d3ff6860e` |
 | `transition` | function | `5311082e3cc6` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
@@ -505,14 +538,18 @@ its row here even when its name and kind are unchanged.
 | `BudgetAccounting` | interface | `9ff44bf115cd` |
 | `BudgetReservation` | interface | `800959a752f8` |
 | `CANDIDATE_POOL_FLOOR` | const | `3b7d2bf7b2b3` |
+| `CLOSER_ELIGIBLE_STATUSES` | const | `16c72fce11b3` |
 | `ChronologicalCursor` | interface | `4dfd48aba7e8` |
 | `ChronologicalPage` | interface | `3a81f7904b73` |
 | `CloseSessionResult` | interface | `9ce31e28018e` |
+| `CloserCandidate` | interface | `95aa130ca604` |
+| `CloserSessionRow` | interface | `cc8f36f2ea4e` |
 | `CommitmentCreate` | interface | `b29fe27da0fc` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
-| `CommitmentTransition` | interface | `7ff05ebf8e31` |
+| `CommitmentStateChangedError` | class | `c3012a9a11d0` |
+| `CommitmentTransition` | interface | `a4ff7abf1023` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
 | `DEFAULT_RECENCY_HALF_LIFE_DAYS` | const | `f8e82bdcf21b` |
@@ -637,6 +674,7 @@ its row here even when its name and kind are unchanged.
 | `auditLog` | const | `16136a25b871` |
 | `auditLogEntryExists` | function | `bab2ee9b3919` |
 | `budgetReservations` | const | `2323c0409991` |
+| `claimSessionTriage` | function | `749516ec8997` |
 | `closeDb` | function | `07b382de379c` |
 | `closeSession` | function | `0f12d1991868` |
 | `commitments` | const | `a414b2f62ba1` |
@@ -654,10 +692,12 @@ its row here even when its name and kind are unchanged.
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
 | `evalRuns` | const | `1f1bdc3ebc7f` |
+| `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
 | `facts` | const | `8609a897374c` |
 | `fetchHitsByIds` | function | `567078eac51f` |
 | `findSimilarPairs` | function | `1cce9d83df14` |
+| `finishSessionTriage` | function | `59f7c08fbb7f` |
 | `getBudgetAccounting` | function | `0ce3fa0f054e` |
 | `getClientByClientId` | function | `3524668c41e2` |
 | `getCommitment` | function | `f7ab2b64fa8e` |
@@ -693,6 +733,7 @@ its row here even when its name and kind are unchanged.
 | `insertUser` | function | `1526ee55b233` |
 | `listApiKeys` | function | `32a72d78eb47` |
 | `listClientsAuthorizedByUser` | function | `3b6f157f2e8b` |
+| `listCloserCandidates` | function | `c6c7935cb7c7` |
 | `listEmbedFailedMemories` | function | `c298e6ec9e3a` |
 | `listFactProposals` | function | `31620c7eb568` |
 | `listGarbageCollectableClients` | function | `a1e35c46687b` |
@@ -719,6 +760,7 @@ its row here even when its name and kind are unchanged.
 | `peekResetToken` | function | `2536f5228240` |
 | `planTiers` | const | `4a0f287afe02` |
 | `readAgentSession` | function | `6cbc302058a4` |
+| `readCloserSession` | function | `1a19fa49b914` |
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
 | `recentDecisions` | function | `386c29c370a3` |
@@ -753,6 +795,8 @@ its row here even when its name and kind are unchanged.
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
 | `sweepCommitments` | function | `67525f8877a1` |
+| `sweepExpiredLeases` | function | `9814898ac80b` |
+| `sweepFloor` | function | `2212e4e03aa8` |
 | `touchApiKeyLastUsed` | function | `0f9df1ba3d81` |
 | `transactionTimePredicate` | function | `be7571bf6c1a` |
 | `transitionCommitment` | function | `03bc3bc0ea29` |
@@ -786,25 +830,33 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
+| `COMPLETION_MODEL` | const | `a14b5e07a163` |
 | `CapabilityClass` | type | `582b5c4aa189` |
+| `CompleteOptions` | interface | `6eb3f45aa363` |
+| `CompletionResult` | interface | `c3d28cdb9440` |
+| `CompletionUsage` | interface | `ad691865547f` |
 | `EMBEDDING_DIMENSIONS` | const | `4322ea3332b0` |
 | `EMBEDDING_MODEL` | const | `56d3da0b927a` |
 | `EmbedResult` | interface | `2472da3d8c8c` |
 | `EmbedUsage` | interface | `9cc5fef52cb8` |
+| `FAKE_COMPLETION_MODEL` | const | `ff50ed8a9dda` |
 | `FAKE_EMBEDDING_MODEL` | const | `84f1a240df95` |
 | `FakeGatewayOptions` | interface | `8a760be672f7` |
-| `Gateway` | interface | `efae9b0cbe48` |
+| `Gateway` | interface | `45f76cc04812` |
 | `GatewayRequestError` | class | `82ab00ddbdb8` |
+| `InvalidCompletionResponseError` | class | `55a9078e7a67` |
 | `InvalidEmbeddingResponseError` | class | `623ecdfc5a4f` |
 | `LlmOperation` | interface | `14f5841b3e4e` |
 | `LlmOperationNotRegisteredError` | class | `5984c2fb5141` |
 | `METERED_EMBED_OPERATIONS` | const | `201351990a48` |
+| `METERED_GENERATION_OPERATIONS` | const | `7ad0575de8c3` |
 | `MeteredEmbedOperation` | type | `2767f0fd1b01` |
+| `MeteredGenerationOperation` | type | `7208de8ee2e3` |
 | `NotImplementedError` | class | `3fde6e518c8d` |
-| `OpenAIGatewayConfig` | interface | `359de6ec4952` |
+| `OpenAIGatewayConfig` | interface | `ce4a89cfa11e` |
 | `assertMeteredOperationsRegistered` | function | `5e131617f985` |
 | `capabilityClassForOperation` | function | `1c6469597a5a` |
-| `createFakeGateway` | function | `94e1b06a4303` |
+| `createFakeGateway` | function | `1b6488631dd9` |
 | `createOpenAIGateway` | function | `9314da14b6b4` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 | `llmOperations` | const | `149d1a02f26a` |
@@ -815,9 +867,10 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
+| `FAKE_COMPLETION_MODEL` | const | `ff50ed8a9dda` |
 | `FAKE_EMBEDDING_MODEL` | const | `84f1a240df95` |
 | `FakeGatewayOptions` | interface | `8a760be672f7` |
-| `createFakeGateway` | function | `94e1b06a4303` |
+| `createFakeGateway` | function | `1b6488631dd9` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
 ## `@3ngram/schema` 0.7.3
@@ -871,6 +924,7 @@ its row here even when its name and kind are unchanged.
 | `ClientIdMetadataDocument` | type | `8bb293cc77d3` |
 | `ClientIdMetadataUrl` | type | `58be5194f976` |
 | `ClientRegistrationInput` | type | `5d738895cb7c` |
+| `CloserVerdict` | type | `7572bbd53759` |
 | `CommitmentStatus` | type | `cc42e86e202c` |
 | `ConfigureScopeInput` | type | `0cf71920e99d` |
 | `ConfigureScopeInputV2` | type | `2297f89d5948` |
@@ -966,6 +1020,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_SESSION_EVENTS_LIMIT` | const | `83a104e42c17` |
 | `MAX_SESSION_EVENT_IDS` | const | `c08d9546e185` |
 | `MAX_SESSION_EXCERPT_LENGTH` | const | `7bfe77fc6dec` |
+| `MAX_SESSION_SWEEP_BATCH` | const | `de69585f1dd1` |
 | `MAX_TAGS` | const | `1e28dd3d6556` |
 | `MAX_TAG_LENGTH` | const | `27eb8fddc2d5` |
 | `MAX_TOPIC_LENGTH` | const | `6e710757d412` |
@@ -1028,7 +1083,9 @@ its row here even when its name and kind are unchanged.
 | `ReviseToolArgs` | type | `b45806d452a9` |
 | `ReviseToolInput` | type | `e603fdbc008c` |
 | `ReviseToolOutput` | type | `616dbf434372` |
+| `SESSION_EXCERPT_TTL_MS` | const | `e2a87bfdd69f` |
 | `SESSION_LEASE_MS` | const | `7b16006cd0d7` |
+| `SESSION_SWEEP_GRACE_MS` | const | `022b4e97f394` |
 | `Scope` | type | `97f97074b2b5` |
 | `ScopeProjectSelectorInput` | type | `f01d419d5d17` |
 | `ScopeRecordOutput` | type | `5117e4c15162` |
@@ -1053,6 +1110,7 @@ its row here even when its name and kind are unchanged.
 | `SearchToolOutput` | type | `404e58875256` |
 | `SearchToolOutputV2` | type | `633a17f87ee4` |
 | `SearchToolOutputV3` | type | `3da64c60f572` |
+| `SessionCloserJobData` | type | `4fe334cbd5d6` |
 | `SessionEvent` | type | `a3653cf7de46` |
 | `SessionEventsQueryInput` | type | `74701d783e24` |
 | `SessionEventsResponse` | type | `34a69709f5fc` |
@@ -1109,6 +1167,7 @@ its row here even when its name and kind are unchanged.
 | `clientIdMetadataDocumentSchema` | const | `ea7d69dd6b87` |
 | `clientIdMetadataUrlSchema` | const | `79e646e23b7f` |
 | `clientRegistrationInputSchema` | const | `ad6b01b9e266` |
+| `closerVerdictSchema` | const | `8bbdc50e3a74` |
 | `commitmentStatusSchema` | const | `da1d2abddb4a` |
 | `configureScopeInputSchema` | const | `87a3e18e4268` |
 | `configureScopeInputV2Schema` | const | `1e66001fb4ae` |
@@ -1249,6 +1308,8 @@ its row here even when its name and kind are unchanged.
 | `searchToolOutputSchema` | const | `9d19c5269b35` |
 | `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
 | `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
+| `sessionCloserJobDataSchema` | const | `d8b375861c64` |
+| `sessionCloserJobId` | function | `d84e5b9d3442` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |
 | `sessionEventsQuerySchema` | const | `064d55e63511` |
 | `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |

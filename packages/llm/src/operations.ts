@@ -23,6 +23,16 @@ export const METERED_EMBED_OPERATIONS = ['memory.embed', 'import.embed', 'search
 export type MeteredEmbedOperation = (typeof METERED_EMBED_OPERATIONS)[number]
 
 /**
+ * Canonical metered GENERATION-operation keys — `gateway.complete()` callers.
+ * These MUST equal the operation strings the core call sites pass:
+ *   - `session.closer` → the resolve-only session closer's single classification
+ *     pass (packages/core/src/admin/session-closer.ts).
+ * The same drift-guard unit test that pins the embed keys pins these.
+ */
+export const METERED_GENERATION_OPERATIONS = ['session.closer'] as const
+export type MeteredGenerationOperation = (typeof METERED_GENERATION_OPERATIONS)[number]
+
+/**
  * The cost/tier surface an operation belongs to.
  *   - `embed`      — embedding-powered (memory/search). The FREE surface.
  *   - `generation` — `gateway.complete()`-powered (entity extraction, digests,
@@ -56,6 +66,14 @@ const MAX_EMBED_INPUT_TOKENS = 8192
 const MOST_EXPENSIVE_EMBED_RATE_USD_PER_TOKEN = 0.13 / 1_000_000
 const MAX_EMBED_CALL_COST_USD = MAX_EMBED_INPUT_TOKENS * MOST_EXPENSIVE_EMBED_RATE_USD_PER_TOKEN
 
+// Basis for the closer's generation ceiling: gpt-4o-mini bills $0.60/1M output
+// tokens and $0.15/1M input. The closer's prompt is bounded by construction (a
+// 4,000-char excerpt, at most 100 briefed rows, at most 500 event kinds) and its
+// reply is a short id list, so ~16K input + ~1K output is already generous.
+// Priced at the pessimistic rate for both halves and rounded up, one call cannot
+// plausibly exceed a third of a cent.
+const MAX_CLOSER_CALL_COST_USD = 0.003
+
 /**
  * Operation → cost ceiling. All embed operations are a single `gateway.embed()`
  * round-trip, so they share the same worst-case bound; they are listed
@@ -66,6 +84,7 @@ export const llmOperations: Readonly<Record<string, LlmOperation>> = {
   'memory.embed': { maxCostUsd: MAX_EMBED_CALL_COST_USD, capabilityClass: 'embed' },
   'import.embed': { maxCostUsd: MAX_EMBED_CALL_COST_USD, capabilityClass: 'embed' },
   search: { maxCostUsd: MAX_EMBED_CALL_COST_USD, capabilityClass: 'embed' },
+  'session.closer': { maxCostUsd: MAX_CLOSER_CALL_COST_USD, capabilityClass: 'generation' },
 }
 
 /** Thrown when an operation has no registered `maxCost` — a config error. */
@@ -117,7 +136,8 @@ export function maxRegisteredCostUsd(): number {
  * runtime surprise on the first metered op.
  */
 export function assertMeteredOperationsRegistered(): void {
-  for (const operation of METERED_EMBED_OPERATIONS) {
+  const metered: readonly string[] = [...METERED_EMBED_OPERATIONS, ...METERED_GENERATION_OPERATIONS]
+  for (const operation of metered) {
     const entry = llmOperations[operation]
     if (entry === undefined) {
       throw new LlmOperationNotRegisteredError(operation)

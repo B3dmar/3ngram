@@ -182,7 +182,13 @@ class AgentSessionParamsConflictError extends Error {
 }
 const getBudgetStatus = vi.fn()
 
-vi.mock('@3ngram/core', () => ({
+// ASYNC factory so the ONE real export this suite needs can be pulled through
+// importActual. The debrief registrar moved from apps/server into @3ngram/core
+// (the worker's closer renders the same words, and apps must not import apps),
+// and these cases assert on the prompt's actual TEXT — a stub would assert
+// nothing. Everything else stays mocked.
+vi.mock('@3ngram/core', async () => ({
+  ...(await vi.importActual<{ renderDebriefPrompt: unknown }>('@3ngram/core')),
   applyPolicyToScopeFilter,
   remember,
   search,

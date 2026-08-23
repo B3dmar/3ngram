@@ -19,12 +19,14 @@ export {
   loadLlmGatewayConfig,
   loadMcpAllowedOrigins,
   loadOAuthConfig,
+  loadSessionCloserConfig,
   loadSmtpConfig,
   OAUTH_RESOURCE_PATH,
   type OAuthConfig,
   type OAuthJwk,
   parseEnv,
   resetEnvCache,
+  type SessionCloserConfig,
   type SmtpConfig,
 } from './env.js'
 export { contextBindings, createLogger, log, logger, setLogDestination } from './logger.js'

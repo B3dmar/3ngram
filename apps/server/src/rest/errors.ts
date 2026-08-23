@@ -31,6 +31,7 @@ import {
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   DuplicateMemoryError,
   EdgeConflictError,
   EpisodicSupersessionError,
@@ -189,7 +190,12 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     // A `startup` open reusing a natural key that already names a row opened
     // with different identity params — "request token; reuse with changed
     // params is 409" (docs/concepts/session-continuity.mdx, REST surface).
-    err instanceof AgentSessionParamsConflictError
+    err instanceof AgentSessionParamsConflictError ||
+    // A commitment transition that kept losing its compare-and-set: the row
+    // exists and the request was legal from the state the caller read, but
+    // concurrent writers moved it out from under every attempt. A write
+    // conflict, not a bad request — the client should simply retry.
+    err instanceof CommitmentStateChangedError
   ) {
     log().warn({ route, err: err.name }, 'rest: conflict')
     return { status: 409, reason: 'conflict' }
