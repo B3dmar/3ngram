@@ -409,3 +409,44 @@ export const closerVerdictSchema = z
   })
   .strict()
 export type CloserVerdict = z.infer<typeof closerVerdictSchema>
+
+/**
+ * The queue payload naming one run for one closer pass.
+ *
+ * It lives HERE rather than in the worker because it re-states constraints the
+ * boundary already owns — a tenant id, a `sessionRunId`, and the
+ * `activation_epoch` the row's own schema pins as a positive integer. A second
+ * copy in `apps/worker` would be a second validation boundary for the same
+ * facts, free to drift from this one (hard rule 2).
+ *
+ * A queue is a durable, cross-version input surface: a payload enqueued by the
+ * previous deploy is parsed by the next one. `.strict()` so a renamed field is a
+ * loud failure rather than an `undefined` tenant reaching `withTenant`.
+ */
+export const sessionCloserJobDataSchema = z
+  .object({
+    userId: z.uuid(),
+    sessionRunId: sessionRunIdSchema,
+    activationEpoch: z.number().int().positive(),
+  })
+  .strict()
+export type SessionCloserJobData = z.infer<typeof sessionCloserJobDataSchema>
+
+/**
+ * The deterministic BullMQ job id for one run at one epoch.
+ *
+ * NO COLONS, and that is a hard constraint rather than a style choice. BullMQ 5
+ * rejects a custom job id containing `:` unless it splits into exactly three
+ * segments — a deliberate backwards-compatibility carve-out for the
+ * `name:id:millis` shape of legacy REPEATABLE job ids, carrying an in-source
+ * TODO to become a blanket `includes(':')` rejection at the next breaking
+ * change (bullmq 5.78.0, classes/job.js). A three-segment colon id would pass
+ * today by coincidence, on the one branch that exists to grandfather a
+ * different feature. A dot-separated id needs no carve-out.
+ *
+ * Keyed on the EPOCH as well as the run: a genuine resurrection must be a
+ * genuinely new job, not a duplicate deduplicated away.
+ */
+export function sessionCloserJobId(data: SessionCloserJobData): string {
+  return `session-closer.${data.sessionRunId}.${data.activationEpoch}`
+}

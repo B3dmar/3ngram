@@ -16,44 +16,29 @@
 // is also why a failure logs `err.name`, never a provider message that may quote
 // the prompt back.
 import { log } from '@3ngram/config'
-import { type CloserResult, closeSessionRun, dbSessionCloserRepo } from '@3ngram/core'
+import {
+  type BudgetEnforcement,
+  type CloserResult,
+  closeSessionRun,
+  dbSessionCloserRepo,
+} from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
-import { z } from 'zod'
+import { sessionCloserJobDataSchema } from '@3ngram/schema'
 
 /** The BullMQ job name for one run's closer pass. */
 export const SESSION_CLOSER_JOB = 'session-closer'
 
-/**
- * The job payload, parsed at the harness boundary.
- *
- * A queue is an untrusted-ish input surface: a payload can outlive a deploy, and
- * a malformed one must be a loud failure rather than a `userId` of `undefined`
- * reaching `withTenant`. `.strict()` so a renamed field is caught rather than
- * silently defaulted. Content-free by construction — ids and an integer.
- */
-export const sessionCloserJobDataSchema = z
-  .object({
-    userId: z.uuid(),
-    sessionRunId: z.uuid(),
-    activationEpoch: z.number().int().positive(),
-  })
-  .strict()
-export type SessionCloserJobData = z.infer<typeof sessionCloserJobDataSchema>
-
-/**
- * The deterministic BullMQ job id for one run at one epoch.
- *
- * Two producers can name the same run in one pass (the sweep closes it, then
- * lists it as a candidate), and the sweep runs again before a long generation
- * finishes. BullMQ drops an add() whose job id already exists, so this collapses
- * those into one job — which is a COST control, not a correctness one: the
- * epoch-fenced claim is what makes a duplicate pass safe, and resolve-only is
- * what makes it harmless. Keying on the epoch means a genuine resurrection is a
- * genuinely new job rather than being deduplicated away.
- */
-export function sessionCloserJobId(data: SessionCloserJobData): string {
-  return `${SESSION_CLOSER_JOB}:${data.sessionRunId}:${data.activationEpoch}`
-}
+// The payload schema and the job-id derivation live at the validation boundary
+// (@3ngram/schema, hard rule 2): they re-state the session row's own
+// constraints — a tenant id, a sessionRunId, the positive-integer
+// activation_epoch — so a worker-local copy would be a second boundary for the
+// same facts, free to drift. Re-exported so the queue wiring still imports one
+// module per job.
+export {
+  type SessionCloserJobData,
+  sessionCloserJobDataSchema,
+  sessionCloserJobId,
+} from '@3ngram/schema'
 
 /**
  * Run the closer for one enqueued run. Returns the pass's counts so BullMQ
@@ -65,13 +50,14 @@ export function sessionCloserJobId(data: SessionCloserJobData): string {
 export async function runSessionCloser(
   data: unknown,
   gateway: Gateway | undefined,
+  budget: BudgetEnforcement,
 ): Promise<CloserResult> {
   const job = sessionCloserJobDataSchema.parse(data)
   const result = await closeSessionRun(
     dbSessionCloserRepo,
     job.userId,
     { sessionRunId: job.sessionRunId, activationEpoch: job.activationEpoch },
-    { gateway, newAttemptId: () => crypto.randomUUID() },
+    { gateway, budget, newAttemptId: () => crypto.randomUUID() },
   )
   log().info(
     {

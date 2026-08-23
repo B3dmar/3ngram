@@ -135,15 +135,15 @@ importers:
       '@3ngram/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@3ngram/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
       bullmq:
         specifier: 5.78.0
         version: 5.78.0
       ioredis:
         specifier: 5.10.1
         version: 5.10.1
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 25.9.1
