@@ -11,7 +11,10 @@
 // be a flake, which hard rule 4 forbids.
 import { SESSION_LEASE_MS } from '@3ngram/schema'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
+import { isUniqueViolation } from '../../src/pg-errors.js'
+import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
@@ -156,6 +159,86 @@ describe('openSession', () => {
     expect(resumed.row.activationEpoch).toBe(2)
   })
 
+  it('restamps the briefing when a STARTUP reopens, and not when a resume does', async () => {
+    const first = [{ id: '01890b6e-0000-7000-8000-0000000000c1', topic: 'old', status: 'open' }]
+    const second = [{ id: '01890b6e-0000-7000-8000-0000000000c2', topic: 'new', status: 'open' }]
+    await open(uid, { ...KEY, source: 'startup', briefedMemories: first })
+    await close(uid)
+
+    // Every startup renders and truncates a briefing, so the reopen records what
+    // survived THAT cut — not a previous activation's delivery.
+    const restarted = await open(uid, { ...KEY, source: 'startup', briefedMemories: second }, LATER)
+    expect(restarted.reopened).toBe(true)
+    expect(restarted.row.briefedMemories).toEqual(second)
+    expect(restarted.row.briefingDeliveredAt?.toISOString()).toBe(LATER.toISOString())
+
+    // resume is an activation, not a delivery: it never restamps.
+    await close(uid, KEY, LATER)
+    const resumed = await open(uid, { ...KEY, source: 'resume', briefedMemories: first }, LATER)
+    expect(resumed.reopened).toBe(true)
+    expect(resumed.row.briefedMemories).toEqual(second)
+    expect(resumed.row.briefingDeliveredAt?.toISOString()).toBe(LATER.toISOString())
+  })
+
+  it('maps a natural-key unique violation to the params conflict, not a raw driver error', async () => {
+    // DETERMINISTIC, not timing-based. Two opens of the same natural key with
+    // DIFFERENT projects hold DIFFERENT attach keys, so neither blocks the
+    // other. A inserts and holds its transaction open; B's row-locked read
+    // cannot see the uncommitted row, so B reaches its INSERT and collides on
+    // agent_sessions_natural_key the moment A commits.
+    let inserted: () => void = () => undefined
+    let release: () => void = () => undefined
+    const aInserted = new Promise<void>((resolve) => {
+      inserted = resolve
+    })
+    const aHeld = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const txA = withTenant(uid, async (tx) => {
+      await openSession(
+        tx,
+        uid,
+        { ...KEY, source: 'startup', project: 'repo-a', selector: { kind: 'all' } },
+        NOW,
+      )
+      inserted()
+      await aHeld
+    })
+    await aInserted
+
+    const txB = open(uid, { ...KEY, source: 'startup', project: 'repo-b' })
+    release()
+
+    await expect(txB).rejects.toBeInstanceOf(AgentSessionParamsConflictError)
+    await txA
+  })
+
+  it('isUniqueViolation matches the REAL driver error for this constraint', async () => {
+    // The other half of the proof above: the predicate is SQLSTATE-based, and
+    // this pins that drizzle's wrapping of an agent_sessions_natural_key
+    // violation is a shape it actually recognises.
+    await open(uid, { ...KEY, source: 'startup' })
+    const caught = await withTenant(uid, (tx) =>
+      tx
+        .insert(agentSessions)
+        .values({
+          userId: uid,
+          agent: KEY.agent,
+          sessionId: KEY.sessionId,
+          source: 'startup',
+          selector: { kind: 'all' as const },
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        ),
+    )
+
+    expect(caught).toBeDefined()
+    expect(isUniqueViolation(caught)).toBe(true)
+  })
+
   it('never moves last_seen_at backwards (GREATEST floor)', async () => {
     await open(uid, { ...KEY, source: 'startup', project: '3ngram' }, LATER)
 
@@ -190,6 +273,7 @@ describe('closeSession', () => {
     const closed = await close(uid, KEY, LATER)
 
     expect(closed.alreadyClosed).toBe(false)
+    expect(closed.closedAt.toISOString()).toBe(LATER.toISOString())
     expect(closed.row.closedAt?.toISOString()).toBe(LATER.toISOString())
     // Frozen: closed_at <= last_seen_at + lease is what identifies an explicit
     // close forever, so close must not refresh the lease.
@@ -203,7 +287,22 @@ describe('closeSession', () => {
     const again = await close(uid, KEY, LATER)
 
     expect(again.alreadyClosed).toBe(true)
+    expect(again.closedAt.toISOString()).toBe(first.closedAt.toISOString())
     expect(again.row.closedAt?.toISOString()).toBe(first.row.closedAt?.toISOString())
+  })
+
+  it('reports a REOPENED row as a fresh close, never as already closed', async () => {
+    // The old zero-row fallback inferred "already closed" from a missed guarded
+    // UPDATE; a row that was closed and then resurrected is live again, and a
+    // close of it is a first close.
+    await open(uid, { ...KEY, source: 'startup' })
+    await close(uid, KEY, NOW)
+    await beat(uid, KEY, LATER)
+
+    const second = await close(uid, KEY, LATER)
+
+    expect(second.alreadyClosed).toBe(false)
+    expect(second.closedAt.toISOString()).toBe(LATER.toISOString())
   })
 
   it('does not clear the excerpt the closer has not consumed yet', async () => {
@@ -282,6 +381,31 @@ describe('heartbeatSession', () => {
 
   it('throws for a natural key this tenant owns no row for', async () => {
     await expect(beat(uid)).rejects.toBeInstanceOf(AgentSessionNotFoundError)
+  })
+
+  it('refuses to write an excerpt back onto an ERASED account', async () => {
+    // Erasure must be the FINAL content write (account-delete.ts). A heartbeat
+    // that arrives after it — the in-flight request whose credentials were
+    // revoked mid-flight — must not restore user content onto the tombstone.
+    const opened = await open(uid, { ...KEY, source: 'startup' })
+    await beat(uid, { ...KEY, lastMessageExcerpt: 'before erasure' })
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid))
+    const erased = (await rawRow(opened.row.id)).last_message_excerpt
+
+    const after = await beat(uid, { ...KEY, lastMessageExcerpt: 'after erasure' }, LATER)
+
+    expect((await rawRow(opened.row.id)).last_message_excerpt).toBe(erased)
+    expect((await rawRow(opened.row.id)).last_message_excerpt).not.toBe('after erasure')
+    // The lease is structural skeleton erasure preserves, so the rest still lands.
+    expect(after.row.lastSeenAt.toISOString()).toBe(LATER.toISOString())
+  })
+
+  it('still stores the excerpt for a live account (the guard is not a blanket refusal)', async () => {
+    const opened = await open(uid, { ...KEY, source: 'startup' })
+
+    await beat(uid, { ...KEY, lastMessageExcerpt: 'live account' })
+
+    expect((await rawRow(opened.row.id)).last_message_excerpt).toBe('live account')
   })
 
   it('cannot heartbeat another tenant row carrying the same natural key', async () => {

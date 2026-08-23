@@ -194,7 +194,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetLogger` | interface | `1bb4d4e1b6bf` |
 | `BudgetReservationHandle` | interface | `94d674619f11` |
 | `BudgetStatus` | interface | `5ce09136bfd0` |
-| `CloseSessionResult` | interface | `2c5e8ac191a6` |
+| `CloseSessionResult` | interface | `9ce31e28018e` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `ConsolidateOptions` | interface | `dfd95b906bcb` |
@@ -354,7 +354,7 @@ its row here even when its name and kind are unchanged.
 | `listProposals` | function | `dd919a6bcedd` |
 | `listScopes` | function | `569a98d16b90` |
 | `listSessionEvents` | function | `ebd96679d1c9` |
-| `openAgentSession` | function | `b68a07f2cef6` |
+| `openAgentSession` | function | `f9f1c5480ba4` |
 | `rejectProposal` | function | `33be71cbec7e` |
 | `rejectProposalAnyKind` | function | `e5eb76037fc2` |
 | `releaseBudgetReservation` | function | `391df079ae05` |
@@ -507,7 +507,7 @@ its row here even when its name and kind are unchanged.
 | `CANDIDATE_POOL_FLOOR` | const | `3b7d2bf7b2b3` |
 | `ChronologicalCursor` | interface | `4dfd48aba7e8` |
 | `ChronologicalPage` | interface | `3a81f7904b73` |
-| `CloseSessionResult` | interface | `2c5e8ac191a6` |
+| `CloseSessionResult` | interface | `9ce31e28018e` |
 | `CommitmentCreate` | interface | `b29fe27da0fc` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
@@ -834,6 +834,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionHeartbeatInput` | type | `63bf87b6c2b9` |
 | `AgentSessionHeartbeatResponse` | type | `5a2c76ef9572` |
 | `AgentSessionNaturalKey` | type | `9c54e89e2045` |
+| `AgentSessionOpenBodyInput` | type | `5cb960cc1a1a` |
 | `AgentSessionOpenInput` | type | `c2f97caee2f9` |
 | `AgentSessionOpenResponse` | type | `a97b73ebdc2a` |
 | `AgentSessionRow` | type | `d4d5b03da60f` |

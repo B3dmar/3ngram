@@ -15,8 +15,10 @@ import { SESSION_LEASE_MS } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const lockSessionAttach = vi.fn(async () => undefined)
+const lockAccountLifecycleShared = vi.fn(async () => undefined)
 vi.mock('../src/client.js', () => ({
   lockSessionAttach: (...a: unknown[]) => lockSessionAttach(...a),
+  lockAccountLifecycleShared: (...a: unknown[]) => lockAccountLifecycleShared(...a),
 }))
 
 const {
@@ -54,13 +56,29 @@ const row = (over: Record<string, unknown> = {}) => ({
 const stale = (over: Record<string, unknown> = {}) =>
   row({ lastSeenAt: new Date(NOW.getTime() - SESSION_LEASE_MS - 60_000), ...over })
 
+/** A live (non-tombstoned) account, the default the excerpt guard reads. */
+const LIVE_USER = { email: 'live@example.test' }
+/** The deletion tombstone `deletedEmail(USER)` produces. */
+const TOMBSTONED_USER = { email: `deleted-${USER}@deleted.invalid` }
+
 /**
- * Fake tenant tx. `reads` feeds SELECTs FIFO, `updates` feeds each
- * `.returning()` of an UPDATE (undefined = the guarded WHERE matched nothing),
- * `insert` feeds the INSERT.
+ * Fake tenant tx. `reads` feeds agent_sessions SELECTs FIFO, `updates` feeds
+ * each `.returning()` of an UPDATE (undefined = the guarded WHERE matched
+ * nothing), `insert` feeds the INSERT, and `user` answers the `users` lookup the
+ * excerpt guard makes (routed by the projected column set, since that is the
+ * only thing distinguishing the two selects).
  */
 function makeTx(
-  script: { reads?: Row[]; updates?: Row[]; insert?: Row; insertError?: unknown } = {},
+  script: {
+    reads?: Row[]
+    updates?: Row[]
+    insert?: Row
+    insertError?: unknown
+    /** The `users` row the excerpt guard reads. Defaults to a live account. */
+    user?: Record<string, unknown>
+    /** No `users` row at all — the guard must treat that as "do not write". */
+    userAbsent?: boolean
+  } = {},
 ) {
   const reads = [...(script.reads ?? [])]
   const updateRows = [...(script.updates ?? [])]
@@ -72,17 +90,22 @@ function makeTx(
     const next = reads.shift()
     return next === undefined ? [] : [next]
   }
+  const readUser = async () => (script.userAbsent === true ? [] : [script.user ?? LIVE_USER])
   const tx = {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          for: (strength: string) => read(strength === 'update'),
-          // biome-ignore lint/suspicious/noThenProperty: mirrors drizzle's thenable select builder
-          then: (onOk: (rows: unknown) => unknown, onErr?: (err: unknown) => unknown) =>
-            read(false).then(onOk, onErr),
-        }),
-      }),
-    }),
+    select: (columns?: Record<string, unknown>) => {
+      // The users lookup projects `email` and nothing else; every
+      // agent_sessions read projects RECORD_COLUMNS, which has `id`.
+      const isUserLookup = columns !== undefined && 'email' in columns && !('id' in columns)
+      const run = (rowLocked: boolean) => (isUserLookup ? readUser() : read(rowLocked))
+      const terminal = {
+        for: (strength: string) => run(strength === 'update'),
+        // biome-ignore lint/suspicious/noThenProperty: mirrors drizzle's thenable select builder
+        then: (onOk: (rows: unknown) => unknown, onErr?: (err: unknown) => unknown) =>
+          run(false).then(onOk, onErr),
+        limit: () => terminal,
+      }
+      return { from: () => ({ where: () => terminal }) }
+    },
     insert: () => ({
       values: (values: Record<string, unknown>) => ({
         returning: async () => {
@@ -128,6 +151,7 @@ function expectMonotonicLastSeen(values: Record<string, unknown>): void {
 
 beforeEach(() => {
   lockSessionAttach.mockClear()
+  lockAccountLifecycleShared.mockClear()
 })
 
 describe('openSession — insert', () => {
@@ -293,17 +317,91 @@ describe('openSession — reopen', () => {
     expect(sets[0]).toMatchObject({ closedAt: null })
   })
 
-  it('never restamps the briefing on a reopen', async () => {
+  it('RESTAMPS the briefing when a startup reopens the row', async () => {
+    // Every startup renders a briefing and truncates it locally, so a startup
+    // that revives a closed row must record what survived THAT cut — otherwise
+    // briefed_memories describes a delivery from a previous activation and the
+    // debrief mapping points at commitments this agent never saw.
+    const closed = row({ closedAt: NOW })
+    const briefedMemories = [{ id: RUN, topic: 'fresh briefing', status: 'open' }]
+    const { tx, sets } = makeTx({
+      reads: [closed, closed],
+      updates: [row({ activationEpoch: 2 })],
+    })
+
+    await openSession(tx, USER, openInput({ briefedMemories }), NOW)
+
+    expect(sets[0]).toMatchObject({ briefedMemories, briefingDeliveredAt: NOW })
+  })
+
+  it('does not restamp when a reopening startup delivered no briefing', async () => {
     const closed = row({ closedAt: NOW })
     const { tx, sets } = makeTx({
       reads: [closed, closed],
       updates: [row({ activationEpoch: 2 })],
     })
 
+    await openSession(tx, USER, openInput(), NOW)
+
+    expect(sets[0]).not.toHaveProperty('briefedMemories')
+    expect(sets[0]).not.toHaveProperty('briefingDeliveredAt')
+  })
+
+  it('never restamps on a RESUME reopen, however briefed the request looks', async () => {
+    // The page is explicit: resume does not restamp. A resume carrying briefed
+    // rows is the hook misbehaving, not a delivery.
+    const closed = row({ closedAt: NOW })
+    const { tx, sets } = makeTx({
+      reads: [closed, closed],
+      updates: [row({ activationEpoch: 2 })],
+    })
+
+    await openSession(
+      tx,
+      USER,
+      openInput({ source: 'resume', briefedMemories: [{ id: RUN, topic: 't', status: 'open' }] }),
+      NOW,
+    )
+
+    expect(sets[0]).not.toHaveProperty('briefedMemories')
+    expect(sets[0]).not.toHaveProperty('briefingDeliveredAt')
+  })
+
+  it('never restamps a duplicate startup delivery onto a still-live row', async () => {
+    const { tx, sets } = makeTx({ reads: [row(), row()], updates: [row()] })
+
     await openSession(tx, USER, openInput({ briefedMemories: [] }), NOW)
 
     expect(sets[0]).not.toHaveProperty('briefedMemories')
     expect(sets[0]).not.toHaveProperty('briefingDeliveredAt')
+  })
+})
+
+describe('openSession — selector comparison', () => {
+  it('does not 409 when jsonb hands the selector back with reordered keys', async () => {
+    // Postgres jsonb stores keys sorted by length then bytewise, so a selector
+    // written as {scope, kind} comes back as {kind, scope}. A raw
+    // JSON.stringify comparison would read that round-trip as a param CHANGE.
+    const stored = row({ selector: { kind: 'scope', scope: 'work' } })
+    const { tx, sets } = makeTx({ reads: [stored, stored], updates: [row()] })
+
+    await openSession(
+      tx,
+      USER,
+      openInput({ selector: { scope: 'work', kind: 'scope' } as never }),
+      NOW,
+    )
+
+    expect(sets).toHaveLength(1)
+  })
+
+  it('still 409s a genuinely different selector', async () => {
+    const stored = row({ selector: { kind: 'scope', scope: 'work' } })
+    const { tx } = makeTx({ reads: [stored, stored] })
+
+    await expect(
+      openSession(tx, USER, openInput({ selector: { kind: 'scope', scope: 'personal' } }), NOW),
+    ).rejects.toBeInstanceOf(AgentSessionParamsConflictError)
   })
 })
 
@@ -339,42 +437,69 @@ describe('closeSession', () => {
     // An explicit close is identified forever by closed_at <= last_seen_at +
     // lease, so close must NOT refresh the lease — and must not clear the
     // excerpt the closer has not consumed yet.
-    const { tx, sets } = makeTx({ updates: [row({ closedAt: NOW })] })
+    const { tx, sets } = makeTx({ reads: [row()], updates: [row({ closedAt: NOW })] })
 
     const result = await closeSession(tx, USER, KEY, NOW)
 
     expect(result.alreadyClosed).toBe(false)
+    expect(result.closedAt).toEqual(NOW)
     expect(sets).toEqual([{ closedAt: NOW }])
     expect(sets[0]).not.toHaveProperty('lastSeenAt')
     expect(sets[0]).not.toHaveProperty('lastMessageExcerpt')
   })
 
+  it('row-locks the read so the decision and the write see one row version', async () => {
+    // The decision "already closed or not" and the UPDATE that acts on it must
+    // observe the same version, or a concurrent open/close in the gap makes the
+    // answer fiction.
+    const { tx, rowLocks } = makeTx({ reads: [row()], updates: [row({ closedAt: NOW })] })
+
+    await closeSession(tx, USER, KEY, NOW)
+
+    expect(rowLocks).toEqual([true])
+  })
+
   it('is idempotent: a repeat close writes nothing and echoes the first timestamp', async () => {
-    // The guarded UPDATE matches open rows only, so it changes no row here.
     const first = new Date(NOW.getTime() - 60_000)
-    const { tx, sets } = makeTx({ updates: [undefined], reads: [row({ closedAt: first })] })
+    const { tx, sets } = makeTx({ reads: [row({ closedAt: first })] })
 
     const result = await closeSession(tx, USER, KEY, NOW)
 
     expect(result.alreadyClosed).toBe(true)
-    expect(result.row.closedAt).toBe(first)
-    expect(sets).toHaveLength(1)
+    expect(result.closedAt).toBe(first)
+    // Nothing written at all — re-stamping would move the row past the
+    // explicit-close window.
+    expect(sets).toHaveLength(0)
+  })
+
+  it('never reports alreadyClosed for a live row (the old fallback could)', async () => {
+    // A row INSERTed between a guarded UPDATE and a second, unlocked re-read is
+    // live with closed_at null; the previous shape reported it as already
+    // closed. Reading under the row lock removes the second observation.
+    const { tx } = makeTx({ reads: [row({ closedAt: null })], updates: [row({ closedAt: NOW })] })
+
+    const result = await closeSession(tx, USER, KEY, NOW)
+
+    expect(result.alreadyClosed).toBe(false)
+    expect(result.closedAt).toEqual(NOW)
   })
 
   it('throws when the tenant owns no row for that natural key', async () => {
-    const { tx } = makeTx({ updates: [undefined], reads: [undefined] })
+    const { tx, sets } = makeTx({ reads: [undefined] })
 
     await expect(closeSession(tx, USER, KEY, NOW)).rejects.toBeInstanceOf(AgentSessionNotFoundError)
+    expect(sets).toHaveLength(0)
   })
 
   it('takes NO advisory lock — it must fit the SessionEnd hook budget', async () => {
     // Safe precisely because it never waits on one: a path that never acquires
     // the advisory lock cannot invert advisory-before-row.
-    const { tx } = makeTx({ updates: [row({ closedAt: NOW })] })
+    const { tx } = makeTx({ reads: [row()], updates: [row({ closedAt: NOW })] })
 
     await closeSession(tx, USER, KEY, NOW)
 
     expect(lockSessionAttach).not.toHaveBeenCalled()
+    expect(lockAccountLifecycleShared).not.toHaveBeenCalled()
   })
 })
 
@@ -391,6 +516,45 @@ describe('heartbeatSession', () => {
     expectMonotonicLastSeen(sets[0] as Record<string, unknown>)
   })
 
+  it('falls through to the locking path when a close commits after the probe', async () => {
+    // THE fast-path race: the unlocked probe saw a live row, /close committed in
+    // the gap. The guarded UPDATE (closed_at IS NULL) matches nothing, so the
+    // call must NOT report a successful non-resurrecting heartbeat and leave an
+    // active conversation closed and closer-eligible.
+    const closed = row({ closedAt: NOW })
+    const { tx, sets, rowLocks } = makeTx({
+      // probe (live) -> guarded UPDATE misses -> locked re-read sees the close
+      reads: [row(), closed],
+      updates: [undefined, row({ activationEpoch: 2 })],
+    })
+
+    const result = await heartbeatSession(tx, USER, KEY, NOW)
+
+    expect(result.resurrected).toBe(true)
+    expect(result.row.activationEpoch).toBe(2)
+    // Two UPDATEs: the guarded miss, then the resurrect under the lock.
+    expect(sets).toHaveLength(2)
+    expect(isResurrect(sets[0] as Record<string, unknown>)).toBe(false)
+    expect(sets[1]).toMatchObject({ closedAt: null })
+    expect(isResurrect(sets[1] as Record<string, unknown>)).toBe(true)
+    // Unlocked probe, then the row-locked re-read under the advisory lock.
+    expect(rowLocks).toEqual([false, true])
+    expect(lockSessionAttach).toHaveBeenCalledTimes(1)
+  })
+
+  it('guards the fast-path UPDATE rather than trusting the probe', async () => {
+    // Regression guard: an unguarded fast UPDATE would have "succeeded" above,
+    // so pin that the miss is even possible to observe.
+    const { tx } = makeTx({
+      reads: [row(), row({ closedAt: NOW })],
+      updates: [undefined, row({ activationEpoch: 2 })],
+    })
+
+    const result = await heartbeatSession(tx, USER, KEY, NOW)
+
+    expect(result.resurrected).toBe(true)
+  })
+
   it('snapshots the turn excerpt when the hook carries one', async () => {
     const { tx, sets } = makeTx({ reads: [row()], updates: [row()] })
 
@@ -403,6 +567,52 @@ describe('heartbeatSession', () => {
     const { tx, sets } = makeTx({ reads: [row()], updates: [row()] })
 
     await heartbeatSession(tx, USER, KEY, NOW)
+
+    expect(sets[0]).not.toHaveProperty('lastMessageExcerpt')
+    // No content write means nothing to order against erasure.
+    expect(lockAccountLifecycleShared).not.toHaveBeenCalled()
+  })
+
+  it('takes the shared account-lifecycle lock before writing an excerpt', async () => {
+    // Account erasure must be the FINAL content write. The shared lock is what
+    // makes the tombstone check below trustworthy: erasure's exclusive
+    // acquisition waits for us, then locks every heartbeat out.
+    const { tx } = makeTx({ reads: [row()], updates: [row()] })
+
+    await heartbeatSession(tx, USER, { ...KEY, lastMessageExcerpt: 'shipped' }, NOW)
+
+    expect(lockAccountLifecycleShared).toHaveBeenCalledTimes(1)
+    expect(lockAccountLifecycleShared.mock.calls[0]?.[1]).toBe(USER)
+  })
+
+  it('DROPS the excerpt when the account is a deletion tombstone', async () => {
+    // The in-flight heartbeat that blocked on the row erasure was updating: it
+    // resumes after erasure commits and must not write the agent's message back
+    // onto an erased account.
+    const { tx, sets } = makeTx({
+      reads: [row()],
+      updates: [row()],
+      user: TOMBSTONED_USER,
+    })
+
+    const result = await heartbeatSession(
+      tx,
+      USER,
+      { ...KEY, lastMessageExcerpt: 'user content' },
+      NOW,
+    )
+
+    expect(sets[0]).not.toHaveProperty('lastMessageExcerpt')
+    // The lease is structural skeleton erasure deliberately preserves, so the
+    // rest of the heartbeat still lands.
+    expectMonotonicLastSeen(sets[0] as Record<string, unknown>)
+    expect(result.resurrected).toBe(false)
+  })
+
+  it('DROPS the excerpt when the users row is gone entirely', async () => {
+    const { tx, sets } = makeTx({ reads: [row()], updates: [row()], userAbsent: true })
+
+    await heartbeatSession(tx, USER, { ...KEY, lastMessageExcerpt: 'x' }, NOW)
 
     expect(sets[0]).not.toHaveProperty('lastMessageExcerpt')
   })

@@ -23,9 +23,11 @@ import type {
   BriefingSelectorV2Input,
 } from '@3ngram/schema'
 import { and, eq, isNull, sql } from 'drizzle-orm'
-import { lockSessionAttach, type TenantTx } from './client.js'
+import { deletedEmail } from './account-delete.js'
+import { lockAccountLifecycleShared, lockSessionAttach, type TenantTx } from './client.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { agentSessions } from './schema/agent-sessions.js'
+import { users } from './schema/identity.js'
 import { isLeased, monotonicLastSeen } from './session-lease.js'
 
 /** No row for this tenant's `(agent, session_id)`. Never a cross-tenant probe: RLS hides those identically. */
@@ -132,21 +134,47 @@ export async function readAgentSession(
   return readByKey(tx, userId, key)
 }
 
+/**
+ * Key-order-independent JSON for comparing a stored `jsonb` selector against an
+ * inbound one. Postgres `jsonb` does NOT preserve key order — it stores keys
+ * sorted by length then bytewise — so the driver can hand back
+ * `{"kind":"scope","scope":"work"}` for a value written as
+ * `{"scope":"work","kind":"scope"}`. A raw `JSON.stringify` comparison would
+ * read that round-trip as a parameter CHANGE and 409 a perfectly ordinary
+ * duplicate `startup` delivery.
+ */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`)
+    return `{${entries.join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
 /** Identity params frozen at open. A `startup` that disagrees with them is a 409, not an overwrite. */
 function paramsDiffer(row: AgentSessionRecord, input: AgentSessionOpenInput): boolean {
   return (
     row.project !== (input.project ?? null) ||
     row.scope !== (input.scope ?? null) ||
-    JSON.stringify(row.selector) !== JSON.stringify(input.selector)
+    canonicalJson(row.selector) !== canonicalJson(input.selector)
   )
 }
 
 /**
- * Briefing stamp, applied on INSERT only. `resume` must not restamp
- * (the page is explicit), and neither may a duplicate `startup` delivery —
- * `briefed_memories` records what the agent SAW, and a second delivery shows it
- * nothing new. Presence of the key is the delivery signal: an empty array is a
- * briefing that surfaced nothing, which is not the same as no briefing.
+ * Briefing stamp. Applied on INSERT, and again on a `startup` that REOPENS a
+ * closed or lease-expired row — every startup renders a briefing and truncates
+ * it locally, so every startup must record what survived the cut, or
+ * `briefed_memories` describes a delivery from a previous activation.
+ *
+ * Never applied to `resume` (the page is explicit), and never to a duplicate
+ * `startup` delivery onto a still-live row: that second delivery showed the
+ * agent nothing new. Presence of the key is the delivery signal — an empty
+ * array is a briefing that surfaced nothing, which is not the same as no
+ * briefing.
  */
 function briefingStamp(input: AgentSessionOpenInput, now: Date) {
   if (input.briefedMemories === undefined) return {}
@@ -215,10 +243,11 @@ async function insertSession(
  * | startup | INSERT, epoch 1   | no-op + heartbeat (retry)    | reopen, epoch + 1        |
  * | resume  | INSERT, epoch 1   | epoch + 1, heartbeat         | reopen, epoch + 1        |
  *
- * Briefing fields are stamped on INSERT and never restamped. `resume` advances
- * the epoch unconditionally because the page says so: it is an activation, and
- * an extra bump only invalidates a closer claim, which then re-runs — the safe
- * direction for a fence.
+ * Briefing fields are stamped on INSERT and on a `startup` that REOPENS (see
+ * {@link briefingStamp}); a duplicate `startup` onto a live row and every
+ * `resume` leave them alone. `resume` advances the epoch unconditionally because
+ * the page says so: it is an activation, and an extra bump only invalidates a
+ * closer claim, which then re-runs — the safe direction for a fence.
  *
  * `resume` on an ABSENT row inserts rather than 404s. The lease is the liveness
  * signal for a session that is demonstrably alive; refusing to record it would
@@ -255,6 +284,10 @@ export async function openSession(
       lastSeenAt: monotonicLastSeen(now),
       ...(reopened ? { closedAt: null } : {}),
       ...(bumpEpoch ? { activationEpoch: sql`${agentSessions.activationEpoch} + 1` } : {}),
+      // A reopening startup is a NEW activation that just rendered and locally
+      // truncated a fresh briefing, so it restamps what survived. A startup onto
+      // a still-live row is a duplicate delivery and restamps nothing.
+      ...(reopened && input.source === 'startup' ? briefingStamp(input, now) : {}),
     })
     .where(naturalKeyPredicate(userId, input))
     .returning(RECORD_COLUMNS)
@@ -264,6 +297,12 @@ export async function openSession(
 
 export interface CloseSessionResult {
   row: AgentSessionRecord
+  /**
+   * When this call stamped it, `now`; otherwise the timestamp the FIRST close
+   * stamped. Non-null by construction, unlike `row.closedAt`, so no caller has
+   * to invent one for a column it cannot prove is set.
+   */
+  closedAt: Date
   /** The row already carried a `closed_at`; this call changed nothing. */
   alreadyClosed: boolean
 }
@@ -278,8 +317,16 @@ export interface CloseSessionResult {
  * rather than a sweeper's implicit close, forever. It also does not clear
  * `last_message_excerpt` — only the closer, once it has durably consumed it.
  *
- * Idempotent by construction: the guarded UPDATE matches open rows only, so a
- * repeat close cannot move the timestamp that window depends on.
+ * READ THE ROW UNDER A LOCK, then write. An earlier shape ran a guarded
+ * `WHERE closed_at IS NULL` UPDATE and, on zero rows, re-read to decide between
+ * "already closed" and "absent". That re-read is a second snapshot: a row
+ * INSERTed by a concurrent `open` in the gap is live with `closed_at` null, and
+ * the fallback would report `alreadyClosed: true` for a session nothing ever
+ * closed. `FOR UPDATE` collapses the two observations into one, so the decision
+ * and the write see the same row version and the answer is never invented.
+ *
+ * Still no advisory lock — close must fit the SessionEnd hook budget, and a
+ * path that never acquires one cannot invert advisory-before-row.
  */
 export async function closeSession(
   tx: TenantTx,
@@ -287,17 +334,21 @@ export async function closeSession(
   key: AgentSessionNaturalKey,
   now: Date,
 ): Promise<CloseSessionResult> {
+  const existing = await readByKey(tx, userId, key, { forUpdate: true })
+  if (existing === undefined) throw new AgentSessionNotFoundError(key)
+  // Idempotent: never restamp. Re-stamping would move the row past the
+  // `closed_at <= last_seen_at + lease` window that tells an explicit SessionEnd
+  // apart from a sweeper's implicit close, forever.
+  if (existing.closedAt !== null) {
+    return { row: existing, closedAt: existing.closedAt, alreadyClosed: true }
+  }
   const [closed] = await tx
     .update(agentSessions)
     .set({ closedAt: now })
-    .where(and(naturalKeyPredicate(userId, key), isNull(agentSessions.closedAt)))
+    .where(naturalKeyPredicate(userId, key))
     .returning(RECORD_COLUMNS)
-  if (closed !== undefined) return { row: closed, alreadyClosed: false }
-
-  // No open row matched: either already closed (idempotent repeat) or absent.
-  const existing = await readByKey(tx, userId, key)
-  if (existing === undefined) throw new AgentSessionNotFoundError(key)
-  return { row: existing, alreadyClosed: true }
+  if (closed === undefined) throw new AgentSessionNotFoundError(key)
+  return { row: closed, closedAt: closed.closedAt ?? now, alreadyClosed: false }
 }
 
 export interface HeartbeatSessionResult {
@@ -306,31 +357,84 @@ export interface HeartbeatSessionResult {
   resurrected: boolean
 }
 
-function excerptPatch(input: AgentSessionHeartbeatInput) {
-  return input.lastMessageExcerpt === undefined
-    ? {}
-    : { lastMessageExcerpt: input.lastMessageExcerpt }
+/**
+ * The excerpt patch, or `{}` when writing it would land user CONTENT on an
+ * erased account.
+ *
+ * `last_message_excerpt` is the only user content this module writes, and
+ * account erasure must be the FINAL content write (account-delete.ts). Without
+ * this guard an in-flight heartbeat that blocks on the row erasure is updating
+ * resumes after erasure commits — credentials already revoked — and writes the
+ * agent's message back onto the tombstoned account.
+ *
+ * The SHARED account-lifecycle lock is what makes the check trustworthy. A
+ * tombstone test alone is not: under READ COMMITTED an UPDATE that waits on a
+ * concurrently-updated row re-evaluates its qual against the new row version but
+ * evaluates subqueries over OTHER relations (here `users`) with the ORIGINAL
+ * snapshot, so an `EXISTS (... users ...)` guard would still pass. Holding the
+ * lock in shared mode means no erasure can be mid-flight or commit while we
+ * decide and write, and the fresh statement below sees any erasure that
+ * committed before we acquired it. Heartbeats do not conflict with each other,
+ * so the hot path stays parallel; only erasure waits.
+ *
+ * LOCK ORDER: account-lifecycle BEFORE the session-attach advisory lock and
+ * before any row lock. Erasure takes account-lifecycle and never takes
+ * session-attach, so the two orders share a prefix and cannot cycle.
+ */
+async function excerptPatch(
+  tx: TenantTx,
+  userId: string,
+  input: AgentSessionHeartbeatInput,
+): Promise<{ lastMessageExcerpt?: string }> {
+  if (input.lastMessageExcerpt === undefined) return {}
+  await lockAccountLifecycleShared(tx, userId)
+  const [user] = await tx
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+  // No row, or a tombstoned one: drop the excerpt and keep the rest of the
+  // heartbeat. The lease and epoch are structural skeleton that erasure
+  // deliberately preserves, so refreshing them writes nothing that was erased.
+  if (user === undefined || user.email === deletedEmail(userId)) return {}
+  return { lastMessageExcerpt: input.lastMessageExcerpt }
 }
 
+/**
+ * Write the lease refresh.
+ *
+ * `onlyOpen` guards the UPDATE with `closed_at IS NULL` and returns undefined
+ * when nothing matched, which is how the caller learns that a close committed
+ * between its unlocked probe and this statement.
+ */
 async function refreshLease(
   tx: TenantTx,
   userId: string,
   input: AgentSessionHeartbeatInput,
   now: Date,
   resurrect: boolean,
-): Promise<HeartbeatSessionResult> {
+  onlyOpen = false,
+): Promise<HeartbeatSessionResult | undefined> {
+  const excerpt = await excerptPatch(tx, userId, input)
   const [row] = await tx
     .update(agentSessions)
     .set({
       lastSeenAt: monotonicLastSeen(now),
-      ...excerptPatch(input),
+      ...excerpt,
       ...(resurrect
         ? { closedAt: null, activationEpoch: sql`${agentSessions.activationEpoch} + 1` }
         : {}),
     })
-    .where(naturalKeyPredicate(userId, input))
+    .where(
+      onlyOpen
+        ? and(naturalKeyPredicate(userId, input), isNull(agentSessions.closedAt))
+        : naturalKeyPredicate(userId, input),
+    )
     .returning(RECORD_COLUMNS)
-  if (row === undefined) throw new AgentSessionNotFoundError(input)
+  if (row === undefined) {
+    if (onlyOpen) return undefined
+    throw new AgentSessionNotFoundError(input)
+  }
   return { row, resurrected: resurrect }
 }
 
@@ -350,6 +454,14 @@ async function refreshLease(
  * must advance `activation_epoch` ONCE for one resurrection, or a closer fenced
  * at the first epoch is invalidated for nothing. The fast path stays unlocked so
  * a live session's per-turn heartbeat never queues behind a row lock.
+ *
+ * That unlocked probe is why the fast path's UPDATE is GUARDED on
+ * `closed_at IS NULL`. A `/close` committing in the gap would otherwise leave a
+ * fast heartbeat stamping `last_seen_at` and the excerpt onto a row whose
+ * `closed_at` stays set, returning `resurrected: false` — an active conversation
+ * silently left closed and closer-eligible, with nothing to reopen it until the
+ * next lease expiry. Zero rows means the probe was stale, so the call falls
+ * through to the locking path, which re-reads FOR UPDATE and resurrects.
  */
 export async function heartbeatSession(
   tx: TenantTx,
@@ -360,12 +472,20 @@ export async function heartbeatSession(
   const observed = await readByKey(tx, userId, input)
   if (observed === undefined) throw new AgentSessionNotFoundError(input)
   const live = observed.closedAt === null && isLeased(observed.lastSeenAt, now)
-  if (live) return refreshLease(tx, userId, input, now, false)
+  if (live) {
+    const fast = await refreshLease(tx, userId, input, now, false, true)
+    if (fast !== undefined) return fast
+    // A close committed between the probe and the UPDATE. Fall through.
+  }
 
   await lockSessionAttach(tx, userId, observed.project)
   const fresh = await readByKey(tx, userId, input, { forUpdate: true })
   if (fresh === undefined) throw new AgentSessionNotFoundError(input)
   // A concurrent writer may have resurrected it while we waited for the lock.
   const stillDead = fresh.closedAt !== null || !isLeased(fresh.lastSeenAt, now)
-  return refreshLease(tx, userId, input, now, stillDead)
+  const beat = await refreshLease(tx, userId, input, now, stillDead)
+  // Unguarded (onlyOpen === false), so refreshLease throws rather than
+  // returning undefined; the assertion is here to keep the type total.
+  if (beat === undefined) throw new AgentSessionNotFoundError(input)
+  return beat
 }

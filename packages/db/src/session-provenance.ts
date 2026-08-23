@@ -182,8 +182,18 @@ async function attachSingleOpen(
   // not on project. Skipping the lock when a pre-count ≠ 1 races a concurrent
   // open or resurrect.
   await lockSessionAttach(tx, userId, project)
+  // ROW-LOCKED, for the same reason attachKnownRun's re-read is: close is a bare
+  // UPDATE of `closed_at` that never takes the advisory lock, so between this
+  // SELECT and the heartbeat+attach below it could commit and this write would
+  // attribute itself to — and refresh the lease of — a session the tenant just
+  // ended. FOR UPDATE makes that close queue behind this transaction. Advisory
+  // lock first, then the row lock: the repo-wide order, preserved.
   const open = await tx
-    .select({ id: agentSessions.id })
+    .select({
+      id: agentSessions.id,
+      closedAt: agentSessions.closedAt,
+      lastSeenAt: agentSessions.lastSeenAt,
+    })
     .from(agentSessions)
     .where(
       and(
@@ -194,9 +204,16 @@ async function attachSingleOpen(
       ),
     )
     .limit(2)
-  const id = open.length === 1 ? open[0]?.id : undefined
-  if (id !== undefined) await heartbeat(tx, userId, id, now)
-  return id
+    .for('update')
+  const candidate = open.length === 1 ? open[0] : undefined
+  if (candidate === undefined) return undefined
+  // Re-check on the LOCKED row. Postgres re-evaluates the qual against the new
+  // version under READ COMMITTED, so a row closed in the gap is normally already
+  // excluded — this is the explicit belt to that braces, and the one place the
+  // decision is stated in code rather than inferred from the planner.
+  if (candidate.closedAt !== null || !isLeased(candidate.lastSeenAt, now)) return undefined
+  await heartbeat(tx, userId, candidate.id, now)
+  return candidate.id
 }
 
 /**

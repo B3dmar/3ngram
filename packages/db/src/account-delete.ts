@@ -181,6 +181,15 @@ export async function eraseAccountData(
   // (attachKnownRun) keys its advisory lock on project and depends on that
   // one-way, one-time mutation for lock-order convergence — any new writer of
   // project must revisit that locking first.
+  //
+  // INVARIANT: erasure is the FINAL content write for this account. The one
+  // other writer of last_message_excerpt is the session heartbeat
+  // (session-lifecycle.ts), which is why it takes lockAccountLifecycleShared and
+  // re-checks the deletion tombstone before writing that column — this tx holds
+  // the same key EXCLUSIVELY (line ~119), so no in-flight heartbeat can write an
+  // excerpt back after this redaction commits. Any new writer of user content on
+  // this table must take that shared lock and re-check too, or the redaction
+  // below stops being final.
   const erasedAgentSessions = await tx
     .update(agentSessions)
     .set({

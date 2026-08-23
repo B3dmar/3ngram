@@ -145,7 +145,15 @@ export const agentSessionOpenBodySchema = z
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES).optional(),
   })
   .strict()
+/** The PARSED open input: `selector` is present, the default already applied. */
 export type AgentSessionOpenInput = z.infer<typeof agentSessionOpenBodySchema>
+/**
+ * The open input as a CALLER writes it — `selector` optional, because the schema
+ * supplies it. Facades take this at their boundary and parse; only code that has
+ * already parsed should take {@link AgentSessionOpenInput}, or a TypeScript
+ * caller is forced to hand-write the very default the schema exists to apply.
+ */
+export type AgentSessionOpenBodyInput = z.input<typeof agentSessionOpenBodySchema>
 
 /**
  * The state `open` resolved to, so the hook can inject the right thing without

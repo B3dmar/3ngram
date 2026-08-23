@@ -49,7 +49,7 @@ const stale = (closedAt: Date | null = null, project: string | null = PROJECT) =
   lastSeenAt: new Date(NOW.getTime() - SESSION_LEASE_MS - 60_000),
 })
 
-type SessionRead = Record<string, unknown> | undefined
+type SessionRead = Record<string, unknown> | Record<string, unknown>[] | undefined
 
 /**
  * Fake tenant tx replaying one row per SELECT (FIFO — the pre-lock read, then
@@ -70,6 +70,9 @@ function makeTx(reads: SessionRead[]) {
   const read = async (rowLocked: boolean) => {
     rowLocks.push(rowLocked)
     const row = queue.shift()
+    // A queue entry may be an ARRAY to script a multi-row result — the
+    // single-open probe selects up to two rows and branches on the count.
+    if (Array.isArray(row)) return row
     return row === undefined ? [] : [row]
   }
   const tx = {
@@ -307,6 +310,51 @@ describe('assertSessionRunOwned', () => {
 
     await expect(assertSessionRunOwned(USER, RUN)).resolves.toBeUndefined()
     expect(updates).toHaveLength(0)
+  })
+})
+
+describe('attachSingleOpen (omitted sessionRunId)', () => {
+  const attachOmitted = (tx: FakeTx, now = NOW) =>
+    resolveSessionProvenance(tx, USER, { project: PROJECT, now })
+
+  it('row-locks the single-open probe, then heartbeats and attaches', async () => {
+    // Same read->write gap the attachKnownRun re-read closes: close is a bare
+    // UPDATE of closed_at that never takes the advisory lock, so without the row
+    // lock this write could attribute itself to a session just ended.
+    const { tx, updates, rowLocks } = makeTx([[leased()]])
+
+    await expect(attachOmitted(tx)).resolves.toBe(RUN)
+
+    expect(lockSessionAttach).toHaveBeenCalledTimes(1)
+    expect(rowLocks).toEqual([true])
+    expect(updates).toHaveLength(1)
+    expectMonotonicLastSeen(updates[0] as Record<string, unknown>, NOW)
+  })
+
+  it('leaves the write unattributed when the locked row turns out closed', async () => {
+    // Belt to the planner's braces: state the decision in code rather than rely
+    // on EvalPlanQual having excluded the row from the result.
+    const { tx, updates } = makeTx([[leased(NOW)]])
+
+    await expect(attachOmitted(tx)).resolves.toBeUndefined()
+
+    expect(updates).toHaveLength(0)
+  })
+
+  it('leaves the write unattributed when the locked row lease has expired', async () => {
+    const { tx, updates } = makeTx([[stale()]])
+
+    await expect(attachOmitted(tx)).resolves.toBeUndefined()
+
+    expect(updates).toHaveLength(0)
+  })
+
+  it('leaves the write unattributed on zero or many open sessions', async () => {
+    for (const rows of [[], [leased(), { ...leased(), id: 'other' }]]) {
+      const { tx, updates } = makeTx([rows])
+      await expect(attachOmitted(tx)).resolves.toBeUndefined()
+      expect(updates).toHaveLength(0)
+    }
   })
 })
 

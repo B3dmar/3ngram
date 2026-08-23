@@ -27,7 +27,7 @@ import {
 import {
   type AgentSessionHeartbeatInput,
   type AgentSessionNaturalKey,
-  type AgentSessionOpenInput,
+  type AgentSessionOpenBodyInput,
   agentSessionCloseBodySchema,
   agentSessionHeartbeatBodySchema,
   agentSessionNaturalKeySchema,
@@ -65,7 +65,11 @@ function clock(options: SessionClockOptions | undefined): Date {
  */
 export async function openAgentSession(
   userId: string,
-  input: AgentSessionOpenInput,
+  // The z.INPUT type: `selector` is optional here because the schema defaults
+  // it. Taking z.infer would make every TypeScript caller hand-write
+  // `{ kind: 'all' }` — the exact default this boundary exists to apply — and a
+  // transport that forwards a raw body would not type-check at all.
+  input: AgentSessionOpenBodyInput,
   options?: SessionClockOptions,
 ): Promise<OpenSessionResult> {
   const parsed = agentSessionOpenBodySchema.parse(input)

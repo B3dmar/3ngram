@@ -7,6 +7,7 @@ export type {
   AgentSessionHeartbeatInput,
   AgentSessionHeartbeatResponse,
   AgentSessionNaturalKey,
+  AgentSessionOpenBodyInput,
   AgentSessionOpenInput,
   AgentSessionOpenResponse,
   AgentSessionRow,
