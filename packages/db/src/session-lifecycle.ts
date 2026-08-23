@@ -24,6 +24,7 @@ import type {
 } from '@3ngram/schema'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { lockSessionAttach, type TenantTx } from './client.js'
+import { isUniqueViolation } from './pg-errors.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { isLeased, monotonicLastSeen } from './session-lease.js'
 
@@ -164,13 +165,25 @@ export interface OpenSessionResult {
   reopened: boolean
 }
 
+/**
+ * Insert the row for a natural key nothing owned yet.
+ *
+ * The attach lock keyed on the request's project serializes the ordinary case,
+ * but two opens of the SAME natural key carrying DIFFERENT projects hold
+ * DIFFERENT keys, so both can reach this INSERT and the loser hits
+ * `agent_sessions_natural_key`. That is exactly the collision
+ * {@link AgentSessionParamsConflictError} names — one conversation id being
+ * opened as two different sessions — so it is reported as the same `409` rather
+ * than escaping as an unmapped driver error. Widening the lock to cover it
+ * would mean locking every project key, which the attach path cannot do.
+ */
 async function insertSession(
   tx: TenantTx,
   userId: string,
   input: AgentSessionOpenInput,
   now: Date,
 ): Promise<OpenSessionResult> {
-  const [row] = await tx
+  const inserted = await tx
     .insert(agentSessions)
     .values({
       userId,
@@ -185,6 +198,11 @@ async function insertSession(
       ...briefingStamp(input, now),
     })
     .returning(RECORD_COLUMNS)
+    .catch((error: unknown) => {
+      if (isUniqueViolation(error)) throw new AgentSessionParamsConflictError(input)
+      throw error
+    })
+  const row = inserted[0]
   if (row === undefined) throw new AgentSessionNotFoundError(input)
   return toOpenResult(row, true, false)
 }

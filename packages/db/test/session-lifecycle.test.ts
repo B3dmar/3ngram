@@ -59,7 +59,9 @@ const stale = (over: Record<string, unknown> = {}) =>
  * `.returning()` of an UPDATE (undefined = the guarded WHERE matched nothing),
  * `insert` feeds the INSERT.
  */
-function makeTx(script: { reads?: Row[]; updates?: Row[]; insert?: Row } = {}) {
+function makeTx(
+  script: { reads?: Row[]; updates?: Row[]; insert?: Row; insertError?: unknown } = {},
+) {
   const reads = [...(script.reads ?? [])]
   const updateRows = [...(script.updates ?? [])]
   const rowLocks: boolean[] = []
@@ -85,6 +87,7 @@ function makeTx(script: { reads?: Row[]; updates?: Row[]; insert?: Row } = {}) {
       values: (values: Record<string, unknown>) => ({
         returning: async () => {
           inserted.push(values)
+          if (script.insertError !== undefined) throw script.insertError
           return script.insert === undefined ? [] : [script.insert]
         },
       }),
@@ -176,6 +179,26 @@ describe('openSession — insert', () => {
 
     expect(result.created).toBe(true)
     expect(inserted[0]).toMatchObject({ source: 'resume' })
+  })
+
+  it('maps a natural-key unique violation to the same 409 as changed params', async () => {
+    // Two opens of the SAME natural key carrying DIFFERENT projects hold
+    // DIFFERENT attach keys, so both can reach the INSERT and the loser hits
+    // agent_sessions_natural_key. That is the same collision — one conversation
+    // id opened as two sessions — so it must not escape as an unmapped driver
+    // error.
+    const { tx } = makeTx({ insertError: Object.assign(new Error('dup'), { code: '23505' }) })
+
+    await expect(openSession(tx, USER, openInput(), NOW)).rejects.toBeInstanceOf(
+      AgentSessionParamsConflictError,
+    )
+  })
+
+  it('rethrows a non-unique insert failure untranslated', async () => {
+    const boom = Object.assign(new Error('connection lost'), { code: '08006' })
+    const { tx } = makeTx({ insertError: boom })
+
+    await expect(openSession(tx, USER, openInput(), NOW)).rejects.toBe(boom)
   })
 
   it('writes project NULL rather than a fake facet when the hook omits it', async () => {
