@@ -388,3 +388,73 @@ describe('attachKnownRun fast paths (no lock taken)', () => {
     expect(lockSessionAttach).not.toHaveBeenCalled()
   })
 })
+
+// RE-ARM ON WRITE (docs/concepts/session-continuity.mdx, "Debounce"; issue #166
+// step 7a). A later provenance event whose id is not in the watermark restores
+// `triage_status` to `idle` — `completed` is not terminal. Two properties are
+// load-bearing and both are asserted on the SQL the attach emits rather than on
+// a database round-trip:
+//
+//   1. IT IS AN EXPRESSION, NOT A READ-THEN-WRITE. The fast attach path holds no
+//      row lock, so the only way the flip can be atomic with the decision is for
+//      the CASE to be evaluated by the same UPDATE that refreshes the lease.
+//   2. IT DOES NOT RESCAN THE SET. The transaction is inserting a brand-new
+//      uuidv7 event id, which is by construction absent from a watermark stamped
+//      earlier — so a membership test would cost a scan to learn nothing. If a
+//      future change reintroduces one, the SQL below stops matching.
+describe('the attach re-arms a completed run', () => {
+  /** The `triage_status` write an attach UPDATE carried, flattened to SQL text. */
+  const triageSql = (values: Record<string, unknown>) => sqlText(values.triageStatus)
+
+  it('folds the flip into the heartbeat UPDATE on a leased-open row', async () => {
+    const { tx, updates } = makeTx([leased()])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    const text = triageSql(updates[0] as Record<string, unknown>)
+    expect(text).toContain('CASE WHEN triage_status')
+    expect(text).toContain("'completed'")
+    expect(text).toContain("'idle'")
+    // No membership test against the stored set: the inserted id cannot be in it.
+    expect(text).not.toContain('last_triaged_event_ids')
+    expect(text).not.toContain('@>')
+  })
+
+  it('folds the same flip into the resurrect UPDATE', async () => {
+    // A stale-lease attach resurrects; that branch is still an attach, so a
+    // completed run that comes back to life with a write must re-arm too.
+    const { tx, updates } = makeTx([stale(), stale()])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    expect(isResurrect(updates[0] as Record<string, unknown>)).toBe(true)
+    expect(triageSql(updates[0] as Record<string, unknown>)).toContain('CASE WHEN triage_status')
+  })
+
+  it('flips ONLY completed — pending, expired and overflowed are left alone', async () => {
+    // The CASE has exactly one arm, and the ELSE is the column itself. `pending`
+    // is an attempt in flight whose complete will absorb this very write;
+    // `expired` re-enters through the nudge's entry rule instead (so a zero-write
+    // continuation cannot nag on every later Stop); `overflowed` is terminal.
+    const { tx, updates } = makeTx([leased()])
+
+    await expect(attach(tx)).resolves.toBe(RUN)
+
+    const text = triageSql(updates[0] as Record<string, unknown>)
+    for (const status of ['pending', 'expired', 'overflowed']) {
+      expect(text).not.toContain(`'${status}'`)
+    }
+    expect(text).toContain('ELSE triage_status')
+  })
+
+  it('does not touch the row at all when the write stays unattributed', async () => {
+    // An explicitly closed row: the page says the write succeeds unattributed,
+    // and an unattributed write emits no provenance event, so there is nothing
+    // to re-arm on.
+    const { tx, updates } = makeTx([leased(NOW)])
+
+    await expect(attach(tx)).resolves.toBeUndefined()
+
+    expect(updates).toHaveLength(0)
+  })
+})

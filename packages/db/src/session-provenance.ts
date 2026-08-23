@@ -82,10 +82,43 @@ async function readSession(
   return row
 }
 
+/**
+ * RE-ARM ON WRITE (docs/concepts/session-continuity.mdx, "Debounce"): *a later
+ * provenance event of create / supersede / resolve / unresolve / archive whose
+ * id is not in `last_triaged_event_ids` … atomically sets `triage_status` back
+ * to `idle`*. `completed` is not terminal.
+ *
+ * NO SET RESCAN, AND NONE IS POSSIBLE TO NEED. The transaction this expression
+ * rides in is INSERTing brand-new `memory_events` rows whose uuidv7 ids are
+ * minted now, after the watermark was stamped — so those ids are BY DEFINITION
+ * not in the stored set. Membership is already decided by construction;
+ * re-reading the jsonb array to confirm it would spend a scan per write to learn
+ * something the insert guarantees.
+ *
+ * FOLDED INTO THE UPDATE THE ATTACH ALREADY RUNS, so the flip is atomic with the
+ * lease refresh: one statement, no extra lock, and under READ COMMITTED the CASE
+ * is evaluated against the row version this UPDATE takes. The fast attach path
+ * holds no row lock, which is exactly why this must be an expression rather than
+ * a read-then-write.
+ *
+ * ONLY `completed` FLIPS.
+ *   - `pending` is an attempt in flight, and the events this transaction is
+ *     writing are precisely what its `triage/complete` will absorb. Flipping it
+ *     would strand the attempt and lose the zero-write check.
+ *   - `expired` is left alone ON PURPOSE. The nudge's entry rule
+ *     (session-triage.ts) already re-admits an `expired` run on this same
+ *     untriaged-event signal, so the observable behaviour matches the page —
+ *     while leaving the status alone keeps the page's other rule intact, that a
+ *     zero-write continuation must not re-inject on every later Stop. `expired`
+ *     is unconditionally closer-eligible either way, so nothing is lost.
+ *   - `overflowed` is terminal; `idle` is already armed.
+ */
+const rearmTriage = sql`CASE WHEN ${agentSessions.triageStatus} = 'completed' THEN 'idle' ELSE ${agentSessions.triageStatus} END`
+
 async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
   await tx
     .update(agentSessions)
-    .set({ lastSeenAt: monotonicLastSeen(now) })
+    .set({ lastSeenAt: monotonicLastSeen(now), triageStatus: rearmTriage })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }
 
@@ -103,6 +136,9 @@ async function resurrect(tx: TenantTx, userId: string, id: string, now: Date): P
       closedAt: null,
       lastSeenAt: monotonicLastSeen(now),
       activationEpoch: sql`${agentSessions.activationEpoch} + 1`,
+      // Same re-arm as heartbeat: this write attaches a new event id, and the
+      // resurrect branch is still an attach. See {@link rearmTriage}.
+      triageStatus: rearmTriage,
     })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }
