@@ -4,18 +4,19 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** (table, native `sessionRunId` plumbing, the typed
-provenance read, the session-lifecycle REST surface and the hook that drives it
-exist; the closer does not). `agent_sessions` and the `memory_events` session
-expression index shipped in migration 0032. Native remember / revise / resolve
-accept optional `sessionRunId` and stamp `{ sessionRunId }` on the audit events
-those writes emit, and
+**Status: design, not built** for the remaining step — the Stop nudge (step 7)
+does not exist. Everything else on this page ships. `agent_sessions` and the
+`memory_events` session expression index shipped in migration 0032. Native
+remember / revise / resolve accept optional `sessionRunId` and stamp
+`{ sessionRunId }` on the audit events those writes emit, and
 `GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. `POST
 /api/v1/agent-sessions/open|close|heartbeat` and `GET /api/v1/prompts/debrief`
 ship the hook-facing half of step 5, and `3ngram-hook briefing|heartbeat|close`
-(step 5b) calls them from SessionStart, Stop and SessionEnd. No triage routes, no
-Stop nudge, no session-closer worker — nothing CONSUMES the bookkeeping yet, so
-the design's outcome is still unbuilt. Tracked as
+(step 5b) calls them from SessionStart, Stop and SessionEnd. Step 6 ships the
+**lease-expiry sweep and the resolve-only closer worker** (plus the worker image
+and Compose service), so the bookkeeping is now CONSUMED — but the closer is
+**default-off** (`SESSION_CLOSER_ENABLED`) until the validation bar below is
+measured, and there are still no triage routes and no Stop nudge. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -566,15 +567,49 @@ Default-off until the validation bar in the plan says otherwise.
 
 ## Layer 5 — closer worker
 
-A new BullMQ job on the existing worker (`apps/worker`, `admin-maintenance` queue),
+<Note>
+**Shipped, default-off (step 6).** `apps/worker` runs the `session-sweep`
+repeatable job and the `session-closer` on-demand job on the existing
+`admin-maintenance` queue. Both are behind `SESSION_CLOSER_ENABLED` (default
+`false`): with the flag unset the sweep scheduler is never registered, so nothing
+implicitly closes a row and no generation is billed. Turning it on is the
+measured decision the validation bar below governs, not a config convenience.
+`apps/worker/Dockerfile` and the `worker` Compose service ship with it.
+
+Three implementation decisions the page left open:
+
+- **Actor is `worker`.** `system` was the alternative; `capture_hook` remains
+  forbidden. The enum names the transport that made the write, and this write's
+  transport is the background worker — the same value the surfacing sweep already
+  records on its `archive` events. No migration, no new enum value.
+- **The claim is a compare-and-set on `triage_attempt_id`, fenced at
+  `activation_epoch`** — not a sixth `triage_status`. `triage_status` is the Stop
+  handshake's vocabulary (layer 4); a closer-only state would put a background
+  job's liveness into an enum a different mechanism reads, and would need its own
+  stale-claim recovery. Postgres serializes two UPDATEs of one row, so the CAS is
+  equally atomic. The trade is that the claim fences rather than excludes: two
+  in-flight passes are possible, and are harmless only because v1 is
+  resolve-only. Physical table count stays **27**.
+- **The closer's writes carry PRE-RESOLVED provenance.** They never enter the
+  write-time attach path: the closer's rows are closed or lease-expired by
+  construction, so `resolveSessionProvenance` would take the resurrect branch —
+  clearing `closed_at`, bumping the epoch, failing the closer's own fenced
+  write-back, and re-sweeping the row on every later pass.
+
+The watermark is stamped from a listing taken **after** the resolves. The
+closer's own `resolve` events carry this run's `sessionRunId`, so a watermark
+captured before them would leave those ids untriaged and re-arm the run it just
+closed.
+</Note>
+
+A BullMQ job on the existing worker (`apps/worker`, `admin-maintenance` queue),
 plus a **repeatable lease-expiry sweep** (same `upsertJobScheduler` pattern as
 consolidation). The hourly consolidation pass stays advisory similarity proposals.
 This job is not that pass.
 
-The documented Compose stack has Postgres, Redis, and the server — **no worker**
-(`docker-compose.yml`; `docs/concepts/local-development.mdx` calls worker packaging
-follow-up). Step 6 includes a worker image and Compose service, or self-host never
-runs the closer.
+The Compose stack now has Postgres, Redis, the server **and the worker**
+(`docker-compose.yml`). Without the worker image and service, self-host would
+enqueue into a void and never run the closer.
 
 **v1 writes: `resolve` only.** Auto-resolve briefed commitments when the excerpt
 and this-run events support it. `resolve` is reversible (`unresolve`). Do **not**
@@ -590,8 +625,10 @@ do not persist a failing batch.
 
 **Epoch fence on the claim, not on every memory insert.** Claim the session row
 at `activation_epoch`. If resurrection has incremented the epoch, the job is a
-no-op. Resolve is reversible, so a torn write is not a 28th-table problem. Actor
-is `system` or a new schema kind — never `capture_hook`.
+no-op — and the epoch is re-checked on the final write-back too, so an in-flight
+generation whose epoch moved abandons rather than landing on a resumed session.
+Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
+`worker` (settled above) — never `capture_hook`.
 
 Clear `last_message_excerpt` only after the attempt has durably finished.
 
@@ -665,8 +702,8 @@ Existing tools cover the jobs. The reason not to add one is the JTBD test.
 | `payload` through `writeMemory` and `transitionCommitment` | Native path hardcodes `undefined` / omits payload |
 | Typed provenance read | History redacts payload values by design |
 | REST prompt render + session open/close/heartbeat (shipped) + triage | Prompts are MCP-only; the hook has no MCP client |
-| Closer job + lease-expiry sweep on the worker | Crash path never enqueues without a producer; v1 resolve-only |
-| Worker image + Compose service | `docker-compose.yml` has no worker; self-host would enqueue into a void |
+| Closer job + lease-expiry sweep on the worker (shipped) | Crash path never enqueues without a producer; v1 resolve-only |
+| Worker image + Compose service (shipped) | Self-host would otherwise enqueue into a void |
 
 ## Relation to threads and reconsolidation
 
@@ -730,7 +767,7 @@ prose here.
 | 4 | ~~Typed provenance read (bounded, paginated)~~ | Closer and nudge can list this run's writes |
 | 5a | ~~REST open / close (natural key, no epoch) / heartbeat / prompt render~~ | Natural-key addressing, idempotency and the lease/epoch rules hold under RLS |
 | 5b | ~~Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId`~~ | Lease stays live across completed turns; resume/compact/crash still hold |
-| 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |
+| 6 | ~~Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve~~ | **Shipped default-off.** Commitment-recall **improvement** vs 0% is the bar for default-on; no new-atom `remember` |
 | 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |
 
 **Validation bar** (go/no-go for default-on, closer and nudge separately):
@@ -750,10 +787,14 @@ A recall-only pass would contradict this page's own thesis.
 
 These are not the P1s.
 
-- **Lease length and debounce thresholds.** Tunable; pick defaults at implementation
-  and pin them with tests (resume, compact, concurrent windows, failed close,
+- **Debounce thresholds (step 7).** Tunable; pick defaults at implementation and
+  pin them with tests (resume, compact, concurrent windows, failed close,
   same-timestamp events, missing MCP, duplicate hook delivery, malicious run id).
-- **Closer actor kind.** `system` vs a new schema value. Must not be `capture_hook`.
+  The lease is settled at 24h, with a **1h sweep grace** on top: the lease
+  already covers the overnight gap, so the grace only debounces the instant of
+  expiry — and being non-zero is what keeps a swept `closed_at` outside the
+  explicit-close window, so a swept row still resurrects.
+- ~~**Closer actor kind.**~~ Settled: `worker` (layer 5).
 - **Evidence provenance.** Corpus-damage numbers come from the engram-era Python
   implementation, migrated into this corpus.
 - **Change-feed.** Replayable per-selector cursor, at-least-once, consume-time
