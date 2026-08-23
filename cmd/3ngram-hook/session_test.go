@@ -136,6 +136,11 @@ func newLifecycleServer(t *testing.T, briefingBody string) *lifecycleServer {
 	t.Setenv("THREENGRAM_HOOK_ROLE", "")
 	t.Setenv("THREENGRAM_BRIEFING_KIND", "all")
 	t.Setenv("THREENGRAM_AGENT", "claude-code")
+	// This server answers the step-5b lifecycle routes only, so the Stop tests
+	// below are about the heartbeat half. Pin the nudge OFF rather than
+	// inheriting it: a developer with THREENGRAM_STOP_NUDGE exported would
+	// otherwise silently change what these tests exercise.
+	t.Setenv("THREENGRAM_STOP_NUDGE", "")
 	return ls
 }
 
@@ -689,7 +694,7 @@ func TestRunHeartbeatSendsBoundedExcerpt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := captureHook(t, string(payload), func() int { return runHeartbeat(nil) })
+	out := captureHook(t, string(payload), func() int { return runStop(nil) })
 	// A Stop hook that prints is a Stop hook that can be mistaken for a decision
 	// envelope. This one is heartbeat-only.
 	if out != "" {
@@ -715,7 +720,7 @@ func TestRunHeartbeatOmitsEmptyExcerpt(t *testing.T) {
 	ls := newLifecycleServer(t, briefingWith(nil))
 
 	captureHook(t, `{"session_id":"sess-6","last_assistant_message":"   "}`, func() int {
-		return runHeartbeat(nil)
+		return runStop(nil)
 	})
 
 	body := ls.bodyFor(t, "/api/v1/agent-sessions/heartbeat")
@@ -744,7 +749,7 @@ func TestRunHeartbeatSurvivesADeadServer(t *testing.T) {
 	t.Cleanup(func() { stderrWriter = orig })
 
 	out := captureHook(t, `{"session_id":"sess-7","last_assistant_message":"done"}`, func() int {
-		return runHeartbeat(nil)
+		return runStop(nil)
 	})
 	if out != "" {
 		t.Fatalf("heartbeat wrote to stdout on failure: %q", out)
