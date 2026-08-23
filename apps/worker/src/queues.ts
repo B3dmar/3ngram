@@ -12,10 +12,17 @@
 // processor switches on job.name to the right runner.
 //
 // The session sweep and closer are DEFAULT-OFF (docs/concepts/session-continuity.mdx
-// layer 5): with `SESSION_CLOSER_ENABLED` unset, the sweep scheduler is never
-// registered, so nothing produces closer jobs and no generation is billed.
-import { loadLlmGatewayConfig, loadSessionCloserConfig, log } from '@3ngram/config'
-import type { CloserEnqueueRequest } from '@3ngram/core'
+// layer 5) and the flag is a real KILL SWITCH, not merely a first-boot default:
+// turning it off REMOVES the durable scheduler from Redis and makes the two
+// processors no-op, so a deployment that once ran with it on stops closing rows
+// and stops billing generation as soon as it restarts with the flag off.
+import {
+  loadBudgetConfig,
+  loadLlmGatewayConfig,
+  loadSessionCloserConfig,
+  log,
+} from '@3ngram/config'
+import { type BudgetEnforcement, type CloserEnqueueRequest, SELFHOST_LIMITS } from '@3ngram/core'
 import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
 import { type Job, Queue, Worker } from 'bullmq'
 import type { Redis } from 'ioredis'
@@ -68,9 +75,36 @@ export interface WorkerHandles {
 }
 
 /**
+ * Removal policy for the DEDUPLICATED closer job.
+ *
+ * The job id is deterministic on `(run, epoch)` so the sweep's two producers
+ * collapse into one job. BullMQ keeps completed and failed jobs by default, and
+ * a kept job KEEPS ITS ID RESERVED: `add()` with an existing id is silently
+ * ignored (addStandardJob's duplicate branch). Without a removal policy the
+ * first pass over a run would therefore burn that id forever — and a pass that
+ * legitimately did no work, such as one that returned `no-gateway`, or one that
+ * exhausted its retries, would block every later attempt on the same run and
+ * epoch. Configuring the gateway on the next deploy would not rescue those
+ * sessions; nothing would.
+ *
+ * So terminal jobs free their id. A small bounded `count` keeps the most recent
+ * ones inspectable without re-reserving the ids the sweep needs to reuse.
+ */
+export const CLOSER_JOB_OPTS = {
+  ...JOB_RETRY_OPTS,
+  removeOnComplete: { count: 100 },
+  removeOnFail: { count: 100 },
+} as const
+
+/**
  * Enqueue one closer job, deduplicated by `(run, epoch)`. Held as a closure over
  * the queue so core never learns that BullMQ exists (hard rule 5): the sweep
  * takes an `enqueueCloser` port and this is the production implementation.
+ *
+ * Deduplication here is a COST control, never a correctness one. The row stays
+ * eligible until a pass stamps a terminal `triage_status`, so a de-duplicated
+ * add is simply a later sweep finding the run still eligible and enqueuing it
+ * again — the epoch-fenced claim is what makes a duplicate pass safe.
  */
 function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promise<void> {
   return async (request) => {
@@ -81,13 +115,28 @@ function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promis
     }
     await queue.add(SESSION_CLOSER_JOB, data, {
       jobId: sessionCloserJobId(data),
-      ...JOB_RETRY_OPTS,
+      ...CLOSER_JOB_OPTS,
     })
   }
 }
 
-/** Dispatch a BullMQ job to its core-backed runner. Unknown names throw (visible failure). */
-async function process(job: Job, queue: Queue, gateway: Gateway | undefined): Promise<unknown> {
+/**
+ * Dispatch a BullMQ job to its core-backed runner. Unknown names throw (visible
+ * failure).
+ *
+ * The two session jobs are gated on the flag HERE as well as at registration.
+ * Schedulers are durable in Redis and a queue can hold already-enqueued closer
+ * jobs, so a deployment that flips the flag off must not keep draining work that
+ * was produced while it was on. Startup removes the scheduler; this stops
+ * anything already in flight.
+ */
+async function process(
+  job: Job,
+  queue: Queue,
+  gateway: Gateway | undefined,
+  budget: BudgetEnforcement,
+  closerEnabled: boolean,
+): Promise<unknown> {
   switch (job.name) {
     case CONSOLIDATION_JOB:
       return runConsolidation()
@@ -96,12 +145,25 @@ async function process(job: Job, queue: Queue, gateway: Gateway | undefined): Pr
     case GC_CLIENTS_JOB:
       return runGcClients()
     case SESSION_SWEEP_JOB:
+      if (!closerEnabled) return closerDisabled(job.name)
       return runSessionSweep(closerEnqueuer(queue))
     case SESSION_CLOSER_JOB:
-      return runSessionCloser(job.data, gateway)
+      if (!closerEnabled) return closerDisabled(job.name)
+      return runSessionCloser(job.data, gateway, budget)
     default:
       throw new Error(`worker: unknown job name ${job.name}`)
   }
+}
+
+/**
+ * A residual session job that arrived after the closer was disabled. Reported as
+ * a completed no-op rather than a failure: a failure would retry three times and
+ * then sit in the failed set, which is noise for an operator action that was
+ * deliberate.
+ */
+function closerDisabled(jobName: string): { skipped: 'closer-disabled' } {
+  log().info({ jobName }, 'worker: session closer disabled; skipping residual job')
+  return { skipped: 'closer-disabled' }
 }
 
 /**
@@ -120,7 +182,22 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   // deployment with no LLM configured.
   const gatewayConfig = loadLlmGatewayConfig()
   const gateway = gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig)
-  const worker = new Worker(QUEUE_NAME, (job) => process(job, queue, gateway), { connection })
+  const closer = loadSessionCloserConfig()
+  // Budget enforcement for the ONE metered operation the worker owns. Mirrors
+  // apps/server's composition root: self-host resolves empty limits and falls
+  // through to the config default cap, so a self-host worker is capped too. The
+  // closer is a background job, so an over-cap pass must be REJECTED rather than
+  // silently billed — this is the seam that does it.
+  const budget: BudgetEnforcement = {
+    resolveLimits: async () => SELFHOST_LIMITS,
+    config: loadBudgetConfig(),
+    logger: { warn: (obj, msg) => log().warn(obj, msg) },
+  }
+  const worker = new Worker(
+    QUEUE_NAME,
+    (job) => process(job, queue, gateway, budget, closer.enabled),
+    { connection },
+  )
 
   worker.on('failed', (job, err) => {
     // ids + error name only — never job data / memory content (hard rule 6).
@@ -152,16 +229,16 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
     },
   )
 
-  // DEFAULT-OFF. Registering the scheduler is what turns the closer on: with the
-  // flag unset nothing ever produces a closer job, so no row is implicitly
-  // closed and no generation is billed. Turning it on is a later, MEASURED
+  // DEFAULT-OFF, AND A REAL KILL SWITCH. Turning it on is a later, MEASURED
   // decision (docs/concepts/session-continuity.mdx "Validation bar").
   //
-  // Nothing UNREGISTERS a scheduler that a previous deploy registered — BullMQ
-  // schedulers are durable — so flipping the flag back off must also remove the
-  // scheduler from Redis. That is deliberate: silently reaping schedulers on
-  // boot would let a rolling deploy with one stale replica fight itself.
-  const closer = loadSessionCloserConfig()
+  // BullMQ job schedulers are DURABLE: `upsertJobScheduler` writes a repeat entry
+  // into Redis that survives the process. So an operator who ran with the flag on
+  // and then turns it off would otherwise keep the sweep firing forever from a
+  // scheduler no code registers any more — still implicitly closing rows, still
+  // spending on generation. Removing it here is what makes "off" mean off. The
+  // processors are gated too (see `process`), because the queue can still hold
+  // closer jobs produced while it was on.
   if (closer.enabled) {
     await queue.upsertJobScheduler(
       SESSION_SWEEP_JOB,
@@ -171,6 +248,10 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
         opts: JOB_RETRY_OPTS,
       },
     )
+  } else {
+    // Idempotent: returns false when there was nothing registered, which is the
+    // overwhelmingly common case (a deployment that never enabled the closer).
+    await queue.removeJobScheduler(SESSION_SWEEP_JOB)
   }
 
   log().info(

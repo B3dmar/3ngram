@@ -10,7 +10,7 @@
 //     collapse into one job while a genuine resurrection does not;
 //   - the job payload is parsed at the boundary, so a stale or malformed
 //     payload is a loud failure rather than `undefined` reaching withTenant.
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sessionCloserJobDataSchema, sessionCloserJobId } from '../src/jobs/session-closer.js'
 
 const DATA = {
@@ -55,16 +55,28 @@ describe('sessionCloserJobId', () => {
 /** Mount startQueues with bullmq and the job modules stubbed. */
 async function bootQueues(closerEnabled: boolean) {
   let processor: ((job: { name: string; data?: unknown }) => Promise<unknown>) | undefined
-  const added: { name: string; data: unknown; opts: { jobId?: string } }[] = []
+  const added: {
+    name: string
+    data: unknown
+    opts: { jobId?: string; removeOnComplete?: unknown; removeOnFail?: unknown }
+  }[] = []
   const upsert = vi.fn(async () => ({}))
+  const removeScheduler = vi.fn(async () => true)
 
   vi.doMock('bullmq', () => ({
     Queue: class {
       upsertJobScheduler = upsert
-      add = vi.fn(async (name: string, data: unknown, opts: { jobId?: string }) => {
-        added.push({ name, data, opts })
-        return {}
-      })
+      removeJobScheduler = removeScheduler
+      add = vi.fn(
+        async (
+          name: string,
+          data: unknown,
+          opts: { jobId?: string; removeOnComplete?: unknown; removeOnFail?: unknown },
+        ) => {
+          added.push({ name, data, opts })
+          return {}
+        },
+      )
       close = vi.fn(async () => {})
     },
     Worker: class {
@@ -79,10 +91,25 @@ async function bootQueues(closerEnabled: boolean) {
     log: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
     loadLlmGatewayConfig: () => undefined,
     loadSessionCloserConfig: () => ({ enabled: closerEnabled }),
+    loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
   }))
 
   const sweepRun = vi.fn(async () => ({}))
   const closerRun = vi.fn(async () => ({}))
+  // The three pre-existing jobs are stubbed too: dispatching them for real would
+  // reach @3ngram/core and then a database, and this suite has neither.
+  vi.doMock('../src/jobs/consolidation.js', () => ({
+    CONSOLIDATION_JOB: 'consolidation',
+    runConsolidation: vi.fn(async () => ({ ran: 'consolidation' })),
+  }))
+  vi.doMock('../src/jobs/surfacing.js', () => ({
+    SURFACING_JOB: 'surfacing',
+    runSurfacing: vi.fn(async () => ({ ran: 'surfacing' })),
+  }))
+  vi.doMock('../src/jobs/gc-clients.js', () => ({
+    GC_CLIENTS_JOB: 'gc-clients',
+    runGcClients: vi.fn(async () => ({ ran: 'gc-clients' })),
+  }))
   vi.doMock('../src/jobs/session-sweep.js', () => ({
     SESSION_SWEEP_JOB: 'session-sweep',
     runSessionSweep: sweepRun,
@@ -99,16 +126,24 @@ async function bootQueues(closerEnabled: boolean) {
 
   const { startQueues } = await import('../src/queues.js')
   const handles = await startQueues({} as never)
-  return { handles, processor, added, upsert, sweepRun, closerRun }
+  return { handles, processor, added, upsert, removeScheduler, sweepRun, closerRun }
 }
 
 function unmountQueues(): void {
   vi.doUnmock('bullmq')
   vi.doUnmock('@3ngram/config')
+  vi.doUnmock('../src/jobs/consolidation.js')
+  vi.doUnmock('../src/jobs/surfacing.js')
+  vi.doUnmock('../src/jobs/gc-clients.js')
   vi.doUnmock('../src/jobs/session-sweep.js')
   vi.doUnmock('../src/jobs/session-closer.js')
   vi.resetModules()
 }
+
+// Unmount even when an expectation fails. Without this a single failure leaves
+// the module registry mocked, and every later boot silently reuses the CACHED
+// queues module — which turns one red test into a cascade that hides its cause.
+afterEach(unmountQueues)
 
 describe('queue wiring — the closer is default-off', () => {
   it('does NOT register the sweep scheduler when the flag is unset', async () => {
@@ -172,5 +207,93 @@ describe('queue wiring — dispatch and enqueue', () => {
     await processor?.({ name: 'session-closer', data: DATA })
     expect(closerRun.mock.calls[0]?.[1]).toBeUndefined()
     unmountQueues()
+  })
+})
+
+describe('the flag is a KILL SWITCH, not just a first-boot default', () => {
+  it('REMOVES the durable scheduler when the flag is off', async () => {
+    // BullMQ writes a repeat entry into Redis that outlives the process, so a
+    // deployment that once ran with the closer on would otherwise keep sweeping
+    // forever from a scheduler no code registers any more — still closing rows,
+    // still billing generation. Skipping the upsert is not enough; the entry has
+    // to go.
+    const { removeScheduler } = await bootQueues(false)
+    expect(removeScheduler).toHaveBeenCalledWith('session-sweep')
+    unmountQueues()
+  })
+
+  it('does not remove it while the flag is on', async () => {
+    const { removeScheduler } = await bootQueues(true)
+    expect(removeScheduler).not.toHaveBeenCalled()
+    unmountQueues()
+  })
+
+  it('no-ops a residual sweep job that arrives after disabling', async () => {
+    // The queue can still hold work produced while the flag was on, and a
+    // scheduler removal does not drain it.
+    const { processor, sweepRun } = await bootQueues(false)
+    const result = await processor?.({ name: 'session-sweep' })
+    expect(sweepRun).not.toHaveBeenCalled()
+    expect(result).toEqual({ skipped: 'closer-disabled' })
+    unmountQueues()
+  })
+
+  it('no-ops a residual closer job that arrives after disabling', async () => {
+    const { processor, closerRun } = await bootQueues(false)
+    const result = await processor?.({ name: 'session-closer', data: DATA })
+    expect(closerRun).not.toHaveBeenCalled()
+    // A completed no-op, not a failure: three retries and a failed-set entry
+    // would be noise for a deliberate operator action.
+    expect(result).toEqual({ skipped: 'closer-disabled' })
+    unmountQueues()
+  })
+
+  it('still runs the three unrelated maintenance jobs while disabled', async () => {
+    // The kill switch is scoped to the closer. Turning it off must not silently
+    // stop consolidation, surfacing or OAuth GC.
+    const { processor } = await bootQueues(false)
+    for (const name of ['consolidation', 'surfacing', 'gc-clients']) {
+      await expect(processor?.({ name })).resolves.not.toEqual({ skipped: 'closer-disabled' })
+    }
+    unmountQueues()
+  })
+})
+
+describe('closer job removal policy', () => {
+  it('frees the job id on both completion and failure', async () => {
+    // The id is deterministic on (run, epoch) and BullMQ keeps terminal jobs by
+    // default — and a kept job keeps its id RESERVED, so `add()` is silently
+    // ignored. Without a removal policy the first pass over a run would burn
+    // that id forever: a pass that returned `no-gateway`, or one that exhausted
+    // its retries, would block every later attempt on the same run and epoch,
+    // and configuring the gateway on the next deploy would not rescue it.
+    const { processor, sweepRun, added } = await bootQueues(true)
+    await processor?.({ name: 'session-sweep' })
+    const enqueue = sweepRun.mock.calls[0]?.[0] as (r: typeof DATA) => Promise<void>
+    await enqueue(DATA)
+
+    expect(added[0]?.opts.removeOnComplete).toBeDefined()
+    expect(added[0]?.opts.removeOnFail).toBeDefined()
+    unmountQueues()
+  })
+})
+
+describe('the job id is legal for BullMQ 5', () => {
+  it('contains no colon at all', () => {
+    // BullMQ 5.78.0 rejects a custom id containing ':' UNLESS it splits into
+    // exactly three segments — a backwards-compatibility carve-out for legacy
+    // repeatable ids (`name:id:millis`), carrying an in-source TODO to become a
+    // blanket rejection. A three-segment colon id would pass today only by
+    // coincidence, on a branch that exists for a different feature.
+    expect(sessionCloserJobId(DATA)).not.toContain(':')
+  })
+
+  it('satisfies BullMQ 5.78.0 addJob validation directly', () => {
+    // The check, transcribed from bullmq/dist/cjs/classes/job.js:
+    //   if (jobId.includes(':') && jobId.split(':').length !== 3) throw
+    //   if (`${parseInt(jobId, 10)}` === jobId) throw   // "cannot be integers"
+    const id = sessionCloserJobId(DATA)
+    expect(id.includes(':') && id.split(':').length !== 3).toBe(false)
+    expect(`${Number.parseInt(id, 10)}` === id).toBe(false)
   })
 })

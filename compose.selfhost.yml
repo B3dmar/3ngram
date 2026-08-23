@@ -2,8 +2,9 @@
 #
 # This is the self-hosting entrypoint, separate from the dev/test
 # `docker-compose.yml`. It stands up the Apache-2.0 core — the MCP server, REST
-# API, Postgres/pgvector, and Redis — with no hosted-only billing/metering/admin
-# paths (no `apps/cloud` is built here). Walkthrough: docs/self-host.mdx.
+# API, the background worker, Postgres/pgvector, and Redis — with no hosted-only
+# billing/metering/admin paths (no `apps/cloud` is built here).
+# Walkthrough: docs/self-host.mdx.
 #
 #   cp .env.selfhost.example .env.selfhost && edit it   # set strong secrets
 #   docker compose --env-file .env.selfhost -f compose.selfhost.yml run --rm migrations
@@ -175,6 +176,52 @@ services:
         - "node"
         - "-e"
         - "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # Background jobs: consolidation proposals, surfacing/overdue, OAuth-client GC,
+  # and — behind SESSION_CLOSER_ENABLED — the session lease-expiry sweep plus the
+  # resolve-only closer (docs/concepts/session-continuity.mdx layer 5). Without
+  # this service those jobs have no runner: the server enqueues nothing and the
+  # closer cannot exist for a self-host deployment.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    # Same split as `server`: app-level secrets (NODE_ENV, LOG_HASH_SALT, the
+    # optional LLM gateway keys the closer needs) come from .env.selfhost, while
+    # the DB/Redis URLs are derived below from the discrete password var.
+    env_file:
+      - .env.selfhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Runtime (app_user) connection — NOBYPASSRLS, append-only grants.
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD:?set APP_USER_PASSWORD}@postgres:5432/ngram
+      # BullMQ has no degraded mode: a missing REDIS_URL is a hard boot failure.
+      REDIS_URL: redis://redis:6379
+      # Scrub the OWNER credential (issue #452), for the same reason as `server`:
+      # .env.selfhost carries POSTGRES_PASSWORD for compose interpolation and the
+      # one-shot migrations init, and `environment:` overrides `env_file:`, so it
+      # is blanked here. This long-running container connects as app_user only.
+      POSTGRES_PASSWORD: ""
+      # Session closer: DEFAULT OFF until its validation bar is measured. Turning
+      # it on also needs LLM_GATEWAY_URL + LLM_GATEWAY_API_KEY (from
+      # .env.selfhost); with either missing every pass reports `no-gateway` and
+      # writes nothing.
+      SESSION_CLOSER_ENABLED: ${SESSION_CLOSER_ENABLED:-false}
+    # No ports: the worker serves no HTTP. It dials out to Postgres and Redis.
+    healthcheck:
+      # The worker has no HTTP surface and no degraded mode — a broken boot exits
+      # rather than idling — so "pid 1 is alive" is the liveness signal. Mirrors
+      # the Dockerfile HEALTHCHECK.
+      test: ["CMD", "node", "-e", "process.exit(0)"]
       interval: 30s
       timeout: 5s
       start_period: 20s

@@ -28,9 +28,14 @@ WORKDIR /repo
 
 # ---- builder: full install, build the worker + its workspace deps ---------------
 FROM base AS builder
-# Honor the repo supply-chain posture: lifecycle scripts stay off (matches the
-# committed .npmrc; set here too so the flag survives even if .npmrc is filtered).
-ENV npm_config_ignore_scripts=true
+# NO `npm_config_ignore_scripts` here, deliberately. It suppresses every
+# dependency lifecycle script, which also disables the `strictDepBuilds`
+# tripwire — the thing that FAILS the install when a dependency gains an
+# undeclared build script. AGENTS.md hard rule 7 bans `ignoreScripts` for exactly
+# that reason: with it set, this image would build green through the supply-chain
+# check the repo relies on. The committed `.npmrc` + `pnpm-workspace.yaml`
+# (`strictDepBuilds` / `onlyBuiltDependencies`) are the policy, and they are
+# copied in with the context below.
 COPY . .
 RUN pnpm install --frozen-lockfile
 # Build apps/worker and ITS workspace deps in dependency order (turbo ^build).
