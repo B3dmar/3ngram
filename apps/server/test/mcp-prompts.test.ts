@@ -12,8 +12,8 @@ import { MAX_CONTENT_LENGTH } from '@3ngram/schema'
 import { Client as McpClient } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { renderDebriefPrompt } from '@3ngram/core'
 import { PROMPTS, registerPrompts } from '../src/mcp/prompts.js'
-import { renderDebriefPrompt } from '../src/prompts/debrief.js'
 
 /** A connected SDK client wired to a server with only the prompts registered. */
 async function connectPromptsClient(): Promise<McpClient> {

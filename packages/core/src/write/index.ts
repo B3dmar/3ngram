@@ -2,6 +2,7 @@
 export { archiveMemory } from './archive.js'
 export {
   BlockerNotFoundError,
+  type ClosedRunResolveOutcome,
   CommitmentExistsError,
   CommitmentNotFoundError,
   type CreateCommitmentOptions,
@@ -11,6 +12,7 @@ export {
   NotCommitmentMemoryError,
   type ResolveStatus,
   resolveByMemoryId,
+  resolveForClosedRun,
   transition,
   type WrittenCommitment,
 } from './commitments.js'

@@ -42,6 +42,34 @@ export {
   SuccessorNotLiveError,
 } from './proposals.js'
 export {
+  CLOSER_ACTOR_KIND,
+  CLOSER_EVENTS_PAGE_SIZE,
+  CLOSER_OPERATION,
+  type CloserClaim,
+  type CloserEventPage,
+  type CloserEventSummary,
+  type CloserFinish,
+  type CloserOptions,
+  type CloserResult,
+  type CloserSessionInput,
+  type CloserSkipReason,
+  CloserVerdictError,
+  closeSessionRun,
+  dbSessionCloserRepo,
+  isCloserEligible,
+  renderCloserPrompt,
+  type SessionCloserRepo,
+  selectResolvable,
+} from './session-closer.js'
+export {
+  type CloserEnqueueRequest,
+  dbSessionSweepRepo,
+  type SessionSweepOptions,
+  type SessionSweepRepo,
+  type SessionSweepResult,
+  sweepSessions,
+} from './session-sweep.js'
+export {
   dbSurfacingRepo,
   type SurfacingRepo,
   type SurfacingResult,

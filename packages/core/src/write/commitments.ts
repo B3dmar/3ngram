@@ -21,6 +21,7 @@ import {
   getCommitment,
   getCommitmentByMemoryId,
   getMemoryById,
+  IllegalCommitmentTransitionError,
   type WrittenCommitment,
   withTenant,
 } from '@3ngram/db'
@@ -183,6 +184,73 @@ export async function resolveByMemoryId(
   // keyedBy 'memory': the carried id is the MEMORY id we looked up by, not a
   // commitment id — the error message/mapping must label it as such.
   throw new CommitmentNotFoundError(memoryId, 'memory')
+}
+
+/**
+ * Why a {@link resolveForClosedRun} candidate was skipped, or that it resolved.
+ * The closer processes a batch, so each candidate reports its own outcome
+ * instead of one bad id failing the pass (the page: *skip illegal transitions;
+ * do not persist a failing batch*).
+ */
+export type ClosedRunResolveOutcome =
+  /** The commitment moved open|waiting -> resolved. */
+  | 'resolved'
+  /** Another session already resolved it. Idempotent, not an error. */
+  | 'already-resolved'
+  /** No commitment rides this memory (a note, a blocker, a superseded row). */
+  | 'not-a-commitment'
+  /** A live re-read found a status `resolved` is not reachable from. */
+  | 'illegal-transition'
+
+/**
+ * The session closer's ONLY write. Resolve one briefed commitment on behalf of a
+ * run that has already closed, stamping that run's provenance verbatim.
+ *
+ * THE LIVE RE-READ IS THE POINT. `briefed_memories` is a SessionStart stamp;
+ * between then and now another session may have resolved, superseded or expired
+ * the row. Every call re-reads the commitment immediately before deciding, and
+ * an illegal or already-settled target is a SKIP, not a throw — one stale
+ * candidate must not abort the other nine.
+ *
+ * Provenance rides `stampedSessionRunId`, never `sessionRunId`: the run is
+ * closed by construction, and the attach path would resurrect it. See the field
+ * doc in packages/db/src/commitments.ts.
+ *
+ * RESOLVE-ONLY, AND REVERSIBLE. This function cannot create, revise or archive
+ * anything; the worst case it can produce is a commitment marked resolved too
+ * early, which `unresolve` (open <- resolved, a legal edge) undoes. That is the
+ * safety property that makes an LLM-driven v1 shippable at all, and it is why a
+ * BullMQ retry through this path cannot append a duplicate corpus row.
+ */
+export async function resolveForClosedRun(
+  userId: string,
+  memoryId: string,
+  actorKind: ActorKind,
+  sessionRunId: string,
+): Promise<ClosedRunResolveOutcome> {
+  const current = await getCommitmentByMemoryId(userId, memoryId)
+  if (!current) return 'not-a-commitment'
+  if (current.status === 'resolved') return 'already-resolved'
+  if (!canTransition(current.status, 'resolved')) return 'illegal-transition'
+  try {
+    await dbTransitionCommitment({
+      userId,
+      commitmentId: current.id,
+      to: 'resolved',
+      actorKind,
+      stampedSessionRunId: sessionRunId,
+    })
+  } catch (error) {
+    // The re-read above closes the window, it does not eliminate it: a
+    // concurrent session can expire the commitment between the SELECT and the
+    // UPDATE, and `expired -> resolved` is not a legal edge. The DB backstop
+    // firing is still a SKIP for the batch, never a failed pass — the row is
+    // simply no longer ours to close.
+    if (error instanceof IllegalCommitmentTransitionError) return 'illegal-transition'
+    if (error instanceof CommitmentNotFoundError) return 'not-a-commitment'
+    throw error
+  }
+  return 'resolved'
 }
 
 /**

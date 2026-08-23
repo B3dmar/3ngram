@@ -35,6 +35,7 @@
 // rejects) we DERIVE the selector vocabulary from the canonical
 // {@link briefingSelectorSchema} discriminator and validate the debrief `scope`
 // against the canonical {@link scopeSchema} before rendering.
+import { renderDebriefPrompt } from '@3ngram/core'
 import {
   briefingModeSchema,
   briefingSelectorSchema,
@@ -43,7 +44,6 @@ import {
 } from '@3ngram/schema'
 import { completable, type GetPromptResult, type McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
-import { renderDebriefPrompt } from '../prompts/debrief.js'
 import { facetCompleter } from './completions.js'
 import type { ToolContext } from './tools.js'
 
@@ -217,7 +217,7 @@ const debriefPrompt = definePrompt({
     }),
   },
   // THE SAME renderer GET /api/v1/prompts/debrief serves
-  // (src/prompts/debrief.ts): 3ngram owns the words and the hook owns the
+  // (packages/core/src/prompts/debrief.ts): 3ngram owns the words and the hook owns the
   // trigger, so the two transports cannot drift. `scope`/`project` are rendered
   // as DELIMITED DATA inside a fenced JSON block rather than interpolated into
   // the imperative sentences — `projectSchema` permits a repo directory name

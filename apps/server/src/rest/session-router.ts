@@ -21,6 +21,7 @@ import {
   getAgentSession,
   heartbeatAgentSession,
   openAgentSession,
+  renderDebriefPrompt,
 } from '@3ngram/core'
 import {
   agentSessionCloseBodySchema,
@@ -29,7 +30,6 @@ import {
   debriefPromptQuerySchema,
 } from '@3ngram/schema'
 import { Router } from 'express'
-import { renderDebriefPrompt } from '../prompts/debrief.js'
 import { defined, guard, tenant } from './route-helpers.js'
 
 export interface SessionRouterOptions {
@@ -103,7 +103,7 @@ export function sessionRouter(options: SessionRouterOptions): Router {
   // GET /api/v1/prompts/debrief — the MCP debrief registrar over REST. MCP
   // prompts are user-invoked and a server cannot push one, so the hook fetches
   // the text here and injects it as a Stop continuation. It renders THE SAME
-  // function src/mcp/prompts.ts renders (src/prompts/debrief.ts) — duplicating
+  // function src/mcp/prompts.ts renders (packages/core/src/prompts/debrief.ts) — duplicating
   // the words into the hook would forfeit cross-harness parity.
   //
   // `agent` + `sessionId` name the run whose `briefed_memories` get inlined as
