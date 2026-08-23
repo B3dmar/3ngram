@@ -11,4 +11,6 @@ Add the hook-facing session-lifecycle REST surface (issue #166 step 5a): `POST /
 
 `GET /api/v1/prompts/debrief` renders the same debrief text the MCP `debrief` prompt serves — one renderer, two transports — and inlines the run's `briefed_memories` as an id → topic/status mapping so the model can tell which commitment to resolve. Instructions are server-authored and every caller- or tenant-supplied value renders inside a fenced JSON block whose fence grows past the longest backtick run in the payload; the MCP `debrief` prompt changed to the same delimited-data shape, so `scope` and `project` are no longer interpolated into its imperative sentences.
 
+The rendered resolve instruction is conditional on that mapping: with one, the prompt narrows resolution to the listed ids; without one — which is every MCP render, since a prompt carries no tenant data — it keeps telling the agent to resolve the commitments it completed, unchanged from before.
+
 Also hardens the native write-attach path: the re-read under the attach advisory lock is now `SELECT ... FOR UPDATE`, so a concurrent close cannot commit between the resurrect decision and the resurrect it justified and silently reopen an explicitly closed session. The close route is the first writer of `closed_at`, which is what made that race reachable.

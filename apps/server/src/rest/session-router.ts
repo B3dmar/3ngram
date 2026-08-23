@@ -74,10 +74,10 @@ export function sessionRouter(options: SessionRouterOptions): Router {
       res.status(200).json({
         sessionRunId: closed.row.id,
         activationEpoch: closed.row.activationEpoch,
-        // A row returned by close always carries closed_at — the guarded UPDATE
-        // set it, or it was already set. The fallback keeps the response total
-        // without asserting on a nullable column.
-        closedAt: (closed.row.closedAt ?? closed.row.lastSeenAt).toISOString(),
+        // Core's non-null `closedAt`, never a value invented from another
+        // column: the close decision and the timestamp come from the same
+        // row-locked read, so there is nothing left to guess.
+        closedAt: closed.closedAt.toISOString(),
         alreadyClosed: closed.alreadyClosed,
       })
     })

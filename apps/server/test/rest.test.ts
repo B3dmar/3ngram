@@ -2676,6 +2676,7 @@ describe('agent-session lifecycle routes', () => {
     it('closes by natural key and reports the close timestamp', async () => {
       closeAgentSession.mockResolvedValue({
         row: row({ closedAt: CLOSED }),
+        closedAt: CLOSED,
         alreadyClosed: false,
       })
       const res = await call('/api/v1/agent-sessions/close', {
@@ -2694,7 +2695,11 @@ describe('agent-session lifecycle routes', () => {
     })
 
     it('is idempotent: a repeat close echoes the FIRST timestamp', async () => {
-      closeAgentSession.mockResolvedValue({ row: row({ closedAt: CLOSED }), alreadyClosed: true })
+      closeAgentSession.mockResolvedValue({
+        row: row({ closedAt: CLOSED }),
+        closedAt: CLOSED,
+        alreadyClosed: true,
+      })
       const res = await call('/api/v1/agent-sessions/close', {
         method: 'POST',
         key: VALID_KEY,
@@ -2704,6 +2709,22 @@ describe('agent-session lifecycle routes', () => {
         alreadyClosed: true,
         closedAt: CLOSED.toISOString(),
       })
+    })
+
+    it('reports core closedAt verbatim, never a value invented from another column', async () => {
+      // The route used to fall back to `lastSeenAt` when `row.closedAt` was
+      // null, which could publish a close timestamp for a row nothing closed.
+      closeAgentSession.mockResolvedValue({
+        row: row({ closedAt: null, lastSeenAt: SEEN }),
+        closedAt: CLOSED,
+        alreadyClosed: false,
+      })
+      const res = await call('/api/v1/agent-sessions/close', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: KEY,
+      })
+      expect((await res.json()).closedAt).toBe(CLOSED.toISOString())
     })
 
     it('404s a natural key this tenant owns no row for', async () => {
