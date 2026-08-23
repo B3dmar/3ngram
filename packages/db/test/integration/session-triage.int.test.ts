@@ -17,11 +17,18 @@
 // non-deterministic and hard rule 4 forbids flake retries; the attempt-id fence
 // and the row-lock ordering are pinned by the fake-tx suite instead, which
 // replays the exact observation sequence each statement sees.
+import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import { writeMemory } from '../../src/memory-write.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
-import { closeSession, openSession } from '../../src/session-lifecycle.js'
+import {
+  claimSessionTriage,
+  finishSessionTriage,
+  readCloserSession,
+  sweepExpiredLeases,
+} from '../../src/session-closer.js'
+import { closeSession, heartbeatSession, openSession } from '../../src/session-lifecycle.js'
 import {
   AgentSessionTriageConflictError,
   beginSessionTriage,
@@ -41,6 +48,10 @@ let counter = 0
 const nextHash = () => `sess-triage-${Date.now()}-${counter++}`
 
 const attempt = (n: number) => `01890b6e-0000-7000-8000-00000000ff${String(n).padStart(2, '0')}`
+/** A token the CLOSER minted — deliberately outside the hook's `attempt(n)` range. */
+const CLOSER_ATTEMPT = '01890b6e-0000-7000-8000-0000000c1050'
+/** Quiet long enough for the sweep: one lease plus the grace, plus a minute. */
+const SWEEPABLE = new Date(NOW.getTime() - SESSION_LEASE_MS - SESSION_SWEEP_GRACE_MS - 60_000)
 
 async function openRun(userId: string, key = KEY): Promise<string> {
   const opened = await withTenant(userId, (tx) =>
@@ -257,6 +268,95 @@ describe('the attempt-id fence', () => {
     const row = await rawRow(runId)
     expect(row.triage_attempt_id).toBe(attempt(7))
     expect(row.triage_status).toBe('completed')
+  })
+
+  // THE FULL INTERLEAVING, through the REAL statements on both sides — the
+  // sweep, the closer's CAS and its fenced write-back, a real resurrection, then
+  // the hook coming back. Hand-written UPDATEs would only prove the assertions
+  // agree with themselves.
+  //
+  // The bug this pins: if the closer's claim left `triage_status = 'pending'`,
+  // resurrection (which preserves the status AND the token) would republish the
+  // CLOSER's attempt id through `begin`'s `pending` reply, and `complete` would
+  // accept it — letting the hook stamp a terminal status for a continuation that
+  // never happened, from a begin watermark belonging to a session that had died.
+  // Because ordinary post-resurrection MCP traffic makes `since_begin` non-empty,
+  // that outcome is `completed`, which is NOT closer-eligible: a run that should
+  // have stayed eligible is silently retired.
+  it('claim -> resurrect -> fenced finish -> the hook can never complete the closer attempt', async () => {
+    const armed = await begin(uid)
+    expect(armed).toMatchObject({ armed: true, attemptId: attempt(1) })
+
+    // 1. The session dies and the sweep closes it. The epoch does NOT move.
+    await ownerPool.query('UPDATE agent_sessions SET last_seen_at = $2 WHERE id = $1', [
+      runId,
+      SWEEPABLE,
+    ])
+    const swept = await withTenant(uid, (tx) => sweepExpiredLeases(tx, uid, NOW, 10))
+    expect(swept).toEqual([{ sessionRunId: runId, activationEpoch: 1 }])
+
+    // 2. The closer observes the abandoned handshake and claims it.
+    const observed = await withTenant(uid, (tx) => readCloserSession(tx, uid, runId))
+    expect(observed).toMatchObject({ triageStatus: 'pending', triageAttemptId: attempt(1) })
+    const claimed = await withTenant(uid, (tx) =>
+      claimSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        observedAttemptId: attempt(1),
+        attemptId: CLOSER_ATTEMPT,
+      }),
+    )
+    expect(claimed).toBe(true)
+    // The claim RETIRES the handshake: a closed row still `pending` is an attempt
+    // whose session ended before complete, and the closer is taking it over.
+    expect(await rawRow(runId)).toMatchObject({
+      triage_status: 'expired',
+      triage_attempt_id: CLOSER_ATTEMPT,
+    })
+
+    // 3. The user comes back. Resurrection bumps the epoch and preserves the
+    //    triage columns (`expired` is not flipped by the write-time re-arm).
+    const beat = await withTenant(uid, (tx) => heartbeatSession(tx, uid, KEY, NOW))
+    expect(beat.resurrected).toBe(true)
+    expect(beat.row.activationEpoch).toBe(2)
+    expect(await rawRow(runId)).toMatchObject({ triage_status: 'expired' })
+
+    // 4. The closer's write-back is fenced out by the epoch and lands nothing.
+    const finished = await withTenant(uid, (tx) =>
+      finishSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        attemptId: CLOSER_ATTEMPT,
+        triageStatus: 'completed',
+        visibleEventIds: [],
+        clearExcerpt: true,
+      }),
+    )
+    expect(finished).toBe(false)
+
+    // 5. The hook's next Stop. No foreign token is published, and with no new
+    //    provenance the expired entry rule declines rather than re-injecting.
+    const declined = await begin(uid, { attemptId: attempt(2), turnCount: 9999 })
+    expect(declined).toMatchObject({ armed: false, triageStatus: 'expired', reason: 'no-signal' })
+    expect(declined.attemptId).toBeUndefined()
+
+    // 6. Neither the hook's own dead token nor the closer's can complete.
+    for (const token of [attempt(1), CLOSER_ATTEMPT]) {
+      await expect(complete(uid, token)).rejects.toBeInstanceOf(AgentSessionTriageConflictError)
+    }
+    expect(await rawRow(runId)).toMatchObject({ triage_status: 'expired' })
+
+    // 7. Real new provenance re-admits it — under the HOOK's own fresh attempt
+    //    and a fresh begin watermark, not the corpse of the old one.
+    await write(uid, runId)
+    const rearmed = await begin(uid, { attemptId: attempt(3) })
+    expect(rearmed).toMatchObject({ armed: true, attemptId: attempt(3) })
+    expect(await rawRow(runId)).toMatchObject({ triage_attempt_id: attempt(3) })
+    await write(uid, runId)
+    await expect(complete(uid, attempt(3))).resolves.toMatchObject({
+      triageStatus: 'completed',
+      sinceBeginCount: 1,
+    })
   })
 })
 

@@ -292,6 +292,61 @@ export async function readCloserSession(
  * is affordable only because v1 is resolve-only — the second pass live-re-reads
  * every candidate and finds it already `resolved`, so it writes nothing. A
  * closer that could `remember` would need the stronger lock.
+ *
+ * ---------------------------------------------------------------------------
+ * THE CLAIM RETIRES A `pending` HANDSHAKE (`pending` -> `expired`).
+ * ---------------------------------------------------------------------------
+ * `triage_attempt_id` has two writers — this CAS and the interactive Stop
+ * handshake (session-triage.ts) — and the handshake's own fence is
+ * `(triage_status = 'pending' AND triage_attempt_id = <the token begin
+ * returned>)`. Swapping the token while LEAVING the status `pending` therefore
+ * published a closer-owned claim into the interactive vocabulary:
+ *
+ *   begin arms A -> lease expires -> sweep closes -> closer CASes A -> C,
+ *   status still `pending` -> the session RESUMES (resurrection preserves
+ *   `triage_status` and `triage_attempt_id`) -> the hook's next `begin` sees
+ *   `pending` and hands the hook back C -> `complete(C)` passes a fence that
+ *   only ever checked the status and the token.
+ *
+ * The hook then stamped a terminal status for a continuation that never
+ * happened: the session had DIED, and any provenance the resurrected session
+ * has written since is ordinary MCP traffic, not an answer to a debrief nobody
+ * was there to read. Because `since_begin` is non-empty for that traffic, the
+ * outcome is `completed` — which is NOT closer-eligible — so a run that should
+ * have stayed eligible is silently retired. False `completed` is the one
+ * direction the page cares about.
+ *
+ * THE FIX IS ONE `CASE`, not a discriminator column. The closer only ever
+ * claims a CLOSED row, and a closed row that is still `pending` is BY
+ * DEFINITION an attempt whose session ended before `complete` — an abandoned
+ * handshake. `expired` is already this page's word for "a triage attempt that
+ * produced no completion", and it is unconditionally closer-eligible, so
+ * retiring the attempt at claim time states a truth the closer was relying on
+ * anyway. It buys the invariant the interactive fence needs:
+ *
+ *   **`pending` means an INTERACTIVE attempt is in flight, and nothing else.**
+ *   `armAttempt` is the only writer of `pending` in the codebase; the closer
+ *   now never leaves one behind.
+ *
+ * The three interleavings, traced:
+ *   1. claim -> finish (happy path). `finishSessionTriage` is fenced on the
+ *      epoch and the token, NOT the status, so the flip is invisible to it.
+ *   2. claim -> resurrect -> hook `begin`/`complete`. The row is `expired`, so
+ *      `begin` applies the expired ENTRY rule — decline `no-signal`, or arm a
+ *      FRESH attempt with the hook's own token and a fresh begin watermark. A
+ *      stale `complete` carrying either old token fails the status leg. No
+ *      foreign token is ever handed to the hook.
+ *   3. claim -> resurrect -> re-close -> closer re-claims. `expired` is in
+ *      CLOSER_ELIGIBLE_STATUSES, so `listCloserCandidates` still selects it and
+ *      `closeSessionRun`'s own `isCloserEligible` still admits it; the retry
+ *      CASes from whatever token it observes. Unchanged.
+ *
+ * `closed_at IS NOT NULL` is asserted here rather than left to the caller.
+ * `closeSessionRun` already refuses a live run, and any closed -> live
+ * transition bumps the epoch so the CAS would fail anyway — but "the closer
+ * only claims closed rows" is now load-bearing for the flip above, and an
+ * invariant that a status transition depends on belongs in the statement that
+ * performs it, not in a caller two layers up.
  */
 export async function claimSessionTriage(
   tx: TenantTx,
@@ -305,12 +360,17 @@ export async function claimSessionTriage(
 ): Promise<boolean> {
   const rows = await tx
     .update(agentSessions)
-    .set({ triageAttemptId: claim.attemptId })
+    .set({
+      triageAttemptId: claim.attemptId,
+      triageStatus: sql`CASE WHEN ${agentSessions.triageStatus} = 'pending' THEN 'expired' ELSE ${agentSessions.triageStatus} END`,
+    })
     .where(
       and(
         eq(agentSessions.userId, userId),
         eq(agentSessions.id, claim.sessionRunId),
         eq(agentSessions.activationEpoch, claim.activationEpoch),
+        // The closer claims CLOSED rows only — see the flip's justification above.
+        isNotNull(agentSessions.closedAt),
         // IS NOT DISTINCT FROM, not `=`: the common case is a NULL attempt id,
         // and `= NULL` is never true. Drizzle has no helper for it.
         sql`${agentSessions.triageAttemptId} IS NOT DISTINCT FROM ${claim.observedAttemptId}`,

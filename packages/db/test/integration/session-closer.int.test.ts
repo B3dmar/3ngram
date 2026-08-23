@@ -299,6 +299,72 @@ describe('claimSessionTriage', () => {
     expect(claimed).toBe(false)
   })
 
+  it('RETIRES an abandoned handshake: pending -> expired, in the same statement', async () => {
+    // `triage_attempt_id` has two writers, and the Stop handshake's fence is
+    // `(triage_status = 'pending', triage_attempt_id)`. Swapping the token while
+    // leaving the status `pending` publishes a closer-owned claim into the
+    // interactive vocabulary — a resurrection preserves both columns, and the
+    // hook's next `begin` would hand that token back as if it were its own.
+    // A closed row still `pending` is an attempt whose session ended before
+    // complete, so `expired` — this page's word for exactly that — is the truth.
+    await setRow(runId, { triage_status: 'pending', triage_attempt_id: null })
+
+    const claimed = await withTenant(uid, (tx) =>
+      claimSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        observedAttemptId: null,
+        attemptId: '99999999-9999-4999-8999-999999999994',
+      }),
+    )
+
+    expect(claimed).toBe(true)
+    const row = await rawRow(runId)
+    expect(row.triage_status).toBe('expired')
+    expect(row.triage_attempt_id).toBe('99999999-9999-4999-8999-999999999994')
+  })
+
+  it('leaves every OTHER eligible status alone — the CASE has one arm', async () => {
+    // idle/expired/completed carry no interactive attempt, so there is nothing
+    // to retire and rewriting them would lose the closer's own re-entry signal.
+    for (const status of ['idle', 'expired', 'completed'] as const) {
+      await setRow(runId, { triage_status: status, triage_attempt_id: null })
+      const claimed = await withTenant(uid, (tx) =>
+        claimSessionTriage(tx, uid, {
+          sessionRunId: runId,
+          activationEpoch: 1,
+          observedAttemptId: null,
+          attemptId: '99999999-9999-4999-8999-999999999995',
+        }),
+      )
+      expect(claimed, status).toBe(true)
+      expect((await rawRow(runId)).triage_status, status).toBe(status)
+    }
+  })
+
+  it('refuses to claim a LIVE row, so the retirement can never hit a real attempt', async () => {
+    // `closeSessionRun` already refuses a live run and any closed -> live
+    // transition bumps the epoch, so this is belt to those braces — but the
+    // pending -> expired flip DEPENDS on "the closer only claims closed rows",
+    // and an invariant a status transition rests on belongs in the statement
+    // that performs it.
+    await setRow(runId, { closed_at: null, triage_status: 'pending', triage_attempt_id: null })
+
+    const claimed = await withTenant(uid, (tx) =>
+      claimSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        observedAttemptId: null,
+        attemptId: '99999999-9999-4999-8999-999999999996',
+      }),
+    )
+
+    expect(claimed).toBe(false)
+    const row = await rawRow(runId)
+    expect(row.triage_status).toBe('pending')
+    expect(row.triage_attempt_id).toBeNull()
+  })
+
   it('serializes two concurrent claims deterministically, without sleeping', async () => {
     // A holds its transaction open after claiming; B's UPDATE blocks on the row
     // lock until A commits, then re-evaluates the CAS against the committed

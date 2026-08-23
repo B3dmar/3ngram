@@ -50,14 +50,34 @@
 //     session dies; the sweep stamps an implicit `closed_at`; the closer selects
 //     the row because `pending` is in CLOSER_ELIGIBLE_STATUSES, and its CAS
 //     (`triage_attempt_id IS NOT DISTINCT FROM A` -> B, at the observed epoch)
-//     succeeds. A late `complete(A)` from the crashed hook then fails BOTH legs
-//     of its predicate — the attempt id is B, and the status is no longer
-//     `pending` once the closer finishes — so it is a 409, never a clobber. This
-//     composes in either order: if the late complete lands FIRST it stamps a
-//     terminal status under A, and the closer's own CAS + fenced write-back then
-//     govern. The cost of that ordering is one closer pass that re-reads an
-//     already-triaged run; it is resolve-only with a live re-read per candidate,
-//     so it writes nothing and merely re-stamps the same watermark.
+//     succeeds. That CAS also RETIRES the abandoned handshake, `pending` ->
+//     `expired` (see claimSessionTriage): a closed row that is still `pending`
+//     is an attempt whose session ended before `complete`, and the closer is
+//     taking it over. A late `complete(A)` from the crashed hook then fails BOTH
+//     legs of its predicate — the token is B and the status is no longer
+//     `pending` — so it is a 409, never a clobber. This composes in either
+//     order: if the late complete lands FIRST it stamps a terminal status under
+//     A, and the closer's own CAS + fenced write-back then govern. The cost of
+//     that ordering is one closer pass that re-reads an already-triaged run; it
+//     is resolve-only with a live re-read per candidate, so it writes nothing
+//     and merely re-stamps the same watermark.
+//
+//     WHY THE RETIREMENT IS LOAD-BEARING HERE, not just tidy over there. The
+//     handshake's fence is `(status = 'pending', token)`, and `triage_attempt_id`
+//     has two writers. If the claim left the status `pending`, a RESURRECTION —
+//     which preserves both columns — would republish the CLOSER's token into the
+//     interactive vocabulary: the next `begin` would decline `pending` and hand
+//     the hook a token it never minted, and `complete` would accept it. The hook
+//     would then stamp a terminal status for a continuation that never happened
+//     (the session had died), and any ordinary MCP traffic since the resurrection
+//     would make `since_begin` non-empty — so the outcome would be `completed`,
+//     which is NOT closer-eligible, silently retiring a run that should have
+//     stayed eligible. The invariant that closes this is
+//     **`pending` <=> an interactive attempt is in flight**: `armAttempt` below
+//     is its only writer, and the closer never leaves one behind. The entry rule
+//     then does the right thing on the resurrected row all by itself — `expired`
+//     re-enters only on new provenance, arming a FRESH attempt under the hook's
+//     own token and a fresh begin watermark.
 //
 // (b) `begin` NEVER ARMS A CLOSED ROW, and never resurrects one. It is the one
 //     hook path that does not refresh the lease: the shipped Stop hook already
@@ -355,6 +375,9 @@ export async function beginSessionTriage(
       armed: false,
       // The `pending` decline hands back the attempt already in flight: the page
       // wants that later Stop to FINISH the attempt, not to inject a second one.
+      // Safe to publish because `pending` means an INTERACTIVE attempt and
+      // nothing else — the closer retires a handshake it takes over rather than
+      // swapping its own token in under a `pending` status (see coexistence (a)).
       ...(decision.reason === 'pending' && row.triageAttemptId !== null
         ? { attemptId: row.triageAttemptId }
         : {}),
