@@ -200,11 +200,26 @@ export function sessionRouter(options: SessionRouterOptions): Router {
       // for — "resolve what you completed" with no ids is the failure the
       // mapping exists to fix.
       const session = key === undefined ? undefined : await getAgentSession(tenant(req), key)
+      // THE ROW IS THE FALLBACK FOR BOTH FACETS, and that is a correctness fix
+      // rather than a convenience. `agent_sessions.scope` records the EFFECTIVE
+      // scope the run was briefed under — a tenant retrieval policy may have
+      // narrowed a `kind=all` request to its default scope, and SessionStart
+      // stamps whatever the briefing response echoed
+      // (`cmd/3ngram-hook/briefing.go`). A caller that reconstructs the facet
+      // from its own environment cannot know that narrowed name, so the prompt
+      // would tell the model to file under a scope it was never briefed under —
+      // and an omitted `scope` on `remember` defaults to `personal`, which drops
+      // the debrief memories out of the very briefing that surfaced the work.
+      // Same argument for `project`: the row holds the facet resolved at open.
+      //
+      // An EXPLICIT query value still wins. This route is not hook-only, and a
+      // caller that names a facet is answering the question itself; the fallback
+      // fires only where the answer was previously absent.
       res.status(200).json({
         prompt: renderDebriefPrompt(
           defined({
-            scope: query.scope,
-            project: query.project,
+            scope: query.scope ?? session?.scope ?? undefined,
+            project: query.project ?? session?.project ?? undefined,
             briefedCommitments: session?.briefedMemories,
           }),
         ),

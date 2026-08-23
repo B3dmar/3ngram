@@ -3133,6 +3133,78 @@ describe('GET /api/v1/prompts/debrief', () => {
       expect(await res.json()).toEqual({ error: 'invalid_input' })
     }
   })
+
+  // The facets fall back to the ROW when the query omits them. The hook sends
+  // only the natural key precisely because it cannot know these values: a
+  // retrieval policy may have narrowed a `kind=all` briefing to a scope that
+  // exists nowhere in the hook's environment, and an omitted `scope` on the
+  // resulting `remember` would default to `personal` — filing the debrief
+  // outside the briefing that surfaced the work.
+  it('resolves scope and project from the session row', async () => {
+    getAgentSession.mockResolvedValue({
+      id: crypto.randomUUID(),
+      scope: 'client-acme',
+      project: '3ngram',
+      briefedMemories: [{ id: NEW_ID, topic: 'ship step 7b', status: 'open' }],
+    })
+    const res = await call(
+      `/api/v1/prompts/debrief?agent=${KEY.agent}&sessionId=${KEY.sessionId}`,
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    const { prompt } = await res.json()
+    const fenced = /```json\n([\s\S]*?)\n```/.exec(prompt)
+    expect(JSON.parse((fenced as RegExpExecArray)[1] as string)).toEqual({
+      scope: 'client-acme',
+      project: '3ngram',
+      briefedCommitments: [{ id: NEW_ID, topic: 'ship step 7b', status: 'open' }],
+    })
+  })
+
+  // An EXPLICIT query value still wins: this route is not hook-only, and a
+  // caller that names a facet has answered the question itself.
+  it('lets an explicit query facet override the row', async () => {
+    getAgentSession.mockResolvedValue({
+      id: crypto.randomUUID(),
+      scope: 'client-acme',
+      project: '3ngram',
+      briefedMemories: [],
+    })
+    const res = await call(
+      `/api/v1/prompts/debrief?scope=work&agent=${KEY.agent}&sessionId=${KEY.sessionId}`,
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    const { prompt } = await res.json()
+    const fenced = /```json\n([\s\S]*?)\n```/.exec(prompt)
+    expect(JSON.parse((fenced as RegExpExecArray)[1] as string)).toEqual({
+      scope: 'work',
+      project: '3ngram',
+      briefedCommitments: [],
+    })
+  })
+
+  // A row with NULL facets renders the keys ABSENT rather than `null`: the
+  // prompt reads an absent key as "use the one the work belonged to", while a
+  // null would be a value the model might copy into a tool argument.
+  it('omits facets the row does not carry', async () => {
+    getAgentSession.mockResolvedValue({
+      id: crypto.randomUUID(),
+      scope: null,
+      project: null,
+      briefedMemories: [],
+    })
+    const res = await call(
+      `/api/v1/prompts/debrief?agent=${KEY.agent}&sessionId=${KEY.sessionId}`,
+      { key: VALID_KEY },
+    )
+    expect(res.status).toBe(200)
+    const { prompt } = await res.json()
+    const fenced = /```json\n([\s\S]*?)\n```/.exec(prompt)
+    expect(JSON.parse((fenced as RegExpExecArray)[1] as string)).toEqual({
+      briefedCommitments: [],
+    })
+  })
 })
 
 // GET /api/v1/budget: the caller's budget status (effective cap + consumed).

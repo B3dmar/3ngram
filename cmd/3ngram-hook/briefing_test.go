@@ -35,10 +35,15 @@ func TestRunBriefingSubagentRoleSkipsAutoPull(t *testing.T) {
 	}
 }
 
-// TestRunHeartbeatSubagentRoleSkips pins the SAME filter on the new Stop hook:
-// a Task-dispatched sub-agent must not refresh (or resurrect) the main agent's
+// TestRunStopSubagentRoleSkips pins the SAME filter on the Stop hook: a
+// Task-dispatched sub-agent must not refresh (or resurrect) the main agent's
 // lease, and SubagentStop is never registered at all.
-func TestRunHeartbeatSubagentRoleSkips(t *testing.T) {
+//
+// The nudge flag is ON here on purpose. The suppression check runs BEFORE
+// anything else in runStop, so enabling the nudge must not open a second door
+// into a sub-agent's turn — a `triage/begin` from a sub-agent would arm the main
+// agent's row and inject a debrief into the wrong conversation.
+func TestRunStopSubagentRoleSkips(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -50,12 +55,16 @@ func TestRunHeartbeatSubagentRoleSkips(t *testing.T) {
 	t.Setenv("THREENGRAM_API_BASE", srv.URL)
 	t.Setenv("THREENGRAM_API_KEY", "3ng_test")
 	t.Setenv("THREENGRAM_HOOK_ROLE", "subagent")
+	t.Setenv("THREENGRAM_STOP_NUDGE", "1")
 
-	captureHook(t, `{"session_id":"sess-sub","last_assistant_message":"done"}`, func() int {
-		return runHeartbeat(nil)
+	out := captureHook(t, `{"session_id":"sess-sub","last_assistant_message":"done"}`, func() int {
+		return runStop(nil)
 	})
 	if got := hits.Load(); got != 0 {
-		t.Fatalf("expected no heartbeat requests, got %d", got)
+		t.Fatalf("expected no Stop requests, got %d", got)
+	}
+	if out != "" {
+		t.Fatalf("a suppressed Stop emitted an envelope: %q", out)
 	}
 }
 

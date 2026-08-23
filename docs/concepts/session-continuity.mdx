@@ -4,25 +4,33 @@ description: "Why session-boundary capture was removed, and the session-state pl
 icon: "arrows-rotate"
 ---
 
-**Status: design, not built** for the remaining step — the Stop nudge HOOK
-(step 7b) does not exist. Everything else on this page ships, including the
-server half of the handshake (step 7a): `POST
+**Status: shipped, default-off — the mechanism is built; the default-on
+behavior this page argues for is unmeasured and gated on the validation bar.**
+Every step of the plan below is implemented, step 7b included. Nothing here
+runs for a user who has not opted in: the Stop nudge ships behind
+`THREENGRAM_STOP_NUDGE=1` (`cmd/3ngram-hook/nudge.go`), registered for one
+harness, and the closer ships behind `SESSION_CLOSER_ENABLED`. Read the
+mechanism as shipped contract and the DEFAULT as an open proposal until the bar
+at the bottom of this page is measured.
+
+Step 7b is the gated Stop nudge hook: `3ngram-hook stop` heartbeats
+unconditionally and, behind the flag, calls the handshake and emits the
+continuation envelope. The server half (step 7a) was already there: `POST
 /api/v1/agent-sessions/triage/begin|complete` implement the entry rule, the
 debounce, the pending/complete/expire/overflow outcomes, the cumulative
-event-id watermark and the write-time re-arm. Nothing calls them yet — no hook
-is registered for a blocking `Stop`, which is what keeps the nudge default-off
-until the validation bar holds. `agent_sessions` and the
+event-id watermark and the write-time re-arm; they only ever answer `armed`, and
+the injection decision stays with the hook. `agent_sessions` and the
 `memory_events` session expression index shipped in migration 0032. Native
 remember / revise / resolve accept optional `sessionRunId` and stamp
 `{ sessionRunId }` on the audit events those writes emit, and
 `GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. `POST
 /api/v1/agent-sessions/open|close|heartbeat` and `GET /api/v1/prompts/debrief`
-ship the hook-facing half of step 5, and `3ngram-hook briefing|heartbeat|close`
+ship the hook-facing half of step 5, and `3ngram-hook briefing|stop|close`
 (step 5b) calls them from SessionStart, Stop and SessionEnd. Step 6 ships the
 **lease-expiry sweep and the resolve-only closer worker** (plus the worker image
 and Compose service), so the bookkeeping is now CONSUMED — but the closer is
 **default-off** (`SESSION_CLOSER_ENABLED`) until the validation bar below is
-measured, and there is still no Stop nudge hook. Tracked as
+measured. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -344,8 +352,9 @@ at SessionEnd. That lesson stays. The feed itself is not this epic.
 
 ### PreCompact and Stop excerpt
 
-Every **main-agent Stop** (including the heartbeat-only Stop in step 5) persists a
-bounded `last_assistant_message` onto `last_message_excerpt`. PreCompact may also
+Every **main-agent Stop** persists a bounded `last_assistant_message` onto
+`last_message_excerpt`, whether or not the nudge is enabled — the heartbeat that
+carries it is the unconditional half of the hook. PreCompact may also
 snapshot; it is not the only writer. Ordinary sessions never compact, and SessionEnd
 has no final-message field — without the Stop path the closer sees null in the
 common case. Retention is unchanged: clear only after the closer durably consumes
@@ -405,9 +414,10 @@ resolve/unresolve/archive inputs. `.strict()` stays.
    on the hooked path is **best-effort and model-mediated**: SessionStart injects
    the `sessionRunId` plus instructions to pass it on writes. Concurrent hooked
    sessions and agents that omit the field fall through to (4). Do not claim the
-   hooked path always sends the id. Step 5 still registers a **heartbeat-only**
-   Stop so the lease stays fresh during *completed* turns before the nudge exists,
-   and so `last_assistant_message` is snapshotted every turn.
+   hooked path always sends the id. The Stop hook heartbeats **unconditionally**,
+   nudge or no nudge, so the lease stays fresh during *completed* turns and
+   `last_assistant_message` is snapshotted every turn — the layer-4 triage is
+   additive on top of that call, never a replacement for it.
 4. **Single-open-session default is the floor** (vanilla MCP and hooked sessions
    that omitted the id). If the write omits `sessionRunId` and the tenant has
    exactly one leased-open row for that project, the write path MAY attach it.
@@ -470,6 +480,50 @@ path. `jsonb` operators for `sessionRunId` only, parsed through
 metadata-only (`present` / `jsonType` / `byteLength`).
 
 ## Layer 4 — Stop is a nudge
+
+<Note>
+**Shipped, default-off (step 7b).** `3ngram-hook stop` (`cmd/3ngram-hook/stop.go`,
+`nudge.go`) heartbeats unconditionally and runs the handshake only behind
+`THREENGRAM_STOP_NUDGE=1`. With the flag unset it is byte-for-byte the
+heartbeat-only Stop of step 5b and calls no triage route at all. `heartbeat`
+stays registered as an alias for `stop`: matching hooks launch concurrently with
+no ordering guarantee, so ONE subcommand that does both is what makes "the lease
+is refreshed before the nudge spends the budget" a fact rather than a hope.
+
+Three implementation decisions this section left open:
+
+- **The numeric self-cap is the server's `pending` state**, not a counter. Stop
+  is a fresh process each time and a local state file is forbidden, so the cap
+  had to be recoverable from the server: `begin` arms exactly once per attempt
+  and answers `pending` thereafter, and the hook injects only on `armed`. That
+  gives one injection per attempt WITHOUT depending on `stop_hook_active`, which
+  is exactly the property Codex (no cap at all) and Gemini CLI 0.30.0 (guard
+  hardcoded false) need. Re-arming requires a provenance event outside the
+  stamped watermark, so a zero-write continuation cannot re-arm (nothing new
+  exists) and a productive one cannot re-arm on its own writes (`complete`
+  absorbed them). **Three residuals, stated rather than hidden.** (1) The bound
+  is *one nudge per turn that produced new provenance*, not "never twice in a
+  session" — a user who keeps working keeps qualifying. (2) A write that
+  COMMITS after `complete` took its listing holds an id outside the watermark
+  and re-arms the next Stop; MCP writes are synchronous, so this needs a
+  genuinely concurrent async writer. (3) Concurrent Stop deliveries — in
+  practice a duplicate registration of both `stop` and its `heartbeat` alias —
+  let a sibling process finalize an attempt before the arming process emits its
+  envelope, so that continuation's writes land outside the watermark and a
+  later Stop re-arms. The README forbids the duplicate registration; closing it
+  properly needs an arm timestamp the row does not carry
+  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)).
+- **The attempt id round-trips through `begin`.** There is no natural-key read
+  on the row, so the finalize Stop recovers the in-flight attempt from `begin`'s
+  `pending` decline. That means the finalize path calls a route that COULD arm;
+  if it does, the hook still refuses to inject (`stop_hook_active=true` forbids
+  it) and completes the fresh attempt immediately, which lands the row on
+  `expired` — closer-eligible. The nudge is lost, the debrief is not.
+- **No `turnCount` hint is sent.** Neither harness carries a turn count in the
+  Stop payload, and the transcript is not a stable interface. The debounce is a
+  disjunction and its other two arms are server-side facts, so the condition
+  still holds.
+</Note>
 
 3ngram already serves the words. `debrief` (`apps/server/src/mcp/prompts.ts`) instructs
 the agent to persist one typed atom per `remember` (2000 characters), pass `project`,
@@ -606,8 +660,23 @@ before the next Stop is not skipped.
 ### Who is registered
 
 Main-agent Stop only. Not SubagentStop. Not secondary worktrees. Not `THREENGRAM_HOOK_ROLE=subagent`.
+The shipped hook enforces all three through the same `hookSuppressed` filter the
+briefing auto-pull uses, checked before anything else runs.
 
-Default-off until the validation bar in the plan says otherwise.
+Default-off until the validation bar in the plan says otherwise. **Claude Code is
+the one registered harness** for the validation phase: `cmd/3ngram-hook/README.md`
+documents enabling the flag there, and the Codex section ships the envelope but
+explicitly defers registration until the bar holds — an ungated triage on a
+harness with no continuation cap is an infinite turn loop, not an annoyance.
+
+One empirical caveat is recorded rather than assumed away. Anthropic's shipped
+`ralph-wiggum` Stop plugin emits top-level `decision`/`reason` — the form the hook
+emits — while the current hooks reference documents
+`hookSpecificOutput.continueConversation` for Stop instead. The hook follows the
+working first-party artifact; `continuationEnvelope` records both citations and
+the two-line swap, and the README's validation checkpoint asks the operator to
+confirm a Stop actually continues the turn on their installed build before
+relying on the nudge.
 
 ## Layer 5 — closer worker
 
@@ -845,7 +914,7 @@ prose here.
 | 5b | ~~Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId`~~ | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | ~~Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve~~ | **Shipped default-off.** Commitment-recall **improvement** vs 0% is the bar for default-on; no new-atom `remember` |
 | 7a | ~~Triage routes: server-side entry rule + debounce, pending/complete/expire/overflow, cumulative event-id watermark, write-time re-arm~~ | **Shipped.** Complete only with provenance since attempt begin; a stale attempt cannot clobber a newer one, including a closer's |
-| 7b | Gated Stop nudge hook, one project, one harness, default-off | The hook injects only on `armed`; numeric self-cap; `stop_hook_active` finalizes |
+| 7b | ~~Gated Stop nudge hook, one project, one harness, default-off~~ | **Shipped; default-off, validation bar pending.** The hook injects only on `armed`; the numeric self-cap is the server's `pending` state, so it holds without `stop_hook_active`; `stop_hook_active` finalizes and never injects |
 
 **Validation bar** (go/no-go for default-on, closer and nudge separately):
 
@@ -858,10 +927,11 @@ prose here.
 
 A recall-only pass would contradict this page's own thesis.
 
-**Do not ship step 7b ungated on Codex. Do not ship it default-on until the bar
-holds.** The 7a routes are inert on their own: nothing calls them until a hook is
-registered for a blocking `Stop`, and they only ever answer `armed` — the
-injection decision stays with the hook.
+**Do not enable step 7b on Codex. Do not turn it default-on until the bar
+holds.** Both still stand now that the hook exists: the Codex envelope ships but
+its registration is deferred, and `THREENGRAM_STOP_NUDGE` defaults off, so the
+7a routes remain uncalled for anyone who has not opted in. They only ever answer
+`armed` — the injection decision stays with the hook.
 
 ## Open questions
 
