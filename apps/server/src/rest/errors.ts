@@ -28,6 +28,7 @@ import {
   AccessDeniedError,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
+  AgentSessionTriageConflictError,
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
@@ -191,6 +192,11 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     // with different identity params — "request token; reuse with changed
     // params is 409" (docs/concepts/session-continuity.mdx, REST surface).
     err instanceof AgentSessionParamsConflictError ||
+    // A `triage/complete` for an attempt that is no longer the current one —
+    // a crashed hook retrying, a second Stop, or a closer that re-claimed the
+    // row after the lease expired mid-handshake. The attempt-id predicate
+    // rejected it, so the newer attempt's verdict stands.
+    err instanceof AgentSessionTriageConflictError ||
     // A commitment transition that kept losing its compare-and-set: the row
     // exists and the request was legal from the state the caller read, but
     // concurrent writers moved it out from under every attempt. A write
