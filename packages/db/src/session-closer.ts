@@ -50,6 +50,36 @@ import { memoryEvents } from './schema/memory.js'
  */
 export const CLOSER_ELIGIBLE_STATUSES = ['idle', 'pending', 'expired'] as const
 
+/**
+ * THE RE-ARM PREDICATE, in one place: this run holds a provenance event whose id
+ * is NOT in `last_triaged_event_ids` (docs/concepts/session-continuity.mdx,
+ * "Debounce" — *re-arm is an event id not in that set*).
+ *
+ * Correlated against the `agent_sessions` row in the enclosing query, so it
+ * reads the watermark from the row rather than round-tripping the jsonb array
+ * through a bind parameter, and it stops at the FIRST untriaged event instead of
+ * materialising the run.
+ *
+ * Two consumers must agree on it or the closer and the Stop nudge would disagree
+ * about whether the same row has untriaged signal: {@link listCloserCandidates}'
+ * `completed` leg, and the triage handshake's entry rule + debounce
+ * (session-triage.ts). Duplicating the SQL is how those two silently drift.
+ *
+ * The jsonb array holds event ids as TEXT, so membership is a containment test
+ * against the scalar (`'["a"]'::jsonb @> '"a"'::jsonb`). `e.id::text` and
+ * `agent_sessions.id::text` are both Postgres' canonical lowercase uuid
+ * spelling, which is the spelling the write path stamps into the payload — the
+ * same equality `listSessionEvents` relies on. The inner scan is served by
+ * `memory_events_session_idx`.
+ */
+export const hasUntriagedSessionEvent = sql`EXISTS (
+    SELECT 1
+      FROM ${memoryEvents} AS e
+     WHERE e.user_id = ${agentSessions.userId}
+       AND e.payload->>'sessionRunId' = ${agentSessions.id}::text
+       AND NOT (${agentSessions.lastTriagedEventIds} @> to_jsonb(e.id::text))
+  )`
+
 /** One row the sweep implicitly closed, or found already closed and eligible. */
 export interface CloserCandidate {
   sessionRunId: string
@@ -184,19 +214,6 @@ export async function listCloserCandidates(
   userId: string,
   limit: number,
 ): Promise<CloserCandidate[]> {
-  // The jsonb array holds event ids as TEXT, so membership is a containment
-  // test against the scalar (`'["a"]'::jsonb @> '"a"'::jsonb`). `e.id::text` and
-  // `agent_sessions.id::text` are both Postgres' canonical lowercase uuid
-  // spelling, which is the spelling the write path stamps into the payload —
-  // the same equality `listSessionEvents` relies on.
-  const hasUntriagedEvent = sql`EXISTS (
-    SELECT 1
-      FROM ${memoryEvents} AS e
-     WHERE e.user_id = ${agentSessions.userId}
-       AND e.payload->>'sessionRunId' = ${agentSessions.id}::text
-       AND NOT (${agentSessions.lastTriagedEventIds} @> to_jsonb(e.id::text))
-  )`
-
   const rows = await tx
     .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
     .from(agentSessions)
@@ -206,7 +223,7 @@ export async function listCloserCandidates(
         isNotNull(agentSessions.closedAt),
         or(
           inArray(agentSessions.triageStatus, [...CLOSER_ELIGIBLE_STATUSES]),
-          and(eq(agentSessions.triageStatus, 'completed'), hasUntriagedEvent),
+          and(eq(agentSessions.triageStatus, 'completed'), hasUntriagedSessionEvent),
         ),
       ),
     )
