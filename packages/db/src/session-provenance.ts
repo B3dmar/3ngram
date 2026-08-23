@@ -4,10 +4,11 @@
 // hands it here inside withTenant. Import never calls this. The one exception to
 // "caller owns the tx" is assertSessionRunOwned, which core's idempotent no-op
 // path calls without a transaction of its own.
-import { SESSION_LEASE_MS, type SessionProvenancePayload } from '@3ngram/schema'
+import type { SessionProvenancePayload } from '@3ngram/schema'
 import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import { lockSessionAttach, type TenantTx, withTenant } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
+import { isExplicitClose, isLeased, leaseFloor, monotonicLastSeen } from './session-lease.js'
 
 /** A syntactically valid sessionRunId that is not a tenant-owned row. */
 export class UnknownSessionRunError extends Error {
@@ -25,22 +26,8 @@ export function sessionPayload(
   return sessionRunId === undefined ? undefined : { sessionRunId }
 }
 
-function leaseFloor(now: Date): Date {
-  return new Date(now.getTime() - SESSION_LEASE_MS)
-}
-
-/** Explicit SessionEnd: closed while the lease was still live. Durable — lastSeenAt freezes at close. */
-function isExplicitClose(closedAt: Date | null, lastSeenAt: Date): boolean {
-  return closedAt !== null && closedAt.getTime() <= lastSeenAt.getTime() + SESSION_LEASE_MS
-}
-
 function projectPredicate(project: string | null | undefined) {
   return project == null ? isNull(agentSessions.project) : eq(agentSessions.project, project)
-}
-
-/** Lease still live at `now` (a stale lease is the resurrect trigger). */
-function isLeased(lastSeenAt: Date, now: Date): boolean {
-  return lastSeenAt.getTime() > leaseFloor(now).getTime()
 }
 
 /**
@@ -93,22 +80,6 @@ async function readSession(
     .limit(1)
   const [row] = opts?.forUpdate === true ? await query.for('update') : await query
   return row
-}
-
-/**
- * MONOTONIC lease refresh: never move `last_seen_at` backwards.
- *
- * `now` is captured in the caller's process before the statement runs, so a
- * slow attacher can reach its UPDATE after a later attacher already committed a
- * NEWER heartbeat. A bare `SET last_seen_at = now` would then overwrite the
- * fresher timestamp with the older captured one, SHORTENING the lease — enough
- * for the next write to read the run as stale and resurrect it for no reason.
- * GREATEST makes a successful heartbeat a floor, never a rollback. The
- * `::timestamptz` cast is the repo's convention for an interpolated timestamp
- * param (search.ts, search-list.ts) — without it the param arrives untyped.
- */
-function monotonicLastSeen(now: Date) {
-  return sql`GREATEST(${agentSessions.lastSeenAt}, ${now.toISOString()}::timestamptz)`
 }
 
 async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {

@@ -78,6 +78,10 @@ function makeTx(reads: SessionRead[]) {
         where: () => ({
           limit: () => ({
             for: (strength: string) => read(strength === 'update'),
+            // A drizzle select IS a thenable: awaiting the builder runs the
+            // plain read while `.for('update')` runs the row-locking one. The
+            // fake must be one too, or it cannot tell those two calls apart.
+            // biome-ignore lint/suspicious/noThenProperty: mirrors drizzle's thenable select builder
             then: (onOk: (rows: unknown) => unknown, onErr?: (err: unknown) => unknown) =>
               read(false).then(onOk, onErr),
           }),

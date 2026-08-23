@@ -582,6 +582,7 @@ jobs:
               test/integration/facts-write.int.test.ts
               test/integration/session-provenance.int.test.ts
               test/integration/session-events-read.int.test.ts
+              test/integration/session-lifecycle.int.test.ts
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts
               test/integration/retrieval-policy.int.test.ts
