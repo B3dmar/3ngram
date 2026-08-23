@@ -268,6 +268,150 @@ export const agentSessionHeartbeatResponseSchema = z
 export type AgentSessionHeartbeatResponse = z.infer<typeof agentSessionHeartbeatResponseSchema>
 
 // ---------------------------------------------------------------------------
+// POST /api/v1/agent-sessions/triage/begin | .../complete — the Stop-nudge
+// handshake (docs/concepts/session-continuity.mdx layer 4, "Pending vs
+// complete" and "Debounce"). Issue #166 step 7a: the SERVER half. The hook that
+// calls these and decides whether to inject is step 7b.
+//
+// NATURAL KEY, like every other hook route: Stop is a separate process that
+// holds the harness conversation id and nothing else. It carries no
+// `sessionRunId` and no `activation_epoch`, and must not persist either in a
+// local mapping file.
+//
+// THE SERVER DECIDES, THE HOOK OBEYS. `begin` evaluates eligibility AND the
+// debounce and answers `armed` — the hook injects the debrief only when armed.
+// Putting the decision here is what keeps the rule identical across harnesses,
+// the same reason 3ngram owns the debrief words and the hook only owns the
+// trigger.
+// ---------------------------------------------------------------------------
+
+/**
+ * Upper bound on the hook's turn-count hint. Generous — it is a sanity bound on
+ * a number the hook counts out of harness stdin, not a product limit.
+ */
+export const MAX_TRIAGE_TURN_COUNT = 100_000
+
+/**
+ * `POST /api/v1/agent-sessions/triage/begin`.
+ *
+ * `turnCount` is a HINT, and the only debounce input the server cannot observe
+ * for itself: the harness's turn count is in the Stop payload the hook reads,
+ * and nothing in `agent_sessions` counts turns. The other two inputs the page
+ * names — elapsed time and a non-triage provenance event — are both server-side
+ * facts (`opened_at`, and the run's events via the expression index), so a hook
+ * that omits the hint can still arm on either of those. The CONDITION is not
+ * optional; which of the three satisfies it is.
+ *
+ * It is deliberately NOT persisted. A client-reported counter is evidence for
+ * one decision, not a fact about the row, and storing it would invite a second
+ * source of truth for session substance.
+ */
+export const agentSessionTriageBeginBodySchema = z
+  .object({
+    agent: agentNameSchema,
+    sessionId: harnessSessionIdSchema,
+    turnCount: z.number().int().min(0).max(MAX_TRIAGE_TURN_COUNT).optional(),
+  })
+  .strict()
+export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBeginBodySchema>
+
+/**
+ * Why `begin` did not arm. Content-free, stable, and safe to log or metric.
+ *
+ * | reason       | meaning                                                              |
+ * |--------------|----------------------------------------------------------------------|
+ * | `not-live`   | the row is closed or past its lease — a nudge needs a live session    |
+ * | `terminal`   | `overflowed`: the run passed the per-run event ceiling, forever       |
+ * | `pending`    | an attempt is already outstanding; `attemptId` names it               |
+ * | `no-signal`  | `completed`/`expired` with no untriaged provenance event to re-arm on |
+ * | `debounce`   | eligible, but the session has no substance yet                        |
+ * | `overflowed` | this call FOUND the run past the ceiling and stamped it terminal      |
+ *
+ * `pending` is not an error and not a re-arm: the page says a later ordinary
+ * Stop that finds `pending` "applies the same complete-or-expire rule and does
+ * not inject again", so the response hands back the existing `attemptId` and
+ * leaves `armed` false. That is what makes `begin` idempotent without ever
+ * double-injecting.
+ */
+export const triageDeclineReasonSchema = z.enum([
+  'not-live',
+  'terminal',
+  'pending',
+  'no-signal',
+  'debounce',
+  'overflowed',
+])
+export type TriageDeclineReason = z.infer<typeof triageDeclineReasonSchema>
+
+/**
+ * The arm-or-decline verdict.
+ *
+ * `attemptId` is present when this call ARMED an attempt, and also on the
+ * `pending` decline, where it names the attempt already in flight — the hook
+ * needs it to finalize rather than re-inject. It is absent on every other
+ * decline: there is no attempt to finish.
+ *
+ * `triageStatus` is the row's state AFTER the call, so a decline is diagnosable
+ * from the response alone without a second read.
+ */
+export const agentSessionTriageBeginResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    armed: z.boolean(),
+    attemptId: z.uuid().optional(),
+    triageStatus: agentSessionTriageStatusSchema,
+    reason: triageDeclineReasonSchema.optional(),
+  })
+  .strict()
+export type AgentSessionTriageBeginResponse = z.infer<typeof agentSessionTriageBeginResponseSchema>
+
+/**
+ * `POST /api/v1/agent-sessions/triage/complete`.
+ *
+ * `attemptId` is REQUIRED and is the fence. A crashed hook, a duplicate
+ * delivery, or a second Stop can all deliver a complete for an attempt that is
+ * no longer current — most sharply when the session died mid-handshake and the
+ * closer re-claimed the row with an attempt id of its own. Stamping under an
+ * attempt-id predicate is what stops that late call clobbering the newer
+ * attempt's verdict.
+ */
+export const agentSessionTriageCompleteBodySchema = z
+  .object({
+    agent: agentNameSchema,
+    sessionId: harnessSessionIdSchema,
+    attemptId: z.uuid(),
+  })
+  .strict()
+export type AgentSessionTriageCompleteInput = z.infer<typeof agentSessionTriageCompleteBodySchema>
+
+/** The terminal statuses one completed handshake can land on. `idle`/`pending` are not outcomes. */
+export const triageOutcomeStatusSchema = z.enum(['completed', 'expired', 'overflowed'])
+export type TriageOutcomeStatus = z.infer<typeof triageOutcomeStatusSchema>
+
+/**
+ * The absorb receipt. COUNTS ONLY — the event ids themselves are audit-log
+ * identifiers for memories this run wrote, and the hook has no use for them
+ * (hard rule 6 keeps the response to ids and counts; here it is only counts).
+ *
+ * `eventCount` is the size of the CUMULATIVE watermark this call stamped — every
+ * event id visible for the run, not the since-begin slice. `sinceBeginCount` is
+ * the zero-write check: `0` is exactly why an outcome is `expired` rather than
+ * `completed`.
+ */
+export const agentSessionTriageCompleteResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    triageStatus: triageOutcomeStatusSchema,
+    eventCount: z.number().int().min(0).max(MAX_SESSION_EVENT_IDS),
+    sinceBeginCount: z.number().int().min(0).max(MAX_SESSION_EVENT_IDS),
+    truncated: z.boolean(),
+  })
+  .strict()
+export type AgentSessionTriageCompleteResponse = z.infer<
+  typeof agentSessionTriageCompleteResponseSchema
+>
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/prompts/debrief — the MCP debrief registrar over REST
 // ---------------------------------------------------------------------------
 
