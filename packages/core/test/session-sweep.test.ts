@@ -102,19 +102,24 @@ describe('sweepSessions', () => {
 
   it('expires excerpts against a TTL floor derived from the injected clock', async () => {
     let floor: Date | undefined
+    let ttlLimit: number | undefined
     const repo = fakeRepo({
       listCloserCandidates: async () => [],
-      expireStaleExcerpts: async (_userId, before) => {
+      expireStaleExcerpts: async (_userId, before, limit) => {
         floor = before
+        ttlLimit = limit
         return 2
       },
     })
-    const result = await sweepSessions(repo, NOW)
+    const result = await sweepSessions(repo, NOW, { limitPerTenant: 7 })
 
     expect(floor).toBeDefined()
     // Strictly in the past — core reads no clock of its own, so a wrong sign
     // here would clear every excerpt in the tenant on the first pass.
     expect((floor as Date).getTime()).toBeLessThan(NOW.getTime())
+    // Bounded like the other two legs: an unbounded UPDATE over a big backlog
+    // would hold row locks far past the advertised per-tenant batch.
+    expect(ttlLimit).toBe(7)
     expect(result.excerptsExpired).toBe(2)
   })
 

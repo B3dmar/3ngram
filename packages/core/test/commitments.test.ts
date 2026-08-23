@@ -66,6 +66,16 @@ vi.mock('@3ngram/db', () => ({
       this.name = 'IllegalCommitmentTransitionError'
     }
   },
+  CommitmentStateChangedError: class CommitmentStateChangedError extends Error {
+    readonly commitmentId: string
+    readonly expectedFrom: string
+    constructor(commitmentId: string, expectedFrom: string) {
+      super(`commitment is no longer in status '${expectedFrom}'`)
+      this.name = 'CommitmentStateChangedError'
+      this.commitmentId = commitmentId
+      this.expectedFrom = expectedFrom
+    }
+  },
 }))
 
 // Pulled from the mocked module so the thrown shape matches what core catches.
@@ -76,6 +86,7 @@ const { UnknownSessionRunError } = (await import('@3ngram/db')) as unknown as {
 const {
   BlockerNotFoundError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   createCommitment,
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
@@ -406,5 +417,72 @@ describe('resolveForClosedRun (session closer)', () => {
     await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).rejects.toThrow(
       'connection terminated',
     )
+  })
+})
+
+// The compare-and-set that makes the live re-read binding. Codex found the hole:
+// the read runs in its own transaction, and the FSM trigger waves
+// `resolved -> resolved` straight through, so a loser of the race used to write
+// anyway — re-stamping resolved_at and appending a SECOND resolve event under a
+// different session's provenance, with both callers reporting 'resolved'.
+describe('resolveForClosedRun compare-and-set', () => {
+  const RUN_ID = '00000000-0000-7000-8000-0000000000cc'
+
+  it('pins the observed status into the write as expectedFrom', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
+
+    await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
+
+    const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(call.expectedFrom).toBe('open')
+  })
+
+  it('reports already-resolved WITHOUT writing when it loses the race', async () => {
+    // First read sees 'open'; the CAS finds the row already moved; the re-read
+    // says who won. Exactly one resolve event exists in the corpus — this
+    // caller appended none.
+    getCommitmentByMemoryId
+      .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+      .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'resolved' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'already-resolved',
+    )
+    expect(dbTransitionCommitment).toHaveBeenCalledOnce()
+  })
+
+  it('reports illegal-transition when the winner moved it somewhere unreachable', async () => {
+    getCommitmentByMemoryId
+      .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+      .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'expired' })
+    dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+      'illegal-transition',
+    )
+  })
+
+  it('two sequential passes over one commitment write exactly ONE transition', async () => {
+    // The end-to-end shape of the bug: closer attempt A resolves, attempt B
+    // (a retry, or a second in-flight pass) must write nothing.
+    let status = 'open'
+    getCommitmentByMemoryId.mockImplementation(async () => ({
+      id: COMMITMENT,
+      memoryId: MEMORY,
+      status,
+    }))
+    dbTransitionCommitment.mockImplementation(async () => {
+      status = 'resolved'
+      return { id: COMMITMENT, status: 'resolved' }
+    })
+
+    const first = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
+    const second = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
+
+    expect(first).toBe('resolved')
+    expect(second).toBe('already-resolved')
+    expect(dbTransitionCommitment).toHaveBeenCalledOnce()
   })
 })

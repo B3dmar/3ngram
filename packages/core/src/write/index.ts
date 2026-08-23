@@ -12,7 +12,8 @@ export {
   NotCommitmentMemoryError,
   type ResolveStatus,
   resolveByMemoryId,
-  resolveForClosedRun,
+  // `resolveForClosedRun` is deliberately NOT re-exported — see its doc comment.
+  // The session closer reaches it by deep import; nothing else may.
   transition,
   type WrittenCommitment,
 } from './commitments.js'

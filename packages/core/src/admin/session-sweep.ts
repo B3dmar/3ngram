@@ -49,7 +49,7 @@ export interface SessionSweepRepo {
   /** Closed rows of this tenant whose triage never ran. */
   listCloserCandidates(userId: string, limit: number): Promise<CloserCandidate[]>
   /** Clear excerpts on rows the closer will never process (the TTL leftovers). */
-  expireStaleExcerpts(userId: string, before: Date): Promise<number>
+  expireStaleExcerpts(userId: string, before: Date, limit: number): Promise<number>
   /** Hand one run to the closer queue. Idempotent by the job id the harness derives. */
   enqueueCloser(request: CloserEnqueueRequest): Promise<void>
 }
@@ -115,7 +115,7 @@ export async function sweepSessions(
       enqueued += 1
     }
 
-    excerptsExpired += await repo.expireStaleExcerpts(userId, excerptFloor)
+    excerptsExpired += await repo.expireStaleExcerpts(userId, excerptFloor, limitPerTenant)
   }
   return { tenantsScanned: tenants.length, implicitlyClosed, enqueued, excerptsExpired }
 }
@@ -137,8 +137,8 @@ export function dbSessionSweepRepo(
       withTenant(userId, (tx) => sweepExpiredLeases(tx, userId, now, limit)),
     listCloserCandidates: (userId, limit) =>
       withTenant(userId, (tx) => listCloserCandidates(tx, userId, limit)),
-    expireStaleExcerpts: (userId, before) =>
-      withTenant(userId, (tx) => expireStaleExcerpts(tx, userId, before)),
+    expireStaleExcerpts: (userId, before, limit) =>
+      withTenant(userId, (tx) => expireStaleExcerpts(tx, userId, before, limit)),
     enqueueCloser,
   }
 }

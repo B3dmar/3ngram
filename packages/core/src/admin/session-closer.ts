@@ -32,17 +32,24 @@
 import {
   claimSessionTriage,
   finishSessionTriage,
+  insertLlmUsage,
   listSessionEvents,
   readCloserSession,
   withTenant,
 } from '@3ngram/db'
-import type { Gateway } from '@3ngram/llm'
+import type { CompletionResult, Gateway } from '@3ngram/llm'
 import {
   type BriefedMemory,
   closerVerdictSchema,
   MAX_SESSION_EVENT_IDS,
   MAX_SESSION_EVENTS_LIMIT,
 } from '@3ngram/schema'
+import {
+  type BudgetEnforcement,
+  type BudgetReservationHandle,
+  releaseBudgetReservation,
+  reserveBudgetSlot,
+} from '../budget/index.js'
 import { renderDebriefPrompt } from '../prompts/index.js'
 import { type ClosedRunResolveOutcome, resolveForClosedRun } from '../write/commitments.js'
 
@@ -125,6 +132,19 @@ export interface SessionCloserRepo {
   resolve(userId: string, memoryId: string, sessionRunId: string): Promise<ClosedRunResolveOutcome>
   /** Epoch-fenced write-back of the terminal status, watermark and excerpt clear. */
   finish(userId: string, finish: CloserFinish): Promise<boolean>
+  /** Record one `llm_usage` row for the generation call. Best-effort by contract. */
+  recordUsage(userId: string, usage: CloserUsage): Promise<void>
+  /** The run's CURRENT activation epoch, or undefined if it vanished. */
+  currentEpoch(userId: string, sessionRunId: string): Promise<number | undefined>
+}
+
+/** Content-free accounting for one closer generation call. */
+export interface CloserUsage {
+  operation: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  costUsd: number | null
 }
 
 /** The closer's bounded view of the session row. */
@@ -169,6 +189,44 @@ export interface CloserOptions {
   gateway?: Gateway | undefined
   /** Mints the attempt id. Injected so a test can pin it. */
   newAttemptId: () => string
+  /**
+   * Injected budget enforcement. Present → the generation is reserved against
+   * the tenant's cap BEFORE the call and released after, exactly as the embed
+   * seam does. Absent → no gate (the same back-compat shape `EmbedOptions` uses).
+   */
+  budget?: BudgetEnforcement | undefined
+}
+
+/**
+ * Output ceiling for the closer's single call. The reply is a short JSON id
+ * list, so this is generous — its job is to stop a looping model turning a
+ * bounded classification into an unbounded bill, and to keep the registered
+ * `maxCostUsd` the budget gate reserves against honest.
+ */
+export const CLOSER_MAX_OUTPUT_TOKENS = 1_000
+
+/**
+ * Per-token prices for the completion models the closer may run against, USD.
+ * Same posture as the embedding price map: a static, reviewed map rather than
+ * env-driven, and an UNKNOWN model records `cost_usd = NULL` (tokens still
+ * tracked) instead of guessing a number that would silently understate spend.
+ */
+export const COMPLETION_PRICE_USD_PER_TOKEN: Readonly<
+  Record<string, { input: number; output: number }>
+> = {
+  'gpt-4o-mini': { input: 0.15 / 1_000_000, output: 0.6 / 1_000_000 },
+  'gpt-4o': { input: 2.5 / 1_000_000, output: 10 / 1_000_000 },
+}
+
+/** Cost for one completion, or null when the model is not in the price map. */
+export function completionCostUsd(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): number | null {
+  const rate = COMPLETION_PRICE_USD_PER_TOKEN[model]
+  if (rate === undefined) return null
+  return inputTokens * rate.input + outputTokens * rate.output
 }
 
 /**
@@ -310,14 +368,21 @@ export function selectResolvable(
   const verdict = closerVerdictSchema.safeParse(parsed)
   if (!verdict.success) throw new CloserVerdictError(reply.length)
 
-  const briefedIds = new Set(briefed.map((row) => row.id))
+  // CASE-INSENSITIVE membership. A uuid is hex, so `A1B2` and `a1b2` are the
+  // same id, and a model copying from the prompt can easily upper-case it. A
+  // case-sensitive Set would count that as a hallucination, silently dropping a
+  // commitment the run really did complete — a false NEGATIVE on the exact
+  // metric the validation bar measures. The briefed spelling is what gets
+  // resolved, so the id handed downstream is always the tenant's own.
+  const briefedIds = new Map(briefed.map((row) => [row.id.toLowerCase(), row.id]))
   const candidates: string[] = []
   let rejected = 0
   for (const id of verdict.data.completed) {
+    const briefedId = briefedIds.get(id.toLowerCase())
     // De-duplicate too: a model that lists the same id twice must not produce
     // two resolve attempts against one commitment.
-    if (!briefedIds.has(id)) rejected += 1
-    else if (!candidates.includes(id)) candidates.push(id)
+    if (briefedId === undefined) rejected += 1
+    else if (!candidates.includes(briefedId)) candidates.push(briefedId)
   }
   return { candidates, rejected }
 }
@@ -507,12 +572,69 @@ export async function closeSessionRun(
     project: session.project,
     scope: session.scope,
   })
-  const reply = await options.gateway.complete(prompt, CLOSER_OPERATION)
-  const { candidates, rejected } = selectResolvable(reply, session.briefedMemories)
+  // METERED. `session.closer` is a registered generation operation, so it rides
+  // the same reserve -> call -> record -> release seam every embed call site
+  // uses. Reserving BEFORE the round-trip is what makes a per-tenant cap
+  // enforceable at all: a read-only pre-check races, and an unmetered background
+  // job is spend that never appears in `llm_usage` and can never be rejected.
+  // Over cap, reserveBudgetSlot throws BudgetExceededError, which propagates and
+  // fails the job — correct, because no work was done and BullMQ should retry
+  // once the window rolls.
+  let reservation: BudgetReservationHandle | undefined
+  let completion: CompletionResult
+  try {
+    if (options.budget) {
+      reservation = await reserveBudgetSlot(options.budget, userId, CLOSER_OPERATION)
+    }
+    completion = await options.gateway.complete(prompt, CLOSER_OPERATION, {
+      maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
+      jsonObject: true,
+    })
+    // The spend was incurred the moment the call returned, so record it before
+    // anything downstream can throw. Best-effort by contract: a failure to write
+    // the accounting row must not lose the resolves the pass is about to make.
+    await repo
+      .recordUsage(userId, {
+        operation: CLOSER_OPERATION,
+        model: completion.model,
+        inputTokens: completion.usage.inputTokens,
+        outputTokens: completion.usage.outputTokens,
+        costUsd: completionCostUsd(
+          completion.model,
+          completion.usage.inputTokens,
+          completion.usage.outputTokens,
+        ),
+      })
+      .catch(() => undefined)
+  } finally {
+    // Release once the call settles; the real cost, if any, is now in llm_usage.
+    if (reservation) await releaseBudgetReservation(userId, reservation)
+  }
+
+  const { candidates, rejected } = selectResolvable(completion.text, session.briefedMemories)
 
   let resolved = 0
   let skippedCandidates = 0
   for (const memoryId of candidates) {
+    // EPOCH PRE-CHECK before each resolve. The fence on `finish` protects the
+    // BOOKKEEPING, but the resolves run before it, so a resurrection during a
+    // slow generation would otherwise land every one of them on a session that
+    // is live again. This is a cheap best-effort read, not a lock — it cannot
+    // close the window, it narrows it from "the whole generation" to "one
+    // statement". That residue is acceptable precisely because the only verb
+    // here is `resolve`, which `unresolve` reverses; a closer that could
+    // `remember` would need a real transaction boundary instead.
+    const epoch = await repo.currentEpoch(userId, request.sessionRunId)
+    if (epoch !== session.activationEpoch) {
+      return {
+        sessionRunId: request.sessionRunId,
+        skipped: 'fenced',
+        candidates: candidates.length,
+        rejected,
+        resolved,
+        skippedCandidates,
+      }
+    }
     const outcome = await repo.resolve(userId, memoryId, request.sessionRunId)
     if (outcome === 'resolved') resolved += 1
     else skippedCandidates += 1
@@ -580,4 +702,16 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
   resolve: (userId, memoryId, sessionRunId) =>
     resolveForClosedRun(userId, memoryId, CLOSER_ACTOR_KIND, sessionRunId),
   finish: (userId, finish) => withTenant(userId, (tx) => finishSessionTriage(tx, userId, finish)),
+  recordUsage: (userId, usage) =>
+    insertLlmUsage(userId, {
+      operation: usage.operation,
+      model: usage.model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      costUsd: usage.costUsd,
+    }),
+  currentEpoch: async (userId, sessionRunId) => {
+    const row = await withTenant(userId, (tx) => readCloserSession(tx, userId, sessionRunId))
+    return row?.activationEpoch
+  },
 }

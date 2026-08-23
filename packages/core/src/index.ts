@@ -258,7 +258,6 @@ export {
   type RetryFailedEmbedsResult,
   remember,
   resolveByMemoryId,
-  resolveForClosedRun,
   retryFailedEmbeds,
   revise,
   transition,

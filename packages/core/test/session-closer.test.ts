@@ -11,15 +11,19 @@
 //   - a candidate another session already settled is SKIPPED, not forced;
 //   - the watermark is taken AFTER the resolves, or the closer re-arms itself;
 //   - the pass is RESOLVE-ONLY — no seam exists for anything else.
-import type { Gateway } from '@3ngram/llm'
+import type { CompleteOptions, Gateway } from '@3ngram/llm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  CLOSER_MAX_OUTPUT_TOKENS,
+  CLOSER_OPERATION,
   type CloserClaim,
   type CloserEventPage,
   type CloserFinish,
   type CloserSessionInput,
+  type CloserUsage,
   CloserVerdictError,
   closeSessionRun,
+  completionCostUsd,
   isCloserEligible,
   renderCloserPrompt,
   type SessionCloserRepo,
@@ -58,15 +62,24 @@ function eventPage(ids: string[], truncated = false): CloserEventPage {
   return { items: ids.map((id) => ({ id, eventKind: 'create' })), truncated }
 }
 
-/** A Gateway whose completion is fixed. Records every prompt it was handed. */
-function fakeGateway(reply: string): Gateway & { prompts: string[] } {
+/** A Gateway whose completion is fixed. Records every call it was handed. */
+function fakeGateway(
+  reply: string,
+): Gateway & { prompts: string[]; options: (CompleteOptions | undefined)[] } {
   const prompts: string[] = []
+  const options: (CompleteOptions | undefined)[] = []
   return {
     prompts,
+    options,
     embed: () => Promise.reject(new Error('the closer never embeds')),
-    complete: (prompt) => {
+    complete: (prompt, _operation, opts) => {
       prompts.push(prompt)
-      return Promise.resolve(reply)
+      options.push(opts)
+      return Promise.resolve({
+        text: reply,
+        usage: { inputTokens: 11, outputTokens: 7 },
+        model: 'gpt-4o-mini',
+      })
     },
   }
 }
@@ -76,11 +89,13 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
   claims: CloserClaim[]
   finishes: CloserFinish[]
   resolved: string[]
+  usages: CloserUsage[]
   listCalls: number
 } {
   const claims: CloserClaim[] = []
   const finishes: CloserFinish[] = []
   const resolved: string[] = []
+  const usages: CloserUsage[] = []
   let listCalls = 0
   const base: SessionCloserRepo = {
     readSession: async () => sessionRow(),
@@ -100,6 +115,10 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
       finishes.push(finish)
       return true
     },
+    recordUsage: async (_userId, usage) => {
+      usages.push(usage)
+    },
+    currentEpoch: async () => 3,
   }
   const repo = { ...base, ...overrides }
   return {
@@ -112,6 +131,9 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
     },
     get resolved() {
       return resolved
+    },
+    get usages() {
+      return usages
     },
     get listCalls() {
       return listCalls
@@ -611,5 +633,128 @@ describe('renderCloserPrompt — tenant text is DATA', () => {
       scope: null,
     })
     expect(prompt).toContain('An empty list is')
+  })
+})
+
+describe('closeSessionRun — accounting and spend bounds', () => {
+  it('records exactly one usage row, priced from the model the gateway reported', async () => {
+    const repo = fakeRepo()
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [] })) },
+    )
+
+    expect(repo.usages).toHaveLength(1)
+    expect(repo.usages[0]).toMatchObject({
+      operation: CLOSER_OPERATION,
+      model: 'gpt-4o-mini',
+      inputTokens: 11,
+      outputTokens: 7,
+    })
+    // Priced, not guessed: the closer is a metered generation operation, so an
+    // unrecorded pass is spend that never reaches llm_usage and can never be
+    // rejected at a cap.
+    expect(repo.usages[0]?.costUsd).toBe(completionCostUsd('gpt-4o-mini', 11, 7))
+    expect(repo.usages[0]?.costUsd).toBeGreaterThan(0)
+  })
+
+  it('bounds the output tokens and asks for a JSON object', async () => {
+    const gateway = fakeGateway(JSON.stringify({ completed: [] }))
+    await closeSessionRun(
+      fakeRepo(),
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway },
+    )
+    expect(gateway.options[0]).toEqual({
+      maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
+      jsonObject: true,
+    })
+  })
+
+  it('does not lose the pass when the accounting write fails', async () => {
+    // Best-effort by contract: an llm_usage failure must not throw away the
+    // resolves the tenant is entitled to.
+    const repo = fakeRepo({
+      recordUsage: async () => {
+        throw new Error('llm_usage insert failed')
+      },
+    })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A] })) },
+    )
+    expect(result.resolved).toBe(1)
+  })
+
+  it('prices an unknown model as NULL rather than zero', () => {
+    expect(completionCostUsd('some-selfhosted-model', 1000, 1000)).toBeNull()
+  })
+})
+
+describe('closeSessionRun — the per-resolve epoch pre-check', () => {
+  it('stops resolving the moment the run is resurrected mid-pass', async () => {
+    // The fence on finish() protects the BOOKKEEPING, but the resolves run
+    // before it. Without this check a slow generation followed by a resume would
+    // land every candidate on a session that is live again.
+    let epoch = 3
+    const repo = fakeRepo({
+      currentEpoch: async () => epoch,
+      resolve: async (_userId, memoryId) => {
+        epoch = 4 // a heartbeat resurrects the row after the first resolve
+        return memoryId === MEM_A ? 'resolved' : 'already-resolved'
+      },
+    })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A, MEM_B] })) },
+    )
+
+    expect(result.skipped).toBe('fenced')
+    expect(result.resolved).toBe(1)
+    // No bookkeeping is stamped once the fence trips.
+    expect(repo.finishes).toEqual([])
+  })
+
+  it('checks before the FIRST resolve, so a resurrection during generation writes nothing', async () => {
+    const repo = fakeRepo({ currentEpoch: async () => 4 })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A] })) },
+    )
+
+    expect(result.skipped).toBe('fenced')
+    expect(repo.resolved).toEqual([])
+  })
+})
+
+describe('selectResolvable — uuid case', () => {
+  it('accepts an id the model upper-cased, and resolves the BRIEFED spelling', () => {
+    // A uuid is hex: A1B2 and a1b2 are one id. Treating a re-cased copy as a
+    // hallucination would be a false NEGATIVE on the exact metric the validation
+    // bar measures.
+    const { candidates, rejected } = selectResolvable(
+      JSON.stringify({ completed: [MEM_A.toUpperCase()] }),
+      BRIEFED,
+    )
+    expect(rejected).toBe(0)
+    expect(candidates).toEqual([MEM_A])
+  })
+
+  it('still rejects a re-cased id that was never briefed', () => {
+    const { candidates, rejected } = selectResolvable(
+      JSON.stringify({ completed: [UNBRIEFED.toUpperCase()] }),
+      BRIEFED,
+    )
+    expect(candidates).toEqual([])
+    expect(rejected).toBe(1)
   })
 })

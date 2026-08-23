@@ -16,6 +16,7 @@ import {
   BlockerNotFoundError,
   CommitmentNotFoundError,
   type CommitmentState,
+  CommitmentStateChangedError,
   createCommitment as dbCreateCommitment,
   transitionCommitment as dbTransitionCommitment,
   getCommitment,
@@ -31,6 +32,7 @@ export {
   BlockerNotFoundError,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   IllegalCommitmentTransitionError,
   NotCommitmentMemoryError,
   type WrittenCommitment,
@@ -221,6 +223,16 @@ export type ClosedRunResolveOutcome =
  * early, which `unresolve` (open <- resolved, a legal edge) undoes. That is the
  * safety property that makes an LLM-driven v1 shippable at all, and it is why a
  * BullMQ retry through this path cannot append a duplicate corpus row.
+ *
+ * NOT PART OF THE PUBLIC SURFACE, ON PURPOSE. It is exported from this module
+ * and from NEITHER barrel (`../write/index.ts`, `../index.ts`), so the only way
+ * to reach it is the deep import the closer uses. Unlike every other write here
+ * it takes `sessionRunId` as an ALREADY-TRUSTED value and stamps it verbatim,
+ * skipping the ownership check `resolveSessionProvenance` performs — safe only
+ * because the caller read that id off the tenant's own session row moments
+ * earlier. A transport handler that picked this out of the barrel and passed a
+ * client-supplied run id would forge provenance across sessions, and (given a
+ * foreign id) across tenants. It must NEVER receive a client-supplied id.
  */
 export async function resolveForClosedRun(
   userId: string,
@@ -238,9 +250,27 @@ export async function resolveForClosedRun(
       commitmentId: current.id,
       to: 'resolved',
       actorKind,
+      // COMPARE-AND-SET on the status just read. The read runs in its own
+      // transaction, so without this the window between it and the write is
+      // wide open: a second closer attempt, or an interactive `resolve` in
+      // another session, settles the row first, and this write still succeeds —
+      // the FSM trigger waves `resolved -> resolved` through — re-stamping
+      // `resolved_at` and appending a DUPLICATE resolve event under this run's
+      // provenance. Both callers would report `resolved`. With the guard the
+      // loser gets zero rows and reports `already-resolved` having written
+      // nothing.
+      expectedFrom: current.status,
       stampedSessionRunId: sessionRunId,
     })
   } catch (error) {
+    // Lost the compare-and-set: somebody moved the row between the read and the
+    // write. Re-read once to say WHICH way it went, so the pass reports an
+    // honest outcome instead of guessing.
+    if (error instanceof CommitmentStateChangedError) {
+      const latest = await getCommitmentByMemoryId(userId, memoryId)
+      if (latest?.status === 'resolved') return 'already-resolved'
+      return 'illegal-transition'
+    }
     // The re-read above closes the window, it does not eliminate it: a
     // concurrent session can expire the commitment between the SELECT and the
     // UPDATE, and `expired -> resolved` is not a legal edge. The DB backstop
