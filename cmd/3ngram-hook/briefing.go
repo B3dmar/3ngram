@@ -27,10 +27,16 @@ type briefingResponse struct {
 	Preferences     memorySection     `json:"preferences"`
 }
 
+// briefingSelector is both an ARGUMENT and an ECHO: the hook sends its
+// requested selector to the briefing GET and reads back the EFFECTIVE one (a
+// tenant retrieval policy may narrow `all` to a scope), which is what the
+// session row must record. IncludeUnscoped is a pointer so the `scope_project`
+// variant round-trips without the other variants gaining a phantom `false`.
 type briefingSelector struct {
-	Kind    string `json:"kind"`
-	Scope   string `json:"scope,omitempty"`
-	Project string `json:"project,omitempty"`
+	Kind            string `json:"kind"`
+	Scope           string `json:"scope,omitempty"`
+	Project         string `json:"project,omitempty"`
+	IncludeUnscoped *bool  `json:"includeUnscoped,omitempty"`
 }
 
 type commitmentSection struct {
@@ -99,54 +105,101 @@ func runBriefing(args []string) int {
 	var input sessionStartInput
 	_ = json.NewDecoder(os.Stdin).Decode(&input)
 
-	maxTokens := envInt("BRIEFING_MAX_TOKENS", 2000)
-	maxChars := maxTokens * 4
+	requested := deriveBriefingSelector(project)
+	rendered := fetchBriefing(project, requested, envInt("BRIEFING_MAX_TOKENS", 2000)*4)
 
-	selector := deriveBriefingSelector(project)
-	query := buildBriefingQuery(selector)
-
-	fallback := fmt.Sprintf("3ngram: Run /briefing for %s context (recent decisions, blockers, commitments)", project)
-
-	body, status, err := apiRequest("GET", "/api/v1/briefing"+query, nil, 5*time.Second)
-	if err != nil || status >= 400 {
-		return 0
-	}
-
-	var resp briefingResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0
-	}
-
-	// A briefing that surfaced NOTHING is still a delivery: `briefedMemories`
-	// stays an empty (non-nil) slice so the open POST carries the key and the
-	// server stamps briefing_delivered_at.
-	output := fallback
-	briefed := []briefedMemory{}
-
-	total := resp.Commitments.Count + resp.Overdue.Count + resp.Blockers.Count +
-		resp.StaleCandidates.Count + resp.RecentDecisions.Count + resp.Preferences.Count
-	if total > 0 {
-		rendered, rows := renderBriefing(&resp, project)
-		// THE STAMP IS WHAT SURVIVED THE CUT, not what the GET returned —
-		// otherwise briefed_memories records commitments the agent never read.
-		cut := len(rendered)
-		if len(rendered) > maxChars+200 {
-			cut = runeSafeCut(rendered, maxChars)
-			rendered = rendered[:cut] + "..."
-		}
-		output = rendered
-		briefed = survivingBriefed(rows, cut)
-	}
-
-	// Appended AFTER the truncation so the run id can never be the thing the
-	// budget cuts off.
-	if runID := runSessionStart(input, args, project, selector, briefed); runID != "" {
+	// A FAILED briefing does not skip the lifecycle. The session still needs its
+	// row, its lease and a sessionRunId — the Stop heartbeat deliberately never
+	// creates a missing row, so skipping here would leave the whole session
+	// unattributed because one read went wrong.
+	output := rendered.text
+	if runID := runSessionStart(input, args, project, rendered.selector, rendered.stamp()); runID != "" {
+		// Appended AFTER the truncation so the run id can never be the thing the
+		// budget cuts off.
 		output += sessionRunInstruction(runID)
 	}
 
 	fmt.Println(output)
 	return 0
 }
+
+// briefingRender is what SessionStart has to work with after the read: the text
+// to inject, the commitments that survived local truncation, and the EFFECTIVE
+// selector the server echoed.
+type briefingRender struct {
+	text     string
+	briefed  []briefedMemory
+	selector briefingSelector
+	// delivered is false when no briefing reached the agent at all (the GET
+	// failed, or its body did not parse).
+	delivered bool
+}
+
+// stamp returns the `briefedMemories` value for the open body: the survivors
+// when a briefing was delivered — an EMPTY array included, because a briefing
+// that surfaced nothing is still a delivery — and nil when none was, so the key
+// is omitted and the server does not stamp `briefing_delivered_at` for a
+// delivery that never happened.
+func (r briefingRender) stamp() *[]briefedMemory {
+	if !r.delivered {
+		return nil
+	}
+	return &r.briefed
+}
+
+// fetchBriefing reads, renders and locally truncates the briefing. Every
+// failure path returns the fallback line rather than nothing: the caller prints
+// what it gets and opens the session either way.
+func fetchBriefing(project string, requested briefingSelector, maxChars int) briefingRender {
+	out := briefingRender{
+		text:     fmt.Sprintf("3ngram: Run /briefing for %s context (recent decisions, blockers, commitments)", project),
+		briefed:  []briefedMemory{},
+		selector: requested,
+	}
+
+	body, status, err := apiRequest("GET", "/api/v1/briefing"+buildBriefingQuery(requested), nil, 5*time.Second)
+	if err != nil || status >= 400 {
+		logSessionFailure("briefing", status, err)
+		return out
+	}
+
+	var resp briefingResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		logSessionFailure("briefing", status, err)
+		return out
+	}
+	out.delivered = true
+	// The EFFECTIVE selector, not the requested one: a tenant retrieval policy
+	// can narrow `kind=all` to its default scope, and the row must record the
+	// lens the agent actually read through.
+	if resp.Selector.Kind != "" {
+		out.selector = resp.Selector
+	}
+
+	total := resp.Commitments.Count + resp.Overdue.Count + resp.Blockers.Count +
+		resp.StaleCandidates.Count + resp.RecentDecisions.Count + resp.Preferences.Count
+	if total == 0 {
+		return out
+	}
+
+	text, rows := renderBriefing(&resp, project)
+	// THE STAMP IS WHAT SURVIVED THE CUT, not what the GET returned — otherwise
+	// briefed_memories records commitments the agent never read.
+	cut := len(text)
+	if len(text) > maxChars+200 {
+		cut = runeSafeCut(text, maxChars)
+		text = text[:cut] + "..."
+	}
+	out.text = text
+	out.briefed = survivingBriefed(rows, cut)
+	return out
+}
+
+// sessionProbeTimeout bounds the heartbeat SessionStart uses to ask about a row.
+// SessionStart is registered with a 10s hook timeout, and the briefing GET has
+// already spent up to 5s of it, so the probe and any follow-up open must fit
+// what is left with room to spare.
+const sessionProbeTimeout = 2 * time.Second
 
 // runSessionStart resolves the SessionStart `source` against the session row and
 // returns the sessionRunId to inject, or "" when there is none to inject.
@@ -156,7 +209,7 @@ func runBriefing(args []string) int {
 // | startup | POST /open source=startup, carrying the surviving briefed rows    |
 // | resume  | POST /open source=resume — epoch + 1, reopen, NEVER restamp       |
 // | compact | POST /heartbeat — NOT an open, NOT a restamp (see below)          |
-// | clear   | heartbeat probe: unknown key -> startup, known key -> resume      |
+// | clear   | POST /heartbeat, then 404 -> open source=startup; 200 -> done     |
 //
 // COMPACT is a heartbeat because that is the least-side-effect shipped call that
 // returns a sessionRunId for a natural key. Compaction discards the
@@ -169,10 +222,20 @@ func runBriefing(args []string) int {
 //
 // CLEAR is the conditional the page asks for — "startup of a new conversation if
 // the harness mints a new session_id; otherwise same as resume" — decided by
-// asking the SERVER rather than by keeping local state: the natural key is the
-// discriminator, and a heartbeat 404 is exactly "this tenant owns no row for
-// this conversation id".
-func runSessionStart(input sessionStartInput, args []string, project string, selector briefingSelector, briefed []briefedMemory) string {
+// asking the SERVER rather than by keeping local state. A 404 means the harness
+// minted a new conversation id, so it opens as `startup`. A 200 means the id was
+// reused, and the probe has ALREADY done what resume was wanted for: it returned
+// the sessionRunId and floored the lease. Posting a second `source=resume` open
+// would spend another round trip and, on a row the probe just resurrected, bump
+// `activation_epoch` a SECOND time. The deviation from a literal resume is that a
+// clear on a LIVE row no longer bumps the epoch — which fences nothing, because
+// no closer claim can exist against a row whose lease is still live.
+//
+// Any OTHER probe answer (timeout, 401, 5xx, malformed body) is not an existence
+// answer. It degrades exactly like a failed open: deliver the briefing, skip the
+// lifecycle, log one line. Guessing `startup` there would 409 against a live row
+// whose stored params differ and cost the session its reinjection outright.
+func runSessionStart(input sessionStartInput, args []string, project string, selector briefingSelector, briefed *[]briefedMemory) string {
 	sessionID := strings.TrimSpace(input.SessionID)
 	if sessionID == "" {
 		return ""
@@ -181,17 +244,20 @@ func runSessionStart(input sessionStartInput, args []string, project string, sel
 
 	switch strings.TrimSpace(input.Source) {
 	case "compact":
-		runID, _ := sessionHeartbeat(key, "", 3*time.Second)
-		return runID
+		return sessionHeartbeat(key, "", sessionProbeTimeout).sessionRunID
 	case "resume":
 		return sessionOpen(key, "resume", project, selector, nil)
 	case "clear":
-		if _, known := sessionHeartbeat(key, "", 3*time.Second); known {
-			return sessionOpen(key, "resume", project, selector, nil)
+		switch probe := sessionHeartbeat(key, "", sessionProbeTimeout); probe.outcome {
+		case heartbeatOK:
+			return probe.sessionRunID
+		case heartbeatNoRow:
+			return sessionOpen(key, "startup", project, selector, briefed)
+		default:
+			return ""
 		}
-		return sessionOpen(key, "startup", project, selector, &briefed)
 	default:
-		return sessionOpen(key, "startup", project, selector, &briefed)
+		return sessionOpen(key, "startup", project, selector, briefed)
 	}
 }
 
@@ -267,9 +333,15 @@ func survivingBriefed(rows []briefedRow, cut int) []briefedMemory {
 	return survivors
 }
 
-// briefedCollector accumulates the stampable commitment rows in render order,
-// enforcing the server's bounds locally: an over-long topic or an id the schema
-// would reject 400s the whole open and costs the session its sessionRunId.
+// briefedCollector accumulates the stampable commitment rows in render order.
+//
+// It enforces exactly TWO things, and deliberately no more: the list cap
+// (generated from MAX_BRIEFED_MEMORIES — past it the whole open 400s), and
+// set semantics. It does NOT re-check the id's uuid form or the field lengths:
+// those rows come from this server's own typed briefing output, `resolve` and
+// `briefedMemorySchema` are the validators, and a Go copy of those constraints
+// is the second boundary AGENTS.md hard rule 2 forbids. A row that really is
+// malformed 400s the open with a stderr line, which is the honest outcome.
 type briefedCollector struct {
 	rows []briefedRow
 	seen map[string]struct{}
@@ -280,9 +352,6 @@ type briefedCollector struct {
 // closer and the debrief nudge use the stamp for — takes a memory id.
 func (c *briefedCollector) add(item briefingCommitment, endOffset int) {
 	if len(c.rows) >= maxBriefedMemories {
-		return
-	}
-	if !looksLikeUUID(item.MemoryID) || item.Topic == "" || item.Status == "" {
 		return
 	}
 	if c.seen == nil {
@@ -297,34 +366,11 @@ func (c *briefedCollector) add(item briefingCommitment, endOffset int) {
 	c.rows = append(c.rows, briefedRow{
 		memory: briefedMemory{
 			ID:     item.MemoryID,
-			Topic:  item.Topic[:runeSafeCut(item.Topic, maxBriefedTopic)],
-			Status: item.Status[:runeSafeCut(item.Status, maxBriefedStatus)],
+			Topic:  item.Topic,
+			Status: item.Status,
 		},
 		endOffset: endOffset,
 	})
-}
-
-// looksLikeUUID is the cheap shape check that keeps a malformed id out of the
-// open body. The server is the authority; this only avoids trading a whole
-// sessionRunId for one bad row.
-func looksLikeUUID(id string) bool {
-	if len(id) != 36 {
-		return false
-	}
-	for i, r := range id {
-		switch i {
-		case 8, 13, 18, 23:
-			if r != '-' {
-				return false
-			}
-		default:
-			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
-			if !isHex {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // renderBriefing returns the markdown briefing AND the per-commitment offsets

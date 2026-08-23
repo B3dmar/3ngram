@@ -4,9 +4,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
-	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -25,26 +26,13 @@ import (
 //
 // Every path here is fire-and-forget: a failure logs one line to stderr and the
 // caller exits 0. These hooks must be invisible when the server is down.
-
-// maxSessionExcerptLength mirrors MAX_SESSION_EXCERPT_LENGTH
-// (packages/schema/src/agent-sessions.ts). The server 400s a longer excerpt
-// rather than deciding which half of an agent's message matters, so the hook
-// truncates locally instead of relying on that rejection.
-const maxSessionExcerptLength = 4000
-
-// maxBriefedMemories / maxBriefedTopic / maxBriefedStatus mirror
-// MAX_BRIEFED_MEMORIES and the briefedMemorySchema field bounds. Over-long rows
-// would 400 the whole open and cost the session its sessionRunId, so the hook
-// drops or trims them here.
-const (
-	maxBriefedMemories = 100
-	maxBriefedTopic    = 256
-	maxBriefedStatus   = 64
-)
-
-// agentNamePattern mirrors agentNameSchema: kebab-case, lowercase alphanumerics
-// and hyphens, leading alphanumeric.
-var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+//
+// The two bounds this file enforces before building a body —
+// maxSessionExcerptLength and maxBriefedMemories — are GENERATED from
+// packages/schema into contract_gen.go. Nothing else from the Zod boundary is
+// mirrored here: the server's parse is the single validator for shapes
+// (AGENTS.md hard rule 2), and a Go copy of a regex or a uuid check would be a
+// second boundary that can silently disagree with it.
 
 // unknownAgent is the natural-key agent for a harness the binary cannot
 // identify. Unlike a project facet — which is OMITTED rather than persisted as
@@ -52,6 +40,10 @@ var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // absent form, so an honest placeholder is the only option. Pass `--agent` (or
 // THREENGRAM_AGENT) from the hook registration to name the harness exactly.
 const unknownAgent = "unknown-agent"
+
+// unknownAgentOnce keeps the placeholder diagnostic to one line per process.
+// The hook runs on every session event; a banner per event would be noise.
+var unknownAgentOnce sync.Once
 
 // hookSuppressed is the filter every session-scoped hook shares: skip
 // Task-dispatched sub-agents (THREENGRAM_HOOK_ROLE=subagent, which inherit the
@@ -107,6 +99,32 @@ type sessionHeartbeatRequest struct {
 
 type sessionHeartbeatResponse struct {
 	SessionRunID string `json:"sessionRunId"`
+	Resurrected  bool   `json:"resurrected"`
+}
+
+// heartbeatOutcome distinguishes the THREE answers a heartbeat can give. The
+// clear path turns a probe into a startup-or-resume decision, and "no row for
+// this conversation id" is a different fact from "I could not ask": collapsing
+// them would send `source=startup` after a timeout, which then 409s against a
+// live row whose stored params differ and costs the session its reinjection.
+type heartbeatOutcome int
+
+const (
+	// heartbeatFailed is the zero value ON PURPOSE: a result nobody filled in
+	// must not read as an existence answer.
+	heartbeatFailed heartbeatOutcome = iota
+	// heartbeatOK — 200. The row exists and its lease was refreshed.
+	heartbeatOK
+	// heartbeatNoRow — a definitive 404. This tenant owns no row for the key.
+	heartbeatNoRow
+)
+
+type heartbeatResult struct {
+	outcome      heartbeatOutcome
+	sessionRunID string
+	// resurrected reports that the refresh revived a closed or lease-expired
+	// row and advanced `activation_epoch`.
+	resurrected bool
 }
 
 // deriveAgent resolves the harness name for the natural key.
@@ -116,6 +134,12 @@ type sessionHeartbeatResponse struct {
 // own environment, then {@link unknownAgent}. The flag wins because a hook
 // registration is the one place that knows for certain which harness will run
 // the binary.
+//
+// An operator-supplied name is NORMALIZED (trim + lowercase, because
+// agentNameSchema is kebab-case) but not VALIDATED. A name the server rejects
+// is a loud 400 on the next call, which is the honest outcome: silently
+// swapping in a detected harness would split one operator's sessions across two
+// natural keys and look like the hook simply lost them.
 func deriveAgent(args []string) string {
 	if a := normalizeAgent(agentFlag(args)); a != "" {
 		return a
@@ -129,7 +153,21 @@ func deriveAgent(args []string) string {
 	if os.Getenv("CODEX_HOME") != "" || os.Getenv("CODEX_SANDBOX") != "" {
 		return "codex"
 	}
+	warnUnknownAgent()
 	return unknownAgent
+}
+
+// warnUnknownAgent tells the operator, once, that their sessions are landing
+// under a placeholder identity. Silence here is the worst outcome: the rows are
+// written and leased correctly, so nothing looks broken until two harnesses
+// share the placeholder and their runs interleave under one agent name.
+func warnUnknownAgent() {
+	unknownAgentOnce.Do(func() {
+		fmt.Fprintf(stderrWriter,
+			"3ngram-hook: harness not detected — session rows will use agent %q.\n"+
+				"  Name it with --agent <harness> in your hook registration, or export THREENGRAM_AGENT.\n",
+			unknownAgent)
+	})
 }
 
 // agentFlag reads `--agent <name>` or `--agent=<name>` out of a subcommand's
@@ -147,14 +185,12 @@ func agentFlag(args []string) string {
 	return ""
 }
 
-// normalizeAgent lowercases and validates against agentNameSchema, returning ""
-// for anything the server would reject.
+// normalizeAgent trims and lowercases an operator-supplied name so it can
+// satisfy the server's kebab-case rule. "" means "not supplied" — the only
+// judgement this function makes; whether the rest is a legal agent name is the
+// server's call.
 func normalizeAgent(raw string) string {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	if value == "" || len(value) > 64 || !agentNamePattern.MatchString(value) {
-		return ""
-	}
-	return value
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 // sessionOpen posts SessionStart and returns the sessionRunId the model is told
@@ -172,8 +208,10 @@ func sessionOpen(key agentSessionKey, source, project string, selector briefingS
 	if project != "" && project != "unknown" {
 		req.Project = project
 	}
-	// Only a selector-carried scope, which the briefing GET already accepted.
-	if selector.Kind == "scope" {
+	// The scope facet comes off whichever selector axis carries one — including
+	// a scope a retrieval policy NARROWED us to, which is the scope the agent
+	// actually read. Whatever the value is, the briefing GET already accepted it.
+	if selector.Scope != "" {
 		req.Scope = selector.Scope
 	}
 
@@ -183,7 +221,7 @@ func sessionOpen(key agentSessionKey, source, project string, selector briefingS
 	}
 	respBody, status, err := apiRequest("POST", "/api/v1/agent-sessions/open", body, 3*time.Second)
 	if err != nil || status >= 400 {
-		logSessionFailure("open", status, err)
+		logSessionFailure("agent-sessions/open", status, err)
 		return ""
 	}
 	var resp sessionOpenResponse
@@ -194,28 +232,50 @@ func sessionOpen(key agentSessionKey, source, project string, selector briefingS
 }
 
 // sessionHeartbeat refreshes the lease by natural key, optionally snapshotting
-// the turn's bounded last_assistant_message. `found` is false when the tenant
-// owns no row for the key (404) — the compact and clear paths use that as the
-// existence answer, and Stop uses it to stay silent.
-func sessionHeartbeat(key agentSessionKey, excerpt string, timeout time.Duration) (runID string, found bool) {
+// the turn's bounded last_assistant_message.
+//
+// A 404 is reported as {@link heartbeatNoRow} rather than as a failure: it is
+// the definitive answer "this tenant owns no row for this conversation id",
+// which is what the clear path needs. Everything else — transport error, 401,
+// 5xx, malformed body — is {@link heartbeatFailed} and must never be read as an
+// existence answer.
+func sessionHeartbeat(key agentSessionKey, excerpt string, timeout time.Duration) heartbeatResult {
 	body, err := json.Marshal(sessionHeartbeatRequest{
 		Agent:              key.Agent,
 		SessionID:          key.SessionID,
 		LastMessageExcerpt: excerpt,
 	})
 	if err != nil {
-		return "", false
+		return heartbeatResult{}
 	}
 	respBody, status, err := apiRequest("POST", "/api/v1/agent-sessions/heartbeat", body, timeout)
-	if err != nil || status >= 400 {
-		logSessionFailure("heartbeat", status, err)
-		return "", false
+	if err != nil {
+		logSessionFailure("agent-sessions/heartbeat", status, err)
+		return heartbeatResult{}
+	}
+	if status == http.StatusNotFound {
+		return heartbeatResult{outcome: heartbeatNoRow}
+	}
+	if status >= 400 {
+		logSessionFailure("agent-sessions/heartbeat", status, nil)
+		return heartbeatResult{}
 	}
 	var resp sessionHeartbeatResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", false
+		logSessionFailure("agent-sessions/heartbeat", status, err)
+		return heartbeatResult{}
 	}
-	return resp.SessionRunID, true
+	if resp.Resurrected {
+		// A refresh that revives a row bumps `activation_epoch` and invalidates
+		// any closer claim fenced at the old one. That is correct and cheap, but
+		// a call made to ASK a question should not mutate state invisibly.
+		fmt.Fprintln(stderrWriter, "3ngram-hook: heartbeat resurrected a closed or lease-expired session row")
+	}
+	return heartbeatResult{
+		outcome:      heartbeatOK,
+		sessionRunID: resp.SessionRunID,
+		resurrected:  resp.Resurrected,
+	}
 }
 
 // sessionClose stamps closed_at by natural key. Correctness never depends on it
@@ -228,18 +288,20 @@ func sessionClose(key agentSessionKey, timeout time.Duration) {
 	}
 	_, status, err := apiRequest("POST", "/api/v1/agent-sessions/close", body, timeout)
 	if err != nil || status >= 400 {
-		logSessionFailure("close", status, err)
+		logSessionFailure("agent-sessions/close", status, err)
 	}
 }
 
-// logSessionFailure writes one bounded line to stderr. Ids and status codes
-// only — no memory content, no briefing rows, no excerpt (hard rule 6).
+// logSessionFailure writes one bounded line to stderr. `route` is the REST path
+// tail, so the operator can tell a briefing read apart from a lifecycle write.
+// Route names and status codes only — no memory content, no briefing rows, no
+// excerpt (hard rule 6).
 func logSessionFailure(route string, status int, err error) {
 	if err != nil {
-		fmt.Fprintf(stderrWriter, "3ngram-hook: agent-sessions/%s unreachable (%v)\n", route, err)
+		fmt.Fprintf(stderrWriter, "3ngram-hook: %s unreachable (%v)\n", route, err)
 		return
 	}
-	fmt.Fprintf(stderrWriter, "3ngram-hook: agent-sessions/%s returned %d\n", route, status)
+	fmt.Fprintf(stderrWriter, "3ngram-hook: %s returned %d\n", route, status)
 }
 
 // boundExcerpt trims and truncates last_assistant_message to the server's cap.
