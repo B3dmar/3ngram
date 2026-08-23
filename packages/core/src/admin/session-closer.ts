@@ -402,6 +402,10 @@ function stripCodeFence(reply: string): string {
  * cleanly loses. It cannot duplicate corpus rows: step 5's only verb is
  * `resolve`, and a live re-read of an already-resolved commitment returns
  * `already-resolved` and writes nothing.
+ *
+ * CONVERGENCE. A skip whose cause is PERMANENT still settles the row (see
+ * {@link settleWithoutWork} below). Otherwise the sweep re-selects it forever,
+ * and a bounded batch of such runs starves every later one.
  */
 export async function closeSessionRun(
   repo: SessionCloserRepo,
@@ -421,12 +425,29 @@ export async function closeSessionRun(
   if (session.activationEpoch !== request.activationEpoch) return skip('fenced')
   if (session.closedAt === null) return skip('not-closed')
 
-  const events = await repo.listEvents(userId, request.sessionRunId)
-  const visibleEventIds = events.items.map((event) => event.id)
-  if (events.truncated) {
-    // Terminal. Claim it only to stamp `overflowed` so it stops being selected;
-    // no generation, and the excerpt is left for the TTL sweep rather than
-    // cleared as if it had been consumed.
+  /**
+   * Stamp a terminal status on a run the closer will do NO work on, so it stops
+   * being selected. Claim first — `finish` is fenced on the attempt token — and
+   * treat a lost claim as fine: whoever holds it will settle the run.
+   *
+   * WHY A NO-WORK RUN MUST STILL BE STAMPED. `listCloserCandidates` selects
+   * closed rows whose `triage_status` is `idle`/`pending`/`expired`, oldest
+   * `closed_at` first, bounded per pass. A run that is skipped WITHOUT a
+   * write-back keeps that status forever, so it is re-selected and re-enqueued
+   * on every later sweep. Once enough of them accumulate they fill the batch
+   * ahead of every newer run — sorted earlier by `closed_at` — and the closer
+   * silently stops resolving anything for that tenant, with no error and no
+   * metric that distinguishes it from a healthy pass. Only skips whose cause is
+   * TRANSIENT (an unconfigured gateway, a lost claim, a resurrection) may return
+   * without stamping; a permanent one must settle the row.
+   *
+   * The excerpt is deliberately NOT cleared: no closer ever consumed it, so it
+   * is a TTL-sweep leftover rather than a durable consumption.
+   */
+  const settleWithoutWork = async (
+    triageStatus: 'completed' | 'overflowed',
+    eventIds: string[],
+  ): Promise<void> => {
     const attemptId = options.newAttemptId()
     const claimed = await repo.claim(userId, {
       sessionRunId: request.sessionRunId,
@@ -434,23 +455,40 @@ export async function closeSessionRun(
       observedAttemptId: session.triageAttemptId,
       attemptId,
     })
-    if (claimed) {
-      await repo.finish(userId, {
-        sessionRunId: request.sessionRunId,
-        activationEpoch: session.activationEpoch,
-        attemptId,
-        triageStatus: 'overflowed',
-        visibleEventIds: visibleEventIds.slice(0, MAX_SESSION_EVENT_IDS),
-        clearExcerpt: false,
-      })
-    }
+    if (!claimed) return
+    await repo.finish(userId, {
+      sessionRunId: request.sessionRunId,
+      activationEpoch: session.activationEpoch,
+      attemptId,
+      triageStatus,
+      visibleEventIds: eventIds.slice(0, MAX_SESSION_EVENT_IDS),
+      clearExcerpt: false,
+    })
+  }
+
+  const events = await repo.listEvents(userId, request.sessionRunId)
+  const visibleEventIds = events.items.map((event) => event.id)
+  if (events.truncated) {
+    // Terminal by contract: the closer must not re-claim and re-spend an LLM
+    // pass on a run past the per-run ceiling. Stamp it, emit the metric, stop.
+    await settleWithoutWork('overflowed', visibleEventIds)
     return skip('overflowed')
   }
 
   if (!isCloserEligible(session.triageStatus, visibleEventIds, session.lastTriagedEventIds)) {
     return skip('not-eligible')
   }
-  if (session.briefedMemories.length === 0) return skip('nothing-briefed')
+  if (session.briefedMemories.length === 0) {
+    // PERMANENT, not transient. `briefed_memories` is a SessionStart stamp and
+    // nothing rewrites it on a closed run, so this run will never have an id the
+    // closer could legally resolve. It is a common shape — any session that
+    // opened with no open or overdue commitments — so leaving it eligible is
+    // exactly how the batch fills with runs that can never produce work.
+    await settleWithoutWork('completed', visibleEventIds)
+    return skip('nothing-briefed')
+  }
+  // TRANSIENT: configuration, not this run. Deliberately left eligible so the
+  // pass runs for real once a gateway is configured.
   if (options.gateway === undefined) return skip('no-gateway')
 
   const attemptId = options.newAttemptId()

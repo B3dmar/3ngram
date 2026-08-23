@@ -484,7 +484,65 @@ describe('closeSessionRun — the early exits', () => {
     expect(gateway.prompts).toEqual([])
   })
 
-  it('skips when no gateway is configured rather than guessing', async () => {
+  it('SETTLES a nothing-briefed run so it cannot starve later passes', async () => {
+    // The zombie case. `briefed_memories` is a SessionStart stamp that nothing
+    // rewrites on a closed run, so "briefed on nothing" is PERMANENT. Skipping
+    // without a write-back would leave the row `idle`, and
+    // listCloserCandidates selects idle rows oldest-closed-first under a bounded
+    // batch — so enough of them fill every pass ahead of runs that DO have
+    // commitments to resolve, and the closer silently stops working for that
+    // tenant with no error and no distinguishing metric.
+    const repo = fakeRepo({ readSession: async () => sessionRow({ briefedMemories: [] }) })
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      {
+        ...OPTIONS,
+        gateway,
+      },
+    )
+
+    expect(repo.claims).toHaveLength(1)
+    expect(repo.finishes[0]).toMatchObject({ triageStatus: 'completed', clearExcerpt: false })
+    // And it leaves the unconditionally-eligible bucket for good.
+    expect(isCloserEligible('completed', ['e1', 'e2'], ['e1', 'e2'])).toBe(false)
+  })
+
+  it('does not settle a nothing-briefed run whose claim was lost', async () => {
+    const repo = fakeRepo({
+      readSession: async () => sessionRow({ briefedMemories: [] }),
+      claim: async () => false,
+    })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway },
+    )
+    expect(result.skipped).toBe('nothing-briefed')
+    // Whoever holds the claim settles it; a second write-back would fight the fence.
+    expect(repo.finishes).toEqual([])
+  })
+
+  it('claims and settles an overflowed run so it is never re-selected', async () => {
+    const repo = fakeRepo({ listEvents: async () => eventPage(['e1'], true) })
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      {
+        ...OPTIONS,
+        gateway,
+      },
+    )
+    expect(repo.claims).toHaveLength(1)
+    expect(repo.finishes[0]).toMatchObject({ triageStatus: 'overflowed' })
+  })
+
+  it('LEAVES a no-gateway run eligible — that skip is transient, not permanent', async () => {
+    // The mirror of the case above: configuration is not a property of this run,
+    // so the row must still be picked up once a gateway is configured.
     const repo = fakeRepo()
     const result = await closeSessionRun(
       repo,
@@ -494,6 +552,7 @@ describe('closeSessionRun — the early exits', () => {
     )
     expect(result.skipped).toBe('no-gateway')
     expect(repo.claims).toEqual([])
+    expect(repo.finishes).toEqual([])
   })
 
   it('skips a completed run with no untriaged signal', async () => {
