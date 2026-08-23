@@ -20,9 +20,13 @@ WORKDIR /repo
 
 # ---- builder: full install, build the server + its workspace deps --------------
 FROM base AS builder
-# Honor the repo supply-chain posture: lifecycle scripts stay off (matches the
-# committed .npmrc; set here too so the flag survives even if .npmrc is filtered).
-ENV npm_config_ignore_scripts=true
+# NO `npm_config_ignore_scripts` here, deliberately. It suppresses every
+# dependency lifecycle script, which also disables the `strictDepBuilds`
+# tripwire — the thing that FAILS the install when a dependency gains an
+# undeclared build script. AGENTS.md hard rule 7 bans `ignoreScripts` for exactly
+# that reason: with it set, this image would build green through the supply-chain
+# gate. (The old comment claimed this matched the committed .npmrc; pnpm 11 reads
+# only auth/registry from .npmrc — the policy lives in pnpm-workspace.yaml.)
 # pnpm fetch + filtered install would need per-package manifests staged first;
 # the simplest correct path for a turbo monorepo is to copy the whole context
 # (the .dockerignore keeps it lean) and run a frozen install once.
