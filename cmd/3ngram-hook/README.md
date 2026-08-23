@@ -8,18 +8,59 @@ so a hook never blocks your workflow.
 Built for the 3ngram backend:
 the briefing reads the single `GET /api/v1/briefing` orientation endpoint and the
 precheck surfaces memories via `POST /api/v1/search`. The binary is a read-side
-context feed; high-value write capture (LLM-summarized decisions/commitments) is
-handled by the `/debrief` skill, not a mechanical hook.
+context feed plus session BOOKKEEPING (`agent_sessions` open / heartbeat /
+close — no memory rows, ever); high-value write capture (LLM-summarized
+decisions/commitments) is handled by the `/debrief` skill, not a mechanical hook.
 
 ## Subcommands
 
 | Command | Hook Event | Description |
 |---------|-----------|-------------|
-| `3ngram-hook briefing` | SessionStart | Fetch `GET /api/v1/briefing`, render markdown briefing |
+| `3ngram-hook briefing` | SessionStart | Fetch `GET /api/v1/briefing?mode=full`, render + locally truncate the markdown briefing, open/refresh the session row, and inject the `sessionRunId` |
+| `3ngram-hook heartbeat` | Stop | Refresh the session lease and snapshot a bounded `last_assistant_message` (`POST /api/v1/agent-sessions/heartbeat`). Never blocks, never prints, always exits 0 |
+| `3ngram-hook close` | SessionEnd | Stamp `closed_at` by natural key (`POST /api/v1/agent-sessions/close`). One POST with a 1 s timeout, fire-and-forget |
 | `3ngram-hook precheck` | PreToolUse | Surface related memories before Write/Edit/apply_patch (`POST /api/v1/search`) |
-| `3ngram-hook sync [--push\|--pull\|--both]` | SessionEnd | **Deferred** — currently a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet |
+| `3ngram-hook sync [--push\|--pull\|--both]` | (none) | **Deferred** — a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet. SessionEnd now runs `close` instead |
 | `3ngram-hook verify` | (manual) | Print resolved API base + key status, probe `GET /api/v1/briefing` |
 | `3ngram-hook version` | (manual) | Print the binary version (also `--version`) |
+
+Every subcommand accepts `--agent <name>` — the harness half of the session
+natural key `(agent, session_id)`. Claude Code is detected from its own
+environment; name the harness explicitly anywhere else (see
+[Session lifecycle](#session-lifecycle)).
+
+## Session lifecycle
+
+`briefing`, `heartbeat` and `close` drive the `agent_sessions` bookkeeping row
+described in [`docs/concepts/session-continuity.mdx`](../../docs/concepts/session-continuity.mdx).
+Nothing here writes a memory.
+
+- **SessionStart** (`briefing`) resolves the hook's `source`: `startup` opens the
+  row and stamps the `{id, topic, status}` commitments that survived the local
+  `BRIEFING_MAX_TOKENS` truncation; `resume` reuses the row and never restamps;
+  `compact` is neither an open nor a restamp — it heartbeats the row to recover
+  the `sessionRunId` that compaction discarded with the context; `clear` asks the
+  server which of the two it is — a `404` means the harness minted a new
+  conversation id, so it opens as `startup`, while a `200` is already the answer
+  (the probe returned the run id and refreshed the lease, so no second call is
+  made). Any other probe result is not an existence answer: the briefing is still
+  delivered, the lifecycle is skipped, and one line goes to stderr.
+- A failed or unparseable briefing does **not** skip the open. The read and the
+  bookkeeping write are independent calls, and Stop never creates a missing row —
+  so the session would otherwise run unattributed because one read went wrong.
+  `briefedMemories` is omitted in that case, since no briefing was delivered.
+- The `sessionRunId` and an instruction to pass it on `remember` / `revise` /
+  `resolve` are appended to the injected briefing. Propagation is
+  **model-mediated and best-effort** — a write that omits it falls back to the
+  server's single-open-session default.
+- **Stop** (`heartbeat`) keeps the lease live across completed turns. It carries
+  no triage logic and emits no `decision` envelope.
+- **SessionEnd** (`close`) is best-effort by construction: a killed terminal or a
+  failed POST just leaves the row for the lease-expiry sweep.
+
+Sub-agents (`THREENGRAM_HOOK_ROLE=subagent`) and secondary git worktrees are
+skipped by all three, exactly as the briefing auto-pull already was. Register
+main-agent `Stop` only — never `SubagentStop`.
 
 ## Build (from source)
 
@@ -27,6 +68,15 @@ handled by the `/debrief` skill, not a mechanical hook.
 cd cmd/3ngram-hook
 CGO_ENABLED=0 go build -ldflags="-s -w" -o 3ngram-hook .
 ```
+
+`contract_gen.go` is generated and committed, so a source build needs no Node
+toolchain. It carries the two bounds the hook must honour before it builds a
+request body (`MAX_SESSION_EXCERPT_LENGTH`, `MAX_BRIEFED_MEMORIES`), mirrored
+from `packages/schema` by `scripts/gen-hook-contract.mjs`. Regenerate with
+`pnpm run docs:generate` from the repo root; CI's `docs-reference` lane diffs it
+byte for byte, so a schema change that is not regenerated goes red. Nothing else
+from the Zod boundary is mirrored — the server's parse is the single validator
+for shapes.
 
 Cross-compile:
 
@@ -76,11 +126,63 @@ The X-API-Key chain (`apps/server/src/middleware/api-key.ts`) returns `200` for
 a valid key, a uniform `401` for missing/unknown/revoked keys, and `503` if the
 resolver/DB is unavailable.
 
+## Claude Code hooks
+
+Claude Code reads its hooks from `~/.claude/settings.json` (or a project
+`.claude/settings.json`) under the top-level `hooks` key. `SessionStart` matches
+on the activation source; `Stop` and `SessionEnd` take no matcher, so the
+`matcher` key is omitted for them.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "3ngram-hook briefing", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "3ngram-hook precheck", "timeout": 2 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "3ngram-hook heartbeat", "timeout": 5 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "3ngram-hook close", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`timeout` is per hook, in seconds. `close` self-limits its POST to 1 s, so it
+fits the SessionEnd budget whether or not the per-hook `timeout` raises it.
+Register `Stop`, **not** `SubagentStop`.
+
 ## Codex hooks
 
 Register the binary in `~/.codex/hooks.json` after installing it on your
 `PATH`. Codex requires the JSON `additionalContext` output that this binary
 emits for `PreToolUse`; plain stdout is intentionally ignored for that event.
+
+`--agent codex` rides the command itself: the natural key needs the harness
+name, and a hook registration is the one place that knows for certain which
+harness will run the binary.
 
 ```json
 {
@@ -91,7 +193,7 @@ emits for `PreToolUse`; plain stdout is intentionally ignored for that event.
         "hooks": [
           {
             "type": "command",
-            "command": "3ngram-hook briefing",
+            "command": "3ngram-hook briefing --agent codex",
             "timeout": 10,
             "statusMessage": "Loading 3ngram briefing"
           }
@@ -110,12 +212,37 @@ emits for `PreToolUse`; plain stdout is intentionally ignored for that event.
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "3ngram-hook heartbeat --agent codex",
+            "timeout": 5,
+            "statusMessage": "Refreshing 3ngram session"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "3ngram-hook close --agent codex",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-Restart Codex, then use `/hooks` to review and trust the hook definition.
+Codex's SessionEnd allows up to 3 s (1 s by default); the `close` POST gives up
+at 1 s regardless. Restart Codex, then use `/hooks` to review and trust the hook
+definition.
 
 ## Environment Variables
 
@@ -126,7 +253,8 @@ Restart Codex, then use `/hooks` to review and trust the hook definition.
 | `THREENGRAM_API_KEY` | (none) | API key for `X-API-Key` auth |
 | `THREENGRAM_SCOPE` | `personal` | Scope for briefing/search (`personal`/`work`/…) |
 | `THREENGRAM_BRIEFING_KIND` | (auto) | Briefing selector: `all`, `scope`, or `project` |
-| `THREENGRAM_HOOK_ROLE` | (none) | Set to `subagent` to suppress the briefing auto-pull |
+| `THREENGRAM_AGENT` | (auto) | Harness name for the session natural key (kebab-case). `--agent` on the subcommand wins; Claude Code is auto-detected; anything else falls back to `unknown-agent` with a one-time stderr note |
+| `THREENGRAM_HOOK_ROLE` | (none) | Set to `subagent` to suppress the briefing auto-pull and every session-lifecycle call |
 | `THREENGRAM_HOOK_DEBUG` | `0` | Set to `1` to dump payloads to `/tmp/3ngram-hook-debug/` |
 | `THREENGRAM_PRECHECK_DISABLE` | `0` | Set to `1` to disable the PreToolUse surfacing |
 | `THREENGRAM_PRECHECK_LIMIT` | `3` | Max memories surfaced by precheck |
@@ -136,8 +264,9 @@ API key lookup order: `THREENGRAM_API_KEY` env →
 `$XDG_CONFIG_HOME/3ngram/api-key` → `~/.config/3ngram/api-key`.
 
 When the hook runs from a secondary git worktree it suppresses the briefing
-auto-pull so an orchestrator's sub-agents inherit context without re-pulling
-(also via `THREENGRAM_HOOK_ROLE=subagent` for Task-dispatched sub-agents that
+auto-pull — and every session-lifecycle call — so an orchestrator's sub-agents
+inherit context without re-pulling and never open, lease or close a row of their
+own (also via `THREENGRAM_HOOK_ROLE=subagent` for Task-dispatched sub-agents that
 inherit the main worktree cwd).
 
 ## Local development

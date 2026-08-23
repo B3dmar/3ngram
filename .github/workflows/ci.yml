@@ -345,12 +345,18 @@ jobs:
       # mirrors" contract check): the committed docs reference artifacts
       # must match a fresh regeneration, byte for byte. The OpenAPI generator
       # also asserts its route table covers every router.ts registration.
+      #
+      # cmd/3ngram-hook/contract_gen.go rides the SAME diff (scripts/gen-hook-
+      # contract.mjs is the last step of docs:generate). The Go hook cannot
+      # import packages/schema, so the bounds it enforces before sending a body
+      # are generated rather than hand-copied; this lane is not path-gated on
+      # Go, so a schema-only change that leaves the file stale still goes red.
       - name: Docs reference freshness
         if: ${{ matrix.lane == 'docs-reference' }}
         run: |
           pnpm run docs:generate
           git add -N docs
-          git diff --exit-code -- docs
+          git diff --exit-code -- docs cmd/3ngram-hook/contract_gen.go
       # Generate-and-diff freshness gate for the eval transport-surfaces fixture
       # (eval/scripts/gen-transport-surfaces.mjs): the committed MCP surface
       # snapshot (tools/prompts/resource-templates/completions) must match a

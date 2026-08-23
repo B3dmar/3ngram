@@ -5,15 +5,17 @@ icon: "arrows-rotate"
 ---
 
 **Status: design, not built** (table, native `sessionRunId` plumbing, the typed
-provenance read, and the session-lifecycle REST surface exist; hook / closer do
-not). `agent_sessions` and the `memory_events` session expression index shipped in
-migration 0032. Native remember / revise / resolve accept optional `sessionRunId`
-and stamp `{ sessionRunId }` on the audit events those writes emit, and
+provenance read, the session-lifecycle REST surface and the hook that drives it
+exist; the closer does not). `agent_sessions` and the `memory_events` session
+expression index shipped in migration 0032. Native remember / revise / resolve
+accept optional `sessionRunId` and stamp `{ sessionRunId }` on the audit events
+those writes emit, and
 `GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. `POST
 /api/v1/agent-sessions/open|close|heartbeat` and `GET /api/v1/prompts/debrief`
-ship the hook-facing half of step 5; the Go hook that calls them (step 5b) does
-not exist yet, so nothing drives them in production. No triage routes, no Stop
-nudge, no session-closer worker. Tracked as
+ship the hook-facing half of step 5, and `3ngram-hook briefing|heartbeat|close`
+(step 5b) calls them from SessionStart, Stop and SessionEnd. No triage routes, no
+Stop nudge, no session-closer worker — nothing CONSUMES the bookkeeping yet, so
+the design's outcome is still unbuilt. Tracked as
 [issue #166](https://github.com/B3dmar/3ngram/issues/166). The cheap half of that issue
 (chunked debrief, keep the 2000-character cap, optional `debrief.project`) shipped in
 v1.4.4. This page is the remainder.
@@ -109,10 +111,11 @@ The design is constrained by what the harness actually permits.
 
 Two consequences:
 
-1. **A debrief cannot run at `SessionEnd`.** By then there is nobody to instruct. This is
-   why `3ngram-hook sync` sits at that event and is a deliberate no-op
-   (`cmd/3ngram-hook/sync.go`) — pushing files needs no model, and that slot cannot be
-   upgraded into a triage. Codex states this structurally: `SessionEnd` is the **only**
+1. **A debrief cannot run at `SessionEnd`.** By then there is nobody to instruct. That
+   slot now runs `3ngram-hook close` — one natural-key POST, no model
+   (`cmd/3ngram-hook/close.go`); `3ngram-hook sync` remains the deliberate no-op it
+   always was (`cmd/3ngram-hook/sync.go`) and is no longer registered there. Neither
+   slot can be upgraded into a triage. Codex states this structurally: `SessionEnd` is the **only**
    event with no output schema generated for it at all. Do not rely on SessionEnd for
    correctness: a killed terminal, crash, or failed POST leaves the row open. Layer 1
    uses a lease, not SessionEnd, as the liveness signal.
@@ -261,10 +264,10 @@ The shipped hook is registered for Codex matchers `startup|resume|clear|compact`
 
 | `source` | Behavior |
 |---|---|
-| `startup` | `GET /api/v1/briefing?mode=full` (the shipped hook omits `mode` and gets the `brief` slice). Render, then **truncate locally** (`BRIEFING_MAX_TOKENS`, default 2000 → `maxChars` at `briefing.go`). `POST /open` with the natural key **and the `{id, topic, status}` rows that survived the cut**. The stamp is that POST, not the GET — otherwise `briefed_memories` records commitments the agent never saw. |
-| `resume` | Idempotent: reuse the existing `(user_id, agent, session_id)` row; increment `activation_epoch`; reopen if implicitly or explicitly closed. Do **not** restamp the briefing fields. Heartbeat `last_seen_at`. |
-| `compact` | Not an open, not a restamp. **Re-inject** the existing `sessionRunId` and the instruction to pass it on writes — compaction discards the model-mediated id with the context. Same row, same briefing stamp. |
-| `clear` | Treat as startup of a new conversation if the harness mints a new `session_id`; otherwise same as resume. Confirm against the harness at implementation. |
+| `startup` | `GET /api/v1/briefing?mode=full`. Render, then **truncate locally** (`BRIEFING_MAX_TOKENS`, default 2000 → `maxChars` at `briefing.go`). `POST /open` with the natural key, the **effective** selector the response echoed (a retrieval policy may narrow `all` to a scope — the row must record the lens the agent read through, not the one the hook asked for), **and the `{id, topic, status}` rows that survived the cut** — the hook records a per-row byte offset while rendering and replays the cut against it. The stamp is that POST, not the GET — otherwise `briefed_memories` records commitments the agent never saw. A **failed** briefing does not skip the open: the read and the bookkeeping write are independent, and Stop deliberately never creates a missing row, so the session would otherwise go unattributed for the sake of one bad read. It opens with `briefedMemories` **omitted** — no briefing was delivered, and an empty array would stamp `briefing_delivered_at` for a delivery that never happened. |
+| `resume` | Idempotent: reuse the existing `(user_id, agent, session_id)` row; increment `activation_epoch`; reopen if implicitly or explicitly closed. Do **not** restamp the briefing fields — the hook omits `briefedMemories` from the resume body entirely. Heartbeat `last_seen_at`. |
+| `compact` | Not an open, not a restamp. **Re-inject** the existing `sessionRunId` and the instruction to pass it on writes — compaction discards the model-mediated id with the context. Same row, same briefing stamp. The hook recovers the id with `POST /heartbeat`: there is no natural-key GET on the row, and on a live row a heartbeat leaves the epoch and every briefing field untouched, where a `source=resume` open would bump the epoch for an activation that never happened. |
+| `clear` | Treat as startup of a new conversation if the harness mints a new `session_id`; otherwise same as resume. Resolved against the SERVER rather than local state: the hook probes `POST /heartbeat`. A **404** — this tenant owns no row for that conversation id — is what makes it a `startup`. A **200** ends it there: the probe has already returned the `sessionRunId` and floored the lease, so a second `source=resume` open would only spend a round trip and, on a row the probe just resurrected, bump `activation_epoch` twice. The deviation from a literal resume is that a clear on a **live** row no longer bumps the epoch — which fences nothing, because no closer claim can exist against a row whose lease is still live. Any **other** answer (timeout, 401, 5xx, unparseable body) is not an existence answer and must not be guessed as `startup`: the hook delivers the briefing, skips the lifecycle and logs one line. |
 
 Do not write the literal `"unknown"` that `deriveProject` returns for an empty cwd
 (`cmd/3ngram-hook/project.go`). Omit `project` rather than persist a fake facet.
@@ -726,7 +729,7 @@ prose here.
 | 3 | ~~Native-only `sessionRunId` plumbing; model-mediated pass-through as best-effort; single-open default as the floor~~ | Attribution is server-validated; hooked path is not "always" |
 | 4 | ~~Typed provenance read (bounded, paginated)~~ | Closer and nudge can list this run's writes |
 | 5a | ~~REST open / close (natural key, no epoch) / heartbeat / prompt render~~ | Natural-key addressing, idempotency and the lease/epoch rules hold under RLS |
-| 5b | Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId` | Lease stays live across completed turns; resume/compact/crash still hold |
+| 5b | ~~Hook SessionStart **and a heartbeat-only Stop** that also snapshots `last_assistant_message`. Compact re-injects `sessionRunId`~~ | Lease stays live across completed turns; resume/compact/crash still hold |
 | 6 | Closer v1: **resolve only** + lease-expiry sweep + worker image/Compose. Live re-read before resolve | Commitment-recall **improvement** vs 0%; no new-atom `remember` |
 | 7 | Gated Stop nudge, one project, one harness, default-off | Complete only with provenance since attempt begin; event-id watermark; debounce; numeric cap |
 
