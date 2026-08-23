@@ -39,6 +39,38 @@ export type AgentSessionTriageStatus = z.infer<typeof agentSessionTriageStatusSc
 export const SESSION_LEASE_MS = 24 * 60 * 60 * 1000
 
 /**
+ * Extra idle the lease-expiry sweep waits BEYOND {@link SESSION_LEASE_MS} before
+ * it stamps an implicit `closed_at` (docs/concepts/session-continuity.mdx,
+ * "Resurrection": *the closer on implicit close waits a grace after lease expiry
+ * so an overnight idle gap can reopen instead of being debriefed mid-conversation*).
+ *
+ * WHY IT ALSO KEEPS THE DISCRIMINATOR HONEST. `isExplicitClose` identifies a
+ * SessionEnd close forever by `closed_at <= last_seen_at + lease`. The sweep
+ * stamps `closed_at = now` only for rows where
+ * `now > last_seen_at + lease + grace`, so its stamp lands STRICTLY outside that
+ * window and the row classifies as an IMPLICIT close — which is what keeps it
+ * resurrectable by a later heartbeat or resume. Any grace > 0 preserves that;
+ * one hour is chosen because the 24h lease already covers the overnight gap the
+ * page names, so the grace only has to debounce the instant of expiry.
+ */
+export const SESSION_SWEEP_GRACE_MS = 60 * 60 * 1000
+
+/**
+ * Rows one sweep pass may close (and enqueue a closer for) per tenant. A bounded
+ * batch keeps a backlog from turning one tick into an unbounded scan; the next
+ * tick picks up the remainder.
+ */
+export const MAX_SESSION_SWEEP_BATCH = 100
+
+/**
+ * How long a `last_message_excerpt` may survive on a row the closer will never
+ * process — the page's "TTL sweep leftovers". An `overflowed` run is terminal
+ * and a `completed` run has already been consumed, so their excerpts are dead
+ * weight that would otherwise sit in the corpus-adjacent store forever.
+ */
+export const SESSION_EXCERPT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
  * Closed native-write payload. JSON keys are spelling-sensitive — the index uses
  * the same spelling — and so is the VALUE: it is compared as `text` by
  * `payload->>'sessionRunId' = $1`, so the id rides the canonical
@@ -351,3 +383,29 @@ export const sessionEventsResponseSchema = z
   })
   .strict()
 export type SessionEventsResponse = z.infer<typeof sessionEventsResponseSchema>
+
+// ---------------------------------------------------------------------------
+// Closer v1 — the model's verdict (docs/concepts/session-continuity.mdx layer 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the closer's single LLM pass is allowed to say: which of the commitments
+ * the run was BRIEFED on the work completed. Nothing else — v1 is resolve-only,
+ * so there is no field here a model could use to mint a memory, revise one, or
+ * name an id it was not shown.
+ *
+ * `.strict()` plus `z.uuid()` is only the syntactic half. The semantic half —
+ * every returned id must be a member of the briefed set — cannot live in a
+ * static schema because the set is per-run; the closer intersects against it
+ * (packages/core/src/admin/session-closer.ts). Both halves are load-bearing.
+ * RLS already stops a hallucinated id reaching another tenant, so the risk the
+ * intersection covers is the id that IS this tenant's: a commitment no briefing
+ * ever showed this run, resolved on the strength of a guess. That is precisely
+ * the spurious write the validation bar measures at near-zero.
+ */
+export const closerVerdictSchema = z
+  .object({
+    completed: z.array(z.uuid()).max(MAX_BRIEFED_MEMORIES),
+  })
+  .strict()
+export type CloserVerdict = z.infer<typeof closerVerdictSchema>
