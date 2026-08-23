@@ -194,6 +194,20 @@ export {
   setRetrievalDefault,
   setScopeAliases,
 } from './scope/index.js'
+// --- hook-facing agent-session bookkeeping: open / close / heartbeat ---
+export {
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
+  type AgentSessionRecord,
+  type CloseSessionResult,
+  closeAgentSession,
+  getAgentSession,
+  type HeartbeatSessionResult,
+  heartbeatAgentSession,
+  type OpenSessionResult,
+  openAgentSession,
+  type SessionClockOptions,
+} from './session/index.js'
 export {
   archiveMemory,
   BlockerNotFoundError,
