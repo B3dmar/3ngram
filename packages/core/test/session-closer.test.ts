@@ -12,7 +12,6 @@
 //   - the watermark is taken AFTER the resolves, or the closer re-arms itself;
 //   - the pass is RESOLVE-ONLY — no seam exists for anything else.
 import type { CompleteOptions, Gateway } from '@3ngram/llm'
-import { CLOSER_BACKOFF_BASE_MS } from '@3ngram/schema'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   CLOSER_MAX_OUTPUT_TOKENS,
@@ -56,7 +55,6 @@ function sessionRow(overrides: Partial<CloserSessionInput> = {}): CloserSessionI
     project: '3ngram',
     scope: 'work',
     closedAt: new Date('2026-08-23T12:00:00.000Z'),
-    closerFailureCount: 0,
     ...overrides,
   }
 }
@@ -626,20 +624,19 @@ describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184
       ),
     ).rejects.toThrow('gateway is down')
 
-    expect(repo.failures).toEqual([
-      {
-        sessionRunId: RUN,
-        activationEpoch: 3,
-        failureCount: 1,
-        nextAttemptAt: new Date(OPTIONS.now.getTime() + CLOSER_BACKOFF_BASE_MS),
-      },
-    ])
+    expect(repo.failures).toEqual([{ sessionRunId: RUN, activationEpoch: 3, now: OPTIONS.now }])
     // No terminal write-back — a failure is retried, not settled.
     expect(repo.finishes).toEqual([])
   })
 
-  it('grows the delay off the OBSERVED count, not a repo-local counter', async () => {
-    const repo = fakeRepo({ readSession: async () => sessionRow({ closerFailureCount: 2 }) })
+  it('carries NO count and NO computed delay — the db layer derives both, atomically, from the CURRENT row (Codex review of PR #196)', async () => {
+    // The bug this replaces: core used to read `closerFailureCount` at the
+    // START of the pass and compute `failureCount`/`nextAttemptAt` from that
+    // snapshot. A `completeSessionTriage` reset landing between that read and
+    // this stamp (no epoch bump) would then have its reset OVERWRITTEN by the
+    // stale pre-race count. `CloserSessionInput` no longer even carries the
+    // field — there is nothing here to go stale.
+    const repo = fakeRepo()
     const gateway: Gateway = {
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('still down')),
@@ -653,11 +650,7 @@ describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184
       ),
     ).rejects.toThrow('still down')
 
-    // Third consecutive failure: base * 2^2.
-    expect(repo.failures[0]).toMatchObject({
-      failureCount: 3,
-      nextAttemptAt: new Date(OPTIONS.now.getTime() + CLOSER_BACKOFF_BASE_MS * 4),
-    })
+    expect(repo.failures).toEqual([{ sessionRunId: RUN, activationEpoch: 3, now: OPTIONS.now }])
   })
 
   it('never lets a recordFailure error mask the real failure', async () => {

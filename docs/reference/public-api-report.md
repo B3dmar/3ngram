@@ -218,7 +218,7 @@ its row here even when its name and kind are unchanged.
 | `CloserFinish` | interface | `7cecec3fd92c` |
 | `CloserOptions` | interface | `0b91d92bdcd8` |
 | `CloserResult` | interface | `6f1996e181d0` |
-| `CloserSessionInput` | interface | `8aa40d87a1a1` |
+| `CloserSessionInput` | interface | `8f8f533b59f2` |
 | `CloserSkipReason` | type | `c378f5605331` |
 | `CloserVerdictError` | class | `644008da0f76` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
@@ -330,7 +330,7 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
-| `SessionCloserRepo` | interface | `930ba397f4eb` |
+| `SessionCloserRepo` | interface | `d2ce79fd10f0` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
@@ -560,8 +560,8 @@ its row here even when its name and kind are unchanged.
 | `ChronologicalPage` | interface | `3a81f7904b73` |
 | `CloseSessionResult` | interface | `9ce31e28018e` |
 | `CloserCandidate` | interface | `95aa130ca604` |
-| `CloserFailure` | interface | `c88693a38bb9` |
-| `CloserSessionRow` | interface | `9ba148b24c11` |
+| `CloserFailure` | interface | `27bdda58d14e` |
+| `CloserSessionRow` | interface | `cc8f36f2ea4e` |
 | `CommitmentCreate` | interface | `b29fe27da0fc` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |

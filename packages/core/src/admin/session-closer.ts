@@ -31,7 +31,6 @@
 // errors raised when the model returns something unparseable.
 import {
   claimSessionTriage,
-  closerBackoffDelayMs,
   finishSessionTriage,
   insertLlmUsage,
   listSessionEvents,
@@ -142,7 +141,9 @@ export interface SessionCloserRepo {
    * Stamp the per-row backoff after a FAILED pass (issue #184) — see
    * {@link closeSessionRun}'s catch. Epoch-fenced, so a resurrection mid-pass
    * makes it a no-op; best-effort from the caller's side (it must never mask
-   * the failure that triggered it).
+   * the failure that triggered it). Deliberately carries NO count or delay —
+   * see {@link CloserFailureInput}: the implementation derives both from the
+   * row's value at write time, not a value this caller observed earlier.
    */
   recordFailure(userId: string, failure: CloserFailureInput): Promise<void>
 }
@@ -169,16 +170,25 @@ export interface CloserSessionInput {
   project: string | null
   scope: string | null
   closedAt: Date | null
-  /** Consecutive closer-pass failures observed BEFORE this attempt. See {@link closerBackoffDelayMs}. */
-  closerFailureCount: number
 }
 
-/** Fence + count the failure recording needs; see {@link SessionCloserRepo.recordFailure}. */
+/**
+ * Fence + clock the failure recording needs; see
+ * {@link SessionCloserRepo.recordFailure}. Deliberately NOT a count or a
+ * computed delay (Codex review of PR #196, comment 3843607494) — this used to
+ * carry `failureCount`/`nextAttemptAt` computed from `CloserSessionInput`'s
+ * count, read at the START of the pass. A `completeSessionTriage` that resets
+ * the row's backoff between that read and this write (a durable write-back
+ * with no epoch bump, unlike a resurrect) would then have its reset
+ * overwritten by the stale pre-race count. The db-layer implementation now
+ * computes both columns from the row's value AT WRITE TIME, atomically, in
+ * one statement — so there is nothing left here to go stale.
+ */
 export interface CloserFailureInput {
   sessionRunId: string
   activationEpoch: number
-  failureCount: number
-  nextAttemptAt: Date
+  /** Injected clock (issue #184) — core reads no clock of its own. */
+  now: Date
 }
 
 export interface CloserEventPage {
@@ -560,7 +570,14 @@ export async function closeSessionRun(
     // describes it. BullMQ's own retry (unaffected — `throw err` below still
     // always runs) is what covers attempts 1 and 2.
     if (options.isLastAttempt) {
-      const failureCount = session.closerFailureCount + 1
+      // NO COUNT, NO COMPUTED DELAY (Codex review of PR #196, comment
+      // 3843607494). `repo.recordFailure`'s db-layer implementation derives
+      // both from the row's value AT WRITE TIME, atomically — never from
+      // `session.closerFailureCount`, which was read at the START of this
+      // pass and can go stale under a concurrent `completeSessionTriage`
+      // reset (no epoch bump) between then and now. See
+      // `CloserFailureInput`'s own doc for the full argument.
+      //
       // Best-effort: `recordFailure`'s own epoch fence already makes a
       // resurrection a safe no-op, and a failure to WRITE the backoff must
       // never mask the real error — the job still fails and BullMQ still
@@ -572,8 +589,7 @@ export async function closeSessionRun(
         .recordFailure(userId, {
           sessionRunId: request.sessionRunId,
           activationEpoch: session.activationEpoch,
-          failureCount,
-          nextAttemptAt: new Date(options.now.getTime() + closerBackoffDelayMs(failureCount)),
+          now: options.now,
         })
         .catch((recordErr: unknown) => {
           // The hook itself is best-effort too: if it throws, that rejection

@@ -296,39 +296,73 @@ describe('listCloserCandidates — the backoff gate', () => {
 })
 
 describe('recordCloserFailure', () => {
-  it('stamps the count and the gate verbatim', async () => {
+  const recordFailure = (sessionRunId: string, activationEpoch = 1, now = NOW) =>
+    withTenant(uid, (tx) => recordCloserFailure(tx, uid, { sessionRunId, activationEpoch, now }))
+
+  it('stamps the count and the gate from the ROW, not a caller-supplied value', async () => {
     const opened = await open(uid, 'conv-fail-stamp')
     await setRow(opened.row.id, { closed_at: NOW })
-    const nextAttemptAt = new Date(NOW.getTime() + closerBackoffDelayMs(1))
 
-    await withTenant(uid, (tx) =>
-      recordCloserFailure(tx, uid, {
-        sessionRunId: opened.row.id,
-        activationEpoch: 1,
-        failureCount: 1,
-        nextAttemptAt,
-      }),
-    )
+    await recordFailure(opened.row.id)
 
     const row = await rawRow(opened.row.id)
     expect(row.closer_failure_count).toBe(1)
-    expect(row.closer_next_attempt_at).toEqual(nextAttemptAt)
+    expect(row.closer_next_attempt_at).toEqual(new Date(NOW.getTime() + closerBackoffDelayMs(1)))
     // And the gate it just set really does exclude the row.
     expect(await candidates(uid)).toEqual([])
+  })
+
+  it('matches closerBackoffDelayMs bit-for-bit across five consecutive failures', async () => {
+    // The SQL formula is a SEPARATE spelling of the same curve
+    // `closerBackoffDelayMs` documents (issue #184) — empirically checked
+    // against it here rather than assumed, exactly because a wrong exponent
+    // or a missing cap is a silent-forever-churn bug no behavioural test over
+    // a live scan would catch.
+    const opened = await open(uid, 'conv-fail-curve')
+    await setRow(opened.row.id, { closed_at: NOW })
+
+    for (let n = 1; n <= 5; n++) {
+      await recordFailure(opened.row.id)
+      const row = await rawRow(opened.row.id)
+      expect(row.closer_failure_count, `failure ${n}`).toBe(n)
+      expect(row.closer_next_attempt_at, `failure ${n}`).toEqual(
+        new Date(NOW.getTime() + closerBackoffDelayMs(n)),
+      )
+    }
+  })
+
+  it('derives the stamp from the CURRENT count, not one a caller read earlier (Codex review of PR #196, comment 3843607494)', async () => {
+    // The interleaving the fix closes: a pass observes closer_failure_count=5
+    // at the START of its (LLM-round-trip-length) run. Before it fails and
+    // reaches this call, an interactive `completeSessionTriage` legitimately
+    // resets the row to 0 — a durable write-back with NO epoch bump, so the
+    // epoch fence alone does not protect against it. The OLD shape took the
+    // post-increment count as an INPUT (computed from that stale 5), and would
+    // have stamped 6, overwriting the reset with a near-4-hour gate on a row
+    // that had just been legitimately re-armed. The fix has NO count input at
+    // all: it reads the row's value AT THIS STATEMENT, so the reset — however
+    // it lands relative to a caller's earlier read — is exactly what gets
+    // incremented.
+    const opened = await open(uid, 'conv-fail-race')
+    await setRow(opened.row.id, { closed_at: NOW, closer_failure_count: 5 })
+
+    // Simulate the race: the reset commits before this call, same as it would
+    // if `completeSessionTriage` won the interleaving.
+    await setRow(opened.row.id, { closer_failure_count: 0, closer_next_attempt_at: null })
+
+    await recordFailure(opened.row.id)
+
+    const row = await rawRow(opened.row.id)
+    // ONE, not six — the whole point of the fix.
+    expect(row.closer_failure_count).toBe(1)
+    expect(row.closer_next_attempt_at).toEqual(new Date(NOW.getTime() + closerBackoffDelayMs(1)))
   })
 
   it('is a no-op at a stale epoch — a resurrection wins either ordering', async () => {
     const opened = await open(uid, 'conv-fail-fenced')
     await setRow(opened.row.id, { closed_at: NOW })
 
-    await withTenant(uid, (tx) =>
-      recordCloserFailure(tx, uid, {
-        sessionRunId: opened.row.id,
-        activationEpoch: 99, // stale — the row is still at epoch 1
-        failureCount: 1,
-        nextAttemptAt: new Date(NOW.getTime() + 60_000),
-      }),
-    )
+    await recordFailure(opened.row.id, 99) // stale — the row is still at epoch 1
 
     const row = await rawRow(opened.row.id)
     expect(row.closer_failure_count).toBe(0)
@@ -339,14 +373,7 @@ describe('recordCloserFailure', () => {
     const theirs = await open(other, 'conv-fail-theirs')
     await setRow(theirs.row.id, { closed_at: NOW })
 
-    await withTenant(uid, (tx) =>
-      recordCloserFailure(tx, uid, {
-        sessionRunId: theirs.row.id,
-        activationEpoch: 1,
-        failureCount: 1,
-        nextAttemptAt: new Date(NOW.getTime() + 60_000),
-      }),
-    )
+    await recordFailure(theirs.row.id)
 
     expect((await rawRow(theirs.row.id)).closer_failure_count).toBe(0)
   })

@@ -159,8 +159,9 @@ function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promis
 
 /**
  * Is THIS invocation of the processor the last one BullMQ will make for `job`
- * (issue #184)? Mirrors `Job.shouldRetryJob`'s own check (bullmq 5.78.0,
- * classes/job.js) — read at the same point in the lifecycle: our processor
+ * (issue #184)? Mirrors the ATTEMPT-COUNT ARITHMETIC of `Job.shouldRetryJob`'s
+ * own check (bullmq 5.78.0, classes/job.js) — NOT the whole check; see the
+ * qualifier below — read at the same point in the lifecycle: our processor
  * runs BEFORE `moveToCompleted`/`moveToFailed` touch `job.attemptsMade`, so
  * during THIS call it still holds the count of attempts that already
  * finished — 0 on the first try, 1 on the second, and so on — never the one
@@ -168,7 +169,7 @@ function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promis
  * without a retry policy; every job this worker enqueues carries one
  * (`JOB_RETRY_OPTS`), but the fallback keeps this total for any job shape.
  *
- * ONLY THE ATTEMPT-COUNT CLAUSE, though — `shouldRetryJob` ALSO stops
+ * ONLY THAT ARITHMETIC, though — `shouldRetryJob` ALSO stops
  * retrying on an `UnrecoverableError` (or `err.name === 'UnrecoverableError'`)
  * and on `job.discarded`, neither of which this function can see: both are
  * evaluated from the thrown ERROR itself, after this attempt has already run,
