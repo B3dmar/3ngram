@@ -415,36 +415,60 @@ export async function transitionCommitment(
       // memory and so a missing commitment is a clean NotFound (vs the FSM
       // trigger never running on a no-op UPDATE).
       //
-      // LOCKED (`FOR UPDATE`), not a plain read (issue #185, resolve-path
-      // TOCTOU — a real bug in an earlier revision of this function). Every
-      // caller is about to write this exact row, so taking its lock here,
-      // rather than implicitly a few statements later inside the UPDATE, is
-      // free — and it is what makes the epoch check right below trustworthy
-      // for the closer's stamped path. `eraseAccountData`
-      // (account-delete.ts) UPDATEs EVERY commitment row of the account
-      // BEFORE it bumps `activation_epoch`, so locking this row first forces
-      // erasure and this transaction to SERIALIZE against each other rather
-      // than merely race.
+      // LOCKED (`FOR UPDATE`) ONLY ON THE STAMPED (closer) PATH — not
+      // unconditionally. An earlier revision of this function locked here for
+      // EVERY caller (issue #185, resolve-path TOCTOU) and that was itself a
+      // bug (F1b): it inverted the canonical lock order for the non-stamped
+      // path, which calls `resolveSessionProvenance` a few statements below
+      // and may take the tenant/project ATTACH advisory lock. The canonical
+      // order for every write path that stamps provenance — see
+      // memory-revise.ts's own "LOCK ORDER" note — is attach-lock BEFORE any
+      // memory/commitment row lock; inverting it here (row lock, THEN attach)
+      // is an AB-BA deadlock against a concurrent write that takes them in the
+      // canonical order (reviseMemory's commitment-sync helper does exactly
+      // that).
       //
-      // An EXISTS(...) epoch check folded into the UPDATE's own WHERE — this
-      // function's previous revision — is NOT equivalent and does not work:
-      // Postgres evaluates a blocked-then-woken UPDATE's TARGET row fresh
-      // (EvalPlanQual), but a sub-SELECT against another table inside that
-      // same WHERE still runs under the statement's ORIGINAL snapshot. If
-      // erasure held this row's lock first, the woken UPDATE would re-check
-      // its own qual against the post-erasure commitment row yet evaluate the
-      // `agent_sessions` sub-select as of BEFORE erasure committed — seeing
-      // the stale epoch, passing the guard, and landing the resolve after
-      // all. This is the exact pitfall `excerptPatch` (session-lifecycle.ts)
-      // and `settleNeedsLook` (session-closer.ts) already document: a
-      // sub-SELECT needs its own fresh statement, not a shared one with the
-      // write it guards.
-      const [existing] = await tx
+      // THE DEEPER TENSION, not just a style choice: `eraseAccountData`
+      // (account-delete.ts) orders its writes commitments -> agent_sessions
+      // (redact commitments, THEN bump the epoch), while the canonical
+      // provenance-stamping order is agent_sessions(-adjacent attach lock) ->
+      // commitments. No single lock order in this one function can satisfy
+      // both erasure's ordering (which the stamped path needs to serialize
+      // against, below) and the canonical provenance ordering (which the
+      // non-stamped path needs) at the same time. Scoping the lock to ONLY the
+      // stamped path is the resolution: that path never calls
+      // `resolveSessionProvenance` (a pre-resolved id bypasses it entirely —
+      // see `stampedSessionRunId`'s own doc), so it holds exactly one lock and
+      // waits on nothing else, safe to serialize against erasure. The
+      // non-stamped path takes NO commitment lock here at all, and keeps the
+      // canonical attach-first order it always had.
+      //
+      // WHY THE STAMPED PATH NEEDS THE LOCK AT ALL: `eraseAccountData` UPDATEs
+      // EVERY commitment row of the account BEFORE it bumps
+      // `activation_epoch`, so the closer's write locking this row FIRST
+      // forces erasure and this transaction to SERIALIZE against each other
+      // rather than merely race — see the epoch fence right below for why the
+      // lock has to come first. An EXISTS(...) epoch check folded into the
+      // UPDATE's own WHERE — a still-earlier revision — is NOT equivalent and
+      // does not work: Postgres evaluates a blocked-then-woken UPDATE's TARGET
+      // row fresh (EvalPlanQual), but a sub-SELECT against another table
+      // inside that same WHERE still runs under the statement's ORIGINAL
+      // snapshot. If erasure held this row's lock first, the woken UPDATE
+      // would re-check its own qual against the post-erasure commitment row
+      // yet evaluate the `agent_sessions` sub-select as of BEFORE erasure
+      // committed — seeing the stale epoch, passing the guard, and landing the
+      // resolve after all. This is the exact pitfall `excerptPatch`
+      // (session-lifecycle.ts) and `settleNeedsLook` (session-closer.ts)
+      // already document: a sub-SELECT needs its own fresh statement, not a
+      // shared one with the write it guards.
+      const locked =
+        input.stampedSessionRunId !== undefined && input.stampedSessionEpoch !== undefined
+      const base = tx
         .select({ memoryId: commitments.memoryId })
         .from(commitments)
         .where(and(eq(commitments.userId, input.userId), eq(commitments.id, input.commitmentId)))
         .limit(1)
-        .for('update')
+      const [existing] = await (locked ? base.for('update') : base)
       if (!existing) throw new CommitmentNotFoundError(input.commitmentId)
 
       // THE RESOLVE-PATH EPOCH FENCE (issue #185), now that the lock above is
@@ -505,11 +529,15 @@ export async function transitionCommitment(
       // straight through, so a resolved -> resolved UPDATE succeeds, bumps
       // `resolved_at`/`updated_at`, and appends a SECOND `resolve` event under a
       // different session's provenance. Putting the observed status in the WHERE
-      // turns that into a zero-row update the caller can classify. Holding this
-      // row's lock since the SELECT above means nothing NEW can race this
-      // predicate between then and now — the WHERE is defending against a
-      // status this transaction has not yet re-read, not against a fresh
-      // concurrent writer, since this transaction holds the only lock there is.
+      // turns that into a zero-row update the caller can classify. On the
+      // STAMPED path, `locked` means this transaction has held this row's lock
+      // since the SELECT above, so nothing NEW can race this predicate between
+      // then and now either — the WHERE still matters (it is the guard against
+      // the STALE status the caller observed before this transaction even
+      // began), but no concurrent writer can additionally sneak in during this
+      // transaction's own lifetime. The non-stamped path holds no such lock
+      // (see above), so for it the WHERE is doing the whole job, same as
+      // before this file ever added a lock here.
       const [row] = await tx
         .update(commitments)
         .set({ status: input.to, resolvedAt, updatedAt: sql`now()` })
@@ -524,11 +552,13 @@ export async function transitionCommitment(
         )
         .returning({ id: commitments.id, status: commitments.status })
       if (!row) {
-        // The row exists (the SELECT above found it, and this transaction has
-        // held its lock ever since), so with `expectedFrom` set a zero-row
-        // update means only one thing: somebody moved it first. The epoch
-        // fence above already ran to completion — an epoch mismatch never
-        // reaches this branch, it aborts earlier with SessionEpochFencedError.
+        // The row exists (the SELECT above found it), so with `expectedFrom`
+        // set a zero-row update means only one thing: somebody moved it
+        // first — on the stamped path, this transaction has held the row's
+        // lock ever since that SELECT, so "somebody" moved it before this
+        // transaction started, not during it. The epoch fence above already
+        // ran to completion — an epoch mismatch never reaches this branch, it
+        // aborts earlier with SessionEpochFencedError.
         if (input.expectedFrom !== undefined) {
           throw new CommitmentStateChangedError(input.commitmentId, input.expectedFrom)
         }

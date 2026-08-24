@@ -852,13 +852,19 @@ async function runClosePass(
       }
     }
     // THE RESOLVE-PATH EPOCH FENCE (issue #185). `expectedEpoch` threads
-    // through to `transitionCommitment`, which re-reads `activation_epoch`
-    // INSIDE the same transaction as the commitment write and aborts instead
-    // of writing when it no longer matches — closing the gap between the
-    // read above and the write, not just narrowing it. A 'epoch-fenced'
-    // outcome means the write never happened, so this pass is ABANDONED
-    // exactly like every other epoch-fence hit — never counted as a per-
-    // candidate skip, and never retried.
+    // through to `transitionCommitment`, which locks the commitment row THEN
+    // re-reads `activation_epoch` on a fresh statement inside the same
+    // transaction as the write, aborting instead of writing when it no longer
+    // matches. Against ERASURE this CLOSES the gap between the read above and
+    // the write, not just narrows it — erasure's own bulk commitments UPDATE
+    // takes the same row lock, forcing the two transactions to serialize.
+    // Against a plain RESURRECTION (a heartbeat or SessionStart resuming the
+    // row) it only NARROWS the gap to one fresh statement: resurrection never
+    // touches `commitments`, so nothing forces an ordering against it the way
+    // erasure's lock does. Harmless either way — a resolve is reversible
+    // (`unresolve`). A 'epoch-fenced' outcome means the write never happened,
+    // so this pass is ABANDONED exactly like every other epoch-fence hit —
+    // never counted as a per-candidate skip, and never retried.
     const outcome = await repo.resolve(
       userId,
       memoryId,

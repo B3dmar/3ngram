@@ -902,15 +902,21 @@ to the gateway's and inverts the repo's no-lock-across-network-call rule.
 (3) is superseded by (4) as the AUTHORITATIVE guard, not made redundant: the
 outer per-resolve read used to be the only fence on an individual resolve, so
 **an individual resolve could commit against a session that had just become
-active again** — that residual is now CLOSED, not merely disclosed, by (4)'s
-lock-then-read. (3) stays in place deliberately, as a cheap EARLY EXIT: it is a
-plain read with no lock, so it cannot itself guarantee anything, but it stops
-the REST of the batch at the first stale candidate rather than paying a doomed
-lock-wait-then-write attempt for every remaining one. Resolve is reversible
-regardless (`unresolve`), which is why v1 stayed resolve-only in the first
-place — a closer that could `remember` would need a stronger guarantee than
-even (4) gives on non-idempotent writes, and that is one of the costs the page
-rejects it for.
+active again** — that residual is now CLOSED against ERASURE specifically,
+because erasure's bulk `commitments` UPDATE takes the same row lock (4) does,
+forcing the two transactions to serialize. It stays only NARROWED against plain
+RESURRECTION (a heartbeat or SessionStart `resume`/`clear` reopening the row):
+resurrection never touches `commitments` at all, so there is no lock forcing an
+ordering between it and a resolve the way there is against erasure — (4)'s
+fresh epoch read still shrinks the window to one statement, same shape as (2),
+just smaller in practice. Harmless either way: resolve is reversible
+(`unresolve`), which is why v1 stayed resolve-only in the first place — a
+closer that could `remember` would need a stronger guarantee than even (4)
+gives on non-idempotent writes, and that is one of the costs the page rejects
+it for. (3) stays in place regardless, as a cheap EARLY EXIT: it is a plain
+read with no lock, so it cannot itself guarantee anything, but it stops the
+REST of the batch at the first stale candidate rather than paying a doomed
+lock-wait-then-write attempt for every remaining one.
 
 Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
 `worker` (settled above) — never `capture_hook`.
