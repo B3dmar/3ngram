@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/worker",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "private": true,
   "description": "Background BullMQ worker — the consolidation-proposal, surfacing/overdue and session lease-expiry repeatable jobs, plus the resolve-only session closer. A thin harness: schedule + invoke + shutdown; all business logic lives in @3ngram/core (docs/concepts/architecture.mdx, hard rule 5).",
   "license": "Apache-2.0",
