@@ -85,7 +85,9 @@ describe('openAgentSession input type', () => {
 //      schema a second, driftable owner.
 type BeginOptions = Parameters<typeof beginAgentSessionTriage>[2]
 
-const _requiresThresholds: BeginOptions = { thresholds: { minTurns: 3, minElapsedMs: 600_000 } }
+const _requiresThresholds: BeginOptions = {
+  thresholds: { minTurns: 3, minElapsedMs: 600_000, minAttemptAgeMs: 30_000 },
+}
 
 // @ts-expect-error thresholds are not optional: the transport must supply them.
 const _rejectsMissingThresholds: BeginOptions = {}

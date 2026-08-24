@@ -137,6 +137,12 @@ export class AgentSessionTriageConflictError extends Error {
 export interface TriageDebounceThresholds {
   minTurns: number
   minElapsedMs: number
+  /**
+   * How old an outstanding attempt must be before `begin` will hand its token
+   * back for finalizing. The age guard of issue #188 — see
+   * {@link evaluateTriageEntry}.
+   */
+  minAttemptAgeMs: number
 }
 
 /** The arm-or-decline verdict, plus the row state that justified it. */
@@ -164,6 +170,7 @@ interface TriageRow {
   lastSeenAt: Date
   triageStatus: AgentSessionTriageStatus
   triageAttemptId: string | null
+  triageArmedAt: Date | null
   lastTriagedEventIds: string[]
 }
 
@@ -174,6 +181,7 @@ const TRIAGE_COLUMNS = {
   lastSeenAt: agentSessions.lastSeenAt,
   triageStatus: agentSessions.triageStatus,
   triageAttemptId: agentSessions.triageAttemptId,
+  triageArmedAt: agentSessions.triageArmedAt,
   lastTriagedEventIds: agentSessions.lastTriagedEventIds,
 } as const
 
@@ -277,7 +285,7 @@ export type TriageEntryDecision = { arm: true } | { arm: false; reason: TriageDe
  * |---------------|-----------------|------------------------------------------|
  * | any, row dead | any             | `not-live` — a nudge needs a live session |
  * | `overflowed`  | any             | `terminal` — past the ceiling, forever    |
- * | `pending`     | any             | `pending` — finish the attempt, no re-arm |
+ * | `pending`     | any             | `pending` / `pending-fresh` — see below   |
  * | `idle`        | no              | debounce decides (turns / elapsed)        |
  * | `idle`        | yes             | ARM (signal satisfies the debounce)       |
  * | `completed`   | no              | `no-signal`                               |
@@ -298,6 +306,52 @@ export type TriageEntryDecision = { arm: true } | { arm: false; reason: TriageDe
  * write*). The third disjunct is the untriaged-event signal — "not itself a
  * prior-triage write" is precisely "not in `last_triaged_event_ids`", which is
  * why the same probe serves both the entry rule and the debounce.
+ *
+ * THE AGE GUARD ON `pending` (issue #188). "Finish the attempt" is safe when one
+ * process handles one Stop. It is NOT safe when two handle the SAME Stop
+ * concurrently — which is what a duplicate registration of `stop` and its
+ * `heartbeat` alias produces, since a harness runs every matching hook for an
+ * event in parallel. Process A arms and pauses to fetch the debrief; process B
+ * reads A's attempt as `pending` and completes it; A then injects anyway, and
+ * the continuation's writes commit OUTSIDE the watermark B just stamped, so a
+ * later Stop re-arms and one turn's work draws two nudges.
+ *
+ * The separation is wide: B's read of A's attempt is MILLISECONDS after the arm,
+ * while a genuine later ordinary Stop is a whole model turn later. So an attempt
+ * younger than `minAttemptAgeMs` declines `pending-fresh` and the response
+ * withholds the token, which is what makes the hook leave it alone — the
+ * capability to finalize is the `attemptId`, and only the server decides who
+ * gets one. Deferring costs at most one Stop: age only grows, the row is never
+ * re-armed while `pending`, and a `pending` row is unconditionally
+ * closer-eligible if the session ends first.
+ *
+ * `attemptAgeMs === undefined` is "age unknown" — a row armed before
+ * `triage_armed_at` existed — and falls back to today's behavior (`pending`,
+ * finalize) rather than stranding it. A NEGATIVE age (clock skew between two app
+ * instances) reads as fresh, which is the safe direction.
+ *
+ * `stopHookActive` EXEMPTS the guard, and the exemption is what keeps a short
+ * turn's provenance visible. Deferring a finalize is not free: the attempt stays
+ * `pending` across the user's NEXT turn, and the Stop that finally completes it
+ * stamps the CUMULATIVE watermark — which by then contains the new turn's events
+ * too. Those events are absorbed without ever having armed a nudge, and a
+ * `completed` row whose ids are all in the watermark is not closer-eligible
+ * either, so that turn's work becomes invisible to the debrief machinery
+ * entirely. A finalize-only delivery is the one caller that can be trusted not
+ * to be a racing sibling: the harness sets the flag only because it already
+ * blocked on a previous Stop for this turn, and the hook cannot inject on it.
+ *
+ * WHY THE EXEMPTION DOES NOT REOPEN #188. The race needs a sibling to finalize
+ * an attempt whose arming process has not emitted its envelope yet. Both
+ * siblings of one delivery read the SAME payload, and a delivery that can arm
+ * and inject is `stop_hook_active=false` by definition — so on the delivery
+ * where an injection is at stake the exemption is unreachable and the guard
+ * still applies. Two concurrent finalize deliveries (both `true`) both receive
+ * the token, but the `(status = 'pending', attempt id)` fence in
+ * {@link completeSessionTriage} lets exactly one stamp the outcome and 409s the
+ * loser, and neither may inject. The assumption underneath is the blocking Stop
+ * contract itself: a harness that dispatched the next Stop before the current
+ * one's hook exited would have no continuation to protect in the first place.
  */
 export function evaluateTriageEntry(input: {
   live: boolean
@@ -305,11 +359,21 @@ export function evaluateTriageEntry(input: {
   untriagedEvent: boolean
   turnCount: number
   elapsedMs: number
+  /** Age of the outstanding attempt; `undefined` when the row carries no arm time. */
+  attemptAgeMs?: number | undefined
+  /** The caller's `stop_hook_active`. A finalize-only delivery is exempt from the age guard. */
+  stopHookActive?: boolean | undefined
   thresholds: TriageDebounceThresholds
 }): TriageEntryDecision {
   if (!input.live) return { arm: false, reason: 'not-live' }
   if (input.triageStatus === 'overflowed') return { arm: false, reason: 'terminal' }
-  if (input.triageStatus === 'pending') return { arm: false, reason: 'pending' }
+  if (input.triageStatus === 'pending') {
+    const fresh =
+      input.stopHookActive !== true &&
+      input.attemptAgeMs !== undefined &&
+      input.attemptAgeMs < input.thresholds.minAttemptAgeMs
+    return { arm: false, reason: fresh ? 'pending-fresh' : 'pending' }
+  }
   if (input.triageStatus !== 'idle' && !input.untriagedEvent) {
     return { arm: false, reason: 'no-signal' }
   }
@@ -325,8 +389,31 @@ export interface BeginTriageOptions {
   attemptId: string
   /** The hook's turn-count hint. Absent reads as zero — the other two disjuncts still apply. */
   turnCount?: number | undefined
+  /** The caller's `stop_hook_active`. Absent reads as `false` — the guarded path. */
+  stopHookActive?: boolean | undefined
   thresholds: TriageDebounceThresholds
+  /**
+   * The Stop's clock, read once at the REQUEST boundary. Every decision below
+   * uses it: liveness, the elapsed-time debounce, and the attempt age.
+   */
   now: Date
+  /**
+   * The clock re-read at the ARM POINT, for `triage_armed_at` only.
+   *
+   * `now` is taken before the tenant transaction opens, before the row lock is
+   * granted and before the bounded event listing runs, so on a slow `begin` it
+   * can be seconds older than the moment the attempt actually becomes visible
+   * to a sibling. Stamping it would date the attempt EARLIER than it was armed,
+   * and with `minAttemptAgeMs` configurable down to one second that is enough
+   * for the very next `begin` to compute an age past the floor and hand out the
+   * token — the #188 race, recreated by the guard's own bookkeeping. The stamp
+   * therefore reads the clock again where the UPDATE is built.
+   *
+   * Injected rather than calling `new Date()` inline so the stamp stays pinnable:
+   * a test that fixes `now` and omits this gets a deterministic arm time, and
+   * production passes the real clock.
+   */
+  armNow?: (() => Date) | undefined
   /**
    * Per-run ceiling. Injected ONLY so a test can exercise the truncation branch
    * without inserting MAX_SESSION_EVENT_IDS + 1 events; production always takes
@@ -367,6 +454,36 @@ export async function beginSessionTriage(
     untriagedEvent,
     turnCount: options.turnCount ?? 0,
     elapsedMs: options.now.getTime() - row.openedAt.getTime(),
+    // THE AGE IS A CROSS-INSTANCE SUBTRACTION, and that is the guard's one
+    // assumption. `triage_armed_at` was stamped from the ARMING process's
+    // injected clock; this subtracts the READING process's. Two Stops racing one
+    // turn usually hit the same app instance, but nothing guarantees it behind a
+    // load balancer, so the guard assumes NTP-synchronised instances — skew well
+    // under `minAttemptAgeMs`.
+    //
+    // THE FAILURE DIRECTIONS ARE NOT SYMMETRIC. A reader whose clock is SLOW (or
+    // an arming clock that is fast) computes an age that is too small and
+    // declines `pending-fresh`, which merely defers a finalize by one Stop —
+    // harmless, and the same direction a negative age falls in. A reader whose
+    // clock is more than `minAttemptAgeMs` FAST relative to the arming instance
+    // computes an age past the floor for an attempt armed moments ago, receives
+    // the real token, and can finalize an attempt still in flight: exactly the
+    // #188 race, unguarded. That residual is real and is documented on the page
+    // rather than hidden here.
+    //
+    // WHY NOT DERIVE THE AGE WHERE IT WAS STAMPED. There is no such place. Stop
+    // is a fresh process per delivery and the racing Stops are different
+    // processes on possibly different app instances, so no single process holds
+    // both the stamp and the read. The alternative that WOULD close it is a
+    // database clock — `now() - triage_armed_at` computed in the statement — but
+    // that breaks the injected-clock convention this module is built on (every
+    // decision here reads `options.now`, which is what makes the entry rule and
+    // the debounce unit-testable without a database), so it is deliberately not
+    // taken for a residual that NTP already bounds.
+    ...(row.triageArmedAt === null
+      ? {}
+      : { attemptAgeMs: options.now.getTime() - row.triageArmedAt.getTime() }),
+    ...(options.stopHookActive === undefined ? {} : { stopHookActive: options.stopHookActive }),
     thresholds: options.thresholds,
   })
   if (!decision.arm) {
@@ -378,6 +495,10 @@ export async function beginSessionTriage(
       // Safe to publish because `pending` means an INTERACTIVE attempt and
       // nothing else — the closer retires a handshake it takes over rather than
       // swapping its own token in under a `pending` status (see coexistence (a)).
+      //
+      // `pending-fresh` is NOT in this condition, deliberately: withholding the
+      // token IS the age guard (issue #188). The hook has no threshold of its
+      // own and no way to finalize an attempt it was never handed.
       ...(decision.reason === 'pending' && row.triageAttemptId !== null
         ? { attemptId: row.triageAttemptId }
         : {}),
@@ -389,7 +510,7 @@ export async function beginSessionTriage(
 }
 
 /**
- * Stamp `pending` + the attempt token + the begin watermark.
+ * Stamp `pending` + the attempt token + the arm time + the begin watermark.
  *
  * TRUNCATION IS CHECKED HERE TOO, not only at complete. A run already past the
  * per-run ceiling is `overflowed` — terminal, no closer retry — so arming it
@@ -421,9 +542,22 @@ async function armAttempt(
     .update(agentSessions)
     .set({
       triageStatus: overflowed ? 'overflowed' : 'pending',
+      // THE STAMP IS READ HERE, not at the request boundary. `options.now` is
+      // older than this point by the whole cost of the transaction, the row lock
+      // and the listing above; stamping it would publish an attempt that is
+      // already partly aged, and a low `minAttemptAgeMs` would then let the very
+      // next `begin` finalize it. See BeginTriageOptions.armNow.
+      //
+      // It stays an app clock, not `now()` in SQL: every other decision in this
+      // module reads the injected clock, which is what keeps the entry rule and
+      // the debounce testable without a database.
       ...(overflowed
         ? {}
-        : { triageAttemptId: options.attemptId, lastTriagedEventIds: visible.ids }),
+        : {
+            triageAttemptId: options.attemptId,
+            triageArmedAt: options.armNow?.() ?? options.now,
+            lastTriagedEventIds: visible.ids,
+          }),
     })
     .where(keyPredicate(userId, key))
   if (overflowed) {

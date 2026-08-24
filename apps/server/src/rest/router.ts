@@ -958,6 +958,7 @@ export function restRouter(options: RestRouterOptions): Router {
           activationEpoch: session.activationEpoch,
           triageStatus: session.triageStatus,
           triageAttemptId: session.triageAttemptId ?? null,
+          triageArmedAt: session.triageArmedAt?.toISOString() ?? null,
           lastTriagedEventIds: session.lastTriagedEventIds,
           briefingDeliveredAt: session.briefingDeliveredAt?.toISOString() ?? null,
           briefedMemories: session.briefedMemories,

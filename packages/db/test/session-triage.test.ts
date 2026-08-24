@@ -45,7 +45,7 @@ const OTHER_ATTEMPT = '01890b6e-0000-7000-8000-0000000000cc'
 const NOW = new Date('2026-08-23T12:00:00.000Z')
 const KEY = { agent: 'claude-code', sessionId: 'conv-abc' }
 
-const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000 }
+const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000, minAttemptAgeMs: 30_000 }
 
 // ---------------------------------------------------------------------------
 // 1. The entry rule + the debounce
@@ -91,6 +91,92 @@ describe('the entry rule (triage_status x signal)', () => {
     expect(entry({ triageStatus: 'pending', untriagedEvent: true, turnCount: 99 })).toEqual({
       arm: false,
       reason: 'pending',
+    })
+  })
+
+  // The age guard on the `pending` decline (issue #188). `pending` publishes the
+  // attempt token, which is the CAPABILITY to finalize; below the floor the
+  // caller is far more likely to be a sibling process racing the same Stop than
+  // a genuine later one, and a sibling's finalize is what drops a continuation's
+  // writes outside the watermark and draws a second nudge for one turn's work.
+  describe('the age guard on a pending attempt', () => {
+    const pending = (attemptAgeMs?: number) =>
+      entry({
+        triageStatus: 'pending',
+        untriagedEvent: true,
+        turnCount: 99,
+        ...(attemptAgeMs === undefined ? {} : { attemptAgeMs }),
+      })
+
+    it('withholds the finalize below the floor and grants it at or above', () => {
+      // The matrix, exactly: [age, reason].
+      const matrix: [number, string][] = [
+        [0, 'pending-fresh'],
+        [THRESHOLDS.minAttemptAgeMs - 1, 'pending-fresh'],
+        [THRESHOLDS.minAttemptAgeMs, 'pending'],
+        [THRESHOLDS.minAttemptAgeMs + 1, 'pending'],
+        [SESSION_LEASE_MS, 'pending'],
+      ]
+      for (const [attemptAgeMs, reason] of matrix) {
+        expect(pending(attemptAgeMs)).toEqual({ arm: false, reason })
+      }
+    })
+
+    it('finalizes when the row carries no arm time at all', () => {
+      // A row armed before `triage_armed_at` existed. Age unknown must fall back
+      // to the pre-guard behavior, or those rows sit `pending` until the closer.
+      expect(pending()).toEqual({ arm: false, reason: 'pending' })
+    })
+
+    it('reads a negative age as fresh', () => {
+      // Clock skew between two app instances. "Armed in the future" is not
+      // evidence that a whole model turn has passed, and withholding one
+      // finalize is cheaper than authorizing one double nudge.
+      expect(pending(-5_000)).toEqual({ arm: false, reason: 'pending-fresh' })
+    })
+
+    it('is EXEMPTED by a finalize-only delivery, at every age', () => {
+      // A `stop_hook_active=true` Stop cannot inject, and the harness set the
+      // flag because it already blocked on a previous Stop for this turn — so
+      // this caller is the continuation of the attempt, not a sibling racing it.
+      // Deferring it is what pushes a short turn's events into the NEXT turn's
+      // cumulative watermark, where nothing can ever re-arm on them.
+      for (const attemptAgeMs of [0, THRESHOLDS.minAttemptAgeMs - 1, -5_000]) {
+        expect(
+          entry({
+            triageStatus: 'pending',
+            untriagedEvent: true,
+            attemptAgeMs,
+            stopHookActive: true,
+          }),
+        ).toEqual({ arm: false, reason: 'pending' })
+      }
+    })
+
+    it('guards an explicit stopHookActive=false exactly like an absent one', () => {
+      // The delivery that can ARM and INJECT is `false` by definition, so this is
+      // the case the #188 guard exists for. Both siblings of one delivery read
+      // the same payload, which is why the exemption cannot be reached there.
+      expect(pending(0)).toEqual(
+        entry({
+          triageStatus: 'pending',
+          untriagedEvent: true,
+          turnCount: 99,
+          attemptAgeMs: 0,
+          stopHookActive: false,
+        }),
+      )
+    })
+
+    it('changes nothing for any other status', () => {
+      // The guard is scoped to `pending`. A fresh arm time left over on a row
+      // that has since gone terminal must not re-decide the entry rule.
+      for (const triageStatus of STATUSES) {
+        if (triageStatus === 'pending') continue
+        expect(entry({ triageStatus, untriagedEvent: true, attemptAgeMs: 0 })).toEqual(
+          entry({ triageStatus, untriagedEvent: true }),
+        )
+      }
     })
   })
 
@@ -177,6 +263,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   lastSeenAt: NOW,
   triageStatus: 'idle',
   triageAttemptId: null,
+  triageArmedAt: null,
   lastTriagedEventIds: [],
   ...over,
 })
@@ -305,8 +392,35 @@ describe('beginSessionTriage', () => {
     expect(updates[0]?.values).toEqual({
       triageStatus: 'pending',
       triageAttemptId: ATTEMPT,
+      // With no `armNow` injected the stamp falls back to `now`, so the arm time
+      // stays deterministic for the rest of the matrix.
+      triageArmedAt: NOW,
       lastTriagedEventIds: ['e1', 'e2'],
     })
+  })
+
+  it('stamps the arm time read AT THE ARM, not at the request boundary', async () => {
+    // `now` is taken before the transaction, the row lock and the listing. On a
+    // slow begin the difference is real, and stamping the older value would
+    // publish an attempt that is already partly aged — enough, under a low
+    // `minAttemptAgeMs`, for the next begin to hand out the token and recreate
+    // the #188 race. The stamp must be the clock at the UPDATE.
+    const armedAt = new Date(NOW.getTime() + 5_000)
+    eventPages = [page(['e1'])]
+    const { tx, updates } = makeTx([row()])
+
+    await beginSessionTriage(tx, USER, KEY, {
+      attemptId: ATTEMPT,
+      turnCount: 99,
+      thresholds: THRESHOLDS,
+      now: NOW,
+      armNow: () => armedAt,
+    })
+
+    expect(updates[0]?.values).toMatchObject({ triageArmedAt: armedAt })
+    // And the decision still reads `now`: the late clock must not leak into the
+    // liveness or debounce arithmetic.
+    expect(updates[0]?.values).toMatchObject({ triageStatus: 'pending' })
   })
 
   it('does not list events at all when it declines', async () => {
@@ -319,8 +433,9 @@ describe('beginSessionTriage', () => {
   })
 
   it('hands back the in-flight attempt on a pending row, without re-arming', async () => {
+    const armedAt = new Date(NOW.getTime() - THRESHOLDS.minAttemptAgeMs)
     const { tx, updates } = makeTx([
-      row({ triageStatus: 'pending', triageAttemptId: OTHER_ATTEMPT }),
+      row({ triageStatus: 'pending', triageAttemptId: OTHER_ATTEMPT, triageArmedAt: armedAt }),
     ])
 
     await expect(begin(tx)).resolves.toEqual({
@@ -333,6 +448,38 @@ describe('beginSessionTriage', () => {
     // Idempotent by construction: no second attempt id is minted and no write
     // happens, so a duplicate Stop delivery cannot double-inject.
     expect(updates).toHaveLength(0)
+  })
+
+  it('WITHHOLDS the attempt id when the pending attempt is younger than the floor', async () => {
+    // The sibling-process race (issue #188). Withholding the token IS the guard:
+    // the hook cannot finalize an attempt it was never handed, and it holds no
+    // threshold of its own to reason about.
+    const { tx, updates } = makeTx([
+      row({
+        triageStatus: 'pending',
+        triageAttemptId: OTHER_ATTEMPT,
+        triageArmedAt: new Date(NOW.getTime() - 1),
+      }),
+    ])
+
+    await expect(begin(tx)).resolves.toEqual({
+      sessionRunId: RUN,
+      armed: false,
+      triageStatus: 'pending',
+      reason: 'pending-fresh',
+    })
+    expect(updates).toHaveLength(0)
+  })
+
+  it('still publishes the attempt id for a pending row with no arm time', async () => {
+    // Rows armed before the column existed. They must keep finalizing, or the
+    // upgrade strands every in-flight attempt until the closer sweeps it.
+    const { tx } = makeTx([row({ triageStatus: 'pending', triageAttemptId: OTHER_ATTEMPT })])
+
+    await expect(begin(tx)).resolves.toMatchObject({
+      attemptId: OTHER_ATTEMPT,
+      reason: 'pending',
+    })
   })
 
   it('stamps a run past the per-run ceiling as terminally overflowed', async () => {
@@ -457,6 +604,25 @@ describe('completeSessionTriage', () => {
       await expect(complete(tx)).rejects.toBeInstanceOf(AgentSessionTriageConflictError)
       expect(updates).toHaveLength(0)
     }
+  })
+
+  it('409s the LOSER of two concurrent finalize deliveries', async () => {
+    // What makes the `stopHookActive` exemption safe. Two finalize-only Stops
+    // for one turn both clear the age guard and both receive the SAME token, so
+    // both call complete. The row lock serializes them: the winner stamps the
+    // outcome, and the loser — re-reading after the lock is released — finds a
+    // status that is no longer `pending` and conflicts instead of recomputing
+    // `since_begin` as empty and demoting the run to `expired`. Neither may
+    // inject, so the cap is untouched either way.
+    eventPages = [page(['e1'])]
+    const winner = makeTx([
+      row({ triageStatus: 'pending', triageAttemptId: ATTEMPT, lastTriagedEventIds: [] }),
+    ])
+    await expect(complete(winner.tx)).resolves.toMatchObject({ triageStatus: 'completed' })
+
+    const loser = makeTx([row({ triageStatus: 'completed', triageAttemptId: ATTEMPT })])
+    await expect(complete(loser.tx)).rejects.toBeInstanceOf(AgentSessionTriageConflictError)
+    expect(loser.updates).toHaveLength(0)
   })
 
   it('re-asserts BOTH fence legs in the UPDATE, not only in the read', async () => {

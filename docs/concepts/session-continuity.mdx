@@ -252,6 +252,7 @@ agent_sessions (
   activation_epoch     int not null,         -- incremented on startup/resume/resurrect; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
+  triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline. NULL = unknown (pre-guard rows) = finalize
   last_triaged_event_ids jsonb not null default '[]', -- event ids ACCOUNTED FOR by triage: all ids visible at the last complete/expire, and the ids visible when the current attempt began — never a since-attempt-begin slice
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
@@ -502,18 +503,24 @@ Three implementation decisions this section left open:
   hardcoded false) need. Re-arming requires a provenance event outside the
   stamped watermark, so a zero-write continuation cannot re-arm (nothing new
   exists) and a productive one cannot re-arm on its own writes (`complete`
-  absorbed them). **Three residuals, stated rather than hidden.** (1) The bound
+  absorbed them). **Two residuals, stated rather than hidden — plus a third that
+  is closed only under a stated assumption.** (1) The bound
   is *one nudge per turn that produced new provenance*, not "never twice in a
   session" — a user who keeps working keeps qualifying. (2) A write that
   COMMITS after `complete` took its listing holds an id outside the watermark
   and re-arms the next Stop; MCP writes are synchronous, so this needs a
-  genuinely concurrent async writer. (3) Concurrent Stop deliveries — in
+  genuinely concurrent async writer. A third — concurrent Stop deliveries, in
   practice a duplicate registration of both `stop` and its `heartbeat` alias —
-  let a sibling process finalize an attempt before the arming process emits its
-  envelope, so that continuation's writes land outside the watermark and a
-  later Stop re-arms. The README forbids the duplicate registration; closing it
-  properly needs an arm timestamp the row does not carry
-  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)).
+  is now **closed** by the age guard on the `pending` decline
+  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)): `triage_armed_at`
+  dates the attempt, and `begin` withholds the token below the floor, so a
+  sibling cannot finalize the attempt it is racing. It is closed **on the
+  assumption that app instances agree on the clock** — the age subtracts the
+  arming process's stamp from the reading process's `now`, so a reader whose
+  clock runs more than the floor fast reopens the race (the age-guard paragraph
+  in layer 4 states it in full); the opposite skew only defers a finalize. The
+  README still forbids the duplicate registration —
+  the guard makes it survivable, not correct.
 - **The attempt id round-trips through `begin`.** There is no natural-key read
   on the row, so the finalize Stop recovers the in-flight attempt from `begin`'s
   `pending` decline. That means the finalize path calls a route that COULD arm;
@@ -617,13 +624,61 @@ nag on an unresponsive session this paragraph rules out. Either way, `begin`
 arms only when new provenance exists, and both statuses stay closer-eligible
 throughout — declining a *nudge* is never declining a *debrief*.
 
-`stop_hook_active=true` never injects a new prompt; it only finalizes or expires.
+`stop_hook_active=true` never injects a new prompt; it only finalizes or expires,
+and it says so on the wire: `triage/begin` carries `stopHookActive`, which EXEMPTS
+the age guard below. A finalize-only delivery is the continuation of an attempt
+the harness already blocked on, not a sibling racing the delivery that armed it —
+and the exemption cannot be reached on the delivery that *can* inject, because
+that one is `stop_hook_active=false` by definition. Without it a turn shorter than
+the floor would defer its finalize into the next turn, whose events the eventual
+`complete` would then absorb (see the age guard). A harness that never sets the
+field — Codex has none, Gemini CLI 0.30.0 hardcodes it false — keeps the deferral.
 Claude's eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
 and `stop_hook_active` may never arrive (#54360), so the **numeric self-cap is a
 finalize path**, not a backstop we hope not to need.
 
 A later ordinary Stop (`stop_hook_active=false`) that finds `triage_status=pending`
-applies the same complete-or-expire rule and does not inject again. A live session
+applies the same complete-or-expire rule and does not inject again — **unless the
+attempt is younger than `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (default 30), in
+which case `begin` declines `pending-fresh`, withholds the `attemptId`, and the
+attempt is left alone.** Below that floor the caller is far more likely to be a
+sibling process racing the *same* Stop than a genuine later one: a duplicate
+registration of `stop` and its `heartbeat` alias runs both concurrently, and the
+sibling's finalize would land its watermark before the arming process emits the
+envelope, so that continuation's writes would fall outside it and a later Stop
+would nudge twice for one turn's work. A sibling reads the row milliseconds after
+the arm; a genuine later ordinary Stop is a whole model turn away. Deferring costs
+at most one Stop for the nudge itself — a `pending` row can never arm a second
+injection, age only grows, and `pending` is unconditionally closer-eligible if the
+session ends first.
+
+**Deferral is not free, which is why `stopHookActive` exempts it.** A deferred
+attempt stays `pending` across the user's *next* turn, and the Stop that finally
+completes it stamps the CUMULATIVE watermark — which by then contains that turn's
+events too. They are absorbed without ever having armed a nudge, and a `completed`
+row whose ids are all in the watermark is not closer-eligible either, so that
+turn's provenance goes missing from the debrief machinery entirely. A
+finalize-only delivery therefore declares itself and skips the guard. What is left
+is bounded: only a harness that never sets `stop_hook_active` still defers, and
+only for a continuation shorter than the floor.
+`triage_armed_at` is the arm time (NULL on rows armed before it existed, which read
+as "finalize", the pre-guard behavior).
+
+**The guard assumes NTP-synchronised app instances, and the residual is one-sided.**
+The age is a cross-instance subtraction: `triage_armed_at` carries the *arming*
+process's clock and the floor is applied against the *reading* process's, and
+nothing pins two Stops racing one turn to the same instance behind a load balancer.
+A reading clock that is SLOW computes too small an age and declines `pending-fresh`,
+which only defers a finalize by one Stop — the same harmless direction a negative
+age falls in. A reading clock more than the floor FAST relative to the arming one
+computes an age past the floor for an attempt armed moments ago, gets the real
+token, and can finalize an attempt still in flight: the #188 race, unguarded. No
+process holds both the stamp and the read — Stop is a fresh process per delivery —
+so the only construction that closes it is a database clock (`now() -
+triage_armed_at` inside the statement), which would break the injected-clock
+convention that makes the entry rule and the debounce testable without a database.
+Skew that large is an operational fault in its own right, so the assumption is
+stated rather than engineered around. A live session
 keeps refreshing the lease, so "expire pending after the lease" cannot fire while
 the user is working — that expiry is only for a dead session the closer will pick
 up. Interrupted triage in a live session is the next Stop, not the lease.
@@ -989,8 +1044,9 @@ These are not the P1s.
   `SESSION_TRIAGE_MIN_TURNS` defaults to **3** and
   `SESSION_TRIAGE_MIN_ELAPSED_MINUTES` to **10**, and the third disjunct — an
   untriaged provenance event — has no knob because it is a fact about the run
-  rather than a threshold. The matrix is pinned in
-  `packages/db/test/session-triage.test.ts`.
+  rather than a threshold. `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (**30**) was
+  added later, for the age guard on the `pending` decline, not for the debounce.
+  Both matrices are pinned in `packages/db/test/session-triage.test.ts`.
   The lease is settled at 24h, with a **1h sweep grace** on top: the lease
   already covers the overnight gap, so the grace only debounces the instant of
   expiry — and being non-zero is what keeps a swept `closed_at` outside the

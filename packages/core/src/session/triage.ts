@@ -88,8 +88,15 @@ export async function beginAgentSessionTriage(
       {
         attemptId,
         ...(parsed.turnCount === undefined ? {} : { turnCount: parsed.turnCount }),
+        ...(parsed.stopHookActive === undefined ? {} : { stopHookActive: parsed.stopHookActive }),
         thresholds: options.thresholds,
         now,
+        // The ARM stamp re-reads the clock instead of reusing `now`, which was
+        // taken above — before withTenant opened a transaction, before the row
+        // lock, before the event listing. A slow begin would otherwise stamp an
+        // attempt as already aged and let the next Stop finalize it under a low
+        // floor. An injected clock still wins, so a test stays deterministic.
+        armNow: () => options.now ?? new Date(),
       },
     ),
   )

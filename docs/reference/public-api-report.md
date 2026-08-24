@@ -43,7 +43,7 @@ its row here even when its name and kind are unchanged.
 | `REDACTED_FIELDS` | const | `48e36111cfc1` |
 | `RequestContext` | interface | `7b9320e0e681` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
-| `SessionTriageConfig` | interface | `ef27122cedc5` |
+| `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `Surface` | type | `ec490e7783d6` |
 | `bindContext` | function | `d9a0d26e17cf` |
@@ -55,7 +55,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `0225d161510a` |
+| `envSchema` | const | `2bc85a3b3191` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -107,9 +107,9 @@ its row here even when its name and kind are unchanged.
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
-| `SessionTriageConfig` | interface | `ef27122cedc5` |
+| `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
-| `envSchema` | const | `0225d161510a` |
+| `envSchema` | const | `2bc85a3b3191` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
@@ -190,7 +190,7 @@ its row here even when its name and kind are unchanged.
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
 | `AsOf` | interface | `7ff84f49ed40` |
 | `BeginTriageFacadeOptions` | interface | `c1a758589a39` |
-| `BeginTriageOptions` | interface | `4cfcb8ba3516` |
+| `BeginTriageOptions` | interface | `f4eb50fd0af3` |
 | `BeginTriageResult` | interface | `27b7ce303f4d` |
 | `BlockerNotFoundError` | class | `c9e230dee923` |
 | `Briefing` | interface | `a199b1441e0b` |
@@ -249,7 +249,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `52a67a5ebb03` |
+| `ExportAgentSessionRow` | interface | `bcac571b32ce` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -339,7 +339,7 @@ its row here even when its name and kind are unchanged.
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
-| `TriageDebounceThresholds` | interface | `32e80508f03b` |
+| `TriageDebounceThresholds` | interface | `80eeac1034f2` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
@@ -372,7 +372,7 @@ its row here even when its name and kind are unchanged.
 | `deleteAccount` | function | `43aafd3f76ea` |
 | `deleteScope` | function | `8e460c0839b0` |
 | `describeEnvironment` | function | `4ba1439f061f` |
-| `evaluateTriageEntry` | function | `a6d5d8441c24` |
+| `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `exportUserData` | function | `8b186867c06b` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
@@ -545,7 +545,7 @@ its row here even when its name and kind are unchanged.
 | `AsOf` | interface | `7ff84f49ed40` |
 | `AuditLogEntry` | interface | `7be038eca9e3` |
 | `AuthorizedClient` | interface | `a1b0bc5ae156` |
-| `BeginTriageOptions` | interface | `4cfcb8ba3516` |
+| `BeginTriageOptions` | interface | `f4eb50fd0af3` |
 | `BeginTriageResult` | interface | `27b7ce303f4d` |
 | `BlockerNotFoundError` | class | `c9e230dee923` |
 | `BriefingCommitmentRow` | interface | `6a2b55cb44cd` |
@@ -585,7 +585,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `52a67a5ebb03` |
+| `ExportAgentSessionRow` | interface | `bcac571b32ce` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -672,7 +672,7 @@ its row here even when its name and kind are unchanged.
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingSweepResult` | interface | `7be2206cfb1b` |
 | `TenantTx` | type | `62a38afad7f6` |
-| `TriageDebounceThresholds` | interface | `32e80508f03b` |
+| `TriageDebounceThresholds` | interface | `80eeac1034f2` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
@@ -684,7 +684,7 @@ its row here even when its name and kind are unchanged.
 | `WrittenMemory` | interface | `bec591e2c3d0` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
-| `agentSessions` | const | `2d8bd14addd4` |
+| `agentSessions` | const | `203fee4a4d15` |
 | `apiKeys` | const | `c5d36321993d` |
 | `appendImportedEvent` | function | `4654962471fe` |
 | `applyFactProposal` | function | `bb1b15f61cc0` |
@@ -717,7 +717,7 @@ its row here even when its name and kind are unchanged.
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
 | `evalRuns` | const | `1f1bdc3ebc7f` |
-| `evaluateTriageEntry` | function | `a6d5d8441c24` |
+| `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
 | `facts` | const | `8609a897374c` |
@@ -1173,10 +1173,10 @@ its row here even when its name and kind are unchanged.
 | `agentSessionNaturalKeySchema` | const | `efdc49fde04d` |
 | `agentSessionOpenBodySchema` | const | `aa40eb93736b` |
 | `agentSessionOpenResponseSchema` | const | `84ea2b031ba9` |
-| `agentSessionRowSchema` | const | `4459480e2172` |
+| `agentSessionRowSchema` | const | `7981ed4687e3` |
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
-| `agentSessionTriageBeginBodySchema` | const | `14c34c945537` |
-| `agentSessionTriageBeginResponseSchema` | const | `c2911ef114f1` |
+| `agentSessionTriageBeginBodySchema` | const | `7747702f51cb` |
+| `agentSessionTriageBeginResponseSchema` | const | `f65b36887b5a` |
 | `agentSessionTriageCompleteBodySchema` | const | `b137f7cac20c` |
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
@@ -1361,7 +1361,7 @@ its row here even when its name and kind are unchanged.
 | `tagSchema` | const | `d32d1e9837a9` |
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
-| `triageDeclineReasonSchema` | const | `d5077f10f572` |
+| `triageDeclineReasonSchema` | const | `0d7abf3381fe` |
 | `triageOutcomeStatusSchema` | const | `7044bf7dd8b4` |
 | `userCredentialsSchema` | const | `39a616eb6d60` |
 | `userProfileAttributesSchema` | const | `6d3b282d63ce` |
