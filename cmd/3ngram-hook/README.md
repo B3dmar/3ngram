@@ -133,6 +133,12 @@ attempt back so the closer still picks the session up.
 > `pending-fresh`, so a sibling process has nothing to finalize. That makes the
 > duplicate registration survivable, not correct: it still doubles every hook
 > call this Stop makes.
+>
+> The hook's own finalize Stop is exempt — it sends `stopHookActive:true` on
+> `triage/begin`, which is how the server tells the continuation of an attempt
+> from a sibling racing the delivery that armed it. On a harness that never sets
+> `stop_hook_active`, a continuation shorter than the floor has its finalize
+> deferred to the next Stop instead.
 
 **Facets come from the session row, not from this process.** The hook sends only
 the natural key to `GET /api/v1/prompts/debrief`; the server fills `scope` and

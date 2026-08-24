@@ -632,6 +632,9 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "stopHookActive": {
+                    "type": "boolean"
+                  },
                   "turnCount": {
                     "maximum": 100000,
                     "minimum": 0,

@@ -133,6 +133,19 @@ func stopNudgeEnabled() bool {
 type triageBeginRequest struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"sessionId"`
+	// StopHookActive forwards the harness's own flag so the SERVER can tell a
+	// finalize-only delivery from a sibling racing the delivery that armed. It
+	// exempts the attempt-age guard, which is what stops a short turn's finalize
+	// being deferred into the next turn's watermark (issue #188). It is not a
+	// permission to inject — this hook never injects on such a Stop.
+	//
+	// OMITTED WHEN FALSE, deliberately. The begin body is a `.strict()` Zod
+	// object, so a field an older server does not know is a 400, not an ignored
+	// extra. Sending it only on the finalize path keeps the ordinary path — the
+	// one that arms and injects — wire-compatible with any 7a server, and leaves
+	// the finalize path degrading to exactly today's deferral if the server is
+	// older than the flag.
+	StopHookActive bool `json:"stopHookActive,omitempty"`
 	// TURN COUNT IS DELIBERATELY ABSENT. `turnCount` is a hint the server
 	// cannot observe for itself, and neither harness puts one in the Stop
 	// payload: Claude Code sends session_id / transcript_path / cwd /
@@ -206,7 +219,9 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 		return 0
 	}
 
-	begun, ok := triageBegin(key)
+	// `false` is not a formality here: this is the delivery that can ARM and
+	// INJECT, so it is exactly the delivery whose siblings must stay age-guarded.
+	begun, ok := triageBegin(key, false)
 	if !ok {
 		// Server down, unknown natural key (Stop never creates a missing row),
 		// or an unparseable body. Nothing to inject and nothing to finish.
@@ -288,16 +303,22 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 // attempt id, which is the honest answer "nothing was armed, or the closer took
 // the row over" — the hook does nothing.
 //
-// `pending-fresh` reaches here too, on a turn shorter than the server's age
-// floor, and the finalize is then DEFERRED rather than lost: the row stays
-// `pending`, so no later `begin` can arm a second injection, the next Stop past
-// the floor completes it, and a session that ends first is unconditionally
-// closer-eligible while `pending`. The server cannot tell this caller apart from
-// a sibling process racing the same Stop — both send the same natural key — so
-// the guard applies to both, and deferring one finalize is the cheaper error
-// than authorizing one double nudge.
+// `pending-fresh` should NOT reach here any more: this path sends
+// `stopHookActive=true`, which exempts the server's attempt-age guard, so a
+// short turn's finalize lands on the turn that produced it rather than being
+// deferred into the next one's watermark. It can still reach here on a server
+// older than the flag (the strict body 400s, so `ok` is false and nothing
+// happens) or on a harness that never sets `stop_hook_active` — Codex has no
+// such field and Gemini CLI 0.30.0 hardcodes it false — and there the finalize
+// is DEFERRED rather than lost: the row stays `pending`, so no later `begin` can
+// arm a second injection, the next Stop past the floor completes it, and a
+// session that ends first is unconditionally closer-eligible while `pending`.
 func finalizeTriage(key agentSessionKey) {
-	begun, ok := triageBegin(key)
+	// `true` tells the server this is a finalize-only delivery, which exempts the
+	// attempt-age guard: the harness set the flag because it already blocked on a
+	// previous Stop for this turn, so this caller is the continuation of that
+	// attempt rather than a sibling racing it.
+	begun, ok := triageBegin(key, true)
 	if !ok {
 		return
 	}
@@ -332,8 +353,12 @@ func completeTriage(key agentSessionKey, attemptID string) {
 // triageBegin asks the server whether to nudge. The bool is "I got an answer",
 // which is NOT the same as "arm": a decline is a 200 with `armed:false`, and
 // only a transport failure, a non-2xx or an unparseable body is `false` here.
-func triageBegin(key agentSessionKey) (triageBeginResponse, bool) {
-	body, err := json.Marshal(triageBeginRequest{Agent: key.Agent, SessionID: key.SessionID})
+func triageBegin(key agentSessionKey, stopHookActive bool) (triageBeginResponse, bool) {
+	body, err := json.Marshal(triageBeginRequest{
+		Agent:          key.Agent,
+		SessionID:      key.SessionID,
+		StopHookActive: stopHookActive,
+	})
 	if err != nil {
 		return triageBeginResponse{}, false
 	}

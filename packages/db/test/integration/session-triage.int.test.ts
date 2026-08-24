@@ -93,12 +93,15 @@ const begin = (
     key?: typeof KEY
     /** The Stop's clock. Defaults to NOW; pass LATER to clear the attempt-age floor. */
     now?: Date
+    /** Declares a finalize-only delivery, which is exempt from the age guard. */
+    stopHookActive?: boolean
   } = {},
 ) =>
   withTenant(userId, (tx) =>
     beginSessionTriage(tx, userId, over.key ?? KEY, {
       attemptId: over.attemptId ?? attempt(1),
       turnCount: over.turnCount ?? THRESHOLDS.minTurns,
+      ...(over.stopHookActive === undefined ? {} : { stopHookActive: over.stopHookActive }),
       thresholds: THRESHOLDS,
       now: over.now ?? NOW,
       ...(over.ceiling === undefined ? {} : { ceiling: over.ceiling }),
@@ -457,6 +460,19 @@ describe('the entry rule against a real row', () => {
       triage_status: 'pending',
       triage_attempt_id: attempt(1),
     })
+  })
+
+  it('exempts a finalize-only delivery from the age guard', async () => {
+    // The same instant, the same fresh attempt — but this caller declares
+    // `stop_hook_active`, so it is the continuation of the attempt rather than a
+    // sibling racing it, and it may finalize now instead of pushing this turn's
+    // events into the next turn's cumulative watermark.
+    await begin(uid)
+
+    const finalize = await begin(uid, { attemptId: attempt(2), stopHookActive: true })
+
+    expect(finalize).toMatchObject({ armed: false, reason: 'pending', attemptId: attempt(1) })
+    await expect(complete(uid, attempt(1))).resolves.toMatchObject({ triageStatus: 'expired' })
   })
 
   it('re-enters an EXPIRED run only on new provenance', async () => {

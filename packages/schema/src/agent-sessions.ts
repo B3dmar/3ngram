@@ -329,11 +329,22 @@ export const MAX_TRIAGE_TURN_COUNT = 100_000
  * one decision, not a fact about the row, and storing it would invite a second
  * source of truth for session substance.
  */
+/**
+ * `stopHookActive` is the harness's own "a previous Stop already blocked this
+ * turn" flag, forwarded verbatim from the Stop payload. It is a HINT about which
+ * delivery this is, not a permission: the hook cannot inject on such a Stop
+ * (the page forbids it), so the only thing the server does with it is EXEMPT the
+ * attempt-age guard, because a finalize-only delivery is by construction the
+ * continuation of an attempt this harness already blocked on — not a sibling
+ * racing the delivery that armed it. Absent reads as `false`, which is the
+ * guarded path, so an older hook that never sends it is never worse off.
+ */
 export const agentSessionTriageBeginBodySchema = z
   .object({
     agent: agentNameSchema,
     sessionId: harnessSessionIdSchema,
     turnCount: z.number().int().min(0).max(MAX_TRIAGE_TURN_COUNT).optional(),
+    stopHookActive: z.boolean().optional(),
   })
   .strict()
 export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBeginBodySchema>

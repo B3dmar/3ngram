@@ -624,10 +624,15 @@ nag on an unresponsive session this paragraph rules out. Either way, `begin`
 arms only when new provenance exists, and both statuses stay closer-eligible
 throughout — declining a *nudge* is never declining a *debrief*.
 
-`stop_hook_active=true` never injects a new prompt; it only finalizes or expires —
-and, under the age guard below, a turn shorter than the floor defers even that to
-the next Stop (the server cannot tell this caller from a sibling racing the same
-Stop; both send the same natural key).
+`stop_hook_active=true` never injects a new prompt; it only finalizes or expires,
+and it says so on the wire: `triage/begin` carries `stopHookActive`, which EXEMPTS
+the age guard below. A finalize-only delivery is the continuation of an attempt
+the harness already blocked on, not a sibling racing the delivery that armed it —
+and the exemption cannot be reached on the delivery that *can* inject, because
+that one is `stop_hook_active=false` by definition. Without it a turn shorter than
+the floor would defer its finalize into the next turn, whose events the eventual
+`complete` would then absorb (see the age guard). A harness that never sets the
+field — Codex has none, Gemini CLI 0.30.0 hardcodes it false — keeps the deferral.
 Claude's eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
 and `stop_hook_active` may never arrive (#54360), so the **numeric self-cap is a
 finalize path**, not a backstop we hope not to need.
@@ -643,8 +648,19 @@ sibling's finalize would land its watermark before the arming process emits the
 envelope, so that continuation's writes would fall outside it and a later Stop
 would nudge twice for one turn's work. A sibling reads the row milliseconds after
 the arm; a genuine later ordinary Stop is a whole model turn away. Deferring costs
-at most one Stop — a `pending` row can never arm a second injection, age only
-grows, and `pending` is unconditionally closer-eligible if the session ends first.
+at most one Stop for the nudge itself — a `pending` row can never arm a second
+injection, age only grows, and `pending` is unconditionally closer-eligible if the
+session ends first.
+
+**Deferral is not free, which is why `stopHookActive` exempts it.** A deferred
+attempt stays `pending` across the user's *next* turn, and the Stop that finally
+completes it stamps the CUMULATIVE watermark — which by then contains that turn's
+events too. They are absorbed without ever having armed a nudge, and a `completed`
+row whose ids are all in the watermark is not closer-eligible either, so that
+turn's provenance goes missing from the debrief machinery entirely. A
+finalize-only delivery therefore declares itself and skips the guard. What is left
+is bounded: only a harness that never sets `stop_hook_active` still defers, and
+only for a continuation shorter than the floor.
 `triage_armed_at` is the arm time (NULL on rows armed before it existed, which read
 as "finalize", the pre-guard behavior).
 

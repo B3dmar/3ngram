@@ -301,6 +301,12 @@ func TestStopNudgeArmedEmitsTheClaudeEnvelope(t *testing.T) {
 	if _, present := begin["turnCount"]; present {
 		t.Fatalf("begin sent a turnCount the harness never supplied: %v", begin)
 	}
+	// Nor a `stopHookActive`: this is the delivery that ARMS, so it must stay
+	// age-guarded, and omitting the false value also keeps the arming path
+	// wire-compatible with a server older than the flag (the body is strict).
+	if _, present := begin["stopHookActive"]; present {
+		t.Fatalf("the arming delivery claimed stop_hook_active: %v", begin)
+	}
 	if len(begin) != 2 {
 		t.Fatalf("begin body carries more than the natural key: %v", begin)
 	}
@@ -413,6 +419,28 @@ func TestStopNudgeFinalizesOnStopHookActive(t *testing.T) {
 	}
 	if complete["attemptId"] != testAttemptID {
 		t.Fatalf("complete fenced on %v, want the attempt begin republished", complete["attemptId"])
+	}
+}
+
+// TestFinalizeDeliveryDeclaresItself pins the one wire difference between the
+// two deliveries, because the SERVER's age guard keys on it (issue #188).
+//
+// A finalize-only Stop sends `stopHookActive:true`, which exempts the attempt-age
+// guard: without it a continuation shorter than the floor is declined
+// `pending-fresh`, the attempt stays `pending` across the user's next turn, and
+// the Stop that finally completes it absorbs THAT turn's events into the
+// cumulative watermark — where nothing can ever re-arm on them. The arming
+// delivery sends no flag at all (asserted above), so the exemption is
+// unreachable on the only delivery that can inject.
+func TestFinalizeDeliveryDeclaresItself(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = pendingBody(testAttemptID)
+
+	captureHook(t, stopPayload("sess-finalize-flag", true), func() int { return runStop(nil) })
+
+	begin := ns.bodyFor(t, "/api/v1/agent-sessions/triage/begin")
+	if begin["stopHookActive"] != true {
+		t.Fatalf("the finalize delivery did not declare stop_hook_active: %v", begin)
 	}
 }
 

@@ -448,6 +448,24 @@ describe('agentSessionTriageBeginBodySchema', () => {
     expect(agentSessionTriageBeginBodySchema.parse({ ...KEY, turnCount: 4 }).turnCount).toBe(4)
   })
 
+  it('takes stopHookActive as an optional boolean, absent meaning guarded', () => {
+    // The flag exempts the attempt-age guard, so "absent" must land on the
+    // GUARDED side rather than on a default this schema invents: an older hook
+    // that never sends it stays exactly as safe as it is today.
+    expect(agentSessionTriageBeginBodySchema.parse(KEY).stopHookActive).toBeUndefined()
+    expect(
+      agentSessionTriageBeginBodySchema.parse({ ...KEY, stopHookActive: true }).stopHookActive,
+    ).toBe(true)
+    // No coercion, for the same reason turnCount does not coerce: a JSON body
+    // that says `'true'` is a client bug, and this one flips a race guard.
+    for (const stopHookActive of ['true', 1, null]) {
+      expect(
+        agentSessionTriageBeginBodySchema.safeParse({ ...KEY, stopHookActive }).success,
+        String(stopHookActive),
+      ).toBe(false)
+    }
+  })
+
   it('bounds the turn count and refuses a non-integer or a string', () => {
     // A sanity bound on a number the hook counts out of harness stdin. It does
     // NOT coerce: this is a JSON body, not a query string, so `'4'` is a client
