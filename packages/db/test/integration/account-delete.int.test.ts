@@ -129,6 +129,14 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     await seedFact(userA, m1, 'secret value')
     await seedFactProposal(userA, m1, 'secret proposed value')
     await seedAgentSession(userA, 'sess-a', 'secret last message', 'secret briefing topic')
+    // A second session, explicitly CLOSED, to prove the epoch bump lands on
+    // EVERY row of the account (issue #185) — open and closed alike — not just
+    // the one row the other PII assertions below happen to inspect.
+    await seedAgentSession(userA, 'sess-a2', 'second secret message', 'second briefing topic')
+    await ownerPool.query(
+      `UPDATE agent_sessions SET closed_at = now() WHERE user_id = $1 AND session_id = 'sess-a2'`,
+      [userA],
+    )
     await ownerPool.query(
       `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
        VALUES ($1, 'default', 'private')`,
@@ -188,7 +196,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(result?.memories).toBe(2)
     expect(result?.facts).toBe(1)
     expect(result?.factProposals).toBe(1)
-    expect(result?.agentSessions).toBe(1)
+    expect(result?.agentSessions).toBe(2)
     expect(result?.sessionsDeleted).toBe(1)
     expect(result?.apiKeysRevoked).toBe(1)
     expect(result?.oauthTokensRevoked).toBe(1)
@@ -200,7 +208,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(await countRows('memories', userA)).toBe(memoriesBefore)
     expect(await countRows('facts', userA)).toBe(1)
     expect(await countRows('fact_proposals', userA)).toBe(1)
-    expect(await countRows('agent_sessions', userA)).toBe(1)
+    expect(await countRows('agent_sessions', userA)).toBe(2)
 
     // PII is redacted in place.
     const mem = await ownerPool.query(
@@ -230,7 +238,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     const session = await ownerPool.query(
       `SELECT project, scope, selector, briefed_memories, last_message_excerpt, needs_look,
               closer_failure_count, closer_next_attempt_at
-       FROM agent_sessions WHERE user_id = $1`,
+       FROM agent_sessions WHERE user_id = $1 AND session_id = 'sess-a'`,
       [userA],
     )
     expect(session.rows[0].project).toBeNull()
@@ -245,6 +253,21 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     // has no writer left that could ever clear a stale one.
     expect(session.rows[0].closer_failure_count).toBe(0)
     expect(session.rows[0].closer_next_attempt_at).toBeNull()
+
+    // EPOCH FENCE (issue #185): every row of the account is bumped by this same
+    // UPDATE, open or closed — this is the closer's fence against sending
+    // stale (or now-redacted) content to the gateway on an in-flight pass.
+    // Both seeded rows started at the schema default (1), so a single erasure
+    // bumps each to 2.
+    const epochs = await ownerPool.query(
+      `SELECT session_id, activation_epoch FROM agent_sessions
+        WHERE user_id = $1 ORDER BY session_id`,
+      [userA],
+    )
+    expect(epochs.rows).toEqual([
+      { session_id: 'sess-a', activation_epoch: 2 },
+      { session_id: 'sess-a2', activation_epoch: 2 },
+    ])
 
     // Identity erased; the email becomes the deletion marker.
     const user = await ownerPool.query('SELECT email, password_hash FROM users WHERE id = $1', [

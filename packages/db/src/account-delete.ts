@@ -19,7 +19,7 @@
 // this runtime-role function and is recorded as a known gap.
 //
 // Observability (hard rule 6): logs NOTHING; callers log the id hash + counts only.
-import { eq, isNull } from 'drizzle-orm'
+import { eq, isNull, sql } from 'drizzle-orm'
 import { lockAccountLifecycle, lockPasswordReset, type TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import {
@@ -190,6 +190,34 @@ export async function eraseAccountData(
   // excerpt back after this redaction commits. Any new writer of user content on
   // this table must take that shared lock and re-check too, or the redaction
   // below stops being final.
+  //
+  // INVARIANT (issue #185): this UPDATE also increments `activation_epoch` on
+  // EVERY row, in the SAME statement as the content redaction above. The closer
+  // (packages/core/src/admin/session-closer.ts) fences its claim and its
+  // pre-gateway dispatch on that epoch, and its final write-back is fenced on
+  // epoch + attempt token (session-closer.ts below); an in-flight pass that
+  // observed the pre-erasure epoch therefore either never claims, or is caught
+  // by the pre-gateway re-check before it sends the excerpt/topics being
+  // redacted here, or — if it already dispatched — has its resolves and
+  // write-back rejected once the pass reaches its own epoch re-checks. This is
+  // the SAME bump this table already gets on startup/resume/resurrect
+  // (docs/concepts/session-continuity.mdx); erasure is simply a fourth writer,
+  // and folding it into this one statement is what makes it atomic with the
+  // redaction instead of racing it.
+  //
+  // RESIDUAL, disclosed rather than hidden: a pass that already called the
+  // gateway before this UPDATE commits has that request in flight, and nothing
+  // erasure does can recall it — the closer's own epoch fence only stops a
+  // pass from LANDING resolves or bookkeeping on the redacted row, not from
+  // completing a round trip already under way. That window is bounded by the
+  // gateway's request timeout (30s default, packages/llm/src/openai.ts), so
+  // erasure can report complete while a call is still on the wire for at most
+  // that long. That bound holds tightly because the closer's pre-gateway check
+  // runs AFTER it reserves its budget slot, not before — the reservation takes
+  // a per-user advisory lock that can itself block for an unbounded time behind
+  // another in-flight metered call, and checking before it would let that wait
+  // add to this window (session-closer.ts's `closeSessionRun` documents why the
+  // check sits where it does).
   const erasedAgentSessions = await tx
     .update(agentSessions)
     .set({
@@ -222,6 +250,11 @@ export async function eraseAccountData(
       // nothing writes these columns again.
       closerFailureCount: 0,
       closerNextAttemptAt: null,
+      // Fourth writer of activation_epoch (see the invariant note above). Folded
+      // into this UPDATE rather than a second statement so it is atomic with the
+      // redaction: a closer pass can never observe the erased content at the
+      // pre-erasure epoch, or vice versa.
+      activationEpoch: sql`${agentSessions.activationEpoch} + 1`,
     })
     .returning({ id: agentSessions.id })
 

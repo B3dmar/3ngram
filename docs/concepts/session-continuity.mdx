@@ -249,7 +249,7 @@ agent_sessions (
   opened_at            timestamptz not null,
   closed_at            timestamptz null,
   last_seen_at         timestamptz not null, -- lease heartbeat
-  activation_epoch     int not null,         -- incremented on startup/resume/resurrect; closer fence, not SessionEnd
+  activation_epoch     int not null,         -- incremented on startup/resume/resurrect/erasure; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
   triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline. NULL = unknown (pre-guard rows) = finalize
@@ -332,6 +332,37 @@ close is stamped while the lease is still live and freezes `last_seen_at` there,
 lands after lease expiry and still resurrects. The
 closer on implicit close waits a grace after lease expiry so an overnight idle gap
 can reopen instead of being debriefed mid-conversation.
+
+**Erasure is a fourth writer of `activation_epoch`** (issue #185), folded into the
+same UPDATE as the PII redaction in `eraseAccountData`
+(`packages/db/src/account-delete.ts`) — every row of the account is bumped, closed
+or open. The closer fences its claim, a re-check after the budget reservation and
+immediately before the gateway call, and its final write-back on this epoch
+(below), so an in-flight pass that
+observed the pre-erasure epoch either never claims the row, is caught before it
+sends the excerpt or briefed topics being redacted, or has its resolves and
+bookkeeping rejected once it reaches its own epoch checks. **Residual, disclosed
+rather than closed:** a pass that already dispatched to the gateway before the
+erasure UPDATE commits has that request in flight, and no epoch bump recalls it —
+the fence stops a pass from *landing* work on the redacted row, not from
+*completing a round trip already under way*. That window is bounded by the
+gateway's request timeout (30s default), so erasure can report complete while one
+last request is still on the wire for up to that long.
+
+**Documentation obligation.** Before this, an `activation_epoch` bump meant one
+thing: the session was resumed or resurrected, and every reader treated it that
+way. That inference is now false — an epoch bump also fires on erasure, which is
+the opposite of the session being alive. No current reader infers liveness from
+the epoch alone (checked as part of issue #185): `session-lifecycle.ts`,
+`session-provenance.ts` and `session-closer.ts` each treat it strictly as an
+opaque fence value, never as a liveness signal; `data-export.ts` (the GDPR
+portability export, :239 and :450) only copies the column through verbatim,
+read-only, into the exported row; and the 3ngram hook's `cmd/3ngram-hook/session.go`
+(:88) decodes `activationEpoch` off the open response into a struct
+field it never reads back or compares — the hook holds no local activation
+token and never has (see SessionEnd, below). Any future reader must not either
+— check `closed_at` and `last_seen_at` for liveness, and treat
+`activation_epoch` as write-fence-only.
 
 ### Last-consumed cursor — deferred
 
@@ -807,26 +838,38 @@ session may already have resolved or superseded the row. Immediately before each
 do not persist a failing batch.
 
 **Epoch fence on the claim, not on every memory insert.** Claim the session row
-at `activation_epoch`. If resurrection has incremented the epoch, the claim
-fails and the job is a no-op.
+at `activation_epoch`. If resurrection — or, since issue #185, an account
+erasure — has incremented the epoch, the claim fails and the job is a no-op.
 
-The fence is checked in three places, and it is worth being precise about what
+The fence is checked in **four** places, and it is worth being precise about what
 each one buys, because they are not equally strong:
 
 1. **at claim time** — a run resurrected before the pass starts is never touched;
-2. **before each `resolve`** — a cheap read, so a resurrection during a slow
+2. **after the budget reservation, immediately before the gateway call** (issue
+   #185) — the last point before the excerpt and briefed topics leave the
+   process at all, so this is what actually stops a stale send rather than
+   merely stopping the pass from acting on the reply. Checked AFTER reserving,
+   not before: the reservation takes a per-user advisory lock that can block
+   behind another in-flight metered call for that user, and checking before it
+   would let that wait inflate the residual below past the gateway's own
+   timeout;
+3. **before each `resolve`** — a cheap read, so a resurrection during a slow
    generation stops the batch at the next candidate rather than at the end;
-3. **on the final write-back**, together with the attempt token — the bookkeeping
+4. **on the final write-back**, together with the attempt token — the bookkeeping
    (terminal status, watermark, excerpt clear) is all-or-nothing.
 
-(2) narrows the window; it does not close it. A resurrection can still land
-between the check and the `resolve` that follows it, so **an individual resolve
-may commit against a session that has just become active again**. That is a
-deliberate, disclosed trade rather than an oversight: the fence gates the
-BOOKKEEPING atomically, while individual resolves are reversible. A commitment
-closed a moment too early is undone with `unresolve` — which is the whole reason
-v1 is resolve-only. A closer that could `remember` would need a real transaction
-boundary here instead, and that is one of the costs the page rejects it for.
+(2) and (3) each narrow a window; neither closes it. Once (2) passes, the prompt
+is dispatched, and nothing can recall a request already on the wire — the residual
+is bounded by the gateway's timeout (30s default) and is disclosed, not hidden,
+in the erasure section above. Once (3) passes for a given candidate, a
+resurrection can still land between that check and the `resolve` call that
+follows it, so **an individual resolve may commit against a session that has just
+become active again**. Both are deliberate, disclosed trades rather than
+oversights: the fence gates the BOOKKEEPING atomically, while individual resolves
+are reversible. A commitment closed a moment too early is undone with `unresolve`
+— which is the whole reason v1 is resolve-only. A closer that could `remember`
+would need a real transaction boundary here instead, and that is one of the costs
+the page rejects it for.
 
 Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
 `worker` (settled above) — never `capture_hook`.

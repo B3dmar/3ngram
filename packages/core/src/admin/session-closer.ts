@@ -510,6 +510,20 @@ function stripCodeFence(reply: string): string {
  *      re-spend an LLM pass forever. Marking it is itself a fenced write.
  *   3. CLAIM. Compare-and-set at the observed epoch (see packages/db). A lost
  *      claim is a clean no-op.
+ *   3b. RESERVE THE BUDGET SLOT, THEN RE-CHECK THE EPOCH, IMMEDIATELY BEFORE THE
+ *      GATEWAY CALL (issue #185). Claiming, listing events and the reservation
+ *      itself are all further awaited work — the reservation can block on a
+ *      per-user advisory lock for as long as another metered call for this user
+ *      is in flight — so the epoch the claim fenced on can already be stale by
+ *      the time the prompt is about to go out. The check runs AFTER the
+ *      reservation, not before, so that blocking wait never inflates the
+ *      residual: this is the LAST awaited step before the excerpt and briefed
+ *      topics leave the process. Once `gateway.complete` is called, that
+ *      content is on the wire for up to the gateway's timeout regardless of
+ *      anything that happens after, so the per-resolve check in step 5 (which
+ *      runs only AFTER that round trip returns) is too late to stop the send,
+ *      only to stop acting on the reply. Skip `fenced`, same as every other
+ *      epoch miss; the reservation still gets released by the `finally` below.
  *   4. GENERATE. One call. The excerpt and topics go in as delimited data.
  *   5. RESOLVE. Per candidate, a LIVE re-read then a resolve. Skips are counted,
  *      not fatal.
@@ -718,6 +732,38 @@ async function runClosePass(
     if (options.budget) {
       reservation = await reserveBudgetSlot(options.budget, userId, CLOSER_OPERATION)
     }
+
+    // EPOCH RE-CHECK AT THE GATEWAY BOUNDARY (issue #185), placed AFTER the
+    // reservation above rather than before it. `reserveBudgetSlot` takes a
+    // per-user advisory tx lock (packages/core/src/budget) and can block behind
+    // another in-flight metered call for the same user for an UNBOUNDED time;
+    // checking the epoch before reserving would leave the residual window "the
+    // gateway's timeout PLUS however long that lock wait was" rather than just
+    // the gateway's timeout. Checking here — the last statement before dispatch
+    // — is what makes the 30s figure in the erasure comment and the docs
+    // literally true. A fenced return here still hits the `finally` below, so
+    // the reservation is released, never billed.
+    //
+    // A bare epoch comparison is enough proof of freshness for THE ERASURE
+    // CASE specifically — no need to re-read the excerpt/topics themselves.
+    // Erasure (packages/db/src/account-delete.ts) bumps the epoch in the SAME
+    // statement as the redaction, so "the epoch I observed still holds" implies
+    // "this row has not been erased since". It does NOT mean every possible
+    // staleness is covered: `expireStaleExcerpts` (packages/db/src/session-closer.ts,
+    // TTL sweep) and `finishSessionTriage`'s `clearExcerpt` branch (a prior
+    // pass's own write-back) can both null `last_message_excerpt` on a closed
+    // row WITHOUT bumping the epoch — that is the accepted "RETENTION WINS"
+    // trade already documented at packages/db/src/session-closer.ts's
+    // `expireStaleExcerpts`.
+    // The worst case from those two is a stale send of content retention just
+    // deleted (an excerpt from a still-erasable, not-yet-erased account) —
+    // never an un-redacted send after an actual erasure, which is the one this
+    // check exists to prevent. Reuses `currentEpoch`, the same seam the
+    // per-resolve check in the loop below already calls, so no new
+    // SessionCloserRepo member is needed.
+    const gatewayEpoch = await repo.currentEpoch(userId, request.sessionRunId)
+    if (gatewayEpoch !== session.activationEpoch) return skip('fenced')
+
     completion = await options.gateway.complete(prompt, CLOSER_OPERATION, {
       maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
       jsonObject: true,

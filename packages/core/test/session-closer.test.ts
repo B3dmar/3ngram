@@ -12,7 +12,23 @@
 //   - the watermark is taken AFTER the resolves, or the closer re-arms itself;
 //   - the pass is RESOLVE-ONLY — no seam exists for anything else.
 import type { CompleteOptions, Gateway } from '@3ngram/llm'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// DB-mocked ONLY for the budget reserve/release seam (F3, issue #185 audit):
+// `reserveBudgetSlot`/`releaseBudgetReservation` (packages/core/src/budget)
+// call these two @3ngram/db functions directly — they are not part of the
+// injectable SessionCloserRepo — so observing "reserved, then released,
+// never billed" on a fenced pass requires faking them, same seam
+// budget-failopen.test.ts already fakes. Every other test in this file never
+// passes `options.budget`, so these mocks are simply unused there; the rest
+// of `@3ngram/db` (claimSessionTriage, listSessionEvents, etc.) is only ever
+// referenced by `dbSessionCloserRepo`, which no test here constructs or calls.
+vi.mock('@3ngram/db', () => ({
+  reserveBudget: vi.fn(),
+  releaseReservation: vi.fn(),
+}))
+
+import { releaseReservation, reserveBudget } from '@3ngram/db'
 import {
   CLOSER_MAX_OUTPUT_TOKENS,
   CLOSER_OPERATION,
@@ -30,7 +46,24 @@ import {
   type SessionCloserRepo,
   selectResolvable,
 } from '../src/admin/session-closer.js'
+import type { BudgetEnforcement } from '../src/budget/index.js'
 import type { ClosedRunResolveOutcome } from '../src/write/commitments.js'
+
+const mockReserveBudget = vi.mocked(reserveBudget)
+const mockReleaseReservation = vi.mocked(releaseReservation)
+// Default: release always resolves. `mockClear` (not `mockReset`) between tests
+// so this default implementation survives — only call history is wiped.
+mockReleaseReservation.mockResolvedValue(undefined)
+
+afterEach(() => {
+  mockReserveBudget.mockClear()
+  mockReleaseReservation.mockClear()
+})
+
+/** A no-op-limits budget enforcement — the reserve/release call themselves are the mock. */
+function fakeBudget(): BudgetEnforcement {
+  return { resolveLimits: async () => ({}), config: { defaultCapUsd: 10, defaultWindowDays: 30 } }
+}
 
 const USER = '11111111-1111-4111-8111-111111111111'
 const RUN = '22222222-2222-4222-8222-222222222222'
@@ -954,6 +987,115 @@ describe('closeSessionRun — the per-resolve epoch pre-check', () => {
 
     expect(result.skipped).toBe('fenced')
     expect(repo.resolved).toEqual([])
+  })
+})
+
+describe('closeSessionRun — the pre-gateway epoch fence (issue #185)', () => {
+  it('re-checks the epoch AFTER reserving the budget slot but BEFORE dispatching: reserved, released, never billed', async () => {
+    // The claim's own CAS fenced at the epoch observed at step 1, but claiming,
+    // listing events and the reservation itself are all further awaited work —
+    // an erasure (or a plain resurrection) can land in that gap. This check is
+    // what stops the send itself, not just what stops the closer from acting on
+    // the reply. It runs AFTER the reservation (not before) so the reservation's
+    // own advisory-lock wait never inflates the disclosed residual — see the
+    // ordering comment in closeSessionRun.
+    mockReserveBudget.mockResolvedValueOnce({ allowed: true, reservationId: 'res-1' })
+    const repo = fakeRepo({ currentEpoch: async () => 4 })
+    const gateway = fakeGateway(JSON.stringify({ completed: [MEM_A] }))
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway, budget: fakeBudget() },
+    )
+
+    expect(result.skipped).toBe('fenced')
+    // The row was already claimed (that CAS matched) and the budget slot was
+    // already reserved (that happens before the epoch check), but nothing past
+    // this point ran: no prompt left the process and no usage was recorded — the
+    // pass is NOT billed. The reservation itself is still released, not leaked.
+    expect(repo.claims).toHaveLength(1)
+    expect(mockReserveBudget).toHaveBeenCalledTimes(1)
+    expect(mockReleaseReservation).toHaveBeenCalledTimes(1)
+    expect(mockReleaseReservation).toHaveBeenCalledWith(USER, 'res-1')
+    expect(gateway.prompts).toEqual([])
+    expect(repo.usages).toEqual([])
+    expect(repo.finishes).toEqual([])
+  })
+
+  it('dispatches normally when the epoch still matches at the pre-gateway check, and bills the reservation', async () => {
+    mockReserveBudget.mockResolvedValueOnce({ allowed: true, reservationId: 'res-2' })
+    const repo = fakeRepo()
+    const gateway = fakeGateway(JSON.stringify({ completed: [MEM_A] }))
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway, budget: fakeBudget() },
+    )
+
+    expect(result.skipped).toBeUndefined()
+    expect(gateway.prompts).toHaveLength(1)
+    // The contrasting half of the case above: an unfenced pass reserves,
+    // dispatches, records usage (billed), and still releases the reservation.
+    expect(repo.usages).toHaveLength(1)
+    expect(mockReleaseReservation).toHaveBeenCalledWith(USER, 'res-2')
+  })
+})
+
+describe('closeSessionRun — convergence after an erasure fences a pass (issue #185)', () => {
+  it('a fenced pass leaves the row non-terminal; the next sweep hits nothing-briefed and settles BEFORE any gateway call', async () => {
+    // Pass 1: an erasure committed between this pass's initial read and its
+    // pre-gateway check — bumping the epoch and, in the same statement,
+    // clearing briefed_memories. The pre-gateway fence catches the epoch move
+    // and returns without any bookkeeping write-back, so the row is left
+    // non-terminal (still whatever triage_status the claim observed). The
+    // budget slot it already reserved is released, not billed.
+    mockReserveBudget.mockResolvedValueOnce({ allowed: true, reservationId: 'res-1' })
+    const gateway = fakeGateway(JSON.stringify({ completed: [MEM_A] }))
+    const firstRepo = fakeRepo({ currentEpoch: async () => 4 })
+    const first = await closeSessionRun(
+      firstRepo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway, budget: fakeBudget() },
+    )
+    expect(first.skipped).toBe('fenced')
+    expect(firstRepo.finishes).toEqual([]) // non-terminal: nothing stamped
+    expect(gateway.prompts).toEqual([]) // no spend
+    expect(firstRepo.usages).toEqual([]) // not billed
+    expect(mockReleaseReservation).toHaveBeenCalledTimes(1) // reservation released, not leaked
+    expect(mockReleaseReservation).toHaveBeenCalledWith(USER, 'res-1')
+
+    // Pass 2: a later sweep re-selects the row at its NEW epoch (4) and finds
+    // briefed_memories now empty (the erasure's redaction). That is PERMANENT,
+    // so this pass settles it — completed, terminal — via settleWithoutWork,
+    // which returns before the claim/reservation/dispatch sequence above is
+    // ever reached. `budget` IS wired here (unlike pass 1's absence of a
+    // pre-existing default): if `settleWithoutWork` regressed into reaching
+    // `reserveBudgetSlot`, the mock would record a second call and the
+    // `toHaveBeenCalledTimes(1)` assertion below would actually catch it —
+    // without a budget fake in scope for this pass, that assertion could never
+    // fail no matter what the code did.
+    mockReserveBudget.mockResolvedValueOnce({ allowed: true, reservationId: 'res-3' })
+    const secondRepo = fakeRepo({
+      readSession: async () => sessionRow({ activationEpoch: 4, briefedMemories: [] }),
+      currentEpoch: async () => 4,
+    })
+    const second = await closeSessionRun(
+      secondRepo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 4 },
+      { ...OPTIONS, gateway, budget: fakeBudget() },
+    )
+    expect(second.skipped).toBe('nothing-briefed')
+    expect(secondRepo.finishes).toHaveLength(1)
+    expect(secondRepo.finishes[0]).toMatchObject({ triageStatus: 'completed', activationEpoch: 4 })
+    expect(gateway.prompts).toEqual([]) // still zero across both passes
+    // Still exactly one reservation across the whole convergence chain — pass 2
+    // never touched the budget seam at all, even though it COULD have (budget
+    // was wired for it too).
+    expect(mockReserveBudget).toHaveBeenCalledTimes(1)
   })
 })
 
