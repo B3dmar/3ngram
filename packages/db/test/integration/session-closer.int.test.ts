@@ -14,6 +14,8 @@
 //
 // Concurrency is provoked with the deterministic two-promise barrier the
 // lifecycle suite uses, never with sleeps (hard rule 4 forbids flake).
+
+import { readFile } from 'node:fs/promises'
 import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
 import { and, eq, isNull, lt } from 'drizzle-orm'
 import { QueryBuilder } from 'drizzle-orm/pg-core'
@@ -1147,5 +1149,96 @@ describe('agent_sessions_closer_idx', () => {
     expect(probeLoops(after)).toBe(probeLoops(before))
     expect(scanRows(after)).toBe(scanRows(before))
     expect(rowsDiscarded(after)).toBe(rowsDiscarded(before))
+  })
+})
+
+/**
+ * MIGRATION 0034's BACKFILL, run against real fixtures.
+ *
+ * The narrowed index makes `needs_look = false` load-bearing: a `completed` row
+ * that carries it is dropped from the closer's candidate scan permanently. The
+ * column default declares every pre-existing row settled, so the backfill is the
+ * only thing standing between an existing untriaged event and silent loss — and
+ * it is a one-shot statement no other test can reach, because `runMigrations()`
+ * is idempotent and has already run by the time this suite starts.
+ *
+ * So the statement is READ OUT OF THE MIGRATION FILE and executed here. A copy
+ * pasted into the test would pass while the shipped SQL rotted.
+ */
+describe('0034 needs_look backfill', () => {
+  /** The backfill UPDATE, verbatim from the shipped migration. */
+  async function backfillStatement(): Promise<string> {
+    const sqlText = await readFile(
+      new URL('../../migrations/0034_session_closer_needs_look.sql', import.meta.url),
+      'utf8',
+    )
+    const statements = sqlText.split('--> statement-breakpoint')
+    // The statement is preceded by its own `--` rationale, so match the first
+    // line that OPENS a statement rather than the start of the segment.
+    const update = statements.find((statement) => /^\s*UPDATE\b/m.test(statement))
+    if (update === undefined) throw new Error('0034 no longer contains a backfill UPDATE')
+    return update
+  }
+
+  /** A row in `status`, closed or not, plus one event that the watermark misses. */
+  async function seedUntriaged(
+    sessionId: string,
+    status: string,
+    closed: boolean,
+  ): Promise<string> {
+    const opened = await open(uid, sessionId)
+    await setRow(opened.row.id, {
+      triage_status: status,
+      ...(closed ? { closed_at: NOW } : {}),
+    })
+    const memoryId = await seedCommitmentMemory(uid)
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, opened.row.id],
+    )
+    return opened.row.id
+  }
+
+  it('flags every completed run holding an untriaged event, OPEN ones included', async () => {
+    // The open row is the case a `closed_at IS NOT NULL` backfill would miss. The
+    // Stop handshake stamps `completed` on a LEASED-OPEN row, and `closeSession`
+    // stamps `closed_at` and nothing else — no recompute runs on close — so the
+    // flag this statement leaves is the flag the index uses forever after.
+    const openCompleted = await seedUntriaged('conv-backfill-open', 'completed', false)
+    const closedCompleted = await seedUntriaged('conv-backfill-closed', 'completed', true)
+    const overflowed = await seedUntriaged('conv-backfill-over', 'overflowed', true)
+
+    // Settled: its only event is already in the watermark.
+    const settled = await open(uid, 'conv-backfill-settled')
+    const settledMemory = await seedCommitmentMemory(uid)
+    const inserted = await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))
+       RETURNING id`,
+      [uid, settledMemory, settled.row.id],
+    )
+    await setRow(settled.row.id, {
+      closed_at: NOW,
+      triage_status: 'completed',
+      last_triaged_event_ids: JSON.stringify([(inserted.rows[0] as { id: string }).id]),
+    })
+
+    // Every row starts at the column default — the state the migration inherits.
+    await ownerPool.query('UPDATE agent_sessions SET needs_look = false')
+    await ownerPool.query(await backfillStatement())
+
+    const flagOf = async (id: string) => (await rawRow(id)).needs_look
+    expect(await flagOf(openCompleted)).toBe(true)
+    expect(await flagOf(closedCompleted)).toBe(true)
+    expect(await flagOf(settled.row.id)).toBe(false)
+    // `overflowed` is terminal and never a candidate, flagged or not.
+    expect(await flagOf(overflowed)).toBe(false)
+
+    // The open row is not yet scannable — the index still requires a close — but
+    // it becomes a candidate the moment it closes, which is the whole point.
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(openCompleted)
+    await setRow(openCompleted, { closed_at: NOW })
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).toContain(openCompleted)
   })
 })

@@ -6,12 +6,20 @@ ALTER TABLE "agent_sessions" ADD COLUMN "needs_look" boolean DEFAULT false NOT N
 -- watermark, which is exactly the row the closer's `EXISTS` leg exists to catch.
 -- Losing those would destroy captured provenance, so the flag is derived once
 -- here, by the same probe, rather than assumed. This is the per-tick cost the
--- migration removes, paid a single time. `overflowed` is terminal and out of
--- scope; open rows are not candidates.
+-- migration removes, paid a single time. `overflowed` is terminal and out of scope.
+--
+-- EVERY `completed` ROW, OPEN OR CLOSED. The Stop handshake stamps `completed` on
+-- a LEASED-OPEN row, and `closeSession` later stamps `closed_at` and nothing else
+-- — no recompute runs on close. So the flag a row carries while open is the flag
+-- the narrowed index uses once it closes, and an open row skipped here would be
+-- excluded from the closer's scan permanently. Restricting the probe to closed
+-- rows would trade a one-off scan for exactly the data loss this backfill exists
+-- to prevent. A raised flag on an open row costs nothing: the index predicate
+-- still requires `closed_at IS NOT NULL`, so it only becomes scannable on close,
+-- and the next watermark stamp recomputes it either way.
 UPDATE "agent_sessions" AS s
    SET "needs_look" = true
- WHERE s."closed_at" IS NOT NULL
-   AND s."triage_status" = 'completed'
+ WHERE s."triage_status" = 'completed'
    AND EXISTS (
          SELECT 1
            FROM "memory_events" AS e
