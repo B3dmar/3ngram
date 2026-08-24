@@ -1,5 +1,13 @@
 # @3ngram/sdk
 
+## 1.6.0
+
+### Patch Changes
+
+- Updated dependencies [6421161]
+- Updated dependencies [67b0c02]
+  - @3ngram/schema@0.9.0
+
 ## 1.5.0
 
 ### Minor Changes
