@@ -505,7 +505,20 @@ export async function completeSessionTriage(
 
   const stamped = await tx
     .update(agentSessions)
-    .set({ triageStatus, lastTriagedEventIds: visible.ids.slice(0, MAX_SESSION_EVENT_IDS) })
+    .set({
+      triageStatus,
+      lastTriagedEventIds: visible.ids.slice(0, MAX_SESSION_EVENT_IDS),
+      // Same reset `finishSessionTriage` makes on the closer's own terminal
+      // write-back (issue #184 audit F4): this IS the interactive handshake's
+      // equivalent durable write-back, and the reset rule is stated once, for
+      // both. In practice the count is very likely already 0 here — `begin`
+      // only arms on a LIVE row, and every path that reopens a row already
+      // clears it (see the three resurrect writers) — so this is closing a
+      // theoretical gap rather than a reachable one, cheaply, rather than
+      // resting the invariant on that argument holding forever.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
+    })
     .where(
       and(
         keyPredicate(userId, key),

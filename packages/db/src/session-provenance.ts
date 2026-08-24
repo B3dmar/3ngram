@@ -159,6 +159,14 @@ async function resurrect(tx: TenantTx, userId: string, id: string, now: Date): P
       // resurrect branch is still an attach. See {@link rearmTriage}.
       triageStatus: rearmTriage,
       needsLook: flagNeedsLook,
+      // GENUINELY RE-ARMED BY NEW WORK (issue #184): the row was closed, is
+      // reopening for a reason that has nothing to do with why a past closer
+      // pass may have failed, and the epoch bump below fences off any backoff
+      // stamp still in flight for the old (closed) generation — see
+      // `recordCloserFailure`. Unconditional, not read-modify-write: this is
+      // the one write in the file that always clears it.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
     })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }

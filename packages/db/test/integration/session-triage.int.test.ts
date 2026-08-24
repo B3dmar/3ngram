@@ -106,7 +106,9 @@ const complete = (userId: string, attemptId = attempt(1), ceiling?: number) =>
 
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const r = await ownerPool.query(
-    'SELECT triage_status, triage_attempt_id, last_triaged_event_ids, last_message_excerpt FROM agent_sessions WHERE id = $1',
+    `SELECT triage_status, triage_attempt_id, last_triaged_event_ids, last_message_excerpt,
+            closer_failure_count, closer_next_attempt_at
+       FROM agent_sessions WHERE id = $1`,
     [id],
   )
   return r.rows[0] as Record<string, unknown>
@@ -181,6 +183,24 @@ describe('begin/complete round trip', () => {
     await complete(uid, armed.attemptId)
 
     expect((await rawRow(runId)).last_message_excerpt).toBe('the turn ended here')
+  })
+
+  it('resets a closer backoff on its own durable write-back too (issue #184 audit F4)', async () => {
+    // This handshake's `complete` is the OTHER durable terminal write-back the
+    // reset rule names, alongside the closer's own `finishSessionTriage` — see
+    // session-triage.ts's doc comment on completeSessionTriage.
+    const armed = await begin(uid)
+    await ownerPool.query(
+      'UPDATE agent_sessions SET closer_failure_count = 2, closer_next_attempt_at = $2 WHERE id = $1',
+      [runId, new Date(NOW.getTime() + 40 * 60 * 1000)],
+    )
+    await write(uid, runId)
+
+    await complete(uid, armed.attemptId)
+
+    const row = await rawRow(runId)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
   })
 })
 

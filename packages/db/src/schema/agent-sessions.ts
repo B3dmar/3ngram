@@ -55,6 +55,17 @@ export const agentSessions = pgTable(
     // not part of the Stop-handshake vocabulary — `triage_status` stays exactly
     // the five words layer 4 reads. See session-closer.ts `settleNeedsLook`.
     needsLook: boolean('needs_look').notNull().default(false),
+    // THE PER-ROW BACKOFF (issue #184). Consecutive closer-pass FAILURES for
+    // this row (a thrown exception — gateway, DB, an unparseable verdict — not
+    // a deliberate skip, which already settles or stays transiently eligible by
+    // design). Stamped by `recordCloserFailure`, honored by
+    // `closerCandidatePredicate`'s WHERE leg (NOT the partial index below —
+    // `closerNextAttemptAt <= now()` is not IMMUTABLE, so Postgres refuses it on
+    // CREATE INDEX; needs_look is a stored boolean and has no such problem), and
+    // reset to 0/NULL on a successful `finishSessionTriage` or a resurrect. Never
+    // makes a row permanently ineligible — see `closerBackoffDelayMs`.
+    closerFailureCount: integer('closer_failure_count').notNull().default(0),
+    closerNextAttemptAt: timestamp('closer_next_attempt_at', { withTimezone: true }),
   },
   (t) => [
     unique('agent_sessions_tenant_id_uq').on(t.userId, t.id),

@@ -384,6 +384,10 @@ describe('completeSessionTriage', () => {
     expect(updates[0]?.values).toEqual({
       triageStatus: 'completed',
       lastTriagedEventIds: ['e1', 'e2'],
+      // The other durable terminal write-back resets the closer backoff too
+      // (issue #184 audit F4) — same rule as `finishSessionTriage`.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
     })
   })
 

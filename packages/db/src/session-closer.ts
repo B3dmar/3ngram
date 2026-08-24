@@ -33,11 +33,13 @@
 import {
   type AgentSessionTriageStatus,
   type BriefedMemory,
+  CLOSER_BACKOFF_BASE_MS,
+  CLOSER_BACKOFF_MAX_MS,
   MAX_SESSION_EVENT_IDS,
   SESSION_LEASE_MS,
   SESSION_SWEEP_GRACE_MS,
 } from '@3ngram/schema'
-import { and, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { memoryEvents } from './schema/memory.js'
@@ -49,6 +51,27 @@ import { memoryEvents } from './schema/memory.js'
  * {@link listCloserCandidates}. `overflowed` is terminal and never eligible.
  */
 export const CLOSER_ELIGIBLE_STATUSES = ['idle', 'pending', 'expired'] as const
+
+/**
+ * THE BACKOFF CURVE (issue #184), doubling per consecutive FAILURE, capped so
+ * a persistently broken row is never unreachable:
+ * `min(CLOSER_BACKOFF_MAX_MS, CLOSER_BACKOFF_BASE_MS * 2^(n-1))` for `n`
+ * consecutive failures (`n <= 0` returns the base — a row cannot be BACKED
+ * OFF for zero failures, but this only guards against a stray 0 or negative).
+ *
+ * THE SPEC, NOT THE IMPLEMENTATION. `recordCloserFailure` does NOT call this
+ * — it re-derives the same formula directly in SQL, atomically, from the
+ * row's CURRENT count rather than one read earlier by a caller (that "earlier
+ * read" was the bug; see `recordCloserFailure`'s own doc). This function is
+ * what the integration suite checks that SQL against: it stays exported and
+ * pinned WITHOUT a database precisely so a wrong exponent or a missing cap —
+ * a silent-forever-churn bug a behavioural test over a live scan is the wrong
+ * tool to catch — has a single, database-free reference to diverge from.
+ */
+export function closerBackoffDelayMs(failureCount: number): number {
+  const n = Math.max(1, failureCount)
+  return Math.min(CLOSER_BACKOFF_MAX_MS, CLOSER_BACKOFF_BASE_MS * 2 ** (n - 1))
+}
 
 /**
  * THE RE-ARM PREDICATE, in one place: this run holds a provenance event whose id
@@ -277,8 +300,19 @@ export async function sweepExpiredLeases(
  * The WHERE lives in {@link closerCandidatePredicate} so the integration suite can
  * EXPLAIN the shipped predicate instead of a hand-copied transcription of it — a
  * plan assertion against a second spelling proves nothing once the two drift.
+ *
+ * THE BACKOFF LEG (issue #184) is a WHERE-only conjunct, deliberately NOT folded
+ * into `agent_sessions_closer_idx` (0034) the way `needs_look` was. A partial
+ * index predicate must be IMMUTABLE, and `closer_next_attempt_at <= now()`
+ * depends on the call time — Postgres rejects that at `CREATE INDEX`, full
+ * stop. It also does not need the index: unlike the untriaged-event `EXISTS`,
+ * this is one column comparison against a row the index scan already fetched,
+ * so it costs a `Filter`, not a second probe. A backed-off row is still
+ * VISITED — that is the whole mechanism, it is what stops it being RETURNED —
+ * but visiting and discarding a column comparison is the cost the `needs_look`
+ * fix specifically avoided for the EXISTS probe, not for this.
  */
-export const closerCandidatePredicate = (userId: string) =>
+export const closerCandidatePredicate = (userId: string, now: Date) =>
   and(
     eq(agentSessions.userId, userId),
     isNotNull(agentSessions.closedAt),
@@ -287,17 +321,20 @@ export const closerCandidatePredicate = (userId: string) =>
     or(ne(agentSessions.triageStatus, 'completed'), eq(agentSessions.needsLook, true)),
     // The late-commit backstop, on flagged rows only.
     or(ne(agentSessions.triageStatus, 'completed'), hasUntriagedSessionEvent),
+    // The backoff gate: unset, or its window has already elapsed.
+    or(isNull(agentSessions.closerNextAttemptAt), lte(agentSessions.closerNextAttemptAt, now)),
   )
 
 export async function listCloserCandidates(
   tx: TenantTx,
   userId: string,
+  now: Date,
   limit: number,
 ): Promise<CloserCandidate[]> {
   const rows = await tx
     .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
     .from(agentSessions)
-    .where(closerCandidatePredicate(userId))
+    .where(closerCandidatePredicate(userId, now))
     .orderBy(agentSessions.closedAt)
     .limit(limit)
   return rows.map((row) => ({ sessionRunId: row.id, activationEpoch: row.activationEpoch }))
@@ -485,6 +522,14 @@ export async function finishSessionTriage(
       triageStatus: finish.triageStatus,
       lastTriagedEventIds: finish.visibleEventIds.slice(0, MAX_SESSION_EVENT_IDS),
       ...(finish.clearExcerpt ? { lastMessageExcerpt: null } : {}),
+      // RESET, not carried forward (issue #184). Reaching a durable write-back
+      // at all — whether this pass generated for real or `settleWithoutWork`
+      // stamped a permanent skip — means it did NOT throw, which is the only
+      // thing `recordCloserFailure` ever counts. A row that failed twice and
+      // then finished cleanly must not still be serving out its old backoff the
+      // next time it is genuinely re-armed.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
     })
     .where(
       and(
@@ -501,6 +546,113 @@ export async function finishSessionTriage(
   // committed after the listing it stamped. See {@link settleNeedsLook}.
   await settleNeedsLook(tx, userId, finish.sessionRunId)
   return true
+}
+
+/** One backoff stamp: which row, at which epoch, off which injected clock. */
+export interface CloserFailure {
+  sessionRunId: string
+  activationEpoch: number
+  /** Injected clock (issue #184) — this module reads no wall-clock of its own. */
+  now: Date
+}
+
+/**
+ * Exponent ceiling fed to `POWER` in {@link recordCloserFailure}'s SQL — NOT a
+ * change to the curve `closerBackoffDelayMs` documents (cap/base = 12, so
+ * exponent 4 already saturates it), a guard against Postgres' numeric `POWER`
+ * ERRORING on a pathologically large exponent. Verified empirically, not
+ * assumed: `POWER(2, 2000000000::int)` raises "value out of range: overflow";
+ * `POWER(2, 32)` does not, and is already ~10⁶× past the point `LEAST` would
+ * have picked the cap anyway. `closer_failure_count` can only ever reach a
+ * value this large by incrementing one at a time forever — not a real
+ * scenario — but the clamp costs nothing and turns "impossible" into
+ * "provably cannot crash the statement."
+ */
+const MAX_BACKOFF_EXPONENT = 32
+
+/**
+ * Stamp the backoff after a closer pass FAILS for this row (issue #184): an
+ * exception, not a deliberate skip — see `closeSessionRun`'s catch in
+ * packages/core, which is the only caller.
+ *
+ * BOTH THE INCREMENT AND THE DELAY ARE COMPUTED HERE, IN ONE STATEMENT, FROM
+ * THE ROW'S CURRENT VALUE — never from a count the caller read earlier. An
+ * earlier shape took the post-increment count as an INPUT, computed by the
+ * core catch block from `readSession`'s `closerFailureCount` (read at the
+ * START of the pass, before the LLM round-trip). Between that read and this
+ * write, an interactive `completeSessionTriage` can legally reset the row's
+ * backoff to 0 — a durable write-back with NO epoch bump (unlike a
+ * resurrect). The epoch fence alone does not catch that: the epoch is
+ * unchanged, so the stale-count stamp still matches it and OVERWRITES the
+ * reset with the pre-race count — a row genuinely re-armed a moment earlier
+ * would inherit a multi-hour gate instead of a fresh 20-minute one (Codex
+ * review of PR #196, comment 3843607494). Computing both columns from the
+ * row Postgres has locked RIGHT NOW, in the same statement that increments
+ * it, removes the stale value from the picture entirely — there is no longer
+ * a "count read a round-trip ago" to go stale.
+ *
+ * THE SQL RELIES ON A STANDARD UPDATE PROPERTY: every expression in one
+ * statement's SET list reads the OLD row, never another column's NEW value
+ * from the SAME statement. So referencing `closer_failure_count` in both the
+ * increment and the delay expression is exactly right — the delay expression
+ * reads the PRE-increment count (call it `n`), which is what
+ * `closerBackoffDelayMs`'s `2^(count-1)` formula for the POST-increment count
+ * (`n+1`) needs: `2^((n+1)-1) = 2^n`. And because Postgres locks the row and
+ * evaluates this against whatever is committed at THIS moment (READ
+ * COMMITTED), a reset that lands before this statement is honestly seen
+ * (count 0 -> stamped as a genuine first failure, 20 minutes); a reset that
+ * lands after simply overwrites it — last writer wins, same as every other
+ * racing writer of this row. Pinned in
+ * packages/db/test/integration/session-closer.int.test.ts by seeding a count,
+ * simulating the race with a raw reset between setup and the call, and
+ * asserting the stamp lands as failure ONE, not the stale count plus one.
+ *
+ * FENCED on `activationEpoch`, exactly like {@link claimSessionTriage} and
+ * {@link finishSessionTriage}. TWO SEPARATE PROPERTIES, not one, and it is
+ * worth keeping them apart:
+ *
+ *   1. RACE SAFETY AGAINST A RESURRECT. The fence is what makes this a safe
+ *      no-op against a CONCURRENT resurrection — a resurrect always bumps
+ *      `activation_epoch` (session-provenance.ts `resurrect`;
+ *      session-lifecycle.ts `openSession`'s `reopened` branch; `refreshLease`'s
+ *      `resurrect` branch, Stop's own path), so a stamp that observed the
+ *      pre-resurrection epoch either commits BEFORE the resurrect (harmless —
+ *      the row it stamped is about to be excluded from every candidate scan
+ *      by `closed_at IS NOT NULL` the instant the resurrect commits) or fails
+ *      its own fence and writes nothing (the epoch already moved). This holds
+ *      whether or not a resurrect touches the backoff columns at all — it is
+ *      a property of the fence, not of what the other writer does with it.
+ *   2. NO STALE WAIT ACROSS ACTIVATIONS. Separately, all three resurrect
+ *      writers above ALSO reset both columns to zero/NULL. That is not what
+ *      (1) needs — it is what stops a backoff earned by one activation
+ *      surviving to gate the NEXT one: a row that failed its way to the
+ *      4-hour cap, then resumed and did real work for an hour, must not carry
+ *      that cap into the fresh close a moment later.
+ */
+export async function recordCloserFailure(
+  tx: TenantTx,
+  userId: string,
+  failure: CloserFailure,
+): Promise<void> {
+  await tx
+    .update(agentSessions)
+    .set({
+      closerFailureCount: sql`${agentSessions.closerFailureCount} + 1`,
+      // `|| ' milliseconds')::interval` is the repo's existing idiom for a
+      // computed-duration add (migration 0034's backfill; the cost-model
+      // suite's `seedSettledHistory` fixture) — not a bespoke spelling.
+      closerNextAttemptAt: sql`${failure.now.toISOString()}::timestamptz + (LEAST(
+          ${CLOSER_BACKOFF_MAX_MS},
+          ${CLOSER_BACKOFF_BASE_MS} * power(2, LEAST(${agentSessions.closerFailureCount}, ${MAX_BACKOFF_EXPONENT}))
+        ) || ' milliseconds')::interval`,
+    })
+    .where(
+      and(
+        eq(agentSessions.userId, userId),
+        eq(agentSessions.id, failure.sessionRunId),
+        eq(agentSessions.activationEpoch, failure.activationEpoch),
+      ),
+    )
 }
 
 /**

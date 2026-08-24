@@ -91,7 +91,7 @@ describe('sweepSessions', () => {
         limits.push(limit)
         return []
       },
-      listCloserCandidates: async (_userId, limit) => {
+      listCloserCandidates: async (_userId, _now, limit) => {
         limits.push(limit)
         return []
       },

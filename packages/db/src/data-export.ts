@@ -244,6 +244,8 @@ export interface ExportAgentSessionRow {
   briefedMemories: BriefedMemory[]
   lastMessageExcerpt: string | null
   needsLook: boolean
+  closerFailureCount: number
+  closerNextAttemptAt: Date | null
 }
 
 /** The complete user-owned dataset for a portability export. */
@@ -455,6 +457,8 @@ export async function readUserDataExport(
       briefedMemories: agentSessions.briefedMemories,
       lastMessageExcerpt: agentSessions.lastMessageExcerpt,
       needsLook: agentSessions.needsLook,
+      closerFailureCount: agentSessions.closerFailureCount,
+      closerNextAttemptAt: agentSessions.closerNextAttemptAt,
     })
     .from(agentSessions)
     .where(eq(agentSessions.userId, userId))

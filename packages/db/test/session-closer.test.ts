@@ -12,9 +12,14 @@
 //
 // So this suite pins the arithmetic and the boundary in both directions
 // (docs/concepts/session-continuity.mdx, "Lease" and "Resurrection").
-import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
+import {
+  CLOSER_BACKOFF_BASE_MS,
+  CLOSER_BACKOFF_MAX_MS,
+  SESSION_LEASE_MS,
+  SESSION_SWEEP_GRACE_MS,
+} from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
-import { sweepFloor } from '../src/session-closer.js'
+import { closerBackoffDelayMs, sweepFloor } from '../src/session-closer.js'
 import { isExplicitClose, isLeased } from '../src/session-lease.js'
 
 const NOW = new Date('2026-08-23T12:00:00.000Z')
@@ -87,6 +92,48 @@ describe('an explicit SessionEnd close stays explicit', () => {
     const lastSeenAt = quietFor(365 * SESSION_LEASE_MS)
     const closedAt = new Date(lastSeenAt.getTime() + 1000)
     expect(isExplicitClose(closedAt, lastSeenAt)).toBe(true)
+  })
+})
+
+describe('closerBackoffDelayMs — the curve the backoff gate rides', () => {
+  it('is exactly the base for the first failure', () => {
+    expect(closerBackoffDelayMs(1)).toBe(CLOSER_BACKOFF_BASE_MS)
+  })
+
+  it('doubles per consecutive failure', () => {
+    expect(closerBackoffDelayMs(2)).toBe(CLOSER_BACKOFF_BASE_MS * 2)
+    expect(closerBackoffDelayMs(3)).toBe(CLOSER_BACKOFF_BASE_MS * 4)
+    expect(closerBackoffDelayMs(4)).toBe(CLOSER_BACKOFF_BASE_MS * 8)
+  })
+
+  it('never exceeds the cap, however many consecutive failures', () => {
+    expect(closerBackoffDelayMs(5)).toBe(CLOSER_BACKOFF_MAX_MS)
+    expect(closerBackoffDelayMs(1000)).toBe(CLOSER_BACKOFF_MAX_MS)
+    // Self-healing has a lower bound, not just an upper one: the cap is a
+    // ceiling on the WAIT, never a signal that stops the row being retried.
+    expect(closerBackoffDelayMs(1000)).toBeGreaterThan(0)
+  })
+
+  it('treats a non-positive count as the first failure — never a zero wait', () => {
+    // The caller always passes the POST-increment count (>= 1), but a curve
+    // that returned 0 or a negative delay for n <= 0 would gate nothing, which
+    // silently defeats the whole mechanism for a mis-called caller.
+    expect(closerBackoffDelayMs(0)).toBe(CLOSER_BACKOFF_BASE_MS)
+    expect(closerBackoffDelayMs(-3)).toBe(CLOSER_BACKOFF_BASE_MS)
+  })
+
+  it('the base is at least one sweep tick, or the gate would never bind', () => {
+    // Below the sweep's own cadence, next_attempt_at would already be in the
+    // past by the time the very next tick runs — the floor is a property of
+    // the mechanism, not a free constant.
+    //
+    // The 20-minute literal is SESSION_SWEEP_CRON's own cadence
+    // (apps/worker/src/queues.ts), hardcoded here rather than imported because
+    // this package cannot depend on apps/worker. It is NOT independent of that
+    // cron — issue #184 audit note 9: widening the cron without lowering this
+    // literal (or raising CLOSER_BACKOFF_BASE_MS to match) would let this
+    // assertion drift from the invariant it exists to pin.
+    expect(CLOSER_BACKOFF_BASE_MS).toBeGreaterThanOrEqual(20 * 60 * 1000)
   })
 })
 

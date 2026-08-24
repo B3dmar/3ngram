@@ -288,6 +288,11 @@ export async function openSession(
       // truncated a fresh briefing, so it restamps what survived. A startup onto
       // a still-live row is a duplicate delivery and restamps nothing.
       ...(reopened && input.source === 'startup' ? briefingStamp(input, now) : {}),
+      // GENUINELY RE-ARMED BY NEW WORK (issue #184): the primary SessionStart
+      // resume path. A stale backoff from the PREVIOUS activation must not gate
+      // the row this activation eventually closes — see the same reset in
+      // session-provenance.ts `resurrect` for the full argument.
+      ...(reopened ? { closerFailureCount: 0, closerNextAttemptAt: null } : {}),
     })
     .where(naturalKeyPredicate(userId, input))
     .returning(RECORD_COLUMNS)
@@ -422,7 +427,13 @@ async function refreshLease(
       lastSeenAt: monotonicLastSeen(now),
       ...excerpt,
       ...(resurrect
-        ? { closedAt: null, activationEpoch: sql`${agentSessions.activationEpoch} + 1` }
+        ? {
+            closedAt: null,
+            activationEpoch: sql`${agentSessions.activationEpoch} + 1`,
+            // Same reset, same reason (issue #184): Stop's own resurrect branch.
+            closerFailureCount: 0,
+            closerNextAttemptAt: null,
+          }
         : {}),
     })
     .where(

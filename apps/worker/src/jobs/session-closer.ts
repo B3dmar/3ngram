@@ -46,18 +46,42 @@ export {
  * failed and retries per JOB_RETRY_OPTS. A retry re-enters through the claim,
  * which is idempotent: it either re-claims or cleanly loses, and resolve-only
  * means a second pass over the same candidates writes nothing new.
+ *
+ * `isLastAttempt` (issue #184) is the harness's own knowledge of BullMQ's
+ * retry state — `job.attemptsMade`/`job.opts.attempts`, computed by the caller
+ * (`apps/worker/src/queues.ts`'s `isLastAttempt` helper) — handed down as a
+ * plain boolean so core never learns BullMQ exists (hard rule 5). It gates
+ * whether a thrown failure stamps the row-level backoff at all: see
+ * `CloserOptions.isLastAttempt` in packages/core for why that matters.
  */
 export async function runSessionCloser(
   data: unknown,
   gateway: Gateway | undefined,
   budget: BudgetEnforcement,
+  isLastAttempt: boolean,
 ): Promise<CloserResult> {
   const job = sessionCloserJobDataSchema.parse(data)
   const result = await closeSessionRun(
     dbSessionCloserRepo,
     job.userId,
     { sessionRunId: job.sessionRunId, activationEpoch: job.activationEpoch },
-    { gateway, budget, newAttemptId: () => crypto.randomUUID() },
+    {
+      gateway,
+      budget,
+      newAttemptId: () => crypto.randomUUID(),
+      now: new Date(),
+      isLastAttempt,
+      // Content-free (hard rule 6): run id + error NAME only, never a DB driver
+      // message that could quote back anything content-shaped.
+      onRecordFailureError: (err) =>
+        log().warn(
+          {
+            sessionRunId: job.sessionRunId,
+            err: err instanceof Error ? err.name : 'unknown',
+          },
+          'worker: session closer failed to record its own backoff',
+        ),
+    },
   )
   log().info(
     {

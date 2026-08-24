@@ -25,11 +25,13 @@ import { createCommitment, transitionCommitment } from '../../src/commitments.js
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
+  closerBackoffDelayMs,
   closerCandidatePredicate,
   expireStaleExcerpts,
   finishSessionTriage,
   listCloserCandidates,
   readCloserSession,
+  recordCloserFailure,
   sweepExpiredLeases,
   sweepFloor,
 } from '../../src/session-closer.js'
@@ -60,8 +62,8 @@ const open = (userId: string, sessionId: string, openedAt = NOW) =>
 const sweep = (userId: string, now = NOW, limit = 100) =>
   withTenant(userId, (tx) => sweepExpiredLeases(tx, userId, now, limit))
 
-const candidates = (userId: string, limit = 100) =>
-  withTenant(userId, (tx) => listCloserCandidates(tx, userId, limit))
+const candidates = (userId: string, limit = 100, now = NOW) =>
+  withTenant(userId, (tx) => listCloserCandidates(tx, userId, now, limit))
 
 const readCloser = (userId: string, runId: string) =>
   withTenant(userId, (tx) => readCloserSession(tx, userId, runId))
@@ -228,6 +230,152 @@ describe('listCloserCandidates', () => {
     const theirs = await open(other, 'conv-theirs')
     await setRow(theirs.row.id, { closed_at: NOW })
     expect(await candidates(uid)).toEqual([])
+  })
+})
+
+/**
+ * THE BACKOFF GATE (issue #184): a row whose `closer_next_attempt_at` is still
+ * in the future must not be returned, however eligible it otherwise is — and
+ * the gate must clear on its own once that time passes, with no other write
+ * needed. This is the WHERE-clause leg `closerCandidatePredicate` adds; the
+ * cost-model suite below proves it does not need — and cannot use — the
+ * partial index.
+ */
+describe('listCloserCandidates — the backoff gate', () => {
+  it('excludes a row whose backoff window has not elapsed', async () => {
+    const opened = await open(uid, 'conv-backoff-future')
+    await setRow(opened.row.id, {
+      closed_at: NOW,
+      closer_next_attempt_at: new Date(NOW.getTime() + 60_000),
+    })
+    expect(await candidates(uid)).toEqual([])
+  })
+
+  it('re-admits the row the instant `now` reaches its next_attempt_at', async () => {
+    const opened = await open(uid, 'conv-backoff-elapsed')
+    const nextAttemptAt = new Date(NOW.getTime() + 60_000)
+    await setRow(opened.row.id, { closed_at: NOW, closer_next_attempt_at: nextAttemptAt })
+
+    expect(await candidates(uid, 100, nextAttemptAt)).toEqual([
+      { sessionRunId: opened.row.id, activationEpoch: 1 },
+    ])
+  })
+
+  it('a NULL next_attempt_at gates nothing — the common, never-failed case', async () => {
+    const opened = await open(uid, 'conv-backoff-null')
+    await setRow(opened.row.id, { closed_at: NOW })
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).toContain(opened.row.id)
+  })
+
+  it('ALSO gates the completed+needs_look leg — the same conjunct, undeclared until now (issue #184 audit F6)', async () => {
+    // A `completed` row only reaches the index at all via `needs_look` (0034);
+    // this proves the backoff conjunct applies to that leg exactly as it does
+    // to the unconditionally-eligible statuses, not just to idle/pending/expired.
+    const opened = await open(uid, 'conv-backoff-completed-needs-look')
+    const memoryId = await seedCommitmentMemory(uid)
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, opened.row.id],
+    )
+    const nextAttemptAt = new Date(NOW.getTime() + 60_000)
+    await setRow(opened.row.id, {
+      closed_at: NOW,
+      triage_status: 'completed',
+      needs_look: true,
+      closer_next_attempt_at: nextAttemptAt,
+    })
+
+    // Backed off: excluded despite genuinely holding untriaged signal.
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(opened.row.id)
+    // Self-healing once the window elapses — the untriaged event is not lost.
+    expect((await candidates(uid, 100, nextAttemptAt)).map((row) => row.sessionRunId)).toContain(
+      opened.row.id,
+    )
+  })
+})
+
+describe('recordCloserFailure', () => {
+  const recordFailure = (sessionRunId: string, activationEpoch = 1, now = NOW) =>
+    withTenant(uid, (tx) => recordCloserFailure(tx, uid, { sessionRunId, activationEpoch, now }))
+
+  it('stamps the count and the gate from the ROW, not a caller-supplied value', async () => {
+    const opened = await open(uid, 'conv-fail-stamp')
+    await setRow(opened.row.id, { closed_at: NOW })
+
+    await recordFailure(opened.row.id)
+
+    const row = await rawRow(opened.row.id)
+    expect(row.closer_failure_count).toBe(1)
+    expect(row.closer_next_attempt_at).toEqual(new Date(NOW.getTime() + closerBackoffDelayMs(1)))
+    // And the gate it just set really does exclude the row.
+    expect(await candidates(uid)).toEqual([])
+  })
+
+  it('matches closerBackoffDelayMs bit-for-bit across five consecutive failures', async () => {
+    // The SQL formula is a SEPARATE spelling of the same curve
+    // `closerBackoffDelayMs` documents (issue #184) — empirically checked
+    // against it here rather than assumed, exactly because a wrong exponent
+    // or a missing cap is a silent-forever-churn bug no behavioural test over
+    // a live scan would catch.
+    const opened = await open(uid, 'conv-fail-curve')
+    await setRow(opened.row.id, { closed_at: NOW })
+
+    for (let n = 1; n <= 5; n++) {
+      await recordFailure(opened.row.id)
+      const row = await rawRow(opened.row.id)
+      expect(row.closer_failure_count, `failure ${n}`).toBe(n)
+      expect(row.closer_next_attempt_at, `failure ${n}`).toEqual(
+        new Date(NOW.getTime() + closerBackoffDelayMs(n)),
+      )
+    }
+  })
+
+  it('derives the stamp from the CURRENT count, not one a caller read earlier (Codex review of PR #196, comment 3843607494)', async () => {
+    // The interleaving the fix closes: a pass observes closer_failure_count=5
+    // at the START of its (LLM-round-trip-length) run. Before it fails and
+    // reaches this call, an interactive `completeSessionTriage` legitimately
+    // resets the row to 0 — a durable write-back with NO epoch bump, so the
+    // epoch fence alone does not protect against it. The OLD shape took the
+    // post-increment count as an INPUT (computed from that stale 5), and would
+    // have stamped 6, overwriting the reset with a near-4-hour gate on a row
+    // that had just been legitimately re-armed. The fix has NO count input at
+    // all: it reads the row's value AT THIS STATEMENT, so the reset — however
+    // it lands relative to a caller's earlier read — is exactly what gets
+    // incremented.
+    const opened = await open(uid, 'conv-fail-race')
+    await setRow(opened.row.id, { closed_at: NOW, closer_failure_count: 5 })
+
+    // Simulate the race: the reset commits before this call, same as it would
+    // if `completeSessionTriage` won the interleaving.
+    await setRow(opened.row.id, { closer_failure_count: 0, closer_next_attempt_at: null })
+
+    await recordFailure(opened.row.id)
+
+    const row = await rawRow(opened.row.id)
+    // ONE, not six — the whole point of the fix.
+    expect(row.closer_failure_count).toBe(1)
+    expect(row.closer_next_attempt_at).toEqual(new Date(NOW.getTime() + closerBackoffDelayMs(1)))
+  })
+
+  it('is a no-op at a stale epoch — a resurrection wins either ordering', async () => {
+    const opened = await open(uid, 'conv-fail-fenced')
+    await setRow(opened.row.id, { closed_at: NOW })
+
+    await recordFailure(opened.row.id, 99) // stale — the row is still at epoch 1
+
+    const row = await rawRow(opened.row.id)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
+  })
+
+  it('never crosses a tenant boundary', async () => {
+    const theirs = await open(other, 'conv-fail-theirs')
+    await setRow(theirs.row.id, { closed_at: NOW })
+
+    await recordFailure(theirs.row.id)
+
+    expect((await rawRow(theirs.row.id)).closer_failure_count).toBe(0)
   })
 })
 
@@ -449,6 +597,29 @@ describe('finishSessionTriage', () => {
     expect(row.last_triaged_event_ids).toEqual(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'])
     // Durable consumption — the ONLY path allowed to clear it.
     expect(row.last_message_excerpt).toBeNull()
+  })
+
+  it('RESETS a prior backoff — reaching a durable write-back is what "succeeded" means (issue #184)', async () => {
+    await setRow(runId, {
+      closer_failure_count: 3,
+      closer_next_attempt_at: new Date(NOW.getTime() + 60_000),
+    })
+
+    const ok = await withTenant(uid, (tx) =>
+      finishSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        attemptId: ATTEMPT,
+        triageStatus: 'completed',
+        visibleEventIds: [],
+        clearExcerpt: true,
+      }),
+    )
+
+    expect(ok).toBe(true)
+    const row = await rawRow(runId)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
   })
 
   it('is a no-op when the epoch moved mid-pass (resurrection)', async () => {
@@ -1011,6 +1182,34 @@ describe('needs_look', () => {
 })
 
 /**
+ * A resurrect RESETS the closer backoff (issue #184): the row is reopening for
+ * a reason that has nothing to do with why a past closer pass may have
+ * failed, so a stale wait must not survive to gate the NEXT time it closes.
+ */
+describe('a resurrect resets the closer backoff', () => {
+  it('clears a stale backoff the moment a new write reopens the row', async () => {
+    const opened = await open(uid, 'conv-backoff-resurrect')
+    await setRow(opened.row.id, { last_seen_at: SWEEPABLE })
+    await sweep(uid)
+    await setRow(opened.row.id, {
+      closer_failure_count: 3,
+      closer_next_attempt_at: new Date(NOW.getTime() + 60 * 60 * 1000),
+    })
+
+    // Stale-lease attach: the row is closed, so this takes the resurrect branch.
+    await withTenant(uid, (tx) =>
+      resolveSessionProvenance(tx, uid, { sessionRunId: opened.row.id, now: NOW }),
+    )
+
+    const row = await rawRow(opened.row.id)
+    expect(row.closed_at).toBeNull()
+    expect(row.activation_epoch).toBe(2)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
+  })
+})
+
+/**
  * THE COST MODEL, asserted against a real planner (issue #183).
  *
  * The bug this migration fixes is not a wrong answer, it is a wrong SHAPE: the
@@ -1053,11 +1252,11 @@ describe('agent_sessions_closer_idx', () => {
   }
 
   /** The shipped candidate statement, EXPLAINed with real counters. */
-  async function planCandidateScan(userId: string): Promise<PlanNode> {
+  async function planCandidateScan(userId: string, now: Date = NOW): Promise<PlanNode> {
     const query = new QueryBuilder()
       .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
       .from(agentSessions)
-      .where(closerCandidatePredicate(userId))
+      .where(closerCandidatePredicate(userId, now))
       .orderBy(agentSessions.closedAt)
       .limit(50)
       .toSQL()
@@ -1149,6 +1348,63 @@ describe('agent_sessions_closer_idx', () => {
     expect(probeLoops(after)).toBe(probeLoops(before))
     expect(scanRows(after)).toBe(scanRows(before))
     expect(rowsDiscarded(after)).toBe(rowsDiscarded(before))
+  })
+
+  /**
+   * THE BACKOFF GATE, EXPLAINed (issue #184). `closer_next_attempt_at <= now()`
+   * cannot live in the partial index the way `needs_look` does — the value
+   * depends on the CALL TIME, and a partial index predicate must be IMMUTABLE,
+   * so `CREATE INDEX` would refuse it outright. This proves what that leaves
+   * behind: still exactly one index answering the scan, and the backed-off row
+   * showing up as a `Filter` discard rather than a second probe.
+   */
+  it('the backoff gate is a WHERE-only Filter, never a second index or probe', async () => {
+    const backedOff = await open(uid, 'conv-plan-backoff')
+    await setRow(backedOff.row.id, {
+      closed_at: NOW,
+      triage_status: 'idle',
+      closer_next_attempt_at: new Date(NOW.getTime() + 60 * 60 * 1000),
+    })
+    const ready = await open(uid, 'conv-plan-ready')
+    await setRow(ready.row.id, { closed_at: NOW, triage_status: 'idle' })
+    await ownerPool.query('ANALYZE agent_sessions')
+
+    const plan = await planCandidateScan(uid)
+    // `agent_sessions_closer_idx` serves the scan; the untriaged-event probe's
+    // OWN index may still appear in the STATIC plan (both rows are `idle`, so
+    // the planner can leave the `EXISTS` SubPlan in the tree even though the
+    // `triage_status <> 'completed'` leg short-circuits it before it ever
+    // runs) — zero ACTUAL loops is the property that matters, not the node's
+    // absence.
+    expect(indexNames(plan)).toContain('agent_sessions_closer_idx')
+    expect(probeLoops(plan)).toBe(0)
+    expect(scanRows(plan)).toBe(1)
+    expect(rowsDiscarded(plan)).toBe(1)
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).toEqual([ready.row.id])
+  })
+
+  /**
+   * THE BEHAVIOURAL PROOF the plan assertion above only implies: sorted oldest
+   * `closed_at` first, an ungated backed-off row would sit at the FRONT of
+   * every bounded batch forever — exactly the starvation issue #184 exists to
+   * fix. With the gate, a LIMIT with room for only one row skips straight past
+   * it to the newer, ready one.
+   */
+  it('a backed-off row does not occupy the batch window — a newer candidate is returned past it', async () => {
+    const older = await open(uid, 'conv-plan-older')
+    await setRow(older.row.id, {
+      closed_at: new Date(NOW.getTime() - 60_000),
+      triage_status: 'idle',
+      closer_next_attempt_at: new Date(NOW.getTime() + 60 * 60 * 1000),
+    })
+    const newer = await open(uid, 'conv-plan-newer')
+    await setRow(newer.row.id, { closed_at: NOW, triage_status: 'idle' })
+
+    expect((await candidates(uid, 1)).map((row) => row.sessionRunId)).toEqual([newer.row.id])
+    // And once its window elapses, it is selected too — self-healing, not lost.
+    const past = new Date(NOW.getTime() + 61 * 60 * 1000)
+    const ids = (await candidates(uid, 100, past)).map((row) => row.sessionRunId)
+    expect(ids).toContain(older.row.id)
   })
 })
 

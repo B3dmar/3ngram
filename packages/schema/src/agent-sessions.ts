@@ -71,6 +71,27 @@ export const MAX_SESSION_SWEEP_BATCH = 100
 export const SESSION_EXCERPT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
+ * Base backoff after a closer pass FAILS for a row (issue #184): one sweep
+ * tick. Below one tick the stamp would already be in the past by the time the
+ * next scan runs, so it would gate nothing — the floor is set by the cadence
+ * the gate exists to skip, not chosen freely. Seeds the growth curve in
+ * `closerBackoffDelayMs` (packages/db/src/session-closer.ts).
+ */
+export const CLOSER_BACKOFF_BASE_MS = 20 * 60 * 1000
+
+/**
+ * Cap on the per-row closer backoff, doubled per consecutive failure
+ * (`closerBackoffDelayMs`). Four hours: long enough that a row stuck failing
+ * every tick can no longer starve the batch (the worst case shrinks from "every
+ * 20 minutes forever" to "at most every 4 hours once mature"), short enough
+ * that a cleared cause — the gateway back up, a malformed reply no longer
+ * produced — is felt again within the same working day. NEVER unbounded and
+ * NEVER permanent: this is a ceiling on the wait, not a limit on retries, so
+ * self-healing holds at any failure count.
+ */
+export const CLOSER_BACKOFF_MAX_MS = 4 * 60 * 60 * 1000
+
+/**
  * Closed native-write payload. JSON keys are spelling-sensitive — the index uses
  * the same spelling — and so is the VALUE: it is compared as `text` by
  * `payload->>'sessionRunId' = $1`, so the id rides the canonical

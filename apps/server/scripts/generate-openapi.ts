@@ -289,6 +289,8 @@ const exportAgentSession = z
     ),
     lastMessageExcerpt: z.string().nullable(),
     needsLook: z.boolean(),
+    closerFailureCount: z.number().int(),
+    closerNextAttemptAt: z.string().datetime().nullable(),
   })
   .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like
