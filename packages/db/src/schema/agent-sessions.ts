@@ -11,6 +11,7 @@ import {
 } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   check,
   index,
   integer,
@@ -49,6 +50,11 @@ export const agentSessions = pgTable(
     briefingDeliveredAt: timestamp('briefing_delivered_at', { withTimezone: true }),
     briefedMemories: jsonb('briefed_memories').notNull().default([]).$type<BriefedMemory[]>(),
     lastMessageExcerpt: text('last_message_excerpt'),
+    // THE CLOSER'S SCAN DISCRIMINATOR (issue #183). "This run may hold a
+    // provenance event outside `last_triaged_event_ids`." Not user content and
+    // not part of the Stop-handshake vocabulary — `triage_status` stays exactly
+    // the five words layer 4 reads. See session-closer.ts `settleNeedsLook`.
+    needsLook: boolean('needs_look').notNull().default(false),
   },
   (t) => [
     unique('agent_sessions_tenant_id_uq').on(t.userId, t.id),
@@ -61,9 +67,20 @@ export const agentSessions = pgTable(
     // returned, not the work done, and agent_sessions is never routinely
     // deleted. Excluding the terminal status keeps the index to rows a closer
     // could still act on.
+    //
+    // SETTLED HISTORY LEAVES THE INDEX (issue #183). `completed` is the terminal
+    // state of the HAPPY path, so without the `needs_look` leg every session a
+    // tenant ever ran stays in the index and — sorted by `closed_at` — sorts
+    // FIRST, ahead of the backlog the scan is actually looking for. The cost
+    // then grows with history rather than with load. `needs_look` is the one bit
+    // that distinguishes a settled `completed` row from one that may still hold
+    // an event outside its watermark, and only the latter can ever be a
+    // candidate, so only the latter belongs here.
     index('agent_sessions_closer_idx')
       .on(t.userId, t.closedAt)
-      .where(sql`${t.closedAt} IS NOT NULL AND ${t.triageStatus} <> 'overflowed'`),
+      .where(
+        sql`${t.closedAt} IS NOT NULL AND ${t.triageStatus} <> 'overflowed' AND (${t.triageStatus} <> 'completed' OR ${t.needsLook})`,
+      ),
     check('agent_sessions_source_check', enumCheckSql(t.source, agentSessionSourceSchema.options)),
     check(
       'agent_sessions_triage_check',

@@ -288,6 +288,7 @@ const exportAgentSession = z
         .strict(),
     ),
     lastMessageExcerpt: z.string().nullable(),
+    needsLook: z.boolean(),
   })
   .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like

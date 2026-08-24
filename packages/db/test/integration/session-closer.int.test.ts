@@ -14,14 +14,18 @@
 //
 // Concurrency is provoked with the deterministic two-promise barrier the
 // lifecycle suite uses, never with sleeps (hard rule 4 forbids flake).
+
+import { readFile } from 'node:fs/promises'
 import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
 import { and, eq, isNull, lt } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/pg-core'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import { createCommitment, transitionCommitment } from '../../src/commitments.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
+  closerCandidatePredicate,
   expireStaleExcerpts,
   finishSessionTriage,
   listCloserCandidates,
@@ -31,6 +35,7 @@ import {
 } from '../../src/session-closer.js'
 import { isExplicitClose } from '../../src/session-lease.js'
 import { closeSession, heartbeatSession, openSession } from '../../src/session-lifecycle.js'
+import { resolveSessionProvenance } from '../../src/session-provenance.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const NOW = new Date('2026-08-23T12:00:00.000Z')
@@ -666,7 +671,11 @@ describe('listCloserCandidates includes re-armed completed runs (Codex db/sessio
     // commit, so without this leg the event is missed permanently.
     const opened = await open(uid, 'conv-rearm')
     const memoryId = await seedCommitmentMemory(uid)
-    await setRow(opened.row.id, { closed_at: NOW, triage_status: 'completed' })
+    // `needs_look` is what keeps such a row in `agent_sessions_closer_idx` at all
+    // (issue #183); the attach that lands the late event raises it in the same
+    // statement, and a stamp that leaves an event untriaged re-raises it. Both
+    // writers are pinned in `needs_look` below — here it is fixture state.
+    await setRow(opened.row.id, { closed_at: NOW, triage_status: 'completed', needs_look: true })
 
     // An event for this run that the watermark does not contain.
     await ownerPool.query(
@@ -693,6 +702,9 @@ describe('listCloserCandidates includes re-armed completed runs (Codex db/sessio
       closed_at: NOW,
       triage_status: 'completed',
       last_triaged_event_ids: JSON.stringify([eventId]),
+      // Flagged, so the row is IN the index and the probe really does run — the
+      // exclusion below is the EXISTS leg's answer, not the index predicate's.
+      needs_look: true,
     })
 
     expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(opened.row.id)
@@ -701,7 +713,11 @@ describe('listCloserCandidates includes re-armed completed runs (Codex db/sessio
   it('still never selects an overflowed run, however many untriaged events it holds', async () => {
     const opened = await open(uid, 'conv-over')
     const memoryId = await seedCommitmentMemory(uid)
-    await setRow(opened.row.id, { closed_at: NOW, triage_status: 'overflowed' })
+    await setRow(opened.row.id, {
+      closed_at: NOW,
+      triage_status: 'overflowed',
+      needs_look: true,
+    })
     await ownerPool.query(
       `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
        VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
@@ -714,7 +730,7 @@ describe('listCloserCandidates includes re-armed completed runs (Codex db/sessio
   it('keeps another tenant events out of this tenant re-arm check', async () => {
     const mine = await open(uid, 'conv-mine-rearm')
     const theirMemory = await seedCommitmentMemory(other)
-    await setRow(mine.row.id, { closed_at: NOW, triage_status: 'completed' })
+    await setRow(mine.row.id, { closed_at: NOW, triage_status: 'completed', needs_look: true })
     // An event owned by the OTHER tenant that names this tenant's run id.
     await ownerPool.query(
       `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
@@ -872,5 +888,357 @@ describe('closer vs user race, against real Postgres (delta audit P1)', () => {
       [commitment.id],
     )
     expect(after.rows[0]).toEqual(first.rows[0])
+  })
+})
+
+/**
+ * `needs_look` — the discriminator that lets SETTLED history leave the closer's
+ * candidate index (issue #183).
+ *
+ * The flag is a promise, and the promise is one-directional: **false means this
+ * run holds no provenance event outside `last_triaged_event_ids`.** A false
+ * negative loses that event permanently, because a settled `completed` row is
+ * not in `agent_sessions_closer_idx` and so is never visited again. So what is
+ * pinned here is every writer that can leave a row `completed`, not the read.
+ */
+describe('needs_look', () => {
+  const ATTEMPT = '99999999-9999-4999-8999-999999999999'
+
+  /** A closed, claimed run — the state `finishSessionTriage` is fenced against. */
+  async function claimedRun(sessionId: string): Promise<string> {
+    const opened = await open(uid, sessionId)
+    await setRow(opened.row.id, { last_seen_at: SWEEPABLE })
+    await sweep(uid)
+    await withTenant(uid, (tx) =>
+      claimSessionTriage(tx, uid, {
+        sessionRunId: opened.row.id,
+        activationEpoch: 1,
+        observedAttemptId: null,
+        attemptId: ATTEMPT,
+      }),
+    )
+    return opened.row.id
+  }
+
+  async function seedRunEvent(userId: string, runId: string): Promise<string> {
+    const memoryId = await seedCommitmentMemory(userId)
+    const inserted = await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))
+       RETURNING id`,
+      [userId, memoryId, runId],
+    )
+    return (inserted.rows[0] as { id: string }).id
+  }
+
+  const finish = (runId: string, visibleEventIds: string[]) =>
+    withTenant(uid, (tx) =>
+      finishSessionTriage(tx, uid, {
+        sessionRunId: runId,
+        activationEpoch: 1,
+        attemptId: ATTEMPT,
+        triageStatus: 'completed',
+        visibleEventIds,
+        clearExcerpt: true,
+      }),
+    )
+
+  it('is CLEARED when the watermark the closer stamps covers every event', async () => {
+    const runId = await claimedRun('conv-needs-clear')
+    const eventId = await seedRunEvent(uid, runId)
+    await setRow(runId, { needs_look: true })
+
+    expect(await finish(runId, [eventId])).toBe(true)
+    expect((await rawRow(runId)).needs_look).toBe(false)
+    // …and the row therefore drops out of the candidate scan for good.
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(runId)
+  })
+
+  it('is SET by the stamp itself when an event landed outside that watermark', async () => {
+    // The late-commit race, reproduced at the only point it is observable: the
+    // closer took its listing, an attaching transaction committed, and the stamp
+    // now writes a watermark that is already stale. The recompute runs on a
+    // fresh statement snapshot, so it sees the event the listing missed.
+    const runId = await claimedRun('conv-needs-race')
+    const stampedId = await seedRunEvent(uid, runId)
+    const lateId = await seedRunEvent(uid, runId)
+    expect(lateId).not.toBe(stampedId)
+
+    expect(await finish(runId, [stampedId])).toBe(true)
+    const row = await rawRow(runId)
+    expect(row.triage_status).toBe('completed')
+    expect(row.needs_look).toBe(true)
+    // Which is the whole point: the run is still a candidate, so the late event
+    // is triaged on the next pass instead of being lost.
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).toContain(runId)
+  })
+
+  it('is not touched by a stamp the epoch fence rejected', async () => {
+    const runId = await claimedRun('conv-needs-fenced')
+    await seedRunEvent(uid, runId)
+    await setRow(runId, { needs_look: false, activation_epoch: 2 })
+
+    expect(await finish(runId, [])).toBe(false)
+    // A no-op write-back must stay a no-op: the recompute belongs to the stamp.
+    expect((await rawRow(runId)).needs_look).toBe(false)
+  })
+
+  it('is RAISED by a provenance attach that lands on a completed run', async () => {
+    // The other half of the handshake: when the stamper holds the row lock, the
+    // attaching transaction is the one that observes `completed` and re-arms.
+    const opened = await open(uid, 'conv-needs-attach')
+    await setRow(opened.row.id, { triage_status: 'completed' })
+    const memoryId = await seedCommitmentMemory(uid)
+
+    await withTenant(uid, (tx) =>
+      resolveSessionProvenance(tx, uid, { sessionRunId: opened.row.id, now: NOW }),
+    )
+    expect(memoryId).toBeDefined()
+
+    const row = await rawRow(opened.row.id)
+    expect(row.needs_look).toBe(true)
+    // The status re-arm and the flag are the same signal, written together.
+    expect(row.triage_status).toBe('idle')
+  })
+
+  it('leaves an idle run unflagged, so ordinary traffic adds no index churn', async () => {
+    const opened = await open(uid, 'conv-needs-idle')
+    await withTenant(uid, (tx) =>
+      resolveSessionProvenance(tx, uid, { sessionRunId: opened.row.id, now: NOW }),
+    )
+    expect((await rawRow(opened.row.id)).needs_look).toBe(false)
+  })
+})
+
+/**
+ * THE COST MODEL, asserted against a real planner (issue #183).
+ *
+ * The bug this migration fixes is not a wrong answer, it is a wrong SHAPE: the
+ * candidate scan used to walk — and pay an `EXISTS` probe on — every `completed`
+ * row the tenant had ever accumulated, oldest first, because `completed` is the
+ * terminal state of the happy path and `LIMIT` bounds rows RETURNED, not rows
+ * examined. A behavioural test cannot see that; only the plan can.
+ *
+ * `enable_seqscan = off` for the same reason the `memory_events_session_idx`
+ * assertion uses it (session-events-read.int.test.ts): a small fixture table is
+ * always cheaper to seq-scan, so the index path has to be costed to be observed.
+ * The predicate is the SHIPPED one — `closerCandidatePredicate`, rendered through
+ * drizzle's dialect — so this cannot pass against a transcription that has
+ * drifted from the statement the closer actually runs.
+ */
+describe('agent_sessions_closer_idx', () => {
+  interface PlanNode {
+    'Node Type': string
+    'Index Name'?: string
+    'Relation Name'?: string
+    'Actual Loops': number
+    'Actual Rows': number
+    'Rows Removed by Filter'?: number
+    Plans?: PlanNode[]
+  }
+
+  /** Seed `count` SETTLED completed rows: triaged, unflagged, nothing outstanding. */
+  async function seedSettledHistory(userId: string, count: number, tag: string): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO agent_sessions
+         (user_id, agent, session_id, source, selector, closed_at, last_seen_at, triage_status)
+       SELECT $1, 'claude-code', $2 || g, 'startup', '{"kind":"all"}'::jsonb,
+              $3::timestamptz - (g || ' minutes')::interval,
+              $3::timestamptz - (g || ' minutes')::interval,
+              'completed'
+         FROM generate_series(1, $4::int) g`,
+      [userId, tag, NOW.toISOString(), count],
+    )
+    await ownerPool.query('ANALYZE agent_sessions')
+  }
+
+  /** The shipped candidate statement, EXPLAINed with real counters. */
+  async function planCandidateScan(userId: string): Promise<PlanNode> {
+    const query = new QueryBuilder()
+      .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
+      .from(agentSessions)
+      .where(closerCandidatePredicate(userId))
+      .orderBy(agentSessions.closedAt)
+      .limit(50)
+      .toSQL()
+    const conn = await ownerPool.connect()
+    try {
+      await conn.query('BEGIN')
+      await conn.query('SET LOCAL enable_seqscan = off')
+      const explained = await conn.query(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${query.sql}`,
+        query.params as unknown[],
+      )
+      await conn.query('ROLLBACK')
+      const plan = explained.rows[0] as { 'QUERY PLAN': Array<{ Plan: PlanNode }> }
+      return plan['QUERY PLAN'][0].Plan
+    } finally {
+      conn.release()
+    }
+  }
+
+  function walk(node: PlanNode): PlanNode[] {
+    return [node, ...(node.Plans ?? []).flatMap(walk)]
+  }
+
+  /**
+   * Index names anywhere in the plan. Read as a SET rather than off a fixed node,
+   * because a plain index scan and a bitmap scan put the name at different depths
+   * and the property under test is which index answers, not which shape wins.
+   */
+  const indexNames = (plan: PlanNode): string[] =>
+    walk(plan)
+      .map((node) => node['Index Name'])
+      .filter((name): name is string => name !== undefined)
+
+  /** How many times the untriaged-event probe actually ran. THE cost signal. */
+  const probeLoops = (plan: PlanNode): number =>
+    walk(plan)
+      .filter((node) => node['Relation Name'] === 'memory_events')
+      .reduce((total, node) => total + node['Actual Loops'], 0)
+
+  /** Rows the candidate scan emitted for `agent_sessions`. */
+  const scanRows = (plan: PlanNode): number =>
+    walk(plan)
+      .filter((node) => node['Relation Name'] === 'agent_sessions')
+      .reduce((total, node) => total + node['Actual Rows'], 0)
+
+  /**
+   * Rows the scan VISITED and threw away. The counter the old index predicate
+   * moves: a settled row it still admits is examined and discarded here, so this
+   * is where "the work grows with history" becomes visible even when the rows
+   * returned and the probes paid do not change.
+   */
+  const rowsDiscarded = (plan: PlanNode): number =>
+    walk(plan)
+      .filter((node) => node['Relation Name'] === 'agent_sessions')
+      .reduce((total, node) => total + (node['Rows Removed by Filter'] ?? 0), 0)
+
+  it('serves the candidate scan, and its cost does not grow with settled history', async () => {
+    // One genuine backlog row and one FLAGGED completed row that really does hold
+    // an untriaged event, so the probe has work to do and a flat count later is a
+    // property rather than an empty scan.
+    const backlog = await open(uid, 'conv-plan-backlog')
+    await setRow(backlog.row.id, { closed_at: NOW, triage_status: 'idle' })
+    const flagged = await open(uid, 'conv-plan-flagged')
+    await setRow(flagged.row.id, { closed_at: NOW, triage_status: 'completed', needs_look: true })
+    const memoryId = await seedCommitmentMemory(uid)
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, flagged.row.id],
+    )
+    await seedSettledHistory(uid, 200, 'settled-a-')
+
+    const before = await planCandidateScan(uid)
+    expect(indexNames(before)).toContain('agent_sessions_closer_idx')
+    expect(indexNames(before)).toContain('memory_events_session_idx')
+    // Exactly one probe — the single flagged row. The 200 settled rows are not in
+    // the index at all, so the scan never reaches them to filter them out.
+    expect(probeLoops(before)).toBe(1)
+    expect(scanRows(before)).toBe(2)
+    // Nothing is examined only to be thrown away: the settled rows are not there.
+    expect(rowsDiscarded(before)).toBe(0)
+    expect(await candidates(uid)).toHaveLength(2)
+
+    // Ten times the history, same backlog. Before 0034 this multiplied the probe
+    // count by ten; that it no longer does is the entire point of the change.
+    await seedSettledHistory(uid, 2000, 'settled-b-')
+    const after = await planCandidateScan(uid)
+    expect(indexNames(after)).toContain('agent_sessions_closer_idx')
+    expect(probeLoops(after)).toBe(probeLoops(before))
+    expect(scanRows(after)).toBe(scanRows(before))
+    expect(rowsDiscarded(after)).toBe(rowsDiscarded(before))
+  })
+})
+
+/**
+ * MIGRATION 0034's BACKFILL, run against real fixtures.
+ *
+ * The narrowed index makes `needs_look = false` load-bearing: a `completed` row
+ * that carries it is dropped from the closer's candidate scan permanently. The
+ * column default declares every pre-existing row settled, so the backfill is the
+ * only thing standing between an existing untriaged event and silent loss — and
+ * it is a one-shot statement no other test can reach, because `runMigrations()`
+ * is idempotent and has already run by the time this suite starts.
+ *
+ * So the statement is READ OUT OF THE MIGRATION FILE and executed here. A copy
+ * pasted into the test would pass while the shipped SQL rotted.
+ */
+describe('0034 needs_look backfill', () => {
+  /** The backfill UPDATE, verbatim from the shipped migration. */
+  async function backfillStatement(): Promise<string> {
+    const sqlText = await readFile(
+      new URL('../../migrations/0034_session_closer_needs_look.sql', import.meta.url),
+      'utf8',
+    )
+    const statements = sqlText.split('--> statement-breakpoint')
+    // The statement is preceded by its own `--` rationale, so match the first
+    // line that OPENS a statement rather than the start of the segment.
+    const update = statements.find((statement) => /^\s*UPDATE\b/m.test(statement))
+    if (update === undefined) throw new Error('0034 no longer contains a backfill UPDATE')
+    return update
+  }
+
+  /** A row in `status`, closed or not, plus one event that the watermark misses. */
+  async function seedUntriaged(
+    sessionId: string,
+    status: string,
+    closed: boolean,
+  ): Promise<string> {
+    const opened = await open(uid, sessionId)
+    await setRow(opened.row.id, {
+      triage_status: status,
+      ...(closed ? { closed_at: NOW } : {}),
+    })
+    const memoryId = await seedCommitmentMemory(uid)
+    await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))`,
+      [uid, memoryId, opened.row.id],
+    )
+    return opened.row.id
+  }
+
+  it('flags every completed run holding an untriaged event, OPEN ones included', async () => {
+    // The open row is the case a `closed_at IS NOT NULL` backfill would miss. The
+    // Stop handshake stamps `completed` on a LEASED-OPEN row, and `closeSession`
+    // stamps `closed_at` and nothing else — no recompute runs on close — so the
+    // flag this statement leaves is the flag the index uses forever after.
+    const openCompleted = await seedUntriaged('conv-backfill-open', 'completed', false)
+    const closedCompleted = await seedUntriaged('conv-backfill-closed', 'completed', true)
+    const overflowed = await seedUntriaged('conv-backfill-over', 'overflowed', true)
+
+    // Settled: its only event is already in the watermark.
+    const settled = await open(uid, 'conv-backfill-settled')
+    const settledMemory = await seedCommitmentMemory(uid)
+    const inserted = await ownerPool.query(
+      `INSERT INTO memory_events (user_id, memory_id, event_kind, actor_kind, payload)
+       VALUES ($1, $2, 'create', 'user_mcp', jsonb_build_object('sessionRunId', $3::text))
+       RETURNING id`,
+      [uid, settledMemory, settled.row.id],
+    )
+    await setRow(settled.row.id, {
+      closed_at: NOW,
+      triage_status: 'completed',
+      last_triaged_event_ids: JSON.stringify([(inserted.rows[0] as { id: string }).id]),
+    })
+
+    // Every row starts at the column default — the state the migration inherits.
+    await ownerPool.query('UPDATE agent_sessions SET needs_look = false')
+    await ownerPool.query(await backfillStatement())
+
+    const flagOf = async (id: string) => (await rawRow(id)).needs_look
+    expect(await flagOf(openCompleted)).toBe(true)
+    expect(await flagOf(closedCompleted)).toBe(true)
+    expect(await flagOf(settled.row.id)).toBe(false)
+    // `overflowed` is terminal and never a candidate, flagged or not.
+    expect(await flagOf(overflowed)).toBe(false)
+
+    // The open row is not yet scannable — the index still requires a close — but
+    // it becomes a candidate the moment it closes, which is the whole point.
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).not.toContain(openCompleted)
+    await setRow(openCompleted, { closed_at: NOW })
+    expect((await candidates(uid)).map((row) => row.sessionRunId)).toContain(openCompleted)
   })
 })

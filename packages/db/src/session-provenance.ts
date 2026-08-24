@@ -115,10 +115,29 @@ async function readSession(
  */
 const rearmTriage = sql`CASE WHEN ${agentSessions.triageStatus} = 'completed' THEN 'idle' ELSE ${agentSessions.triageStatus} END`
 
+/**
+ * THE SAME SIGNAL, RECORDED FOR THE CLOSER'S SCAN (issue #183). `needs_look` is
+ * what keeps a `completed` row in `agent_sessions_closer_idx`; settled ones are
+ * not in it at all, so an attach that lands on a `completed` row must raise it in
+ * the same statement that re-arms the status.
+ *
+ * The two expressions read the SAME old row version and therefore agree, which
+ * is the point: {@link rearmTriage} covers the row THIS transaction leaves
+ * behind, and the flag covers the row a stamper commits UNDER us — a watermark
+ * stamp blocked on our row lock resumes, sees `completed` (its own write), and
+ * `settleNeedsLook` cannot see our event because we have not committed. Raising
+ * the flag here is the half of that handshake this side owns.
+ */
+const flagNeedsLook = sql<boolean>`CASE WHEN ${agentSessions.triageStatus} = 'completed' THEN true ELSE ${agentSessions.needsLook} END`
+
 async function heartbeat(tx: TenantTx, userId: string, id: string, now: Date): Promise<void> {
   await tx
     .update(agentSessions)
-    .set({ lastSeenAt: monotonicLastSeen(now), triageStatus: rearmTriage })
+    .set({
+      lastSeenAt: monotonicLastSeen(now),
+      triageStatus: rearmTriage,
+      needsLook: flagNeedsLook,
+    })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }
 
@@ -139,6 +158,7 @@ async function resurrect(tx: TenantTx, userId: string, id: string, now: Date): P
       // Same re-arm as heartbeat: this write attaches a new event id, and the
       // resurrect branch is still an attach. See {@link rearmTriage}.
       triageStatus: rearmTriage,
+      needsLook: flagNeedsLook,
     })
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, id)))
 }

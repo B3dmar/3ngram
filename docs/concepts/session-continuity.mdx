@@ -256,6 +256,7 @@ agent_sessions (
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
   last_message_excerpt text null,            -- bounded; closer input; cleared only after closer consumes; TTL sweep leftovers
+  needs_look           boolean not null default false, -- closer scan discriminator: this run may hold an event outside the watermark; set by an attach onto a completed run, recomputed by every watermark stamp
   unique (user_id, agent, session_id)
 )
 ```
@@ -789,6 +790,17 @@ It runs on the lease-expiry sweep, or on explicit `closed_at`, when
 not in `last_triaged_event_ids`**. It does **not** run on `overflowed` (terminal;
 metric only). It does not scrape tool I/O. It does not run on every Stop. It does
 not invent user-turn decisions that were never written.
+
+The candidate scan is bounded by the BACKLOG, never by history. `completed` is the
+terminal state of the happy path, so a predicate that admitted every `completed`
+row would make each sweep tick walk — and pay the untriaged-event probe on — every
+session the tenant ever ran, oldest first. `needs_look` is the one bit that
+separates a settled `completed` row from one that may still hold an event outside
+its watermark: settled rows leave `agent_sessions_closer_idx` entirely, and the
+probe is paid only on flagged rows. The flag is raised by an attaching write that
+lands on a `completed` run, and every watermark stamp recomputes it against the set
+it just wrote — a stamp that leaves an event untriaged re-raises it, which is what
+keeps the late-commit race covered.
 
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That
