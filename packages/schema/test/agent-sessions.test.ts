@@ -74,6 +74,7 @@ describe('agentSessionRowSchema', () => {
     activationEpoch: 1,
     triageStatus: 'idle',
     triageAttemptId: null,
+    triageArmedAt: null,
     lastTriagedEventIds: [],
     briefedMemories: [],
     lastMessageExcerpt: null,
@@ -445,6 +446,24 @@ describe('agentSessionTriageBeginBodySchema', () => {
   it('takes the natural key alone — the turn count is an optional hint', () => {
     expect(agentSessionTriageBeginBodySchema.parse(KEY)).toEqual(KEY)
     expect(agentSessionTriageBeginBodySchema.parse({ ...KEY, turnCount: 4 }).turnCount).toBe(4)
+  })
+
+  it('takes stopHookActive as an optional boolean, absent meaning guarded', () => {
+    // The flag exempts the attempt-age guard, so "absent" must land on the
+    // GUARDED side rather than on a default this schema invents: an older hook
+    // that never sends it stays exactly as safe as it is today.
+    expect(agentSessionTriageBeginBodySchema.parse(KEY).stopHookActive).toBeUndefined()
+    expect(
+      agentSessionTriageBeginBodySchema.parse({ ...KEY, stopHookActive: true }).stopHookActive,
+    ).toBe(true)
+    // No coercion, for the same reason turnCount does not coerce: a JSON body
+    // that says `'true'` is a client bug, and this one flips a race guard.
+    for (const stopHookActive of ['true', 1, null]) {
+      expect(
+        agentSessionTriageBeginBodySchema.safeParse({ ...KEY, stopHookActive }).success,
+        String(stopHookActive),
+      ).toBe(false)
+    }
   })
 
   it('bounds the turn count and refuses a non-integer or a string', () => {

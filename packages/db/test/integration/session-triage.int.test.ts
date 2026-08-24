@@ -39,7 +39,9 @@ import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js
 const NOW = new Date('2026-08-23T12:00:00.000Z')
 const KEY = { agent: 'claude-code', sessionId: 'conv-triage' }
 const PROJECT = '3ngram'
-const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000 }
+const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000, minAttemptAgeMs: 30_000 }
+/** A Stop a whole model turn after the arm — past the attempt-age floor. */
+const LATER = new Date(NOW.getTime() + THRESHOLDS.minAttemptAgeMs)
 
 let uid: string
 let other: string
@@ -84,14 +86,24 @@ async function write(userId: string, sessionRunId: string): Promise<void> {
 
 const begin = (
   userId: string,
-  over: { attemptId?: string; turnCount?: number; ceiling?: number; key?: typeof KEY } = {},
+  over: {
+    attemptId?: string
+    turnCount?: number
+    ceiling?: number
+    key?: typeof KEY
+    /** The Stop's clock. Defaults to NOW; pass LATER to clear the attempt-age floor. */
+    now?: Date
+    /** Declares a finalize-only delivery, which is exempt from the age guard. */
+    stopHookActive?: boolean
+  } = {},
 ) =>
   withTenant(userId, (tx) =>
     beginSessionTriage(tx, userId, over.key ?? KEY, {
       attemptId: over.attemptId ?? attempt(1),
       turnCount: over.turnCount ?? THRESHOLDS.minTurns,
+      ...(over.stopHookActive === undefined ? {} : { stopHookActive: over.stopHookActive }),
       thresholds: THRESHOLDS,
-      now: NOW,
+      now: over.now ?? NOW,
       ...(over.ceiling === undefined ? {} : { ceiling: over.ceiling }),
     }),
   )
@@ -106,7 +118,9 @@ const complete = (userId: string, attemptId = attempt(1), ceiling?: number) =>
 
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const r = await ownerPool.query(
-    'SELECT triage_status, triage_attempt_id, last_triaged_event_ids, last_message_excerpt FROM agent_sessions WHERE id = $1',
+    `SELECT triage_status, triage_attempt_id, triage_armed_at, last_triaged_event_ids,
+            last_message_excerpt, closer_failure_count, closer_next_attempt_at
+       FROM agent_sessions WHERE id = $1`,
     [id],
   )
   return r.rows[0] as Record<string, unknown>
@@ -181,6 +195,24 @@ describe('begin/complete round trip', () => {
     await complete(uid, armed.attemptId)
 
     expect((await rawRow(runId)).last_message_excerpt).toBe('the turn ended here')
+  })
+
+  it('resets a closer backoff on its own durable write-back too (issue #184 audit F4)', async () => {
+    // This handshake's `complete` is the OTHER durable terminal write-back the
+    // reset rule names, alongside the closer's own `finishSessionTriage` — see
+    // session-triage.ts's doc comment on completeSessionTriage.
+    const armed = await begin(uid)
+    await ownerPool.query(
+      'UPDATE agent_sessions SET closer_failure_count = 2, closer_next_attempt_at = $2 WHERE id = $1',
+      [runId, new Date(NOW.getTime() + 40 * 60 * 1000)],
+    )
+    await write(uid, runId)
+
+    await complete(uid, armed.attemptId)
+
+    const row = await rawRow(runId)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
   })
 })
 
@@ -403,10 +435,44 @@ describe('the entry rule against a real row', () => {
   it('hands back the in-flight attempt on a pending row rather than double-arming', async () => {
     await begin(uid)
 
-    const second = await begin(uid, { attemptId: attempt(2) })
+    // A GENUINE later ordinary Stop: a whole model turn after the arm, so it is
+    // past the attempt-age floor and may finalize.
+    const second = await begin(uid, { attemptId: attempt(2), now: LATER })
 
     expect(second).toMatchObject({ armed: false, reason: 'pending', attemptId: attempt(1) })
     expect((await rawRow(runId)).triage_attempt_id).toBe(attempt(1))
+  })
+
+  it('withholds the attempt from a SIBLING process racing the same Stop', async () => {
+    // Issue #188, through the real column: the arm stamps `triage_armed_at`, and
+    // a second begin at the same instant is a sibling of the same Stop, not a
+    // later one. It gets no token, so it cannot complete the attempt the arming
+    // process is still building an envelope for.
+    const armed = await begin(uid)
+    expect(armed.armed).toBe(true)
+    expect((await rawRow(runId)).triage_armed_at).toEqual(NOW)
+
+    const sibling = await begin(uid, { attemptId: attempt(2) })
+
+    expect(sibling).toMatchObject({ armed: false, reason: 'pending-fresh' })
+    expect(sibling.attemptId).toBeUndefined()
+    expect(await rawRow(runId)).toMatchObject({
+      triage_status: 'pending',
+      triage_attempt_id: attempt(1),
+    })
+  })
+
+  it('exempts a finalize-only delivery from the age guard', async () => {
+    // The same instant, the same fresh attempt — but this caller declares
+    // `stop_hook_active`, so it is the continuation of the attempt rather than a
+    // sibling racing it, and it may finalize now instead of pushing this turn's
+    // events into the next turn's cumulative watermark.
+    await begin(uid)
+
+    const finalize = await begin(uid, { attemptId: attempt(2), stopHookActive: true })
+
+    expect(finalize).toMatchObject({ armed: false, reason: 'pending', attemptId: attempt(1) })
+    await expect(complete(uid, attempt(1))).resolves.toMatchObject({ triageStatus: 'expired' })
   })
 
   it('re-enters an EXPIRED run only on new provenance', async () => {

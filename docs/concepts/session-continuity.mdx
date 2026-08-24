@@ -249,13 +249,15 @@ agent_sessions (
   opened_at            timestamptz not null,
   closed_at            timestamptz null,
   last_seen_at         timestamptz not null, -- lease heartbeat
-  activation_epoch     int not null,         -- incremented on startup/resume/resurrect; closer fence, not SessionEnd
+  activation_epoch     int not null,         -- incremented on startup/resume/resurrect/erasure; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
+  triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline. NULL = unknown (pre-guard rows) = finalize
   last_triaged_event_ids jsonb not null default '[]', -- event ids ACCOUNTED FOR by triage: all ids visible at the last complete/expire, and the ids visible when the current attempt began — never a since-attempt-begin slice
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
   last_message_excerpt text null,            -- bounded; closer input; cleared only after closer consumes; TTL sweep leftovers
+  needs_look           boolean not null default false, -- closer scan discriminator: this run may hold an event outside the watermark; set by an attach onto a completed run, recomputed by every watermark stamp
   unique (user_id, agent, session_id)
 )
 ```
@@ -330,6 +332,58 @@ close is stamped while the lease is still live and freezes `last_seen_at` there,
 lands after lease expiry and still resurrects. The
 closer on implicit close waits a grace after lease expiry so an overnight idle gap
 can reopen instead of being debriefed mid-conversation.
+
+**Erasure is a fourth writer of `activation_epoch`** (issue #185), folded into the
+same UPDATE as the PII redaction in `eraseAccountData`
+(`packages/db/src/account-delete.ts`) — every row of the account is bumped, closed
+or open. Four things now stand between an in-flight pass and a post-erasure write,
+and they are not equally strong:
+
+- the claim itself (fenced at the epoch observed at step 1) — a pass whose epoch
+  already moved before it claims never runs at all;
+- the pre-gateway check, immediately before dispatch — this one only NARROWS the
+  window rather than closing it: it is a read, not a lock, adjacent to the
+  dispatch with no awaited work between them, but not serialized against the
+  erasure commit. The claim is a fence, not an exclusive lease (`session-closer.ts`,
+  `claimSessionTriage`'s own doc), so more than one of the account's runs can be
+  claimed and mid-pass at once — **one racing dispatch per concurrently-executing
+  closer pass**, bounded by worker concurrency (one job at a time per replica
+  today, the BullMQ `Worker` default `apps/worker/src/queues.ts` does not
+  override) times however many replicas are running, not a single absolute
+  request account-wide. Each one that does dispatch is on the wire for up to the
+  gateway's request timeout (30s default) before it completes — disclosed, not
+  hidden, and not an absolute "≤ timeout" guarantee (see the fence enumeration
+  below for why closing it fully would mean a lock across the network call,
+  which the design rejects by contract);
+- each `resolve` write itself — this one CLOSES its window rather than narrowing
+  it: `transitionCommitment` locks the commitment row before reading the run's
+  current epoch in a fresh statement, so a resolve racing an in-flight erasure
+  either happens strictly before it (the lock-holder wins and writes legitimately)
+  or is rejected with no write at all (erasure holds the lock first, the fresh
+  read after the wait sees the bump);
+- the final write-back, fenced on epoch AND attempt token — all-or-nothing.
+
+So an in-flight pass that observed the pre-erasure epoch either never claims the
+row, is very likely (though not provably, under adversarial scheduling) caught
+before it sends the excerpt or briefed topics to the gateway, has any `resolve`
+it attempts genuinely rejected at the write, and has its bookkeeping write-back
+rejected regardless. The one residual that is disclosed rather than closed is the
+pre-gateway one, above.
+
+**Documentation obligation.** Before this, an `activation_epoch` bump meant one
+thing: the session was resumed or resurrected, and every reader treated it that
+way. That inference is now false — an epoch bump also fires on erasure, which is
+the opposite of the session being alive. No current reader infers liveness from
+the epoch alone (checked as part of issue #185): `session-lifecycle.ts`,
+`session-provenance.ts` and `session-closer.ts` each treat it strictly as an
+opaque fence value, never as a liveness signal; `data-export.ts` (the GDPR
+portability export, :239 and :450) only copies the column through verbatim,
+read-only, into the exported row; and the 3ngram hook's `cmd/3ngram-hook/session.go`
+(:88) decodes `activationEpoch` off the open response into a struct
+field it never reads back or compares — the hook holds no local activation
+token and never has (see SessionEnd, below). Any future reader must not either
+— check `closed_at` and `last_seen_at` for liveness, and treat
+`activation_epoch` as write-fence-only.
 
 ### Last-consumed cursor — deferred
 
@@ -501,18 +555,24 @@ Three implementation decisions this section left open:
   hardcoded false) need. Re-arming requires a provenance event outside the
   stamped watermark, so a zero-write continuation cannot re-arm (nothing new
   exists) and a productive one cannot re-arm on its own writes (`complete`
-  absorbed them). **Three residuals, stated rather than hidden.** (1) The bound
+  absorbed them). **Two residuals, stated rather than hidden — plus a third that
+  is closed only under a stated assumption.** (1) The bound
   is *one nudge per turn that produced new provenance*, not "never twice in a
   session" — a user who keeps working keeps qualifying. (2) A write that
   COMMITS after `complete` took its listing holds an id outside the watermark
   and re-arms the next Stop; MCP writes are synchronous, so this needs a
-  genuinely concurrent async writer. (3) Concurrent Stop deliveries — in
+  genuinely concurrent async writer. A third — concurrent Stop deliveries, in
   practice a duplicate registration of both `stop` and its `heartbeat` alias —
-  let a sibling process finalize an attempt before the arming process emits its
-  envelope, so that continuation's writes land outside the watermark and a
-  later Stop re-arms. The README forbids the duplicate registration; closing it
-  properly needs an arm timestamp the row does not carry
-  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)).
+  is now **closed** by the age guard on the `pending` decline
+  ([issue #188](https://github.com/B3dmar/3ngram/issues/188)): `triage_armed_at`
+  dates the attempt, and `begin` withholds the token below the floor, so a
+  sibling cannot finalize the attempt it is racing. It is closed **on the
+  assumption that app instances agree on the clock** — the age subtracts the
+  arming process's stamp from the reading process's `now`, so a reader whose
+  clock runs more than the floor fast reopens the race (the age-guard paragraph
+  in layer 4 states it in full); the opposite skew only defers a finalize. The
+  README still forbids the duplicate registration —
+  the guard makes it survivable, not correct.
 - **The attempt id round-trips through `begin`.** There is no natural-key read
   on the row, so the finalize Stop recovers the in-flight attempt from `begin`'s
   `pending` decline. That means the finalize path calls a route that COULD arm;
@@ -616,13 +676,61 @@ nag on an unresponsive session this paragraph rules out. Either way, `begin`
 arms only when new provenance exists, and both statuses stay closer-eligible
 throughout — declining a *nudge* is never declining a *debrief*.
 
-`stop_hook_active=true` never injects a new prompt; it only finalizes or expires.
+`stop_hook_active=true` never injects a new prompt; it only finalizes or expires,
+and it says so on the wire: `triage/begin` carries `stopHookActive`, which EXEMPTS
+the age guard below. A finalize-only delivery is the continuation of an attempt
+the harness already blocked on, not a sibling racing the delivery that armed it —
+and the exemption cannot be reached on the delivery that *can* inject, because
+that one is `stop_hook_active=false` by definition. Without it a turn shorter than
+the floor would defer its finalize into the next turn, whose events the eventual
+`complete` would then absorb (see the age guard). A harness that never sets the
+field — Codex has none, Gemini CLI 0.30.0 hardcodes it false — keeps the deferral.
 Claude's eight-block override is configurable (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
 and `stop_hook_active` may never arrive (#54360), so the **numeric self-cap is a
 finalize path**, not a backstop we hope not to need.
 
 A later ordinary Stop (`stop_hook_active=false`) that finds `triage_status=pending`
-applies the same complete-or-expire rule and does not inject again. A live session
+applies the same complete-or-expire rule and does not inject again — **unless the
+attempt is younger than `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (default 30), in
+which case `begin` declines `pending-fresh`, withholds the `attemptId`, and the
+attempt is left alone.** Below that floor the caller is far more likely to be a
+sibling process racing the *same* Stop than a genuine later one: a duplicate
+registration of `stop` and its `heartbeat` alias runs both concurrently, and the
+sibling's finalize would land its watermark before the arming process emits the
+envelope, so that continuation's writes would fall outside it and a later Stop
+would nudge twice for one turn's work. A sibling reads the row milliseconds after
+the arm; a genuine later ordinary Stop is a whole model turn away. Deferring costs
+at most one Stop for the nudge itself — a `pending` row can never arm a second
+injection, age only grows, and `pending` is unconditionally closer-eligible if the
+session ends first.
+
+**Deferral is not free, which is why `stopHookActive` exempts it.** A deferred
+attempt stays `pending` across the user's *next* turn, and the Stop that finally
+completes it stamps the CUMULATIVE watermark — which by then contains that turn's
+events too. They are absorbed without ever having armed a nudge, and a `completed`
+row whose ids are all in the watermark is not closer-eligible either, so that
+turn's provenance goes missing from the debrief machinery entirely. A
+finalize-only delivery therefore declares itself and skips the guard. What is left
+is bounded: only a harness that never sets `stop_hook_active` still defers, and
+only for a continuation shorter than the floor.
+`triage_armed_at` is the arm time (NULL on rows armed before it existed, which read
+as "finalize", the pre-guard behavior).
+
+**The guard assumes NTP-synchronised app instances, and the residual is one-sided.**
+The age is a cross-instance subtraction: `triage_armed_at` carries the *arming*
+process's clock and the floor is applied against the *reading* process's, and
+nothing pins two Stops racing one turn to the same instance behind a load balancer.
+A reading clock that is SLOW computes too small an age and declines `pending-fresh`,
+which only defers a finalize by one Stop — the same harmless direction a negative
+age falls in. A reading clock more than the floor FAST relative to the arming one
+computes an age past the floor for an attempt armed moments ago, gets the real
+token, and can finalize an attempt still in flight: the #188 race, unguarded. No
+process holds both the stamp and the read — Stop is a fresh process per delivery —
+so the only construction that closes it is a database clock (`now() -
+triage_armed_at` inside the statement), which would break the injected-clock
+convention that makes the entry rule and the debounce testable without a database.
+Skew that large is an operational fault in its own right, so the assumption is
+stated rather than engineered around. A live session
 keeps refreshing the lease, so "expire pending after the lease" cannot fire while
 the user is working — that expiry is only for a dead session the closer will pick
 up. Interrupted triage in a live session is the next Stop, not the lease.
@@ -751,26 +859,75 @@ session may already have resolved or superseded the row. Immediately before each
 do not persist a failing batch.
 
 **Epoch fence on the claim, not on every memory insert.** Claim the session row
-at `activation_epoch`. If resurrection has incremented the epoch, the claim
-fails and the job is a no-op.
+at `activation_epoch`. If resurrection — or, since issue #185, an account
+erasure — has incremented the epoch, the claim fails and the job is a no-op.
 
-The fence is checked in three places, and it is worth being precise about what
-each one buys, because they are not equally strong:
+The fence is checked in **five** places, and it is worth being precise about what
+each one buys — they are not equally strong, and only one of them is a narrowing
+fence rather than a closing one:
 
 1. **at claim time** — a run resurrected before the pass starts is never touched;
-2. **before each `resolve`** — a cheap read, so a resurrection during a slow
-   generation stops the batch at the next candidate rather than at the end;
-3. **on the final write-back**, together with the attempt token — the bookkeeping
+2. **after the budget reservation, immediately before the gateway call** (issue
+   #185) — the last point before the excerpt and briefed topics leave the
+   process at all, so this is what actually stops a stale send rather than
+   merely stopping the pass from acting on the reply. Checked AFTER reserving,
+   not before: the reservation takes a per-user advisory lock that can block
+   behind another in-flight metered call for that user, and checking before it
+   would let that wait inflate the residual below past the gateway's own
+   timeout;
+3. **before each `resolve`** — a cheap read in its OWN transaction, so a
+   resurrection during a slow generation stops the batch at the next candidate
+   rather than at the end;
+4. **on the `resolve` write itself** (issue #185) — `transitionCommitment`
+   locks the commitment row (`FOR UPDATE`) BEFORE reading the run's epoch, in
+   a separate, freshly-snapshotted statement, and aborts on a mismatch before
+   ever attempting the write. The lock is what makes the read trustworthy: an
+   epoch check folded into the write's own `WHERE` (an `EXISTS(...)` against
+   `agent_sessions`) is NOT equivalent and does not work — a sub-SELECT inside
+   a blocked-then-woken UPDATE's `WHERE` still runs under that statement's
+   ORIGINAL snapshot even though Postgres re-checks the UPDATE's own target row
+   fresh (EvalPlanQual), so it can still read a pre-erasure epoch after erasure
+   has already committed. Locking first and reading second closes that;
+5. **on the final write-back**, together with the attempt token — the bookkeeping
    (terminal status, watermark, excerpt clear) is all-or-nothing.
 
-(2) narrows the window; it does not close it. A resurrection can still land
-between the check and the `resolve` that follows it, so **an individual resolve
-may commit against a session that has just become active again**. That is a
-deliberate, disclosed trade rather than an oversight: the fence gates the
-BOOKKEEPING atomically, while individual resolves are reversible. A commitment
-closed a moment too early is undone with `unresolve` — which is the whole reason
-v1 is resolve-only. A closer that could `remember` would need a real transaction
-boundary here instead, and that is one of the costs the page rejects it for.
+(2) is the one that only NARROWS a window; it does not close it. The check and
+the dispatch are adjacent statements — no awaited work sits between them — but
+the check is a READ, not a lock, so it does not serialize against an erasure
+commit. Under ordinary execution the gap is negligible; under adversarial
+scheduling (a process pause between the check resolving and the dispatch
+actually starting) it is not provably zero. The honest bound is per-pass, not
+account-wide: the claim is a fence, not an exclusive lease, so nothing stops
+several of the account's runs from being claimed and mid-pass at the same
+time — **one racing dispatch per concurrently-executing closer pass**, bounded
+by worker concurrency (one job at a time per replica today) times replica
+count, never a single request no matter how many passes are in flight. Each
+dispatch that does race the commit is still individually capped: on the wire
+for up to the gateway's timeout (30s default) before it completes — disclosed
+in the erasure section above, not an absolute "≤ timeout" guarantee. Closing
+it fully would require holding a lock across the gateway call for every
+in-flight pass — the design memo's option 2, rejected because it couples
+erasure latency to the gateway's and inverts the repo's
+no-lock-across-network-call rule.
+
+(3) is superseded by (4) as the AUTHORITATIVE guard, not made redundant: the
+outer per-resolve read used to be the only fence on an individual resolve, so
+**an individual resolve could commit against a session that had just become
+active again** — that residual is now CLOSED against ERASURE specifically,
+because erasure's bulk `commitments` UPDATE takes the same row lock (4) does,
+forcing the two transactions to serialize. It stays only NARROWED against plain
+RESURRECTION (a heartbeat or SessionStart `resume`/`clear` reopening the row):
+resurrection never touches `commitments` at all, so there is no lock forcing an
+ordering between it and a resolve the way there is against erasure — (4)'s
+fresh epoch read still shrinks the window to one statement, same shape as (2),
+just smaller in practice. Harmless either way: resolve is reversible
+(`unresolve`), which is why v1 stayed resolve-only in the first place — a
+closer that could `remember` would need a stronger guarantee than even (4)
+gives on non-idempotent writes, and that is one of the costs the page rejects
+it for. (3) stays in place regardless, as a cheap EARLY EXIT: it is a plain
+read with no lock, so it cannot itself guarantee anything, but it stops the
+REST of the batch at the first stale candidate rather than paying a doomed
+lock-wait-then-write attempt for every remaining one.
 
 Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
 `worker` (settled above) — never `capture_hook`.
@@ -789,6 +946,53 @@ It runs on the lease-expiry sweep, or on explicit `closed_at`, when
 not in `last_triaged_event_ids`**. It does **not** run on `overflowed` (terminal;
 metric only). It does not scrape tool I/O. It does not run on every Stop. It does
 not invent user-turn decisions that were never written.
+
+The candidate scan is bounded by the BACKLOG, never by history. `completed` is the
+terminal state of the happy path, so a predicate that admitted every `completed`
+row would make each sweep tick walk — and pay the untriaged-event probe on — every
+session the tenant ever ran, oldest first. `needs_look` is the one bit that
+separates a settled `completed` row from one that may still hold an event outside
+its watermark: settled rows leave `agent_sessions_closer_idx` entirely, and the
+probe is paid only on flagged rows. The flag is raised by an attaching write that
+lands on a `completed` run, and every watermark stamp recomputes it against the set
+it just wrote — a stamp that leaves an event untriaged re-raises it, which is what
+keeps the late-commit race covered.
+
+**A row that keeps FAILING backs off (issue #184).** `needs_look` bounds the scan
+by backlog; it says nothing about a row that IS a genuine candidate every tick and
+keeps throwing — a gateway outage, a persistently unparseable verdict, a DB blip on
+`finish`. Before this, `apps/worker`'s job dedup (`removeOnFail: true`) frees such a
+row's job id the moment its retries exhaust, so the next sweep tick re-enqueues it —
+every tick, forever, sorted first by `closed_at` — and it starves every newer
+session sharing the batch window. `agent_sessions.closer_failure_count` /
+`closer_next_attempt_at` fix this the same way `needs_look` fixed the history
+problem: upstream of the query, on the row.
+
+The stamp is **once per ENQUEUED JOB whose BullMQ retries are exhausted, not once
+per individual attempt** (audit finding F3 on the first pass at this page — the
+distinction is load-bearing, not pedantic). `CLOSER_JOB_OPTS` already retries a job
+up to 3 times, 30s/60s apart, before BullMQ gives up on it; stamping on every one of
+those would let a single sub-two-minute blip rack up three row-level failures and
+reach the 4-hour cap before the next sweep tick even ran. `CloserOptions.isLastAttempt`
+(packages/core), fed from `job.attemptsMade`/`job.opts.attempts` in
+`apps/worker/src/queues.ts`, is what keeps one enqueue costing at most one
+increment — which is what makes "the wait doubles roughly once per sweep tick, up
+to a 4-hour cap" a true description of the row's trajectory rather than an
+aspirational one. The gate itself lives in the candidate scan's WHERE clause
+rather than the partial index — `closer_next_attempt_at <= now()` depends on the
+call time, and a partial index predicate must be IMMUTABLE, so Postgres refuses it
+at `CREATE INDEX`. It also applies to the `completed`-with-`needs_look` leg exactly
+as it does to the unconditionally-eligible statuses: a flagged `completed` row can
+be backed off too, and is excluded by the same conjunct.
+
+Both columns reset to zero/`NULL` the moment a pass reaches a durable write-back
+(success, or a permanent skip via `settleWithoutWork` / the interactive handshake's
+own `completeSessionTriage`) or the row is genuinely re-armed by new work — all
+three resurrect writers (the write-time attach's `resurrect`, `openSession`'s
+`reopened` branch, and Stop's own `refreshLease` resurrect branch) reset it, not
+just the first: a backoff earned by one activation must not gate the next one's
+fresh close. The mechanism stays self-healing at any failure count: bounded churn,
+never a permanently ineligible row.
 
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That
@@ -941,8 +1145,9 @@ These are not the P1s.
   `SESSION_TRIAGE_MIN_TURNS` defaults to **3** and
   `SESSION_TRIAGE_MIN_ELAPSED_MINUTES` to **10**, and the third disjunct — an
   untriaged provenance event — has no knob because it is a fact about the run
-  rather than a threshold. The matrix is pinned in
-  `packages/db/test/session-triage.test.ts`.
+  rather than a threshold. `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (**30**) was
+  added later, for the age guard on the `pending` decline, not for the debounce.
+  Both matrices are pinned in `packages/db/test/session-triage.test.ts`.
   The lease is settled at 24h, with a **1h sweep grace** on top: the lease
   already covers the overnight gap, so the grace only debounces the instant of
   expiry — and being non-zero is what keeps a swept `closed_at` outside the

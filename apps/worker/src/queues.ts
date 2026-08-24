@@ -53,6 +53,14 @@ export const GC_CLIENTS_CRON = '0 10 3 * * *'
  * the consolidation tick. Cadence only bounds LATENCY, never correctness — the
  * sweep closes rows already quiet for a 24h lease plus an hour of grace, so a
  * pass arriving twenty minutes late changes nothing about which rows qualify.
+ *
+ * INVARIANT (issue #184 audit note 9): `CLOSER_BACKOFF_BASE_MS`
+ * (packages/schema/src/agent-sessions.ts) assumes this is one SWEEP TICK — a
+ * base shorter than the cadence would already have elapsed by the next tick
+ * and gate nothing. Widening this pattern without revisiting that constant
+ * (and the hardcoded 20-minute literal in
+ * packages/db/test/session-closer.test.ts's `closerBackoffDelayMs` suite)
+ * silently breaks the "base is one tick" claim documented there.
  */
 export const SESSION_SWEEP_CRON = '0 5,25,45 * * * *'
 
@@ -99,13 +107,25 @@ export interface WorkerHandles {
  * the attempts are exhausted.
  *
  * WORST CASE, and why it is acceptable: a row that keeps failing is re-enqueued
- * once per sweep tick instead of once ever. That is bounded churn on a 20-minute
- * cadence, it is SELF-HEALING (the moment the cause clears, the next tick
- * succeeds), and the generation behind it is budget-capped, so a permanently
- * broken row cannot run up spend. Losing the failed-set entry is a real cost;
- * the `worker: job failed` handler below is the observability story that
- * replaces it, and it carries the deterministic job id — which encodes the run
- * and epoch — precisely so a vanished job is still traceable.
+ * on a sweep tick, not once ever — but NOT on every tick unconditionally.
+ * `agent_sessions.closer_next_attempt_at` (issue #184) backs off per row once
+ * per ENQUEUED JOB that exhausts its `attempts` (see `isLastAttempt` below —
+ * NOT once per individual attempt; stamping on every one of the 3 tries
+ * `CLOSER_JOB_OPTS` allows would blow through the cap for a sub-two-minute
+ * blip), doubling from one sweep tick up to a 4-hour cap. So the trade this
+ * comment used to describe as "once per sweep tick forever" is now bounded by
+ * the BACKOFF WINDOW instead: at most every 20 minutes while the row is still
+ * fresh, at most every 4 hours once it has failed enough times to saturate the
+ * cap. It is still SELF-HEALING — a pass that finally succeeds resets the
+ * count to zero (`finishSessionTriage` and `completeSessionTriage`,
+ * packages/db), and so does a genuine resurrect (all three writers: the
+ * write-time attach, `openSession`'s reopen, Stop's own `refreshLease`) — and
+ * still budget-capped, so a permanently broken row cannot run up spend; it
+ * just does so with an order of magnitude less churn against every OTHER
+ * tenant's rows sharing the same batch window. Losing the failed-set entry is
+ * a real cost; the `worker: job failed` handler below is the observability
+ * story that replaces it, and it carries the deterministic job id — which
+ * encodes the run and epoch — precisely so a vanished job is still traceable.
  */
 export const CLOSER_JOB_OPTS = {
   ...JOB_RETRY_OPTS,
@@ -138,6 +158,38 @@ function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promis
 }
 
 /**
+ * Is THIS invocation of the processor the last one BullMQ will make for `job`
+ * (issue #184)? Mirrors the ATTEMPT-COUNT ARITHMETIC of `Job.shouldRetryJob`'s
+ * own check (bullmq 5.78.0, classes/job.js) — NOT the whole check; see the
+ * qualifier below — read at the same point in the lifecycle: our processor
+ * runs BEFORE `moveToCompleted`/`moveToFailed` touch `job.attemptsMade`, so
+ * during THIS call it still holds the count of attempts that already
+ * finished — 0 on the first try, 1 on the second, and so on — never the one
+ * in progress. `job.opts.attempts` defaults to 1 when a job was enqueued
+ * without a retry policy; every job this worker enqueues carries one
+ * (`JOB_RETRY_OPTS`), but the fallback keeps this total for any job shape.
+ *
+ * ONLY THAT ARITHMETIC, though — `shouldRetryJob` ALSO stops
+ * retrying on an `UnrecoverableError` (or `err.name === 'UnrecoverableError'`)
+ * and on `job.discarded`, neither of which this function can see: both are
+ * evaluated from the thrown ERROR itself, after this attempt has already run,
+ * while `isLastAttempt` is computed from attempt bookkeeping alone, before the
+ * error is even known. Nothing in the closer throws either today, so the gap
+ * is latent — but if one ever does, that job terminates on attempt 1 with
+ * `isLastAttempt` still false, and no backoff gets stamped for a row BullMQ
+ * has already given up on.
+ *
+ * WHY THIS MATTERS HERE SPECIFICALLY: it is the seam that keeps ONE enqueued
+ * job costing at most ONE row-level closer-backoff failure (see
+ * `CloserOptions.isLastAttempt`, packages/core) instead of one per BullMQ
+ * retry — three stamps in ~90 seconds would blow straight through the
+ * "backoff grows one step per sweep tick" story the docs tell.
+ */
+export function isLastAttempt(job: Job): boolean {
+  return (job.attemptsMade ?? 0) + 1 >= (job.opts?.attempts ?? 1)
+}
+
+/**
  * Dispatch a BullMQ job to its core-backed runner. Unknown names throw (visible
  * failure).
  *
@@ -166,7 +218,7 @@ async function process(
       return runSessionSweep(closerEnqueuer(queue))
     case SESSION_CLOSER_JOB:
       if (!closerEnabled) return closerDisabled(job.name)
-      return runSessionCloser(job.data, gateway, budget)
+      return runSessionCloser(job.data, gateway, budget, isLastAttempt(job))
     default:
       throw new Error(`worker: unknown job name ${job.name}`)
   }

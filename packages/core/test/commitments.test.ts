@@ -76,6 +76,16 @@ vi.mock('@3ngram/db', () => ({
       this.expectedFrom = expectedFrom
     }
   },
+  SessionEpochFencedError: class SessionEpochFencedError extends Error {
+    readonly sessionRunId: string
+    readonly expectedEpoch: number
+    constructor(sessionRunId: string, expectedEpoch: number) {
+      super('session activation_epoch no longer matches the epoch this pass is fenced at')
+      this.name = 'SessionEpochFencedError'
+      this.sessionRunId = sessionRunId
+      this.expectedEpoch = expectedEpoch
+    }
+  },
 }))
 
 // Pulled from the mocked module so the thrown shape matches what core catches.
@@ -99,6 +109,8 @@ const USER = '00000000-0000-7000-8000-000000000001'
 const MEMORY = '00000000-0000-7000-8000-0000000000aa'
 const COMMITMENT = '00000000-0000-7000-8000-0000000000bb'
 const ACTOR = 'user_api' as const
+/** The epoch the closer's pass is fenced at, for `resolveForClosedRun`'s required `expectedEpoch`. */
+const EPOCH = 3
 
 const ALL_STATUSES = Object.keys(COMMITMENT_TRANSITIONS) as CommitmentStatus[]
 
@@ -349,14 +361,43 @@ describe('resolveForClosedRun (session closer)', () => {
     getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
     dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe('resolved')
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
+      'resolved',
+    )
 
     const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
     expect(call.stampedSessionRunId).toBe(RUN_ID)
+    // The write-time epoch fence (issue #185): the epoch the closer's pass is
+    // fenced at must reach the SAME transaction as the write, not just an
+    // earlier, separate pre-check.
+    expect(call.stampedSessionEpoch).toBe(EPOCH)
     // The attach-path field must be ABSENT, not merely different: passing both
     // would re-enter resolveSessionProvenance and resurrect the row.
     expect(call.sessionRunId).toBeUndefined()
     expect(call).toMatchObject({ to: 'resolved', actorKind: 'worker' })
+  })
+
+  it('abandons the pass (epoch-fenced) when the write-time epoch guard rejects it — issue #185', async () => {
+    // The gap Codex found: the outer per-resolve check (session-closer.ts) reads
+    // the epoch in its OWN transaction; a resurrection or an account erasure can
+    // still commit between that read and this write. `transitionCommitment`
+    // re-reads the epoch INSIDE the write transaction and raises
+    // SessionEpochFencedError instead of writing — this must surface as its own
+    // outcome, distinct from every commitment-state outcome, so the closer
+    // abandons the pass rather than counting it as one skipped candidate.
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    const { SessionEpochFencedError } = (await import('@3ngram/db')) as unknown as {
+      SessionEpochFencedError: new (sessionRunId: string, expectedEpoch: number) => Error
+    }
+    dbTransitionCommitment.mockRejectedValue(new SessionEpochFencedError(RUN_ID, EPOCH))
+
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
+      'epoch-fenced',
+    )
+    // Exactly one write ATTEMPT (the guard lives inside it, not before it) —
+    // no re-read, no retry: an epoch fence is abandoned, never retried.
+    expect(dbTransitionCommitment).toHaveBeenCalledOnce()
+    expect(getCommitmentByMemoryId).toHaveBeenCalledOnce()
   })
 
   it('re-reads LIVE and skips a commitment another session already resolved', async () => {
@@ -366,7 +407,7 @@ describe('resolveForClosedRun (session closer)', () => {
       status: 'resolved',
     })
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'already-resolved',
     )
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
@@ -379,7 +420,7 @@ describe('resolveForClosedRun (session closer)', () => {
       status: 'expired',
     })
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'illegal-transition',
     )
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
@@ -388,7 +429,7 @@ describe('resolveForClosedRun (session closer)', () => {
   it('skips a memory no commitment rides — a blocker or a note is not a closer target', async () => {
     getCommitmentByMemoryId.mockResolvedValue(undefined)
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'not-a-commitment',
     )
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
@@ -405,7 +446,7 @@ describe('resolveForClosedRun (session closer)', () => {
       new IllegalCommitmentTransitionError('expired', 'resolved'),
     )
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'illegal-transition',
     )
   })
@@ -414,7 +455,7 @@ describe('resolveForClosedRun (session closer)', () => {
     getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
     dbTransitionCommitment.mockRejectedValue(new Error('connection terminated'))
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).rejects.toThrow(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).rejects.toThrow(
       'connection terminated',
     )
   })
@@ -432,7 +473,7 @@ describe('resolveForClosedRun compare-and-set', () => {
     getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
     dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
 
-    await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
+    await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)
 
     const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
     expect(call.expectedFrom).toBe('open')
@@ -447,7 +488,7 @@ describe('resolveForClosedRun compare-and-set', () => {
       .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'resolved' })
     dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'already-resolved',
     )
     expect(dbTransitionCommitment).toHaveBeenCalledOnce()
@@ -459,7 +500,7 @@ describe('resolveForClosedRun compare-and-set', () => {
       .mockResolvedValueOnce({ id: COMMITMENT, memoryId: MEMORY, status: 'expired' })
     dbTransitionCommitment.mockRejectedValue(new CommitmentStateChangedError(COMMITMENT, 'open'))
 
-    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)).resolves.toBe(
+    await expect(resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)).resolves.toBe(
       'illegal-transition',
     )
   })
@@ -478,8 +519,8 @@ describe('resolveForClosedRun compare-and-set', () => {
       return { id: COMMITMENT, status: 'resolved' }
     })
 
-    const first = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
-    const second = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID)
+    const first = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)
+    const second = await resolveForClosedRun(USER, MEMORY, 'worker', RUN_ID, EPOCH)
 
     expect(first).toBe('resolved')
     expect(second).toBe('already-resolved')

@@ -276,6 +276,7 @@ const exportAgentSession = z
     activationEpoch: z.number().int(),
     triageStatus: z.string(),
     triageAttemptId: z.uuid().nullable(),
+    triageArmedAt: z.string().datetime().nullable(),
     lastTriagedEventIds: z.array(z.uuid()),
     briefingDeliveredAt: z.string().datetime().nullable(),
     briefedMemories: z.array(
@@ -288,6 +289,9 @@ const exportAgentSession = z
         .strict(),
     ),
     lastMessageExcerpt: z.string().nullable(),
+    needsLook: z.boolean(),
+    closerFailureCount: z.number().int(),
+    closerNextAttemptAt: z.string().datetime().nullable(),
   })
   .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like

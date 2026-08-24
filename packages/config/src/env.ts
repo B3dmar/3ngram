@@ -327,6 +327,20 @@ export const envSchema = z
     // below refuse that.
     SESSION_TRIAGE_MIN_TURNS: z.coerce.number().int().min(1).max(1000).default(3),
     SESSION_TRIAGE_MIN_ELAPSED_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
+    // The age guard on an OUTSTANDING attempt (issue #188). `begin` hands the
+    // in-flight attempt token back so a later Stop finalizes it instead of
+    // injecting again — but two hook processes handling ONE Stop concurrently
+    // would let the sibling finalize the arming process's attempt milliseconds
+    // after it was armed, which drops that continuation's writes outside the
+    // watermark and draws a second nudge for one turn's work. Below this floor
+    // the server declines `pending-fresh` and withholds the token.
+    //
+    // DEFAULT. Thirty seconds sits between the two populations by orders of
+    // magnitude: a sibling process reads the row within milliseconds of the arm,
+    // and a genuine later ordinary Stop is a whole model turn away. The floor of
+    // 1 keeps the guard from being switched off entirely; the ceiling of 600
+    // keeps a misconfiguration from deferring every finalize to the closer.
+    SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS: z.coerce.number().int().min(1).max(600).default(30),
     // SMTP delivery for password-reset emails (self-host hardening). ALL OPTIONAL and env-GATED: when SMTP_HOST +
     // SMTP_FROM are both set the app constructs a real nodemailer transport and
     // emails the reset link; when either is absent the forgot-password route
@@ -757,6 +771,8 @@ export interface SessionTriageConfig {
   minTurns: number
   /** Elapsed time since `opened_at` before a nudge may arm on age alone. */
   minElapsedMs: number
+  /** Age an outstanding attempt must reach before `begin` publishes its token. */
+  minAttemptAgeMs: number
 }
 
 /**
@@ -771,6 +787,7 @@ export function loadSessionTriageConfig(): SessionTriageConfig {
   return {
     minTurns: env.SESSION_TRIAGE_MIN_TURNS,
     minElapsedMs: env.SESSION_TRIAGE_MIN_ELAPSED_MINUTES * 60_000,
+    minAttemptAgeMs: env.SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS * 1_000,
   }
 }
 

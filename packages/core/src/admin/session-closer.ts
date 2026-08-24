@@ -35,6 +35,7 @@ import {
   insertLlmUsage,
   listSessionEvents,
   readCloserSession,
+  recordCloserFailure,
   withTenant,
 } from '@3ngram/db'
 import type { CompletionResult, Gateway } from '@3ngram/llm'
@@ -128,14 +129,32 @@ export interface SessionCloserRepo {
   listEvents(userId: string, sessionRunId: string): Promise<CloserEventPage>
   /** Atomic compare-and-set claim at the observed epoch. */
   claim(userId: string, claim: CloserClaim): Promise<boolean>
-  /** Live re-read + resolve of one briefed commitment, stamping the run's provenance. */
-  resolve(userId: string, memoryId: string, sessionRunId: string): Promise<ClosedRunResolveOutcome>
+  /**
+   * Live re-read + resolve of one briefed commitment, stamping the run's
+   * provenance. `expectedEpoch` is fenced INSIDE the same write transaction
+   * (issue #185) — see {@link ClosedRunResolveOutcome}'s `epoch-fenced` member.
+   */
+  resolve(
+    userId: string,
+    memoryId: string,
+    sessionRunId: string,
+    expectedEpoch: number,
+  ): Promise<ClosedRunResolveOutcome>
   /** Epoch-fenced write-back of the terminal status, watermark and excerpt clear. */
   finish(userId: string, finish: CloserFinish): Promise<boolean>
   /** Record one `llm_usage` row for the generation call. Best-effort by contract. */
   recordUsage(userId: string, usage: CloserUsage): Promise<void>
   /** The run's CURRENT activation epoch, or undefined if it vanished. */
   currentEpoch(userId: string, sessionRunId: string): Promise<number | undefined>
+  /**
+   * Stamp the per-row backoff after a FAILED pass (issue #184) — see
+   * {@link closeSessionRun}'s catch. Epoch-fenced, so a resurrection mid-pass
+   * makes it a no-op; best-effort from the caller's side (it must never mask
+   * the failure that triggered it). Deliberately carries NO count or delay —
+   * see {@link CloserFailureInput}: the implementation derives both from the
+   * row's value at write time, not a value this caller observed earlier.
+   */
+  recordFailure(userId: string, failure: CloserFailureInput): Promise<void>
 }
 
 /** Content-free accounting for one closer generation call. */
@@ -160,6 +179,25 @@ export interface CloserSessionInput {
   project: string | null
   scope: string | null
   closedAt: Date | null
+}
+
+/**
+ * Fence + clock the failure recording needs; see
+ * {@link SessionCloserRepo.recordFailure}. Deliberately NOT a count or a
+ * computed delay (Codex review of PR #196, comment 3843607494) — this used to
+ * carry `failureCount`/`nextAttemptAt` computed from `CloserSessionInput`'s
+ * count, read at the START of the pass. A `completeSessionTriage` that resets
+ * the row's backoff between that read and this write (a durable write-back
+ * with no epoch bump, unlike a resurrect) would then have its reset
+ * overwritten by the stale pre-race count. The db-layer implementation now
+ * computes both columns from the row's value AT WRITE TIME, atomically, in
+ * one statement — so there is nothing left here to go stale.
+ */
+export interface CloserFailureInput {
+  sessionRunId: string
+  activationEpoch: number
+  /** Injected clock (issue #184) — core reads no clock of its own. */
+  now: Date
 }
 
 export interface CloserEventPage {
@@ -195,6 +233,35 @@ export interface CloserOptions {
    * seam does. Absent → no gate (the same back-compat shape `EmbedOptions` uses).
    */
   budget?: BudgetEnforcement | undefined
+  /**
+   * Injected clock (issue #184) — core reads no clock of its own. The only use
+   * is stamping `nextAttemptAt` on a FAILED pass, so a fake gateway that never
+   * throws never needs to supply a meaningful one.
+   */
+  now: Date
+  /**
+   * Is this the LAST retry BullMQ will make for the enqueued job (issue #184
+   * audit F3)? Core has no notion of a "job" or an "attempt" — this is a plain
+   * boolean handed down from the one place that does: `apps/worker`'s queue
+   * processor, off `job.attemptsMade`/`job.opts.attempts` (`CLOSER_JOB_OPTS`:
+   * up to 3 tries, 30s/60s apart). WHY IT GATES THE STAMP: without it, a single
+   * enqueue that fails three times racks up THREE row-level failures within
+   * about ninety seconds — the row would be at the 4-HOUR cap before the first
+   * sweep tick even ran again, for what might have been a sub-two-minute blip.
+   * Stamping only on the attempt that will NOT retry makes one enqueued job
+   * cost at most one row-level failure, which is what makes "the backoff grows
+   * one step per sweep tick" (the doc/changeset claim) actually true rather
+   * than aspirational.
+   */
+  isLastAttempt: boolean
+  /**
+   * Best-effort observability hook (issue #184 audit F5): called with whatever
+   * `repo.recordFailure` threw, ONLY when it threw. Core never logs (hard rule
+   * 5) — this is the seam the worker uses to emit a content-free warning
+   * (run id + `err.name`, hard rule 6). Absent → the secondary failure is
+   * silently dropped, same as before this hook existed.
+   */
+  onRecordFailureError?: (err: unknown) => void
 }
 
 /**
@@ -452,6 +519,43 @@ function stripCodeFence(reply: string): string {
  *      re-spend an LLM pass forever. Marking it is itself a fenced write.
  *   3. CLAIM. Compare-and-set at the observed epoch (see packages/db). A lost
  *      claim is a clean no-op.
+ *   3b. RESERVE THE BUDGET SLOT, THEN RE-CHECK THE EPOCH, IMMEDIATELY BEFORE THE
+ *      GATEWAY CALL (issue #185). Claiming, listing events and the reservation
+ *      itself are all further awaited work — the reservation can block on a
+ *      per-user advisory lock for as long as another metered call for this user
+ *      is in flight — so the epoch the claim fenced on can already be stale by
+ *      the time the prompt is about to go out. The check runs AFTER the
+ *      reservation, not before, so that blocking wait never inflates the
+ *      residual: this is the LAST awaited step before the excerpt and briefed
+ *      topics leave the process. Once `gateway.complete` is called, that
+ *      content is on the wire for up to the gateway's timeout regardless of
+ *      anything that happens after, so the per-resolve check in step 5 (which
+ *      runs only AFTER that round trip returns) is too late to stop the send,
+ *      only to stop acting on the reply. Skip `fenced`, same as every other
+ *      epoch miss; the reservation still gets released by the `finally` below.
+ *      THIS IS A NARROWING FENCE, NOT A SERIALIZED HANDOFF: the check is a
+ *      READ, not a lock, so it does not serialize against an erasure commit —
+ *      it is adjacent to the dispatch (no awaited work sits between the check
+ *      resolving and `gateway.complete` being called), but "adjacent" is a
+ *      source-code property, not a wall-clock guarantee. Under ordinary
+ *      execution the gap is negligible; under adversarial scheduling (a
+ *      process pause, a GC stall, an event-loop delay between the check
+ *      resolving and the call actually dispatching) it is not provably zero.
+ *      The honest residual is PER PASS, not account-wide: the claim
+ *      (claimSessionTriage, packages/db) is a fence, not an exclusive lease,
+ *      so several of this account's runs can be claimed and mid-pass at
+ *      once — ONE RACING DISPATCH PER CONCURRENTLY-EXECUTING CLOSER PASS,
+ *      bounded by worker concurrency (one job at a time per replica today,
+ *      apps/worker/src/queues.ts takes BullMQ's `Worker` default) times
+ *      however many replicas are running, never a single request account-wide
+ *      no matter how many passes race the same commit. Each one that does
+ *      dispatch is still individually capped: on the wire for up to the
+ *      gateway's timeout before it completes — not an absolute
+ *      "residual ≤ timeout" bound. Closing the gap fully would require
+ *      holding a lock (the account-lifecycle lock, or an equivalent) across
+ *      every in-flight pass's network call — the design memo's option 2,
+ *      which the owner rejected because it couples erasure latency to the
+ *      gateway's and inverts the repo's no-lock-across-network-call rule.
  *   4. GENERATE. One call. The excerpt and topics go in as delimited data.
  *   5. RESOLVE. Per candidate, a LIVE re-read then a resolve. Skips are counted,
  *      not fatal.
@@ -490,6 +594,80 @@ export async function closeSessionRun(
   if (session.activationEpoch !== request.activationEpoch) return skip('fenced')
   if (session.closedAt === null) return skip('not-closed')
 
+  try {
+    return await runClosePass(repo, userId, request, options, session, skip)
+  } catch (err) {
+    // THE BACKOFF STAMP (issue #184). Everything `runClosePass` can throw past
+    // this point is a genuine FAILURE — never one of the `skip(...)` returns
+    // above or inside it, which either settle the row permanently
+    // (`settleWithoutWork`) or stay eligible on purpose (no-gateway,
+    // claim-lost, fenced). A row that keeps throwing must stop re-occupying
+    // the `ORDER BY closed_at LIMIT` batch window on every sweep tick — see
+    // `closerBackoffDelayMs` (packages/db/src/session-closer.ts) for the
+    // growth curve and cap.
+    //
+    // ONLY ON THE LAST ATTEMPT (issue #184 audit F3). Without this gate, one
+    // enqueued job that fails all of `CLOSER_JOB_OPTS`' 3 tries stamps the row
+    // THREE times inside ~90 seconds — the second stamp already pushes past
+    // the "one tick" the doc/changeset describe, and the third can reach the
+    // 4-hour cap before the next sweep tick even runs, for what may have been
+    // a sub-two-minute blip. `isLastAttempt` is what makes one JOB cost at
+    // most one row-level failure, matching the growth curve to the prose that
+    // describes it. BullMQ's own retry (unaffected — `throw err` below still
+    // always runs) is what covers attempts 1 and 2.
+    if (options.isLastAttempt) {
+      // NO COUNT, NO COMPUTED DELAY (Codex review of PR #196, comment
+      // 3843607494). `repo.recordFailure`'s db-layer implementation derives
+      // both from the row's value AT WRITE TIME, atomically — never from
+      // `session.closerFailureCount`, which was read at the START of this
+      // pass and can go stale under a concurrent `completeSessionTriage`
+      // reset (no epoch bump) between then and now. See
+      // `CloserFailureInput`'s own doc for the full argument.
+      //
+      // Best-effort: `recordFailure`'s own epoch fence already makes a
+      // resurrection a safe no-op, and a failure to WRITE the backoff must
+      // never mask the real error — the job still fails and BullMQ still
+      // retries either way. `onRecordFailureError` is the only way this
+      // secondary failure becomes OBSERVABLE at all: core reads/writes no
+      // logger of its own (hard rule 5), so a silent catch here would lose
+      // the signal for good rather than merely defer it to the caller.
+      await repo
+        .recordFailure(userId, {
+          sessionRunId: request.sessionRunId,
+          activationEpoch: session.activationEpoch,
+          now: options.now,
+        })
+        .catch((recordErr: unknown) => {
+          // The hook itself is best-effort too: if it throws, that rejection
+          // would otherwise escape this catch and REPLACE `err` below — the
+          // exact masking this whole block exists to prevent, just one layer
+          // deeper. Swallowing here is what keeps the promise real rather than
+          // aspirational.
+          try {
+            options.onRecordFailureError?.(recordErr)
+          } catch {
+            // Nothing further to do with a failure to report a failure.
+          }
+        })
+    }
+    throw err
+  }
+}
+
+/**
+ * The body of one closer pass, once the run is confirmed closed at the
+ * expected epoch. Split out so {@link closeSessionRun} can wrap it in the
+ * try/catch that stamps a backoff on failure — see the module doc above for
+ * the step-by-step shape this still follows unchanged.
+ */
+async function runClosePass(
+  repo: SessionCloserRepo,
+  userId: string,
+  request: { sessionRunId: string; activationEpoch: number },
+  options: CloserOptions,
+  session: CloserSessionInput,
+  skip: (reason: CloserSkipReason) => CloserResult,
+): Promise<CloserResult> {
   /**
    * Stamp a terminal status on a run the closer will do NO work on, so it stops
    * being selected. Claim first — `finish` is fenced on the attempt token — and
@@ -586,6 +764,44 @@ export async function closeSessionRun(
     if (options.budget) {
       reservation = await reserveBudgetSlot(options.budget, userId, CLOSER_OPERATION)
     }
+
+    // EPOCH RE-CHECK AT THE GATEWAY BOUNDARY (issue #185), placed AFTER the
+    // reservation above rather than before it. `reserveBudgetSlot` takes a
+    // per-user advisory tx lock (packages/core/src/budget) and can block behind
+    // another in-flight metered call for the same user for an UNBOUNDED time;
+    // checking the epoch before reserving would leave the residual window "the
+    // gateway's timeout PLUS however long that lock wait was" rather than just
+    // the gateway's timeout. Checking here — the last statement before dispatch
+    // — is what keeps the residual bounded by the gateway's timeout ALONE
+    // rather than by that unbounded lock wait too. It does NOT make the
+    // residual an absolute "≤ timeout" guarantee: this check is a READ, not a
+    // lock, so a dispatch that starts a moment after it resolves can still
+    // race an erasure commit under adversarial scheduling — see the ordering
+    // note in this function's doc comment (step 3b) for the honest shape of
+    // that residual and the rejected serialized alternative. A fenced return
+    // here still hits the `finally` below, so the reservation is released,
+    // never billed.
+    //
+    // A bare epoch comparison is enough proof of freshness for THE ERASURE
+    // CASE specifically — no need to re-read the excerpt/topics themselves.
+    // Erasure (packages/db/src/account-delete.ts) bumps the epoch in the SAME
+    // statement as the redaction, so "the epoch I observed still holds" implies
+    // "this row has not been erased since". It does NOT mean every possible
+    // staleness is covered: `expireStaleExcerpts` (packages/db/src/session-closer.ts,
+    // TTL sweep) and `finishSessionTriage`'s `clearExcerpt` branch (a prior
+    // pass's own write-back) can both null `last_message_excerpt` on a closed
+    // row WITHOUT bumping the epoch — that is the accepted "RETENTION WINS"
+    // trade already documented at packages/db/src/session-closer.ts's
+    // `expireStaleExcerpts`.
+    // The worst case from those two is a stale send of content retention just
+    // deleted (an excerpt from a still-erasable, not-yet-erased account) —
+    // never an un-redacted send after an actual erasure, which is the one this
+    // check exists to prevent. Reuses `currentEpoch`, the same seam the
+    // per-resolve check in the loop below already calls, so no new
+    // SessionCloserRepo member is needed.
+    const gatewayEpoch = await repo.currentEpoch(userId, request.sessionRunId)
+    if (gatewayEpoch !== session.activationEpoch) return skip('fenced')
+
     completion = await options.gateway.complete(prompt, CLOSER_OPERATION, {
       maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
       jsonObject: true,
@@ -622,14 +838,15 @@ export async function closeSessionRun(
   let resolved = 0
   let skippedCandidates = 0
   for (const memoryId of candidates) {
-    // EPOCH PRE-CHECK before each resolve. The fence on `finish` protects the
-    // BOOKKEEPING, but the resolves run before it, so a resurrection during a
-    // slow generation would otherwise land every one of them on a session that
-    // is live again. This is a cheap best-effort read, not a lock — it cannot
-    // close the window, it narrows it from "the whole generation" to "one
-    // statement". That residue is acceptable precisely because the only verb
-    // here is `resolve`, which `unresolve` reverses; a closer that could
-    // `remember` would need a real transaction boundary instead.
+    // EPOCH PRE-CHECK before each resolve. A cheap best-effort read in its OWN
+    // transaction, separate from the write below — it narrows the window from
+    // "the whole generation" to "one statement" so a resurrection during a
+    // slow generation stops the batch at the next candidate rather than at the
+    // end, but it does not by itself CLOSE that one-statement window: the
+    // write in `repo.resolve` runs in a later, separate transaction of its
+    // own. That residual is what `expectedEpoch` below actually closes (issue
+    // #185) — this pre-check is the cheap early exit, the write-time guard is
+    // the authoritative one.
     const epoch = await repo.currentEpoch(userId, request.sessionRunId)
     if (epoch !== session.activationEpoch) {
       return {
@@ -641,7 +858,36 @@ export async function closeSessionRun(
         skippedCandidates,
       }
     }
-    const outcome = await repo.resolve(userId, memoryId, request.sessionRunId)
+    // THE RESOLVE-PATH EPOCH FENCE (issue #185). `expectedEpoch` threads
+    // through to `transitionCommitment`, which locks the commitment row THEN
+    // re-reads `activation_epoch` on a fresh statement inside the same
+    // transaction as the write, aborting instead of writing when it no longer
+    // matches. Against ERASURE this CLOSES the gap between the read above and
+    // the write, not just narrows it — erasure's own bulk commitments UPDATE
+    // takes the same row lock, forcing the two transactions to serialize.
+    // Against a plain RESURRECTION (a heartbeat or SessionStart resuming the
+    // row) it only NARROWS the gap to one fresh statement: resurrection never
+    // touches `commitments`, so nothing forces an ordering against it the way
+    // erasure's lock does. Harmless either way — a resolve is reversible
+    // (`unresolve`). A 'epoch-fenced' outcome means the write never happened,
+    // so this pass is ABANDONED exactly like every other epoch-fence hit —
+    // never counted as a per-candidate skip, and never retried.
+    const outcome = await repo.resolve(
+      userId,
+      memoryId,
+      request.sessionRunId,
+      session.activationEpoch,
+    )
+    if (outcome === 'epoch-fenced') {
+      return {
+        sessionRunId: request.sessionRunId,
+        skipped: 'fenced',
+        candidates: candidates.length,
+        rejected,
+        resolved,
+        skippedCandidates,
+      }
+    }
     if (outcome === 'resolved') resolved += 1
     else skippedCandidates += 1
   }
@@ -705,8 +951,8 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
     return { items, truncated }
   },
   claim: (userId, claim) => withTenant(userId, (tx) => claimSessionTriage(tx, userId, claim)),
-  resolve: (userId, memoryId, sessionRunId) =>
-    resolveForClosedRun(userId, memoryId, CLOSER_ACTOR_KIND, sessionRunId),
+  resolve: (userId, memoryId, sessionRunId, expectedEpoch) =>
+    resolveForClosedRun(userId, memoryId, CLOSER_ACTOR_KIND, sessionRunId, expectedEpoch),
   finish: (userId, finish) => withTenant(userId, (tx) => finishSessionTriage(tx, userId, finish)),
   recordUsage: (userId, usage) =>
     insertLlmUsage(userId, {
@@ -720,4 +966,6 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
     const row = await withTenant(userId, (tx) => readCloserSession(tx, userId, sessionRunId))
     return row?.activationEpoch
   },
+  recordFailure: (userId, failure) =>
+    withTenant(userId, (tx) => recordCloserFailure(tx, userId, failure)),
 }

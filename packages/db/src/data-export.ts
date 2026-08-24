@@ -239,10 +239,14 @@ export interface ExportAgentSessionRow {
   activationEpoch: number
   triageStatus: string
   triageAttemptId: string | null
+  triageArmedAt: Date | null
   lastTriagedEventIds: string[]
   briefingDeliveredAt: Date | null
   briefedMemories: BriefedMemory[]
   lastMessageExcerpt: string | null
+  needsLook: boolean
+  closerFailureCount: number
+  closerNextAttemptAt: Date | null
 }
 
 /** The complete user-owned dataset for a portability export. */
@@ -449,10 +453,14 @@ export async function readUserDataExport(
       activationEpoch: agentSessions.activationEpoch,
       triageStatus: agentSessions.triageStatus,
       triageAttemptId: agentSessions.triageAttemptId,
+      triageArmedAt: agentSessions.triageArmedAt,
       lastTriagedEventIds: agentSessions.lastTriagedEventIds,
       briefingDeliveredAt: agentSessions.briefingDeliveredAt,
       briefedMemories: agentSessions.briefedMemories,
       lastMessageExcerpt: agentSessions.lastMessageExcerpt,
+      needsLook: agentSessions.needsLook,
+      closerFailureCount: agentSessions.closerFailureCount,
+      closerNextAttemptAt: agentSessions.closerNextAttemptAt,
     })
     .from(agentSessions)
     .where(eq(agentSessions.userId, userId))

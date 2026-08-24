@@ -118,6 +118,16 @@ func pendingBody(attemptID string) string {
 		testRunID, attemptID)
 }
 
+// pendingFreshBody is the AGE-GUARDED pending decline (issue #188): an attempt
+// is in flight, but it was armed too recently for this caller to be a genuine
+// later Stop rather than a sibling process racing the same one. The server
+// withholds the `attemptId`, and that withholding is the entire guard — the
+// hook holds no threshold and no clock of its own.
+func pendingFreshBody() string {
+	return fmt.Sprintf(`{"sessionRunId":%q,"armed":false,"triageStatus":"pending","reason":"pending-fresh"}`,
+		testRunID)
+}
+
 // declineBody is any decline that carries NO attempt id — there is nothing
 // armed and nothing to finish.
 func declineBody(reason string) string {
@@ -291,6 +301,12 @@ func TestStopNudgeArmedEmitsTheClaudeEnvelope(t *testing.T) {
 	if _, present := begin["turnCount"]; present {
 		t.Fatalf("begin sent a turnCount the harness never supplied: %v", begin)
 	}
+	// Nor a `stopHookActive`: this is the delivery that ARMS, so it must stay
+	// age-guarded, and omitting the false value also keeps the arming path
+	// wire-compatible with a server older than the flag (the body is strict).
+	if _, present := begin["stopHookActive"]; present {
+		t.Fatalf("the arming delivery claimed stop_hook_active: %v", begin)
+	}
 	if len(begin) != 2 {
 		t.Fatalf("begin body carries more than the natural key: %v", begin)
 	}
@@ -406,6 +422,28 @@ func TestStopNudgeFinalizesOnStopHookActive(t *testing.T) {
 	}
 }
 
+// TestFinalizeDeliveryDeclaresItself pins the one wire difference between the
+// two deliveries, because the SERVER's age guard keys on it (issue #188).
+//
+// A finalize-only Stop sends `stopHookActive:true`, which exempts the attempt-age
+// guard: without it a continuation shorter than the floor is declined
+// `pending-fresh`, the attempt stays `pending` across the user's next turn, and
+// the Stop that finally completes it absorbs THAT turn's events into the
+// cumulative watermark — where nothing can ever re-arm on them. The arming
+// delivery sends no flag at all (asserted above), so the exemption is
+// unreachable on the only delivery that can inject.
+func TestFinalizeDeliveryDeclaresItself(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = pendingBody(testAttemptID)
+
+	captureHook(t, stopPayload("sess-finalize-flag", true), func() int { return runStop(nil) })
+
+	begin := ns.bodyFor(t, "/api/v1/agent-sessions/triage/begin")
+	if begin["stopHookActive"] != true {
+		t.Fatalf("the finalize delivery did not declare stop_hook_active: %v", begin)
+	}
+}
+
 // TestStopNudgeFinalizeWithNoPendingAttemptIsANoOp: `begin` says nothing is in
 // flight — the closer took the row over, or nothing was ever armed. There is no
 // attempt to complete and the hook must not invent one.
@@ -484,6 +522,49 @@ func TestPendingDeclineNeverInjects(t *testing.T) {
 			// that never sets stop_hook_active.
 			if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 1 {
 				t.Fatalf("a pending decline completed %d attempts, want 1", n)
+			}
+		})
+	}
+}
+
+// TestPendingFreshDeclineLeavesTheAttemptAlone is the other half of the cap
+// property, and the fix for the concurrent-Stop race (issue #188).
+//
+// Two processes handling ONE Stop is what a duplicate registration of `stop` and
+// its `heartbeat` alias produces. The sibling must not finalize the attempt the
+// arming process is still building an envelope for: completing it early stamps a
+// watermark the continuation's writes then fall outside, and a later Stop
+// re-arms — two nudges for one turn's work.
+//
+// The decision is the SERVER's and arrives as a decline with no `attemptId`, so
+// what is pinned here is the hook's half: it must make no `complete` call, emit
+// nothing, and still exit 0 — on BOTH values of `stop_hook_active`, since the
+// harnesses that need the cap most never set it. Deferring is safe: the row
+// stays `pending`, so no later `begin` can arm a second injection, and the next
+// Stop past the floor finalizes it.
+func TestPendingFreshDeclineLeavesTheAttemptAlone(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stop_hook_active=%t", active), func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = pendingFreshBody()
+
+			code := 1
+			out := captureHook(t, stopPayload("sess-fresh", active), func() int {
+				code = runStop(nil)
+				return code
+			})
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			if out != "" {
+				t.Fatalf("a pending-fresh decline injected: %q", out)
+			}
+			if n := ns.countFor("/api/v1/prompts/debrief"); n != 0 {
+				t.Fatalf("a pending-fresh decline fetched the prompt %d times", n)
+			}
+			if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 0 {
+				t.Fatalf("a pending-fresh decline finalized %d attempts, want 0", n)
 			}
 		})
 	}

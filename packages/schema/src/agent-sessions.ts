@@ -71,6 +71,27 @@ export const MAX_SESSION_SWEEP_BATCH = 100
 export const SESSION_EXCERPT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
+ * Base backoff after a closer pass FAILS for a row (issue #184): one sweep
+ * tick. Below one tick the stamp would already be in the past by the time the
+ * next scan runs, so it would gate nothing — the floor is set by the cadence
+ * the gate exists to skip, not chosen freely. Seeds the growth curve in
+ * `closerBackoffDelayMs` (packages/db/src/session-closer.ts).
+ */
+export const CLOSER_BACKOFF_BASE_MS = 20 * 60 * 1000
+
+/**
+ * Cap on the per-row closer backoff, doubled per consecutive failure
+ * (`closerBackoffDelayMs`). Four hours: long enough that a row stuck failing
+ * every tick can no longer starve the batch (the worst case shrinks from "every
+ * 20 minutes forever" to "at most every 4 hours once mature"), short enough
+ * that a cleared cause — the gateway back up, a malformed reply no longer
+ * produced — is felt again within the same working day. NEVER unbounded and
+ * NEVER permanent: this is a ceiling on the wait, not a limit on retries, so
+ * self-healing holds at any failure count.
+ */
+export const CLOSER_BACKOFF_MAX_MS = 4 * 60 * 60 * 1000
+
+/**
  * Closed native-write payload. JSON keys are spelling-sensitive — the index uses
  * the same spelling — and so is the VALUE: it is compared as `text` by
  * `payload->>'sessionRunId' = $1`, so the id rides the canonical
@@ -111,6 +132,8 @@ export const agentSessionRowSchema = z
     activationEpoch: z.number().int().positive(),
     triageStatus: agentSessionTriageStatusSchema,
     triageAttemptId: z.uuid().nullable(),
+    /** When the current attempt was armed. NULL before the first arm. */
+    triageArmedAt: z.date().nullable(),
     lastTriagedEventIds: z.array(z.uuid()).max(MAX_SESSION_EVENT_IDS),
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
     lastMessageExcerpt: z.string().max(MAX_SESSION_EXCERPT_LENGTH).nullable(),
@@ -306,11 +329,22 @@ export const MAX_TRIAGE_TURN_COUNT = 100_000
  * one decision, not a fact about the row, and storing it would invite a second
  * source of truth for session substance.
  */
+/**
+ * `stopHookActive` is the harness's own "a previous Stop already blocked this
+ * turn" flag, forwarded verbatim from the Stop payload. It is a HINT about which
+ * delivery this is, not a permission: the hook cannot inject on such a Stop
+ * (the page forbids it), so the only thing the server does with it is EXEMPT the
+ * attempt-age guard, because a finalize-only delivery is by construction the
+ * continuation of an attempt this harness already blocked on — not a sibling
+ * racing the delivery that armed it. Absent reads as `false`, which is the
+ * guarded path, so an older hook that never sends it is never worse off.
+ */
 export const agentSessionTriageBeginBodySchema = z
   .object({
     agent: agentNameSchema,
     sessionId: harnessSessionIdSchema,
     turnCount: z.number().int().min(0).max(MAX_TRIAGE_TURN_COUNT).optional(),
+    stopHookActive: z.boolean().optional(),
   })
   .strict()
 export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBeginBodySchema>
@@ -318,25 +352,39 @@ export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBegi
 /**
  * Why `begin` did not arm. Content-free, stable, and safe to log or metric.
  *
- * | reason       | meaning                                                              |
- * |--------------|----------------------------------------------------------------------|
- * | `not-live`   | the row is closed or past its lease — a nudge needs a live session    |
- * | `terminal`   | `overflowed`: the run passed the per-run event ceiling, forever       |
- * | `pending`    | an attempt is already outstanding; `attemptId` names it               |
- * | `no-signal`  | `completed`/`expired` with no untriaged provenance event to re-arm on |
- * | `debounce`   | eligible, but the session has no substance yet                        |
- * | `overflowed` | this call FOUND the run past the ceiling and stamped it terminal      |
+ * | reason          | meaning                                                               |
+ * |-----------------|-----------------------------------------------------------------------|
+ * | `not-live`      | the row is closed or past its lease — a nudge needs a live session    |
+ * | `terminal`      | `overflowed`: the run passed the per-run event ceiling, forever       |
+ * | `pending`       | an attempt is already outstanding; `attemptId` names it               |
+ * | `pending-fresh` | an attempt is outstanding but too YOUNG to finalize; no `attemptId`   |
+ * | `no-signal`     | `completed`/`expired` with no untriaged provenance event to re-arm on |
+ * | `debounce`      | eligible, but the session has no substance yet                        |
+ * | `overflowed`    | this call FOUND the run past the ceiling and stamped it terminal      |
  *
  * `pending` is not an error and not a re-arm: the page says a later ordinary
  * Stop that finds `pending` "applies the same complete-or-expire rule and does
  * not inject again", so the response hands back the existing `attemptId` and
  * leaves `armed` false. That is what makes `begin` idempotent without ever
  * double-injecting.
+ *
+ * `pending-fresh` IS THAT SAME STATE, AGE-GUARDED (issue #188). Two Stop
+ * processes handling ONE Stop concurrently — a duplicate registration of `stop`
+ * and its `heartbeat` alias — let the sibling read the arming process's attempt
+ * as `pending` and finalize it while the arming process is still fetching the
+ * words; that continuation's writes then land outside the stamped watermark and
+ * a later Stop nudges a second time for one turn's work. A sibling's attempt is
+ * MILLISECONDS old; a genuine later ordinary Stop is a whole model turn later,
+ * so the server declines with `pending-fresh` and withholds the `attemptId`
+ * below the age floor. Withholding is the whole mechanism: `attemptId` on a
+ * decline is the CAPABILITY to finalize, and the hook holds no threshold of its
+ * own.
  */
 export const triageDeclineReasonSchema = z.enum([
   'not-live',
   'terminal',
   'pending',
+  'pending-fresh',
   'no-signal',
   'debounce',
   'overflowed',
@@ -349,7 +397,8 @@ export type TriageDeclineReason = z.infer<typeof triageDeclineReasonSchema>
  * `attemptId` is present when this call ARMED an attempt, and also on the
  * `pending` decline, where it names the attempt already in flight — the hook
  * needs it to finalize rather than re-inject. It is absent on every other
- * decline: there is no attempt to finish.
+ * decline, `pending-fresh` included: there is no attempt to finish, or none
+ * this caller may finish yet.
  *
  * `triageStatus` is the row's state AFTER the call, so a decline is diagnosable
  * from the response alone without a second read.

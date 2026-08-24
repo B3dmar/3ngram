@@ -1,5 +1,85 @@
 # @3ngram/server
 
+## 1.6.0
+
+### Minor Changes
+
+- 6421161: fix(worker): back off a consistently-failing closer row instead of retrying it every sweep tick
+
+  `removeOnFail: true` (PR #181) frees a closer job's id the moment its retries exhaust, so
+  a row whose pass keeps throwing — a gateway outage, a persistently unparseable verdict, a
+  DB blip on `finish` — was re-enqueued on EVERY later sweep tick, forever. Sorted oldest
+  `closed_at` first, that row sat at the front of every bounded batch and starved every
+  newer session sharing the window.
+
+  Migration `0035` adds `agent_sessions.closer_failure_count` (int) and
+  `closer_next_attempt_at` (timestamptz, nullable). `closeSessionRun` wraps its pass in a
+  try/catch: a thrown exception — never a deliberate skip, which already settles the row
+  permanently or stays eligible on purpose — stamps the count and a doubling backoff (base
+  one sweep tick, capped at 4 hours; `closerBackoffDelayMs`, `CLOSER_BACKOFF_BASE_MS` /
+  `CLOSER_BACKOFF_MAX_MS`, `@3ngram/schema`) before re-throwing, so the job still fails and
+  BullMQ still retries. The stamp fires **once per enqueued job whose BullMQ retries are
+  exhausted, not once per attempt** (`CloserOptions.isLastAttempt`, fed from
+  `job.attemptsMade`/`job.opts.attempts` in `apps/worker/src/queues.ts`) — without that gate,
+  a single enqueue that fails all 3 of `CLOSER_JOB_OPTS`' tries would stamp the row three
+  times in under two minutes and blow through the cap for what may have been a sub-two-minute
+  blip. The candidate scan's WHERE clause (not the partial index — `closer_next_attempt_at
+<= now()` is not IMMUTABLE, so `CREATE INDEX` refuses it) gates on it, including the
+  `completed`+`needs_look` leg. Both columns reset to zero/`NULL` on a durable write-back
+  (the closer's own `finishSessionTriage`, or the interactive handshake's
+  `completeSessionTriage`) or a genuine resurrect — all three resurrect writers now reset it
+  (the write-time attach, `openSession`'s reopen, and Stop's own `refreshLease` resurrect
+  branch), not just the first one shipped with.
+
+  The GDPR export carries both new columns, and account erasure resets them alongside
+  `needs_look`.
+
+- 05aa7ae: perf(db): bound the session-closer candidate scan by backlog, not history
+
+  `completed` is the terminal state of the closer's happy path and was never left, so
+  every session a tenant had ever run stayed in `agent_sessions_closer_idx`, sorted
+  first by `closed_at`, and each sweep tick paid an untriaged-event `EXISTS` probe on
+  all of them to find nothing. The work grew with age rather than load.
+
+  Migration `0034` adds `agent_sessions.needs_look` and narrows the index predicate to
+  `closed_at IS NOT NULL AND triage_status <> 'overflowed' AND (triage_status <>
+'completed' OR needs_look)`, so settled history leaves the index entirely. The flag
+  is raised by a provenance write that attaches to an already-`completed` run, and
+  recomputed by every watermark stamp against the set it just wrote — a stamp that
+  leaves an event untriaged re-raises it, which is what keeps the late-commit race
+  (a `memory_events` id assigned at INSERT but visible at COMMIT) covered. The
+  `EXISTS` backstop is unchanged; it is now paid only on flagged rows. Existing
+  `completed` rows are backfilled by the same probe during the migration.
+
+  The GDPR export carries the new column, and account erasure resets it alongside the
+  watermark it derives from.
+
+- 67b0c02: Age-guard the Stop nudge's `pending` decline so concurrent Stop deliveries cannot double-nudge one turn's work (issue #188).
+
+  `triage/begin` hands the in-flight `attemptId` back on a `pending` decline so a later ordinary Stop finalizes the attempt instead of injecting again. That is safe when one process handles one Stop, and unsafe when two handle the _same_ Stop — which is what a duplicate registration of the hook's `stop` and `heartbeat` aliases produces, since a harness runs every matching hook for an event concurrently. The sibling would complete the arming process's attempt while it is still fetching the debrief, so that continuation's writes commit outside the stamped watermark, a later Stop re-arms, and the documented bound of _one nudge per turn that produced new provenance_ breaks.
+
+  `agent_sessions` now carries `triage_armed_at` (migration `0036`), stamped by the arm alongside the attempt token, and `begin` decides by AGE: an attempt younger than `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (default 30, bounded 1–600) declines with the new reason `pending-fresh` and **withholds** the `attemptId`. Withholding is the whole mechanism — the token is the capability to finalize, and the hook keeps no threshold, clock or arm time of its own. The separation is wide: a sibling reads the row milliseconds after the arm, a genuine later Stop is a whole model turn away.
+
+  A finalize-only Stop is EXEMPT: `triage/begin` accepts an optional `stopHookActive`, forwarded verbatim from the harness payload, and skips the age guard when it is true. Deferring a finalize is not free — the attempt stays `pending` across the user's next turn, and the Stop that eventually completes it absorbs that turn's events into the cumulative watermark, where nothing can re-arm on them and the closer no longer selects them. The exemption cannot be reached on the delivery that can inject (that one is `stop_hook_active=false` by definition), and two concurrent finalize deliveries are settled by the existing `(status = 'pending', attempt id)` fence: one stamps the outcome, the other gets a 409, and neither may inject. A harness that never sets the field — Codex has none, Gemini CLI 0.30.0 hardcodes it false — keeps the deferral. The hook omits the field when false, so the arming path stays wire-compatible with a 7a server whose begin body is strict.
+
+  `GET /api/v1/export` now serializes `triageArmedAt` for every agent session, matching the generated OpenAPI contract.
+
+  `TriageDebounceThresholds` gains the required `minAttemptAgeMs`, so a composition root that builds the thresholds by hand must supply it; `loadSessionTriageConfig()` already does. `BeginTriageOptions` gains an optional `armNow` clock, read at the arm point so a slow `begin` cannot stamp an attempt as already aged.
+
+  The age is a cross-instance subtraction — the arming process's stamp against the reading process's clock — so the guard assumes NTP-synchronised app instances. A slow reading clock only defers a finalize by one Stop; a reading clock more than the floor fast relative to the arming one reopens the race. Deriving the age where it was stamped is impossible (Stop is a fresh process per delivery), and a database clock would break the injected-clock convention the module's testability rests on, so the assumption is documented rather than engineered around.
+
+  `triage_armed_at` is nullable and a NULL age reads as "finalize", so rows armed before this migration keep the pre-guard behavior. Deferring a finalize costs at most one Stop: a `pending` row can never arm a second injection, age only grows, and `pending` is unconditionally closer-eligible if the session ends first. An older hook needs no update — `pending-fresh` carries no `attemptId`, so the finalize it declines to authorize is unreachable either way.
+
+### Patch Changes
+
+- Updated dependencies [6421161]
+- Updated dependencies [05aa7ae]
+- Updated dependencies [69059d7]
+- Updated dependencies [67b0c02]
+  - @3ngram/schema@0.9.0
+  - @3ngram/core@0.11.0
+  - @3ngram/config@0.4.0
+
 ## 1.5.0
 
 ### Minor Changes
@@ -14,7 +94,7 @@
 
   Also hardens the native write-attach path: the re-read under the attach advisory lock is now `SELECT ... FOR UPDATE`, so a concurrent close cannot commit between the resurrect decision and the resurrect it justified and silently reopen an explicitly closed session. The close route is the first writer of `closed_at`, which is what made that race reachable.
 
-- 54a7993: Add the server half of the Stop-nudge handshake (issue #166 step 7a): `POST /api/v1/agent-sessions/triage/begin` and `/triage/complete`. Both address the row by the natural key `(agent, sessionId)` in the body, with the tenant from the API key — Stop is a separate process that holds the harness conversation id and nothing else. The hook that injects on an armed answer is step 7b and does not exist yet, so the nudge remains default-off: nothing calls these routes.
+- 54a7993: Add the server half of the Stop-nudge handshake (issue #166 step 7a): `POST /api/v1/agent-sessions/triage/begin` and `/triage/complete`. Both address the row by the natural key `(agent, sessionId)` in the body, with the tenant from the API key — Stop is a separate process that holds the harness conversation id and nothing else. The client half is the step 7b hook (`3ngram-hook stop`), which ships in this same release and calls these routes only behind `THREENGRAM_STOP_NUDGE=1` — the nudge remains default-off.
 
   `begin` decides on the SERVER and answers `armed`; the hook injects only when armed. The entry rule is `idle` always, `completed` and `expired` only on a re-arm signal (a provenance event for the run whose id is outside `last_triaged_event_ids`), `pending` hands back the attempt already in flight so a later Stop finishes it rather than double-injecting, and `overflowed` is terminal. `expired` deliberately behaves like `completed` for entry: a zero-write continuation must not nag on every later Stop. The debounce requires session substance — a minimum turn count (`SESSION_TRIAGE_MIN_TURNS`, default 3) **or** elapsed time since `opened_at` (`SESSION_TRIAGE_MIN_ELAPSED_MINUTES`, default 10) **or** that same untriaged-event signal. The thresholds are tunable; the condition is not optional. A decline is a 200 carrying a content-free reason; only an unknown natural key is a 404. Both routes hand the raw body to core, which parses it once — the single validation boundary `remember` already establishes; a transport only re-parses when it must echo a normalized value, and neither triage response does.
 

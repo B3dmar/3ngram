@@ -1,0 +1,2 @@
+ALTER TABLE "agent_sessions" ADD COLUMN "closer_failure_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "agent_sessions" ADD COLUMN "closer_next_attempt_at" timestamp with time zone;

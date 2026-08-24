@@ -2151,10 +2151,14 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         activationEpoch: 1,
         triageStatus: 'idle',
         triageAttemptId: null,
+        triageArmedAt: new Date('2026-01-01T00:00:00.000Z'),
         lastTriagedEventIds: [],
         briefingDeliveredAt: null,
         briefedMemories: [{ id: NEW_ID, topic: 'ship v1.4.4', status: 'open' }],
         lastMessageExcerpt: 'we should ship the migration',
+        needsLook: false,
+        closerFailureCount: 0,
+        closerNextAttemptAt: null,
       },
     ],
     userBudgets: [
@@ -2269,6 +2273,46 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       userBudgets: 1,
       llmUsage: 1,
     })
+  })
+
+  // THE DRIFT THIS CATCHES. The generated OpenAPI is built from the schema
+  // mirror in generate-openapi.ts, while the response is built by hand in the
+  // route — two lists of the same columns, with nothing tying them together. A
+  // column added to one and forgotten in the other makes every real export
+  // violate its own committed contract, and the field-by-field assertions above
+  // cannot see it because they spot-check a few values. Comparing the SERIALIZED
+  // keys against the spec's `required` list catches both directions.
+  it('serializes exactly the agent-session fields the generated OpenAPI requires', async () => {
+    exportUserData.mockResolvedValue(sampleExport())
+    const res = await call('/api/v1/export', { key: VALID_KEY })
+    const body = (await res.json()) as { agentSessions: Record<string, unknown>[] }
+
+    const spec = JSON.parse(
+      readFileSync(new URL('../../../docs/api-reference/openapi.json', import.meta.url), 'utf8'),
+    ) as {
+      paths: Record<
+        string,
+        {
+          get: {
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: { properties: { agentSessions: { items: { required: string[] } } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      >
+    }
+    const required =
+      spec.paths['/api/v1/export']?.get.responses['200'].content['application/json'].schema
+        .properties.agentSessions.items.required
+
+    expect(Object.keys(body.agentSessions[0] ?? {}).sort()).toEqual([...required].sort())
+    expect(body.agentSessions[0]?.triageArmedAt).toBe('2026-01-01T00:00:00.000Z')
   })
 
   it('publishes the runtime retrieval-policy shape in generated OpenAPI', () => {

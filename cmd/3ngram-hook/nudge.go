@@ -44,10 +44,13 @@ const (
 	debriefPromptTimeout  = 2 * time.Second
 
 	// triageReasonPending is the one decline reason the hook BRANCHES on. The
-	// other five (`not-live`, `terminal`, `no-signal`, `debounce`, `overflowed`)
-	// are all "no nudge this turn" and need no local vocabulary — mirroring the
-	// full enum here would be a second boundary that can drift from
-	// triageDeclineReasonSchema for no gain.
+	// other six (`not-live`, `terminal`, `pending-fresh`, `no-signal`,
+	// `debounce`, `overflowed`) are all "no nudge this turn" and need no local
+	// vocabulary — mirroring the full enum here would be a second boundary that
+	// can drift from triageDeclineReasonSchema for no gain. `pending-fresh` in
+	// particular needs none: it carries no `attemptId`, so the finalize it
+	// declines to authorize is unreachable whether the hook knows the word or
+	// not, and an older hook against a newer server behaves identically.
 	triageReasonPending = "pending"
 
 	// claudeCodeAgent / codexAgent are the two harnesses with a REGISTERED
@@ -130,6 +133,19 @@ func stopNudgeEnabled() bool {
 type triageBeginRequest struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"sessionId"`
+	// StopHookActive forwards the harness's own flag so the SERVER can tell a
+	// finalize-only delivery from a sibling racing the delivery that armed. It
+	// exempts the attempt-age guard, which is what stops a short turn's finalize
+	// being deferred into the next turn's watermark (issue #188). It is not a
+	// permission to inject — this hook never injects on such a Stop.
+	//
+	// OMITTED WHEN FALSE, deliberately. The begin body is a `.strict()` Zod
+	// object, so a field an older server does not know is a 400, not an ignored
+	// extra. Sending it only on the finalize path keeps the ordinary path — the
+	// one that arms and injects — wire-compatible with any 7a server, and leaves
+	// the finalize path degrading to exactly today's deferral if the server is
+	// older than the flag.
+	StopHookActive bool `json:"stopHookActive,omitempty"`
 	// TURN COUNT IS DELIBERATELY ABSENT. `turnCount` is a hint the server
 	// cannot observe for itself, and neither harness puts one in the Stop
 	// payload: Claude Code sends session_id / transcript_path / cwd /
@@ -149,7 +165,8 @@ type triageBeginResponse struct {
 	Armed bool `json:"armed"`
 	// AttemptID is present when this call ARMED, and also on the `pending`
 	// decline where it names the attempt already in flight. Absent on every
-	// other decline: there is no attempt to finish.
+	// other decline: there is no attempt to finish, or — on `pending-fresh` —
+	// none this process is authorized to finish yet.
 	AttemptID string `json:"attemptId"`
 	Reason    string `json:"reason"`
 }
@@ -202,7 +219,9 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 		return 0
 	}
 
-	begun, ok := triageBegin(key)
+	// `false` is not a formality here: this is the delivery that can ARM and
+	// INJECT, so it is exactly the delivery whose siblings must stay age-guarded.
+	begun, ok := triageBegin(key, false)
 	if !ok {
 		// Server down, unknown natural key (Stop never creates a missing row),
 		// or an unparseable body. Nothing to inject and nothing to finish.
@@ -216,25 +235,22 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 	// finds triage_status=pending applies the same complete-or-expire rule and
 	// does not inject again".
 	//
-	// KNOWN RACE, and the reason the README forbids registering both `stop` and
-	// its `heartbeat` alias. If two processes handle ONE Stop concurrently
-	// (which is what a duplicate registration produces — a harness runs every
-	// matching hook for an event in parallel), process A can arm and still be
-	// fetching the prompt while process B lands here, reads A's attempt as
-	// `pending`, and completes it. A then injects anyway; the continuation's
-	// writes commit after B's watermark and a later Stop re-arms, so one turn's
-	// work draws two nudges.
+	// THE CONCURRENT-STOP RACE IS GUARDED ON THE SERVER (issue #188), and this
+	// branch is deliberately unaware of how. If two processes handle ONE Stop
+	// concurrently — what a duplicate registration of `stop` and its
+	// `heartbeat` alias produces, since a harness runs every matching hook for
+	// an event in parallel — process A can arm and still be fetching the prompt
+	// while process B lands here. B must NOT finalize A's attempt: A injects
+	// anyway, and the continuation's writes would commit outside the watermark
+	// B stamped, so a later Stop would re-arm and one turn's work would draw
+	// two nudges.
 	//
-	// THE FIX IS AN AGE GUARD, AND IT NEEDS SERVER STATE THIS ROW DOES NOT
-	// CARRY. "Only finalize an attempt older than ~30s" cleanly separates a
-	// sibling process (milliseconds old) from a genuine later Stop (a whole
-	// model turn later), but `agent_sessions` has no arm timestamp:
-	// `armAttempt` writes only the status, the token and the begin watermark,
-	// and the token is a v4 uuid, so nothing on the row or in the response
-	// dates the attempt. Deriving it would mean a new column — a migration to a
-	// table that shipped in step 7a — which is why this ships as a documented
-	// residual plus the registration rule that makes it unreachable, rather
-	// than as a guess. Tracked in issue #188.
+	// `begin` decides that, by AGE: an attempt younger than the server's floor
+	// declines `pending-fresh` and carries no `attemptId`, so there is nothing
+	// here to finalize and completeTriage below is a no-op. The threshold, the
+	// clock and the arm timestamp all stay server-side — the hook holds no
+	// duplicate of a rule that must be identical on every harness, exactly as
+	// it holds no copy of the entry rule or the debounce.
 	if begun.Reason == triageReasonPending {
 		completeTriage(key, begun.AttemptID)
 		return 0
@@ -286,8 +302,23 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 // Any other decline (`not-live`, `no-signal`, `debounce`, `terminal`) carries no
 // attempt id, which is the honest answer "nothing was armed, or the closer took
 // the row over" — the hook does nothing.
+//
+// `pending-fresh` should NOT reach here any more: this path sends
+// `stopHookActive=true`, which exempts the server's attempt-age guard, so a
+// short turn's finalize lands on the turn that produced it rather than being
+// deferred into the next one's watermark. It can still reach here on a server
+// older than the flag (the strict body 400s, so `ok` is false and nothing
+// happens) or on a harness that never sets `stop_hook_active` — Codex has no
+// such field and Gemini CLI 0.30.0 hardcodes it false — and there the finalize
+// is DEFERRED rather than lost: the row stays `pending`, so no later `begin` can
+// arm a second injection, the next Stop past the floor completes it, and a
+// session that ends first is unconditionally closer-eligible while `pending`.
 func finalizeTriage(key agentSessionKey) {
-	begun, ok := triageBegin(key)
+	// `true` tells the server this is a finalize-only delivery, which exempts the
+	// attempt-age guard: the harness set the flag because it already blocked on a
+	// previous Stop for this turn, so this caller is the continuation of that
+	// attempt rather than a sibling racing it.
+	begun, ok := triageBegin(key, true)
 	if !ok {
 		return
 	}
@@ -322,8 +353,12 @@ func completeTriage(key agentSessionKey, attemptID string) {
 // triageBegin asks the server whether to nudge. The bool is "I got an answer",
 // which is NOT the same as "arm": a decline is a 200 with `armed:false`, and
 // only a transport failure, a non-2xx or an unparseable body is `false` here.
-func triageBegin(key agentSessionKey) (triageBeginResponse, bool) {
-	body, err := json.Marshal(triageBeginRequest{Agent: key.Agent, SessionID: key.SessionID})
+func triageBegin(key agentSessionKey, stopHookActive bool) (triageBeginResponse, bool) {
+	body, err := json.Marshal(triageBeginRequest{
+		Agent:          key.Agent,
+		SessionID:      key.SessionID,
+		StopHookActive: stopHookActive,
+	})
 	if err != nil {
 		return triageBeginResponse{}, false
 	}
