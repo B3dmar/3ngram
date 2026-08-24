@@ -399,8 +399,16 @@ async function excerptPatch(
     .where(eq(users.id, userId))
     .limit(1)
   // No row, or a tombstoned one: drop the excerpt and keep the rest of the
-  // heartbeat. The lease and epoch are structural skeleton that erasure
-  // deliberately preserves, so refreshing them writes nothing that was erased.
+  // heartbeat. The lease is structural skeleton that erasure never touches, so
+  // refreshing it writes nothing that was erased. The epoch is NOT untouched
+  // any more (issue #185): erasure now bumps it in the same statement as the
+  // redaction (account-delete.ts), specifically so an in-flight closer pass
+  // fences off the content this function is about to drop. A heartbeat that
+  // still reaches this point is running on a credential that erasure has
+  // already revoked in the same tx — an ordinary post-revocation race, not one this
+  // shared lock closes — and if it goes on to resurrect a closed row below, it
+  // only bumps the epoch further, never back to a value a closer could have
+  // claimed at.
   if (user === undefined || user.email === deletedEmail(userId)) return {}
   return { lastMessageExcerpt: input.lastMessageExcerpt }
 }

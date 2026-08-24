@@ -210,7 +210,7 @@ its row here even when its name and kind are unchanged.
 | `CLOSER_EVENTS_PAGE_SIZE` | const | `81782d897653` |
 | `CLOSER_OPERATION` | const | `05cd81237d6f` |
 | `CloseSessionResult` | interface | `9ce31e28018e` |
-| `ClosedRunResolveOutcome` | type | `74e9c71fed1b` |
+| `ClosedRunResolveOutcome` | type | `9108a89f26b1` |
 | `CloserClaim` | interface | `67269cd81a6e` |
 | `CloserEnqueueRequest` | interface | `833bcf729143` |
 | `CloserEventPage` | interface | `c5968370e704` |
@@ -330,7 +330,7 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
-| `SessionCloserRepo` | interface | `d2ce79fd10f0` |
+| `SessionCloserRepo` | interface | `7e7f6889d214` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
@@ -567,7 +567,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
-| `CommitmentTransition` | interface | `a4ff7abf1023` |
+| `CommitmentTransition` | interface | `1697152a1177` |
 | `CompleteTriageOptions` | interface | `5a4f51b8b231` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
@@ -665,6 +665,7 @@ its row here even when its name and kind are unchanged.
 | `SearchAsOf` | interface | `dd0fe1ef2631` |
 | `SearchFilters` | interface | `8131acb3c156` |
 | `SearchHit` | interface | `6decb1397014` |
+| `SessionEpochFencedError` | class | `cc4a11973844` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SignupEmailVerificationToken` | interface | `d97e5d87001a` |

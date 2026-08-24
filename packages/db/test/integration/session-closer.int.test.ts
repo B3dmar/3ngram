@@ -20,8 +20,13 @@ import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
 import { and, eq, isNull, lt } from 'drizzle-orm'
 import { QueryBuilder } from 'drizzle-orm/pg-core'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
-import { createCommitment, transitionCommitment } from '../../src/commitments.js'
+import {
+  createCommitment,
+  SessionEpochFencedError,
+  transitionCommitment,
+} from '../../src/commitments.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
@@ -81,6 +86,21 @@ async function setRow(id: string, patch: Record<string, unknown>): Promise<void>
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const result = await ownerPool.query('SELECT * FROM agent_sessions WHERE id = $1', [id])
   return result.rows[0] as Record<string, unknown>
+}
+
+/**
+ * Poll a condition instead of sleeping for a fixed duration (hard rule 4: no
+ * flake, no timing hacks). Used to PROVE a genuine row-lock wait is under way
+ * — via `pg_locks` — rather than assuming an interleaving from promise
+ * ordering alone. Same pattern as auth-email-verification.int.test.ts.
+ */
+async function waitFor(pred: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await pred()) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  throw new Error('waitFor: condition not met before timeout')
 }
 
 /**
@@ -979,6 +999,178 @@ describe('stamped provenance never resurrects the run (audit P2)', () => {
       [uid, memoryId],
     )
     expect((events.rows[0] as { n: number }).n).toBe(1)
+  })
+})
+
+describe('the resolve-path epoch fence catches an erasure racing the write (issue #185)', () => {
+  it('rejects a stale-epoch resolve with SessionEpochFencedError and writes NOTHING (erasure already committed)', async () => {
+    // The BASELINE case: erasure has already fully committed by the time the
+    // closer writes, so this exercises the epoch-mismatch detection itself
+    // without any lock contention — the closer's FOR UPDATE read just runs
+    // against the already-current row. It does NOT exercise the genuine
+    // concurrency bug the auditor found (an earlier revision's EXISTS(...)
+    // predicate was unsound under EvalPlanQual specifically when the closer's
+    // statement had to BLOCK on erasure's still-open row lock and then wake).
+    // See the next test for the real two-connection race that proves that.
+    const opened = await open(uid, 'conv-erasure-race')
+    const before = await rawRow(opened.row.id)
+    const staleEpoch = before.activation_epoch as number
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    // Erasure commits BETWEEN the closer's outer check (which observed
+    // staleEpoch) and its write below — bumping activation_epoch on every row
+    // of the account in the same statement as the PII redaction.
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+    const afterErasure = await rawRow(opened.row.id)
+    expect(afterErasure.activation_epoch).not.toBe(staleEpoch)
+
+    await expect(
+      transitionCommitment({
+        userId: uid,
+        commitmentId: commitment.id,
+        to: 'resolved',
+        actorKind: 'worker',
+        expectedFrom: 'open',
+        stampedSessionRunId: opened.row.id,
+        // The STALE epoch the closer's outer check observed, before erasure.
+        stampedSessionEpoch: staleEpoch,
+      }),
+    ).rejects.toBeInstanceOf(SessionEpochFencedError)
+
+    // Nothing landed: the commitment is still open, and no resolve event was
+    // appended under the closer's (now-stale) provenance.
+    const commitmentRow = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [
+      commitment.id,
+    ])
+    expect((commitmentRow.rows[0] as { status: string }).status).toBe('open')
+    const events = await ownerPool.query(
+      `SELECT count(*)::int AS n FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect((events.rows[0] as { n: number }).n).toBe(0)
+  })
+
+  it('rejects a resolve whose lock wait genuinely spans a still-open erasure (real two-connection race)', async () => {
+    // THE DECISIVE TEST. An epoch check folded into the commitment UPDATE's own
+    // WHERE (an earlier revision's EXISTS(...) predicate) looked equivalent to
+    // the shipped lock-then-read but was unsound under EvalPlanQual: Postgres
+    // re-checks a blocked-then-woken UPDATE's OWN target row against the fresh
+    // tuple, but a sub-SELECT against another table inside that same WHERE
+    // still runs under the statement's ORIGINAL snapshot — so it could still
+    // read a pre-erasure epoch even after erasure had already committed. The
+    // sequential test above cannot exercise that bug: it never makes the
+    // closer's statement actually BLOCK on erasure's row lock, so it would
+    // pass even against the unsound EXISTS(...) construction. This test does:
+    // erasure's transaction is driven all the way through (the commitments
+    // redaction AND the agent_sessions epoch bump — both inside one
+    // transaction) and held OPEN, uncommitted, on its own connection; the
+    // closer's transitionCommitment is then started on a SEPARATE connection,
+    // and the test polls `pg_locks` to PROVE its row-lock wait is genuinely
+    // under way — not merely assumed from promise ordering — before erasure is
+    // released to commit.
+    const opened = await open(uid, 'conv-erasure-live-race')
+    const before = await rawRow(opened.row.id)
+    const staleEpoch = before.activation_epoch as number
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    let eraseReady: () => void = () => undefined
+    let releaseErase: () => void = () => undefined
+    const eraseIsReady = new Promise<void>((resolve) => {
+      eraseReady = resolve
+    })
+    const eraseCanCommit = new Promise<void>((resolve) => {
+      releaseErase = resolve
+    })
+
+    // Connection 1: erasure. Runs eraseAccountData to full completion (the
+    // commitments redaction, then the epoch bump — both land inside this one
+    // transaction) and then holds the transaction OPEN, uncommitted, until
+    // released. By the time it signals ready it holds the row lock on every
+    // commitment of this account, this one included.
+    const eraseTx = withTenant(uid, async (tx) => {
+      await eraseAccountData(tx, uid, NOW)
+      eraseReady()
+      await eraseCanCommit
+    })
+    await eraseIsReady
+
+    // Connection 2: the closer's write, started while erasure's transaction is
+    // STILL OPEN and still holding the lock.
+    const resolvePromise = transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+      stampedSessionRunId: opened.row.id,
+      // The epoch the closer's OUTER pre-resolve check observed BEFORE erasure
+      // started — genuinely stale by the time this write is attempted.
+      stampedSessionEpoch: staleEpoch,
+    })
+
+    // PROVE the block: poll pg_locks for a waiting `transactionid` lock — the
+    // signature of one session queued behind another transaction's row lock
+    // (Postgres implements a row-lock wait as waiting on the lock holder's
+    // transaction id). Without this, releasing erasure immediately could let
+    // the two promises settle in whichever order the scheduler happened to
+    // pick, and the test would pass without ever exercising a real wait.
+    await waitFor(async () => {
+      const r = await ownerPool.query(
+        `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted`,
+      )
+      return (r.rows[0] as { n: number }).n >= 1
+    })
+
+    // Release erasure: its transaction commits (redaction + epoch bump land
+    // together), freeing the row lock the closer's statement was queued on.
+    releaseErase()
+    await eraseTx
+
+    // The closer's blocked read wakes, resumes on a FRESH statement (the
+    // mechanism under test), sees the bumped epoch, and aborts — nothing
+    // written.
+    await expect(resolvePromise).rejects.toBeInstanceOf(SessionEpochFencedError)
+
+    const commitmentRow = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [
+      commitment.id,
+    ])
+    expect((commitmentRow.rows[0] as { status: string }).status).toBe('open')
+    const events = await ownerPool.query(
+      `SELECT count(*)::int AS n FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect((events.rows[0] as { n: number }).n).toBe(0)
+  })
+
+  it('still resolves normally when the epoch has NOT moved', async () => {
+    // The guard must not be a no-op false-positive: a pass whose epoch is
+    // genuinely still current writes exactly as before.
+    const opened = await open(uid, 'conv-epoch-current')
+    const row = await rawRow(opened.row.id)
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+      stampedSessionRunId: opened.row.id,
+      stampedSessionEpoch: row.activation_epoch as number,
+    })
+
+    const commitmentRow = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [
+      commitment.id,
+    ])
+    expect((commitmentRow.rows[0] as { status: string }).status).toBe('resolved')
   })
 })
 
