@@ -74,6 +74,7 @@ describe('agentSessionRowSchema', () => {
     activationEpoch: 1,
     triageStatus: 'idle',
     triageAttemptId: null,
+    triageArmedAt: null,
     lastTriagedEventIds: [],
     briefedMemories: [],
     lastMessageExcerpt: null,

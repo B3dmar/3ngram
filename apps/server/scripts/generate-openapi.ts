@@ -276,6 +276,7 @@ const exportAgentSession = z
     activationEpoch: z.number().int(),
     triageStatus: z.string(),
     triageAttemptId: z.uuid().nullable(),
+    triageArmedAt: z.string().datetime().nullable(),
     lastTriagedEventIds: z.array(z.uuid()),
     briefingDeliveredAt: z.string().datetime().nullable(),
     briefedMemories: z.array(

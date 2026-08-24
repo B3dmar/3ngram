@@ -46,6 +46,13 @@ export const agentSessions = pgTable(
     activationEpoch: integer('activation_epoch').notNull().default(1),
     triageStatus: text('triage_status').notNull().default('idle'),
     triageAttemptId: uuid('triage_attempt_id'),
+    // WHEN the current attempt was armed. NULL means "no attempt has ever been
+    // armed on this row", and also covers every row that predates this column —
+    // both read as "age unknown", which the age guard treats as today's
+    // behavior (see evaluateTriageEntry in session-triage.ts). It is stamped by
+    // armAttempt and never cleared: a terminal status already says the attempt
+    // is over, so clearing would only cost a write and lose the last arm time.
+    triageArmedAt: timestamp('triage_armed_at', { withTimezone: true }),
     lastTriagedEventIds: jsonb('last_triaged_event_ids').notNull().default([]).$type<string[]>(),
     briefingDeliveredAt: timestamp('briefing_delivered_at', { withTimezone: true }),
     briefedMemories: jsonb('briefed_memories').notNull().default([]).$type<BriefedMemory[]>(),

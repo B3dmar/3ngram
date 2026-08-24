@@ -132,6 +132,8 @@ export const agentSessionRowSchema = z
     activationEpoch: z.number().int().positive(),
     triageStatus: agentSessionTriageStatusSchema,
     triageAttemptId: z.uuid().nullable(),
+    /** When the current attempt was armed. NULL before the first arm. */
+    triageArmedAt: z.date().nullable(),
     lastTriagedEventIds: z.array(z.uuid()).max(MAX_SESSION_EVENT_IDS),
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
     lastMessageExcerpt: z.string().max(MAX_SESSION_EXCERPT_LENGTH).nullable(),
@@ -339,25 +341,39 @@ export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBegi
 /**
  * Why `begin` did not arm. Content-free, stable, and safe to log or metric.
  *
- * | reason       | meaning                                                              |
- * |--------------|----------------------------------------------------------------------|
- * | `not-live`   | the row is closed or past its lease — a nudge needs a live session    |
- * | `terminal`   | `overflowed`: the run passed the per-run event ceiling, forever       |
- * | `pending`    | an attempt is already outstanding; `attemptId` names it               |
- * | `no-signal`  | `completed`/`expired` with no untriaged provenance event to re-arm on |
- * | `debounce`   | eligible, but the session has no substance yet                        |
- * | `overflowed` | this call FOUND the run past the ceiling and stamped it terminal      |
+ * | reason          | meaning                                                               |
+ * |-----------------|-----------------------------------------------------------------------|
+ * | `not-live`      | the row is closed or past its lease — a nudge needs a live session    |
+ * | `terminal`      | `overflowed`: the run passed the per-run event ceiling, forever       |
+ * | `pending`       | an attempt is already outstanding; `attemptId` names it               |
+ * | `pending-fresh` | an attempt is outstanding but too YOUNG to finalize; no `attemptId`   |
+ * | `no-signal`     | `completed`/`expired` with no untriaged provenance event to re-arm on |
+ * | `debounce`      | eligible, but the session has no substance yet                        |
+ * | `overflowed`    | this call FOUND the run past the ceiling and stamped it terminal      |
  *
  * `pending` is not an error and not a re-arm: the page says a later ordinary
  * Stop that finds `pending` "applies the same complete-or-expire rule and does
  * not inject again", so the response hands back the existing `attemptId` and
  * leaves `armed` false. That is what makes `begin` idempotent without ever
  * double-injecting.
+ *
+ * `pending-fresh` IS THAT SAME STATE, AGE-GUARDED (issue #188). Two Stop
+ * processes handling ONE Stop concurrently — a duplicate registration of `stop`
+ * and its `heartbeat` alias — let the sibling read the arming process's attempt
+ * as `pending` and finalize it while the arming process is still fetching the
+ * words; that continuation's writes then land outside the stamped watermark and
+ * a later Stop nudges a second time for one turn's work. A sibling's attempt is
+ * MILLISECONDS old; a genuine later ordinary Stop is a whole model turn later,
+ * so the server declines with `pending-fresh` and withholds the `attemptId`
+ * below the age floor. Withholding is the whole mechanism: `attemptId` on a
+ * decline is the CAPABILITY to finalize, and the hook holds no threshold of its
+ * own.
  */
 export const triageDeclineReasonSchema = z.enum([
   'not-live',
   'terminal',
   'pending',
+  'pending-fresh',
   'no-signal',
   'debounce',
   'overflowed',
@@ -370,7 +386,8 @@ export type TriageDeclineReason = z.infer<typeof triageDeclineReasonSchema>
  * `attemptId` is present when this call ARMED an attempt, and also on the
  * `pending` decline, where it names the attempt already in flight — the hook
  * needs it to finalize rather than re-inject. It is absent on every other
- * decline: there is no attempt to finish.
+ * decline, `pending-fresh` included: there is no attempt to finish, or none
+ * this caller may finish yet.
  *
  * `triageStatus` is the row's state AFTER the call, so a decline is diagnosable
  * from the response alone without a second read.

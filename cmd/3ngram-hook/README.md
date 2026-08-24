@@ -126,8 +126,13 @@ attempt back so the closer still picks the session up.
 > sees it as `pending` and finalizes it before the first has emitted its
 > envelope; that continuation's writes then land outside the stamped watermark
 > and a later Stop can nudge a second time for the same work. One registration
-> makes this unreachable. Tracked for a server-side age guard in
-> [issue #188](https://github.com/B3dmar/3ngram/issues/188).
+> makes this unreachable — and since
+> [issue #188](https://github.com/B3dmar/3ngram/issues/188) the server also
+> guards it: `begin` withholds the `attemptId` on a `pending` attempt younger
+> than `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (default 30) and answers
+> `pending-fresh`, so a sibling process has nothing to finalize. That makes the
+> duplicate registration survivable, not correct: it still doubles every hook
+> call this Stop makes.
 
 **Facets come from the session row, not from this process.** The hook sends only
 the natural key to `GET /api/v1/prompts/debrief`; the server fills `scope` and
