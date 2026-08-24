@@ -18,7 +18,7 @@ export const SDK_METHOD_NAMES = ['remember', 'search', 'getFacts', 'revise', 're
 export const SDK_METHODS: readonly SdkMethodReference[] = [
   {
     name: 'remember',
-    signature: 'remember(input: RememberToolArgs): Promise<RememberToolOutput>',
+    signature: 'remember(input: RememberToolArgsV2): Promise<RememberToolOutputV2>',
     route: 'POST /api/v1/memories',
     summary: 'Append a typed memory. Commitment outputs include a commitmentId.',
     requestSchema: 'remember',
@@ -81,7 +81,8 @@ export const SDK_METHODS: readonly SdkMethodReference[] = [
   },
   {
     name: 'resolve',
-    signature: 'resolve(memoryId: string, status: CommitmentStatus): Promise<ResolveToolOutput>',
+    signature:
+      'resolve(memoryId: string, status: CommitmentStatus, opts?: { sessionRunId?: string }): Promise<ResolveToolOutput>',
     route: 'POST /api/v1/memories/:id/resolve',
     summary: 'Transition the commitment riding a memory, or archive an active blocker.',
     requestSchema: 'resolve',

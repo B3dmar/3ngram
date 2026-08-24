@@ -69,6 +69,15 @@ run_production_checks() {
     'shipped concept pages must say so'
   require docs/concepts/threads.mdx 'Status: design, not built' \
     'unbuilt designs must declare status so they cannot be read as shipped'
+  # session-continuity is now a MIXED page, the same genus as mcp-surface: every
+  # implementation step ships, but only default-off, and the default-on behavior
+  # the page argues for is gated on an unmeasured validation bar. Requiring the
+  # old `design, not built` marker here would force the page to assert something
+  # its own body disproves — so the required string moved with the truth rather
+  # than the page keeping a marker it immediately negates. The guard is
+  # unchanged in kind: delete the status line and this still fails.
+  require docs/concepts/session-continuity.mdx 'Status: shipped, default-off' \
+    'mixed shipped/gated pages must declare both halves on the status line'
   require docs/concepts/mcp-surface.mdx 'Status:.*design' \
     'mixed shipped/design pages must declare the design half'
 
@@ -87,6 +96,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   printf 'ok\n' >"$tmp/docs/concepts/architecture.mdx"
   printf 'ok\n' >"$tmp/AGENTS.md"
   printf '**Status: design, not built.**\n' >"$tmp/docs/concepts/threads.mdx"
+  printf '**Status: shipped, default-off — gated on the validation bar.**\n' \
+    >"$tmp/docs/concepts/session-continuity.mdx"
   printf '**Status: the cap is shipped; the proposals below are still design.**\n' \
     >"$tmp/docs/concepts/mcp-surface.mdx"
   ROOT="$tmp"
@@ -103,6 +114,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   printf '10 MCP tools\n' >"$tmp/README.md"
   run_production_checks
   [[ $fail -ne 0 ]] || { echo "SELF-TEST FAIL: tool-count mismatch not caught" >&2; exit 1; }
+
+  # A session-continuity page that DROPS its status line must still fail. The
+  # required string changed when the page became mixed; the guard did not.
+  printf '11 MCP tools\n' >"$tmp/README.md"
+  printf 'The page body, with no status line at all.\n' \
+    >"$tmp/docs/concepts/session-continuity.mdx"
+  run_production_checks
+  [[ $fail -ne 0 ]] || { echo "SELF-TEST FAIL: missing status line not caught" >&2; exit 1; }
 
   echo "docs-truth self-test: OK"
   exit 0

@@ -2,8 +2,10 @@
 export { archiveMemory } from './archive.js'
 export {
   BlockerNotFoundError,
+  type ClosedRunResolveOutcome,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   type CreateCommitmentOptions,
   createCommitment,
   IllegalCommitmentTransitionError,
@@ -11,6 +13,8 @@ export {
   NotCommitmentMemoryError,
   type ResolveStatus,
   resolveByMemoryId,
+  // `resolveForClosedRun` is deliberately NOT re-exported — see its doc comment.
+  // The session closer reaches it by deep import; nothing else may.
   transition,
   type WrittenCommitment,
 } from './commitments.js'
@@ -23,6 +27,7 @@ export {
 export {
   DuplicateMemoryError,
   remember,
+  UnknownSessionRunError,
   type WriteResult,
   type WrittenMemory,
 } from './remember.js'

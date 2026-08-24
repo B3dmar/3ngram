@@ -4,7 +4,7 @@ description: "The v1 table layout, the append-and-supersede write path, and the 
 icon: "table"
 ---
 
-Shipped baseline: **26 physical tables** — **24** in the public Drizzle schema (identity 10 · memory domain 8 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 26 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (24).
+Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema (identity 10 · memory domain 9 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 27 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (25). `agent_sessions` (0032) is the 27th: JTBD "worth-keeping work is written without a human typing `/debrief`" cannot live on `memory_events` (needs a `memory_id` and a lifecycle kind).
 
 ## Design rules
 
@@ -33,7 +33,7 @@ Shipped baseline: **26 physical tables** — **24** in the public Drizzle schema
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
 
-### Memory core (8)
+### Memory core (9)
 
 | Table | Purpose | Notes |
 |---|---|---|
@@ -45,6 +45,7 @@ Shipped baseline: **26 physical tables** — **24** in the public Drizzle schema
 | `consolidation_proposals` | Background-worker output: candidate edge + rationale + status (proposed/applied/rejected) + **`similarity` and `memory_type`** so the per-type precision bar is auditable | Advisory, type-aware; `event` type never auto-applies. **Edge direction is the locked contract**: `from_id`/`to_id` are materialized verbatim into `memory_edges`, so for a `supersedes`/`updates` proposal the successor is `from_id` and the **predecessor (the superseded row whose `valid_to` closes on accept) is `to_id`** — the same `successor → predecessor` convention `revise`/`search` rely on. The consolidator MUST emit rows in this orientation. |
 | `fact_proposals` | Staging area for extracted facts awaiting review: the same triple + bi-temporal columns as `facts`, plus `memory_type`, `rationale`, `status` (proposed/applied/rejected) and `decided_at`, FK → source memory | Nothing an extractor produced becomes queryable truth until a human accepts it. A sibling of `consolidation_proposals` rather than a mode on it, so every shipped object stays byte-identical. One OPEN proposal per (memory, subject, predicate, value) — re-proposal after a rejection is allowed, and repeated extractions of one triple collapse to the first. `valid_from` is nullable here (an extractor often cannot date a claim) but a `valid_to` still requires one. |
 | `scopes` | User scope config + aliases (personal/work/custom) | Unifies scope config and aliases in one table |
+| `agent_sessions` | Harness conversation/run bookkeeping: natural key `(user_id, agent, session_id)`, lease, triage, briefing stamp | **Not in the retrieval path.** UPDATE for lease/triage/close; no DELETE. Provenance payload on `memory_events` is `{ sessionRunId }` with expression index `(user_id, payload->>'sessionRunId', id)` |
 
 ### Operations (3)
 

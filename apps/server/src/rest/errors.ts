@@ -26,9 +26,13 @@
 import { log } from '@3ngram/config'
 import {
   AccessDeniedError,
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
+  AgentSessionTriageConflictError,
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   DuplicateMemoryError,
   EdgeConflictError,
   EpisodicSupersessionError,
@@ -46,6 +50,7 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnknownSessionRunError,
   UnscopedRetrievalError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
@@ -105,6 +110,7 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     err instanceof InvalidEmbeddingError ||
     err instanceof MissingSelectorError ||
     err instanceof NotCommitmentMemoryError ||
+    err instanceof UnknownSessionRunError ||
     // A continuation cursor replayed against a different query/filter set —
     // the caller's mistake, named honestly (never a silent re-page of the old
     // search's frozen ordering). No query text is logged, only the class name.
@@ -161,6 +167,17 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     log().warn({ route, err: err.name }, 'rest: memory not found')
     return { status: 404, reason: 'not_found' }
   }
+  // Close / heartbeat / debrief-render named a natural key this tenant owns no
+  // row for (RLS makes not-found and not-owned one answer). The hook treats it
+  // as "nothing to close" — SessionEnd correctness never depended on it (the
+  // lease + sweep do). Only the bounded key is logged, never briefing rows.
+  if (err instanceof AgentSessionNotFoundError) {
+    log().warn(
+      { route, err: err.name, agent: err.agent, session_id: err.sessionId },
+      'rest: agent session not found',
+    )
+    return { status: 404, reason: 'not_found' }
+  }
   // Documented domain CONFLICTS (409): already superseded, edge conflict, a
   // commitment already rides the memory, an illegal FSM transition, a scope-name
   // collision. Names the class / a bounded id or enum state only, never content.
@@ -170,7 +187,21 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
     err instanceof CommitmentExistsError ||
     err instanceof ScopeNameConflictError ||
     err instanceof EpisodicSupersessionError ||
-    err instanceof SuccessorNotLiveError
+    err instanceof SuccessorNotLiveError ||
+    // A `startup` open reusing a natural key that already names a row opened
+    // with different identity params — "request token; reuse with changed
+    // params is 409" (docs/concepts/session-continuity.mdx, REST surface).
+    err instanceof AgentSessionParamsConflictError ||
+    // A `triage/complete` for an attempt that is no longer the current one —
+    // a crashed hook retrying, a second Stop, or a closer that re-claimed the
+    // row after the lease expired mid-handshake. The attempt-id predicate
+    // rejected it, so the newer attempt's verdict stands.
+    err instanceof AgentSessionTriageConflictError ||
+    // A commitment transition that kept losing its compare-and-set: the row
+    // exists and the request was legal from the state the caller read, but
+    // concurrent writers moved it out from under every attempt. A write
+    // conflict, not a bad request — the client should simply retry.
+    err instanceof CommitmentStateChangedError
   ) {
     log().warn({ route, err: err.name }, 'rest: conflict')
     return { status: 409, reason: 'conflict' }

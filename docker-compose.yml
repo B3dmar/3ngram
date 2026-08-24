@@ -1,10 +1,14 @@
-# Self-host / local-dev services (Phase 0 item 7; server/worker containers
-# join in Phase 2/3 when deployables exist). Also the local integration-test
-# database (docs/concepts/testing.mdx): `docker compose up -d postgres redis`.
+# Self-host / local-dev services: Postgres, Redis, the one-shot migrator, the
+# server and the background worker — every deployable the repo has. Also the
+# local integration-test database (docs/concepts/testing.mdx):
+# `docker compose up -d postgres redis`.
 # Setup walkthrough: docs/concepts/local-development.mdx.
 #
-# Images pinned by digest (supply-chain posture, AGENTS.md hard rule 7) — the tag comment
-# records what the digest was resolved from; bump deliberately.
+# Third-party images pinned by digest (supply-chain posture, AGENTS.md hard rule
+# 7) — the tag comment records what the digest was resolved from; bump
+# deliberately. The `server`, `worker` and `migrations` services build from this
+# repo instead: a digest would pin a published artifact, and these are built
+# from the checkout in front of you.
 services:
   postgres:
     # pgvector/pgvector:pg18
@@ -89,6 +93,44 @@ services:
         - "node"
         - "-e"
         - "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # Background jobs: consolidation proposals, surfacing/overdue, OAuth-client GC,
+  # and — behind SESSION_CLOSER_ENABLED — the session lease-expiry sweep plus the
+  # resolve-only closer (docs/concepts/session-continuity.mdx layer 5). Without
+  # this service a self-host stack enqueues nothing and the closer never runs.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      # Runtime (app_user) connection, same scoping rule as `server`: the owner
+      # credential belongs to the one-shot `migrations` service only, and this
+      # service loads no env_file either.
+      DATABASE_URL: postgresql://app_user:${APP_USER_PASSWORD:-app-user-dev}@postgres:5432/ngram
+      # BullMQ has no degraded mode — a missing REDIS_URL is a hard boot failure.
+      REDIS_URL: redis://redis:6379
+      # Session closer: DEFAULT OFF (docs/concepts/session-continuity.mdx
+      # "Validation bar"). Set to `true` together with LLM_GATEWAY_URL and
+      # LLM_GATEWAY_API_KEY to run it; with either missing, every closer pass
+      # reports `no-gateway` and writes nothing.
+      SESSION_CLOSER_ENABLED: ${SESSION_CLOSER_ENABLED:-false}
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      LLM_GATEWAY_API_KEY: ${LLM_GATEWAY_API_KEY:-}
+    healthcheck:
+      # The worker serves no HTTP, and it has no degraded mode: a broken boot
+      # exits rather than idling, so "pid 1 is alive" is the liveness signal.
+      # Mirrors the Dockerfile HEALTHCHECK.
+      test: ["CMD", "node", "-e", "process.exit(0)"]
       interval: 30s
       timeout: 5s
       start_period: 20s

@@ -6,11 +6,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  commitmentStatusSchema,
   factsQueryInputSchema,
   factsToolOutputSchema,
-  rememberToolInputSchema,
-  rememberToolOutputSchema,
+  rememberToolInputV2Schema,
+  rememberToolOutputV2Schema,
+  resolveToolInputSchema,
   resolveToolOutputSchema,
   reviseToolInputSchema,
   reviseToolOutputSchema,
@@ -25,7 +25,7 @@ const CLIENT_SOURCE = resolve(HERE, '../src/client.ts')
 const OUT_FILE = resolve(HERE, '../../../docs/reference/sdk.mdx')
 
 const SCHEMAS = {
-  remember: { input: rememberToolInputSchema, output: rememberToolOutputSchema },
+  remember: { input: rememberToolInputV2Schema, output: rememberToolOutputV2Schema },
   search: { input: searchQuerySchema, output: searchRestResponseV2Schema },
   facts: { input: factsQueryInputSchema, output: factsToolOutputSchema },
   revise: {
@@ -33,7 +33,7 @@ const SCHEMAS = {
     output: reviseToolOutputSchema,
   },
   resolve: {
-    input: z.object({ status: commitmentStatusSchema }).strict(),
+    input: resolveToolInputSchema.omit({ memoryId: true }),
     output: resolveToolOutputSchema,
   },
 } as const

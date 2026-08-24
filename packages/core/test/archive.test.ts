@@ -40,7 +40,7 @@ describe('archiveMemory', () => {
     const result = await archiveMemory(USER, MEMORY, ACTOR)
 
     expect(result).toEqual({ id: MEMORY, status: 'archived' })
-    expect(dbArchiveMemory.mock.calls[0]).toEqual([USER, MEMORY, ACTOR])
+    expect(dbArchiveMemory.mock.calls[0]).toEqual([USER, MEMORY, ACTOR, undefined])
   })
 
   it('maps the db typed miss (ActiveMemoryNotFoundError) to MemoryNotFoundError', async () => {

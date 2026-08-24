@@ -298,6 +298,10 @@ describe('queue wiring (harness, Redis mocked)', () => {
     vi.doMock('bullmq', () => ({
       Queue: class {
         upsertJobScheduler = vi.fn(async () => ({}))
+        // The closer flag is a kill switch: with it off, startQueues REMOVES the
+        // durable sweep scheduler rather than merely skipping the upsert.
+        removeJobScheduler = vi.fn(async () => true)
+        add = vi.fn(async () => ({}))
         close = vi.fn(async () => {})
       },
       Worker: class {

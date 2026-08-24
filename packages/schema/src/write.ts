@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { actorKindSchema, edgeTypeSchema, memoryTypeSchema } from './memory.js'
 import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
+import { sessionRunIdSchema } from './session-run-id.js'
 
 /**
  * Write-path input contracts. These are the validated
@@ -197,6 +198,28 @@ export const rememberWithFactsInputSchema = rememberInputSchema.safeExtend({
 export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema>
 
 /**
+ * Native-only session provenance field. NOT on {@link rememberInputSchema} —
+ * import extends that schema, and `sessionRunId` is reserved for native writes
+ * (docs/concepts/session-continuity.mdx). JSON key spelling matches
+ * sessionProvenancePayloadSchema.
+ */
+const sessionRunIdField = sessionRunIdSchema
+  .optional()
+  .describe(
+    'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.',
+  )
+
+/**
+ * Canonical native remember input (ADR-0011): facts-capable remember PLUS
+ * optional sessionRunId. Core's single parse must accept this shape so
+ * session provenance does not regress structured fact writes.
+ */
+export const nativeRememberInputSchema = rememberWithFactsInputSchema.safeExtend({
+  sessionRunId: sessionRunIdField,
+})
+export type NativeRememberInput = z.infer<typeof nativeRememberInputSchema>
+
+/**
  * `revise` appends a successor and links it to its predecessor with a typed
  * edge — never an in-place content UPDATE (docs/concepts/memory-model.mdx append-and-supersede, hard
  * rule 1). The edge intent is constrained to the supersession family: a revise
@@ -220,6 +243,12 @@ export const reviseInputSchema = rememberInputSchema
   })
   .strict()
 export type ReviseInput = z.infer<typeof reviseInputSchema>
+
+/** Native revise: same optional sessionRunId as {@link nativeRememberInputSchema}. */
+export const nativeReviseInputSchema = reviseInputSchema.safeExtend({
+  sessionRunId: sessionRunIdField,
+})
+export type NativeReviseInput = z.infer<typeof nativeReviseInputSchema>
 
 /**
  * Edge-creation input (typed edges: supersedes/updates/extends/derives). The

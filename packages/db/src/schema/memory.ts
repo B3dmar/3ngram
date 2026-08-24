@@ -159,6 +159,12 @@ export const memoryEvents = pgTable(
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
     index('memory_events_memory_idx').on(t.userId, t.memoryId, t.createdAt),
+    // Session provenance lookup (docs/concepts/session-continuity.mdx). JSON key
+    // spelling matches sessionProvenancePayloadSchema.sessionRunId. Tails on id
+    // because listSessionEvents keysets on uuidv7 id, not created_at.
+    index('memory_events_session_idx')
+      .on(t.userId, sql`(${t.payload}->>'sessionRunId')`, t.id)
+      .where(sql`${t.payload}->>'sessionRunId' IS NOT NULL`),
     check('memory_events_kind_check', enumCheckSql(t.eventKind, eventKindSchema.options)),
     check('memory_events_actor_check', enumCheckSql(t.actorKind, actorKindSchema.options)),
     tenantPolicy(),

@@ -133,9 +133,13 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // MCP +33/+264/+64 (issue #166): debrief prompt description + optional
       // `project` argument ride prompts/list (standing MCP surface). REST/CLI
       // unchanged. MEASURED on this PR's actual base, not summed.
-      mcp: [26643, 214960, 53770],
+      // MCP +448/+3584/+873, REST +448/+448/+448 (native sessionRunId): optional
+      // `sessionRunId` on remember/revise/resolve input schemas. MCP pays it
+      // per turn on tools/list; REST pays the request-surface once. CLI
+      // unchanged. MEASURED on this PR's actual base, not summed.
+      mcp: [27091, 218544, 54643],
       cli: [333, 1236, 1236],
-      rest: [2881, 3898, 3898],
+      rest: [3329, 4346, 4346],
     },
   )
 })

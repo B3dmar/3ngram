@@ -132,6 +132,16 @@ class CommitmentExistsError extends Error {
     this.memoryId = memoryId
   }
 }
+class CommitmentStateChangedError extends Error {
+  readonly commitmentId: string
+  readonly expectedFrom: string
+  constructor(commitmentId: string, expectedFrom: string) {
+    super(`commitment is no longer in status '${expectedFrom}'`)
+    this.name = 'CommitmentStateChangedError'
+    this.commitmentId = commitmentId
+    this.expectedFrom = expectedFrom
+  }
+}
 class NotCommitmentMemoryError extends Error {
   readonly memoryId: string
   constructor(memoryId: string) {
@@ -245,6 +255,14 @@ class SuccessorNotLiveError extends Error {
     this.fromId = fromId
   }
 }
+class UnknownSessionRunError extends Error {
+  readonly sessionRunId: string
+  constructor(sessionRunId: string) {
+    super('session run is not owned by this tenant')
+    this.name = 'UnknownSessionRunError'
+    this.sessionRunId = sessionRunId
+  }
+}
 vi.mock('@3ngram/core', () => ({
   applyPolicyToScopeFilter,
   remember,
@@ -266,7 +284,9 @@ vi.mock('@3ngram/core', () => ({
   EdgeConflictError,
   CommitmentNotFoundError,
   CommitmentExistsError,
+  CommitmentStateChangedError,
   NotCommitmentMemoryError,
+  UnknownSessionRunError,
   InvalidCommitmentTransitionError,
   IllegalCommitmentTransitionError,
   MissingSelectorError,

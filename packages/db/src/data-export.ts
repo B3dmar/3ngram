@@ -24,9 +24,10 @@
 //
 // COMPLETENESS: includes the OTHER tenant PII the model stores — `memory_events`
 // (append-only audit payloads from imports), `consolidation_proposals`
-// (generated rationales), and `fact_proposals` (staged subject/predicate/value
+// (generated rationales), `fact_proposals` (staged subject/predicate/value
 // candidates awaiting review — user content that is not yet a `facts` row, so
-// the facts section alone does not cover it) — AND the typed memory graph: `memory_edges`
+// the facts section alone does not cover it), and `agent_sessions` (lease,
+// briefing stamp, last-message excerpt) — AND the typed memory graph: `memory_edges`
 // (supersedes/updates/extends/derives, docs/concepts/memory-model.mdx), so the archive captures the
 // user's memory STRUCTURE, not just isolated rows. The runtime role has SELECT on
 // all three; export is read-only, so the append-only grant is irrelevant here.
@@ -39,9 +40,10 @@
 // value to assemble the OWNER's own export (its JTBD, like getMemoryById) but
 // logs NOTHING; callers log ids/counts only and never the password hash, which is
 // never selected here.
-import type { RetrievalScopeMode } from '@3ngram/schema'
+import type { BriefedMemory, BriefingSelectorV2Input, RetrievalScopeMode } from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
 import { userProfileAttributes, userRetrievalPolicy, users } from './schema/identity.js'
 import {
@@ -222,6 +224,27 @@ export interface ExportRetrievalPolicyRow {
   updatedAt: Date
 }
 
+/** An agent_sessions row for a portability export (minus tenant id). */
+export interface ExportAgentSessionRow {
+  id: string
+  agent: string
+  sessionId: string
+  source: string
+  project: string | null
+  scope: string | null
+  selector: BriefingSelectorV2Input
+  openedAt: Date
+  closedAt: Date | null
+  lastSeenAt: Date
+  activationEpoch: number
+  triageStatus: string
+  triageAttemptId: string | null
+  lastTriagedEventIds: string[]
+  briefingDeliveredAt: Date | null
+  briefedMemories: BriefedMemory[]
+  lastMessageExcerpt: string | null
+}
+
 /** The complete user-owned dataset for a portability export. */
 export interface UserDataExport {
   account: ExportAccountRow
@@ -233,6 +256,7 @@ export interface UserDataExport {
   memoryEvents: ExportMemoryEventRow[]
   proposals: ExportProposalRow[]
   factProposals: ExportFactProposalRow[]
+  agentSessions: ExportAgentSessionRow[]
   userBudgets: ExportBudgetRow[]
   llmUsage: ExportLlmUsageRow[]
   /** Onboarding profiling; null if the user never answered. */
@@ -410,6 +434,30 @@ export async function readUserDataExport(
     .where(eq(factProposals.userId, userId))
     .orderBy(asc(factProposals.createdAt), asc(factProposals.id))
 
+  const agentSessionRows = await tx
+    .select({
+      id: agentSessions.id,
+      agent: agentSessions.agent,
+      sessionId: agentSessions.sessionId,
+      source: agentSessions.source,
+      project: agentSessions.project,
+      scope: agentSessions.scope,
+      selector: agentSessions.selector,
+      openedAt: agentSessions.openedAt,
+      closedAt: agentSessions.closedAt,
+      lastSeenAt: agentSessions.lastSeenAt,
+      activationEpoch: agentSessions.activationEpoch,
+      triageStatus: agentSessions.triageStatus,
+      triageAttemptId: agentSessions.triageAttemptId,
+      lastTriagedEventIds: agentSessions.lastTriagedEventIds,
+      briefingDeliveredAt: agentSessions.briefingDeliveredAt,
+      briefedMemories: agentSessions.briefedMemories,
+      lastMessageExcerpt: agentSessions.lastMessageExcerpt,
+    })
+    .from(agentSessions)
+    .where(eq(agentSessions.userId, userId))
+    .orderBy(asc(agentSessions.openedAt), asc(agentSessions.id))
+
   const budgetRows = await tx
     .select({
       id: userBudgets.id,
@@ -470,6 +518,7 @@ export async function readUserDataExport(
     memoryEvents: eventRows,
     proposals: proposalRows,
     factProposals: factProposalRows,
+    agentSessions: agentSessionRows,
     userBudgets: budgetRows,
     llmUsage: usageRows,
     profile: profileRow ?? null,

@@ -40,6 +40,7 @@ import {
   listMemoryFacets,
   listProposals,
   listScopes,
+  listSessionEvents,
   rejectProposal,
   remember,
   resolveByMemoryId,
@@ -49,6 +50,7 @@ import {
 import type { Gateway } from '@3ngram/llm'
 import {
   accountDeleteBodySchema,
+  archiveMemoryBodySchema,
   briefingToolInputV3Schema,
   factsQueryInputV2Schema,
   memoriesListQuerySchema,
@@ -57,6 +59,8 @@ import {
   rememberToolInputV2Schema,
   resolveToolInputSchema,
   reviseToolInputSchema,
+  sessionEventsQuerySchema,
+  sessionRunIdSchema,
 } from '@3ngram/schema'
 import { Router } from 'express'
 import { z } from 'zod'
@@ -65,6 +69,7 @@ import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 import { SERVER_VERSION } from '../version.js'
 import { defined, guard, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
+import { sessionRouter } from './session-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
 // malformed id the same as an unknown id (404) instead of letting Postgres raise
@@ -174,6 +179,11 @@ export function restRouter(options: RestRouterOptions): Router {
   // mountable independent of the MCP Bearer mount.
   router.use('/api/v1', apiOrSessionAuth)
   router.use(searchRouter(options))
+  // Hook-facing session lifecycle (open/close/heartbeat + the debrief render)
+  // and the Stop-nudge handshake (triage/begin + triage/complete). Its own
+  // module for the same reason search has one: these routes share a concern
+  // with each other, not with the memory mirror.
+  router.use(sessionRouter(options))
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
@@ -300,6 +310,47 @@ export function restRouter(options: RestRouterOptions): Router {
       if (options.access) await options.access.assertRead(tenant(req))
       const facets = await listMemoryFacets(tenant(req))
       res.status(200).json({ scopes: facets.scopes, projects: facets.projects })
+    })
+  })
+
+  // GET /api/v1/agent-sessions/:sessionRunId/events — typed provenance read
+  // (docs/concepts/session-continuity.mdx layer 3). A NARROWING of the
+  // history rule, not an exception: exactly one payload key (`sessionRunId`)
+  // is projected; the history DTO stays metadata-only. Core asserts the run is
+  // tenant-owned, so an unknown/foreign id raises UnknownSessionRunError ->
+  // 400 invalid_input — the same status the write path gives the same mistake.
+  // The path id is parsed with the SAME uuid boundary so a malformed id gets
+  // that status too rather than the 404 :id routes use — and through
+  // sessionRunIdSchema, which canonicalizes the spelling: the reader compares
+  // payload->>'sessionRunId' as TEXT, so an uppercase id would clear the
+  // uuid-typed ownership check and then match nothing (session-run-id.ts).
+  //
+  // req.query is passed WHOLE to the strict schema rather than hand-picked into
+  // a fresh { cursor, limit } object: rebuilding the object would discard a
+  // misspelled key such as `?cursro=` before `.strict()` could reject it, and
+  // the caller would silently get page 1 again instead of a 400. The schema
+  // coerces `limit` because query values are strings (or an array on a repeated
+  // param). Logs carry ids and counts only, never payload (hard rule 6).
+  router.get('/api/v1/agent-sessions/:sessionRunId/events', (req, res) => {
+    void guard('agent-sessions.events', res, async () => {
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      const query = sessionEventsQuerySchema.parse(req.query)
+      // ACCESS GUARD: provenance is per-tenant audit data, so read access is
+      // asserted BEFORE the read (self-host allowAllAccess allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      const page = await listSessionEvents(tenant(req), sessionRunId, query)
+      res.status(200).json({
+        items: page.items.map((event) => ({
+          id: event.id,
+          memoryId: event.memoryId,
+          eventKind: event.eventKind,
+          actorKind: event.actorKind,
+          sessionRunId: event.sessionRunId,
+          createdAt: event.createdAt.toISOString(),
+        })),
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        truncated: page.truncated,
+      })
     })
   })
 
@@ -580,7 +631,13 @@ export function restRouter(options: RestRouterOptions): Router {
       // ACCESS GUARD: write access is asserted BEFORE the db op runs (self-host
       // allowAllAccess allows all).
       if (options.access) await options.access.assertWrite(tenant(req))
-      const result = await resolveByMemoryId(tenant(req), input.memoryId, input.status, 'user_api')
+      const result = await resolveByMemoryId(
+        tenant(req),
+        input.memoryId,
+        input.status,
+        'user_api',
+        input.sessionRunId,
+      )
       res.status(200).json({ commitmentId: result.id, status: result.status })
     })
   })
@@ -588,11 +645,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // POST /api/v1/memories/:id/archive — archive an active memory of ANY type
   // (adoption-gate Decision D: REST-only, no MCP tool mirrors it). status flips
   // 'active' -> 'archived'; valid_to stays NULL, so the row lands in the archived
-  // bucket GET /memories?status=archived and GET /stats read. No body: the :id
-  // path segment is the whole input, bounded here (a malformed uuid can never
-  // match a stored uuid, so it is the same 404 as an unknown id — mirrors the
-  // proposals/:id routes). Core throws MemoryNotFoundError for an absent,
-  // cross-tenant, already-archived, or superseded id — the mapper's 404.
+  // bucket GET /memories?status=archived and GET /stats read. Optional body
+  // carries sessionRunId; omitted body is the same as {}. A malformed uuid path
+  // is the same 404 as an unknown id. Core throws MemoryNotFoundError for an
+  // absent, cross-tenant, already-archived, or superseded id — the mapper's 404.
   router.post('/api/v1/memories/:id/archive', (req, res) => {
     void guard('archive', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -600,10 +656,11 @@ export function restRouter(options: RestRouterOptions): Router {
         res.status(404).json({ error: 'not_found' })
         return
       }
+      const body = archiveMemoryBodySchema.parse(req.body ?? {})
       // ACCESS GUARD: write access is asserted BEFORE the db op runs (self-host
       // allowAllAccess allows all).
       if (options.access) await options.access.assertWrite(tenant(req))
-      const archived = await archiveMemory(tenant(req), id.data, 'user_api')
+      const archived = await archiveMemory(tenant(req), id.data, 'user_api', body.sessionRunId)
       res.status(200).json({ id: archived.id, status: archived.status })
     })
   })
@@ -887,6 +944,25 @@ export function restRouter(options: RestRouterOptions): Router {
           decidedAt: proposal.decidedAt?.toISOString() ?? null,
           createdAt: proposal.createdAt.toISOString(),
         })),
+        agentSessions: data.agentSessions.map((session) => ({
+          id: session.id,
+          agent: session.agent,
+          sessionId: session.sessionId,
+          source: session.source,
+          project: session.project ?? null,
+          scope: session.scope ?? null,
+          selector: session.selector,
+          openedAt: session.openedAt.toISOString(),
+          closedAt: session.closedAt?.toISOString() ?? null,
+          lastSeenAt: session.lastSeenAt.toISOString(),
+          activationEpoch: session.activationEpoch,
+          triageStatus: session.triageStatus,
+          triageAttemptId: session.triageAttemptId ?? null,
+          lastTriagedEventIds: session.lastTriagedEventIds,
+          briefingDeliveredAt: session.briefingDeliveredAt?.toISOString() ?? null,
+          briefedMemories: session.briefedMemories,
+          lastMessageExcerpt: session.lastMessageExcerpt ?? null,
+        })),
         userBudgets: data.userBudgets.map((budget) => ({
           id: budget.id,
           capUsdOverride: budget.capUsdOverride ?? null,
@@ -929,6 +1005,7 @@ export function restRouter(options: RestRouterOptions): Router {
           memoryEvents: data.memoryEvents.length,
           proposals: data.proposals.length,
           factProposals: data.factProposals.length,
+          agentSessions: data.agentSessions.length,
           userBudgets: data.userBudgets.length,
           llmUsage: data.llmUsage.length,
         },
@@ -964,6 +1041,7 @@ export function restRouter(options: RestRouterOptions): Router {
           commitments: result.erased.commitments,
           proposals: result.erased.proposals,
           factProposals: result.erased.factProposals,
+          agentSessions: result.erased.agentSessions,
           sessionsDeleted: result.erased.sessionsDeleted,
           apiKeysRevoked: result.erased.apiKeysRevoked,
           oauthTokensRevoked: result.erased.oauthTokensRevoked,

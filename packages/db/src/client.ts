@@ -70,6 +70,41 @@ export async function lockAccountLifecycle(tx: TenantTx, userId: string): Promis
 }
 
 /**
+ * Take the per-user account-lifecycle lock in SHARED mode for the current
+ * transaction — the same key {@link lockAccountLifecycle} takes exclusively.
+ *
+ * For paths that must not interleave with an erasure but do not exclude each
+ * other: many can hold it at once, and erasure's exclusive acquisition waits for
+ * all of them, then locks every one of them out. Used by the session heartbeat,
+ * whose `last_message_excerpt` write is user CONTENT and must never land after
+ * erasure has run (session-lifecycle.ts, account-delete.ts).
+ *
+ * A tombstone re-check AFTER acquiring this is still required — the lock orders
+ * the two transactions, it does not tell you which side you are on.
+ */
+export async function lockAccountLifecycleShared(tx: TenantTx, userId: string): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock_shared(hashtext('account_lifecycle'), hashtext(${userId}::uuid::text))`,
+  )
+}
+
+/**
+ * Serialize the single-open-session attach decision for a tenant/project.
+ * Uniqueness is on (user_id, agent, session_id), not project — FOR SHARE on an
+ * existing row cannot block a concurrent INSERT of a different session.
+ */
+export async function lockSessionAttach(
+  tx: TenantTx,
+  userId: string,
+  project: string | null | undefined,
+): Promise<void> {
+  const key = `${userId}:${project ?? ''}`
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('agent_session_attach'), hashtext(${key}))`,
+  )
+}
+
+/**
  * Take the per-user PASSWORD-RESET advisory lock for the current transaction.
  *
  * The SAME key the `auth_reset_password` resolver (migration 0016/0020) and

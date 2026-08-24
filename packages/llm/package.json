@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/llm",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "OpenAI embedding gateway, deterministic test gateway, and metered operation registry for 3ngram.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",

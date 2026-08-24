@@ -11,6 +11,7 @@ import {
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
+  CommitmentStateChangedError,
   DuplicateMemoryError,
   EdgeConflictError,
   EpisodicSupersessionError,
@@ -30,6 +31,7 @@ import {
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
+  UnknownSessionRunError,
   UnscopedRetrievalError,
 } from '@3ngram/core'
 import type { CallToolResult } from '@modelcontextprotocol/server'
@@ -80,7 +82,8 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     err instanceof InvalidEmbeddingError ||
     // A missing/empty orientation selector is the no-firehose guard (docs/concepts/mcp-design.mdx):
     // a 400-class caller mistake, not a server fault. Counted as invalid_input.
-    err instanceof MissingSelectorError
+    err instanceof MissingSelectorError ||
+    err instanceof UnknownSessionRunError
   ) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: tool input rejected')
@@ -187,6 +190,18 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'conflict' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: commitment already exists')
     return fail(`conflict: commitment already exists (${err.memoryId})`)
+  }
+  // A transition that kept losing its compare-and-set: the row exists and the
+  // request was legal from the state the caller read, but concurrent writers
+  // moved it out from under every attempt. A write conflict, not a bad request
+  // — names the bounded expected status only, never content.
+  if (err instanceof CommitmentStateChangedError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'conflict' })
+    log().warn(
+      { tool_name: toolName, err: err.name, expected_from: err.expectedFrom },
+      'mcp: commitment changed under a concurrent write',
+    )
+    return fail(`conflict: commitment is no longer '${err.expectedFrom}'; retry`)
   }
   // An illegal FSM transition (core's primary guard or the DB backstop). Names
   // the from/to states only — both are bounded enum values, never content.

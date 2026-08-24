@@ -37,6 +37,18 @@ vi.mock('../src/memory-edges.js', () => ({
   EdgeConflictError: class EdgeConflictError extends Error {},
 }))
 vi.mock('../src/pg-errors.js', () => ({ isUniqueViolation: () => false }))
+vi.mock('../src/session-provenance.js', () => ({
+  resolveSessionProvenance: async () => undefined,
+  sessionPayload: () => undefined,
+  UnknownSessionRunError: class UnknownSessionRunError extends Error {
+    sessionRunId: string
+    constructor(sessionRunId: string) {
+      super('session run is not owned by this tenant')
+      this.name = 'UnknownSessionRunError'
+      this.sessionRunId = sessionRunId
+    }
+  },
+}))
 
 const { reviseMemory } = await import('../src/memory-revise.js')
 

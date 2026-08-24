@@ -22,6 +22,7 @@ vi.mock('@3ngram/db', () => ({
   recordEmbedFailure: (...a: unknown[]) => recordEmbedFailure(...a),
   insertLlmUsage: (...a: unknown[]) => insertLlmUsage(...a),
   DuplicateMemoryError: class extends Error {},
+  UnknownSessionRunError: class extends Error {},
   EdgeConflictError: class extends Error {},
   PredecessorAlreadySupersededError: class extends Error {},
   PredecessorNotFoundError: class extends Error {},
@@ -76,7 +77,11 @@ describe('remember (ack-before-embed)', () => {
           model: 'text-embedding-3-large',
         }
       },
-      complete: async () => 'x',
+      complete: async () => ({
+        text: 'x',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'fake',
+      }),
     }
 
     const result = await remember(USER, input(), ACTOR, { gateway, logger: silentLogger })
@@ -152,7 +157,11 @@ describe('remember (ack-before-embed)', () => {
       embed: async () => {
         throw gatewayError
       },
-      complete: async () => 'x',
+      complete: async () => ({
+        text: 'x',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'fake',
+      }),
     }
 
     const logLines: Array<{ obj: Record<string, unknown>; msg: string }> = []
@@ -196,7 +205,11 @@ describe('remember (ack-before-embed)', () => {
     recordEmbedFailure.mockResolvedValue(undefined)
     const gateway: Gateway = {
       embed: async () => ({ embeddings: [], usage: { inputTokens: 0 }, model: 'm' }),
-      complete: async () => 'x',
+      complete: async () => ({
+        text: 'x',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'fake',
+      }),
     }
 
     const result = await remember(USER, input(), ACTOR, { gateway, logger: silentLogger })

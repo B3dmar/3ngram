@@ -20,7 +20,7 @@ cp .env.example .env                       # defaults work as-is for local Docke
 docker compose --profile init up migrations   # runs to completion, then exits
 
 # 2. Bring up the data plane + server
-docker compose up -d postgres redis server
+docker compose up -d postgres redis server worker
 
 # 3. Seed the dev user + golden set AND mint a demo API key (printed once)
 set -a; source .env; set +a                # see step 2 of the manual setup below
@@ -38,7 +38,7 @@ Notes:
 - The `migrations` service and the `server` service both build from `apps/server/Dockerfile` (the `migrations` build target adds `psql`); `server` exposes **3000:3000** with a Node-`fetch` `/health` probe.
 - `pnpm seed` runs on the host (not in a container) because it loads the committed eval fixtures; it connects to Postgres on the published port **54320**. The demo API key (name `self-host demo`) is minted once and is idempotent — re-running prints "already present" rather than re-issuing.
 - `APP_USER_PASSWORD` defaults to `app-user-dev` (compose) — override it in `.env` for anything beyond a throwaway local stack. Because the host-run `pnpm seed` reads the literal `DATABASE_URL` (it does not derive the password from `APP_USER_PASSWORD` the way compose does for the `server` service), change the password in **both** `APP_USER_PASSWORD` and the password segment of `DATABASE_URL` — overriding one alone desyncs the two and `pnpm seed` fails with an auth error.
-- A **worker** container is not in compose yet (no `apps/worker/Dockerfile`); BullMQ jobs need a separate deployable before they are part of the self-host stack.
+- The **worker** service builds from `apps/worker/Dockerfile` and runs the BullMQ background jobs (consolidation proposals, surfacing/overdue, OAuth-client GC). It serves no HTTP, so its healthcheck is a process-liveness probe rather than an endpoint. The **session closer** and its lease-expiry sweep are behind `SESSION_CLOSER_ENABLED` (default `false`) and additionally need `LLM_GATEWAY_URL` + `LLM_GATEWAY_API_KEY`; with either missing, every closer pass reports `no-gateway` and writes nothing.
 
 ## Prerequisites
 
@@ -119,6 +119,6 @@ Then repeat from step 1. (Dropping the volume is the supported "delete" path; ru
 
 ## Deployment boundaries and gaps
 
-- **worker container** — the server container exists; the worker needs a separate deployable before it is part of the self-host stack.
+- **session closer** — the worker container ships and runs the background jobs, but the closer itself (auto-resolving briefed commitments a closed session completed) stays `SESSION_CLOSER_ENABLED=false` until its validation bar is measured ([session continuity](/concepts/session-continuity)).
 - **hosted dashboard** — the dashboard UI is proprietary and maintained in a separate private repository; the Apache server includes the REST/auth routes clients need, but this repository does not ship that UI.
 - **embedding provider** — seeded memories have cached vectors, but every search query and new write still needs an embedding. Set both `LLM_GATEWAY_URL` and `LLM_GATEWAY_API_KEY`; without them, search returns `503 embedding_unavailable` while non-search reads and writes remain available.

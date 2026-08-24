@@ -170,7 +170,11 @@ describe('retryFailedEmbeds (#232 repair path, runtime role)', () => {
       embed: async () => {
         throw Object.assign(new Error('transient'), { name: 'GatewayRequestError', status: 429 })
       },
-      complete: async () => 'x',
+      complete: async () => ({
+        text: 'x',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'fake',
+      }),
     }
     const broken = await remember(userA, input('repairable short content'), ACTOR, {
       gateway: failing,

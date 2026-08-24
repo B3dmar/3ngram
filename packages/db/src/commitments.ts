@@ -28,6 +28,7 @@ import {
   isUniqueViolation,
 } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
+import { resolveSessionProvenance, sessionPayload } from './session-provenance.js'
 
 /**
  * Thrown when a commitment already exists for the given memory — the
@@ -90,6 +91,27 @@ export class CommitmentNotFoundError extends Error {
     this.name = 'CommitmentNotFoundError'
     this.commitmentId = id
     this.keyedBy = keyedBy
+  }
+}
+
+/**
+ * Thrown when a compare-and-set transition lost its race: the commitment exists,
+ * but no longer holds the `expectedFrom` status the caller observed. Carries the
+ * commitment id and the status that was expected (never memory content).
+ *
+ * Distinct from {@link IllegalCommitmentTransitionError}: that one means the
+ * requested edge is not in the FSM at all, this one means the edge was legal
+ * from the state the caller SAW and somebody else moved the row first. A batch
+ * caller treats it as a skip; there is nothing wrong with the request.
+ */
+export class CommitmentStateChangedError extends Error {
+  readonly commitmentId: string
+  readonly expectedFrom: CommitmentStatus
+  constructor(commitmentId: string, expectedFrom: CommitmentStatus) {
+    super(`commitment is no longer in status '${expectedFrom}'`)
+    this.name = 'CommitmentStateChangedError'
+    this.commitmentId = commitmentId
+    this.expectedFrom = expectedFrom
   }
 }
 
@@ -281,6 +303,40 @@ export interface CommitmentTransition {
   to: CommitmentStatus
   /** Actor class recorded on the lifecycle audit event. */
   actorKind: ActorKind
+  /**
+   * Compare-and-set guard: apply the transition ONLY while the row still holds
+   * this status, and raise {@link CommitmentStateChangedError} otherwise.
+   *
+   * Every caller reads the current state in a SEPARATE transaction before
+   * deciding, so without this the read is advisory: a concurrent writer can
+   * settle the row in the gap, and because the FSM trigger returns early on
+   * `OLD.status = NEW.status`, a same-state UPDATE then succeeds — re-stamping
+   * `resolved_at` and appending a duplicate lifecycle event under this caller's
+   * provenance. Optional so the interactive surfaces, which already short-circuit
+   * a same-state request in core, keep their exact behaviour.
+   */
+  expectedFrom?: CommitmentStatus | undefined
+  sessionRunId?: string | undefined
+  /**
+   * Provenance the caller has ALREADY resolved: stamp exactly this run id and do
+   * NOT run the attach decision. Mutually exclusive with `sessionRunId`.
+   *
+   * This exists for the session closer, and only for it. The closer's rows are
+   * closed or lease-expired BY CONSTRUCTION — that is its eligibility rule — so
+   * routing its writes through `resolveSessionProvenance` would take the one
+   * branch that must never fire here: a stale-lease row RESURRECTS, clearing
+   * `closed_at` and incrementing `activation_epoch`. The closer would then fail
+   * its own epoch-fenced write-back, leave the dead session looking live, and be
+   * swept again on the next pass — an unbounded loop that spends an LLM call
+   * each time. The other branch is no better: an explicitly closed row attaches
+   * NOTHING, so the resolve would land unattributed and drop out of the run's
+   * own event set.
+   *
+   * The closer is not a write "arriving at" a session; it is the session's own
+   * bookkeeping being consumed. It holds the row, so the id needs no resolution.
+   */
+  stampedSessionRunId?: string | undefined
+  now?: Date | undefined
 }
 
 /** The audit event_kind recorded for each terminal/lifecycle target status. */
@@ -321,18 +377,58 @@ export async function transitionCommitment(
         .limit(1)
       if (!existing) throw new CommitmentNotFoundError(input.commitmentId)
 
+      const [memory] = await tx
+        .select({ project: memories.project })
+        .from(memories)
+        .where(and(eq(memories.userId, input.userId), eq(memories.id, existing.memoryId)))
+        .limit(1)
+      // A pre-resolved id bypasses the attach decision entirely (see
+      // `stampedSessionRunId`): no lock, no heartbeat, no resurrect, no epoch
+      // change — just the stamp.
+      const runId =
+        input.stampedSessionRunId ??
+        (await resolveSessionProvenance(tx, input.userId, {
+          sessionRunId: input.sessionRunId,
+          project: memory?.project,
+          now: input.now ?? new Date(),
+        }))
+
+      // `expectedFrom` makes the caller's live re-read and this write ATOMIC.
+      // Without it a caller that read the row in an earlier transaction — which
+      // is every caller, since the read has its own withTenant — can lose a race
+      // and still write: the FSM trigger passes `OLD.status = NEW.status`
+      // straight through, so a resolved -> resolved UPDATE succeeds, bumps
+      // `resolved_at`/`updated_at`, and appends a SECOND `resolve` event under a
+      // different session's provenance. Putting the observed status in the WHERE
+      // turns that into a zero-row update the caller can classify.
       const [row] = await tx
         .update(commitments)
         .set({ status: input.to, resolvedAt, updatedAt: sql`now()` })
-        .where(and(eq(commitments.userId, input.userId), eq(commitments.id, input.commitmentId)))
+        .where(
+          and(
+            eq(commitments.userId, input.userId),
+            eq(commitments.id, input.commitmentId),
+            ...(input.expectedFrom === undefined
+              ? []
+              : [eq(commitments.status, input.expectedFrom)]),
+          ),
+        )
         .returning({ id: commitments.id, status: commitments.status })
-      if (!row) throw new CommitmentNotFoundError(input.commitmentId)
+      if (!row) {
+        // The row exists (the SELECT above found it), so with `expectedFrom` set
+        // a zero-row update means only one thing: somebody moved it first.
+        if (input.expectedFrom !== undefined) {
+          throw new CommitmentStateChangedError(input.commitmentId, input.expectedFrom)
+        }
+        throw new CommitmentNotFoundError(input.commitmentId)
+      }
 
       await tx.insert(memoryEvents).values({
         userId: input.userId,
         memoryId: existing.memoryId,
         eventKind: TRANSITION_EVENT_KIND[input.to],
         actorKind: input.actorKind,
+        payload: sessionPayload(runId),
       })
 
       return { id: row.id, status: row.status as CommitmentStatus }
@@ -340,6 +436,7 @@ export async function transitionCommitment(
   } catch (error) {
     if (
       error instanceof CommitmentNotFoundError ||
+      error instanceof CommitmentStateChangedError ||
       error instanceof IllegalCommitmentTransitionError
     ) {
       throw error

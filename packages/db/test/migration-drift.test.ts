@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   actorKindSchema,
+  agentSessionSourceSchema,
+  agentSessionTriageStatusSchema,
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
@@ -83,6 +85,16 @@ const factProposalsSql = readFileSync(
   join(import.meta.dirname, '../migrations/0031_fact_proposals.sql'),
   'utf8',
 )
+const agentSessionsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0032_agent_sessions.sql'),
+  'utf8',
+)
+// 0033 indexes the closer's candidate scan — the exact OPPOSITE predicate to
+// 0032's lease index, which is why that one cannot serve it.
+const sessionCloserIndexSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0033_session_closer_index.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -126,6 +138,8 @@ describe('0000_init.sql ↔ @3ngram/schema drift', () => {
       ...commitmentStatusSchema.options,
       ...proposalStatusSchema.options,
       ...tokenEndpointAuthMethodSchema.options,
+      ...agentSessionSourceSchema.options,
+      ...agentSessionTriageStatusSchema.options,
     ]
     for (const v of allValues) {
       expect(allMigrations, `enum value '${v}' missing from generated CHECKs`).toContain(`'${v}'`)
@@ -601,6 +615,67 @@ describe('fact proposals staging table (0031)', () => {
   })
 })
 
+describe('agent_sessions table (0032, issue #166)', () => {
+  it('unique natural key is (user_id, agent, session_id)', () => {
+    expect(agentSessionsSql).toContain(
+      'CONSTRAINT "agent_sessions_natural_key" UNIQUE("user_id","agent","session_id")',
+    )
+  })
+
+  it('lease index only covers open rows', () => {
+    expect(agentSessionsSql).toContain(
+      'CREATE INDEX "agent_sessions_lease_idx" ON "agent_sessions" USING btree ("user_id","last_seen_at") WHERE "agent_sessions"."closed_at" IS NULL',
+    )
+  })
+
+  it('indexes session provenance on (user_id, payload sessionRunId, id)', () => {
+    expect(agentSessionsSql).toContain(
+      'CREATE INDEX "memory_events_session_idx" ON "memory_events" USING btree ("user_id",("payload"->>\'sessionRunId\'),"id") WHERE "memory_events"."payload"->>\'sessionRunId\' IS NOT NULL',
+    )
+  })
+
+  it('generates source and triage CHECKs from the schema enums', () => {
+    for (const s of agentSessionSourceSchema.options) {
+      expect(agentSessionsSql, `source '${s}' missing from CHECK`).toContain(`'${s}'`)
+    }
+    for (const s of agentSessionTriageStatusSchema.options) {
+      expect(agentSessionsSql, `triage '${s}' missing from CHECK`).toContain(`'${s}'`)
+    }
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE', () => {
+    expect(agentSessionsSql).toContain('CREATE POLICY "tenant_isolation" ON "agent_sessions"')
+    expect(agentSessionsSql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(agentSessionsSql).toContain('ALTER TABLE "agent_sessions" FORCE ROW LEVEL SECURITY')
+  })
+
+  it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
+    expect(rolesSql).toMatch(
+      /GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes, agent_sessions/,
+    )
+    expect(rolesSql).not.toMatch(/GRANT DELETE ON agent_sessions/)
+  })
+})
+
+describe('session closer candidate index (0033, issue #166 step 6)', () => {
+  it('is user-leading, ordered by closed_at, and partial on CLOSED rows', () => {
+    // The lease index (0032) is partial on `closed_at IS NULL`; the closer scans
+    // `closed_at IS NOT NULL` and sorts by `closed_at`, so it needs its own.
+    expect(sessionCloserIndexSql).toContain(
+      'CREATE INDEX "agent_sessions_closer_idx" ON "agent_sessions" USING btree ("user_id","closed_at")',
+    )
+    expect(sessionCloserIndexSql).toContain('"agent_sessions"."closed_at" IS NOT NULL')
+  })
+
+  it('excludes the terminal status, so the index only holds actionable rows', () => {
+    expect(sessionCloserIndexSql).toContain(`"agent_sessions"."triage_status" <> 'overflowed'`)
+  })
+
+  it('adds no table — the table count is unchanged at 27', () => {
+    expect(sessionCloserIndexSql).not.toMatch(/CREATE TABLE/i)
+  })
+})
+
 describe('provision-roles.sql append-and-supersede grants', () => {
   it('memory_events and audit_log are INSERT-only for the runtime role', () => {
     expect(rolesSql).toMatch(/GRANT SELECT, INSERT ON memory_events, audit_log/)
@@ -610,7 +685,7 @@ describe('provision-roles.sql append-and-supersede grants', () => {
 
   it('no DELETE grant on any memory-domain table (the write path cannot destroy data)', () => {
     const memoryDomain =
-      /DELETE[^\n]*(memories|memory_edges|commitments|facts|consolidation_proposals|fact_proposals)/
+      /DELETE[^\n]*(memories|memory_edges|commitments|facts|consolidation_proposals|fact_proposals|agent_sessions)/
     expect(rolesSql).not.toMatch(memoryDomain)
   })
 

@@ -453,7 +453,13 @@ const resolveTool: ToolDefinition = {
     // when no gate is wired). remember/revise assert this inside core; resolve's
     // core fn takes no access gate, so the transport asserts it here.
     if (ctx.access) await ctx.access.assertWrite(ctx.userId)
-    const result = await resolveByMemoryId(ctx.userId, input.memoryId, input.status, 'user_mcp')
+    const result = await resolveByMemoryId(
+      ctx.userId,
+      input.memoryId,
+      input.status,
+      'user_mcp',
+      input.sessionRunId,
+    )
     const output = parseOutput('resolve', resolveToolOutputSchema, {
       commitmentId: result.id,
       status: result.status,

@@ -128,6 +128,7 @@ export {
   CommitmentExistsError,
   CommitmentNotFoundError,
   type CommitmentState,
+  CommitmentStateChangedError,
   type CommitmentTransition,
   createCommitment,
   getCommitment,
@@ -144,6 +145,7 @@ export { AccountDeletedError } from './credential-guard.js'
 // --- full-account data export (GDPR portability) — appended block ---
 export {
   type ExportAccountRow,
+  type ExportAgentSessionRow,
   type ExportBudgetRow,
   type ExportCommitmentRow,
   type ExportEdgeRow,
@@ -292,6 +294,7 @@ export {
   type RlsGuardOptions,
   readForcedTenantTables,
 } from './rls-guard.js'
+export * from './schema/agent-sessions.js'
 export * from './schema/budget.js'
 export * from './schema/identity.js'
 export * from './schema/memory.js'
@@ -332,6 +335,53 @@ export {
   type ChronologicalPage,
   searchList,
 } from './search-list.js'
+// --- lease-expiry sweep + the closer's claim/complete statements ---
+export {
+  CLOSER_ELIGIBLE_STATUSES,
+  type CloserCandidate,
+  type CloserSessionRow,
+  claimSessionTriage,
+  expireStaleExcerpts,
+  finishSessionTriage,
+  listCloserCandidates,
+  readCloserSession,
+  sweepExpiredLeases,
+  sweepFloor,
+} from './session-closer.js'
+// --- typed provenance read: one run's audit events, payload-narrow ---
+export {
+  type ListSessionEventsOptions,
+  listSessionEvents,
+  type SessionEventRow,
+  type SessionEventsPage,
+} from './session-events-read.js'
+// --- hook-facing session lifecycle: open / close / heartbeat (natural key) ---
+export {
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
+  type AgentSessionRecord,
+  type CloseSessionResult,
+  closeSession,
+  type HeartbeatSessionResult,
+  heartbeatSession,
+  type OpenSessionResult,
+  openSession,
+  readAgentSession,
+} from './session-lifecycle.js'
+export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
+// --- Stop-nudge handshake: arm an attempt, then absorb the continuation ---
+export {
+  AgentSessionTriageConflictError,
+  type BeginTriageOptions,
+  type BeginTriageResult,
+  beginSessionTriage,
+  type CompleteTriageOptions,
+  type CompleteTriageResult,
+  completeSessionTriage,
+  evaluateTriageEntry,
+  type TriageDebounceThresholds,
+  type TriageEntryDecision,
+} from './session-triage.js'
 export {
   getUserProfileAttributes,
   upsertUserProfileAttributes,

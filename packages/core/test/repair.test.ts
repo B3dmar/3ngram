@@ -75,7 +75,11 @@ describe('retryFailedEmbeds (#232 repair path)', () => {
           model: 'text-embedding-3-large',
         }
       },
-      complete: async () => 'x',
+      complete: async () => ({
+        text: 'x',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'fake',
+      }),
     }
 
     const result = await retryFailedEmbeds(USER, { gateway, logger: silentLogger })

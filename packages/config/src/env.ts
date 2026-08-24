@@ -296,6 +296,37 @@ export const envSchema = z
     // account creation when the corpus is down. The toggle and the fail-open
     // behaviour are separate axes (data-model D4).
     PASSWORD_BREACH_CHECK_ENABLED: z.stringbool().default(false),
+    // Session closer (docs/concepts/session-continuity.mdx layer 5). When true,
+    // the worker registers the lease-expiry sweep and processes closer jobs: a
+    // background LLM pass that auto-RESOLVES briefed commitments a closed
+    // session completed. Nothing else — it never writes new memories.
+    //
+    // DEFAULT OFF, and it stays off until measured. The page's validation bar is
+    // a positive commitment-recall improvement over the 0% baseline, judged by a
+    // dogfood audit rather than by CI, plus a spurious rate near the curated
+    // path's zero. Flipping this default is that later decision, not this one.
+    // With the flag off the sweep is never scheduled, so no row is implicitly
+    // closed and no generation is billed.
+    SESSION_CLOSER_ENABLED: z.stringbool().default(false),
+    // Stop-nudge debounce (docs/concepts/session-continuity.mdx layer 4,
+    // "Debounce"; issue #166 step 7a). "Briefed ids non-empty and never triaged"
+    // is true at turn 1 of almost every session with open commitments, so the
+    // page requires session SUBSTANCE before a nudge: a minimum turn count OR
+    // elapsed time OR a provenance event that is not itself a prior-triage
+    // write. The thresholds are tunable; the condition is not optional, which is
+    // why the third disjunct has no env var — it is a fact about the run, not a
+    // knob.
+    //
+    // DEFAULTS. Three turns is the first Stop at which a session has plausibly
+    // done something worth debriefing (turn 1 is the briefing itself and turn 2
+    // is usually the first real exchange). Ten minutes is the elapsed-time
+    // escape hatch for a session doing long, low-turn-count work — a single
+    // 20-minute refactor turn is substance even though the turn count says
+    // otherwise. Both are floors: raising them makes the nudge rarer, and
+    // lowering them past 1 / 0 would defeat the debounce entirely, so the bounds
+    // below refuse that.
+    SESSION_TRIAGE_MIN_TURNS: z.coerce.number().int().min(1).max(1000).default(3),
+    SESSION_TRIAGE_MIN_ELAPSED_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
     // SMTP delivery for password-reset emails (self-host hardening). ALL OPTIONAL and env-GATED: when SMTP_HOST +
     // SMTP_FROM are both set the app constructs a real nodemailer transport and
     // emails the reset link; when either is absent the forgot-password route
@@ -693,6 +724,54 @@ export function loadLlmGatewayConfig(): LlmGatewayConfig | undefined {
     return undefined
   }
   return { baseUrl: env.LLM_GATEWAY_URL, apiKey: env.LLM_GATEWAY_API_KEY }
+}
+
+/** Resolved session-closer config (docs/concepts/session-continuity.mdx layer 5). */
+export interface SessionCloserConfig {
+  /** Register the lease-expiry sweep and process closer jobs. Default off. */
+  enabled: boolean
+}
+
+/**
+ * Resolve the session-closer config. Always returns a value — the flag has a
+ * bounded default (false), so a worker boots with the closer inert unless the
+ * deployment opts in. Deliberately NOT folded into the gateway config: "a
+ * gateway is configured" and "the closer may run" are different decisions, and
+ * a deployment that embeds should not acquire a background LLM pass by
+ * side effect.
+ */
+export function loadSessionCloserConfig(): SessionCloserConfig {
+  return { enabled: loadEnv().SESSION_CLOSER_ENABLED }
+}
+
+/**
+ * Resolved Stop-nudge debounce thresholds
+ * (docs/concepts/session-continuity.mdx layer 4, "Debounce").
+ *
+ * Milliseconds rather than the env's minutes: every clock in the session family
+ * is a `Date` difference, and converting once here keeps the unit change at the
+ * boundary instead of at each comparison.
+ */
+export interface SessionTriageConfig {
+  /** Turns the hook must have seen before a nudge may arm on turn count alone. */
+  minTurns: number
+  /** Elapsed time since `opened_at` before a nudge may arm on age alone. */
+  minElapsedMs: number
+}
+
+/**
+ * Resolve the Stop-nudge debounce thresholds. Always returns a value — both
+ * knobs have bounded defaults, so the debounce is never accidentally disabled by
+ * an unset env. There is no enable flag here on purpose: the triage ROUTES are
+ * inert until something calls them, and "is the nudge on" is the hook's
+ * registration decision (step 7b), not the server's.
+ */
+export function loadSessionTriageConfig(): SessionTriageConfig {
+  const env = loadEnv()
+  return {
+    minTurns: env.SESSION_TRIAGE_MIN_TURNS,
+    minElapsedMs: env.SESSION_TRIAGE_MIN_ELAPSED_MINUTES * 60_000,
+  }
 }
 
 /**

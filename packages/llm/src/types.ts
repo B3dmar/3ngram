@@ -21,11 +21,47 @@ export interface EmbedResult {
   model: string
 }
 
+/** Token accounting for one generation round-trip. Unlike an embedding, a
+ * completion bills BOTH directions, so the caller needs the pair to price it.
+ * NEVER carries content. */
+export interface CompletionUsage {
+  inputTokens: number
+  outputTokens: number
+}
+
+/** Result of a single complete() round-trip: the text plus the accounting the
+ * caller needs to write exactly one `llm_usage` row (the client tracks cost, the
+ * gateway stays thin — the same split embed() already uses). */
+export interface CompletionResult {
+  /** The model's reply. Derived from tenant input: never logged. */
+  text: string
+  /**
+   * Token accounting, ABSENT when the gateway reported none.
+   *
+   * Optional on purpose: "the gateway said zero" and "the gateway said nothing"
+   * must not collapse into the same value. Defaulting a missing `usage` to zero
+   * would price the call at $0 and let a usage-omitting gateway run without ever
+   * accruing against a budget cap. A caller that cannot see real counts should
+   * record the row UNPRICED so the conservative fallback applies.
+   */
+  usage?: CompletionUsage | undefined
+  /** The model that served it (used for the cost-rate lookup). */
+  model: string
+}
+
+/** Bound on a completion's OUTPUT tokens. Passed per call so a runaway
+ * generation cannot turn a bounded classification into an unbounded bill. */
+export interface CompleteOptions {
+  maxOutputTokens?: number | undefined
+  /** Ask the provider to constrain the reply to a JSON object, where supported. */
+  jsonObject?: boolean | undefined
+}
+
 /** Gateway client surface. Layers 1–4 of the test pyramid only
  * ever see this interface — never a real provider (docs/concepts/testing.mdx LLM policy). */
 export interface Gateway {
   embed(texts: readonly string[], operation: string): Promise<EmbedResult>
-  complete(prompt: string, operation: string): Promise<string>
+  complete(prompt: string, operation: string, options?: CompleteOptions): Promise<CompletionResult>
 }
 
 export const EMBEDDING_DIMENSIONS = 1536
