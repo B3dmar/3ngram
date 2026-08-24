@@ -47,6 +47,8 @@ export {
   agentSessionTriageCompleteResponseSchema,
   agentSessionTriageStatusSchema,
   briefedMemorySchema,
+  CLOSER_BACKOFF_BASE_MS,
+  CLOSER_BACKOFF_MAX_MS,
   closerVerdictSchema,
   DEFAULT_SESSION_EVENTS_LIMIT,
   debriefPromptQuerySchema,

@@ -2156,6 +2156,8 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         briefedMemories: [{ id: NEW_ID, topic: 'ship v1.4.4', status: 'open' }],
         lastMessageExcerpt: 'we should ship the migration',
         needsLook: false,
+        closerFailureCount: 0,
+        closerNextAttemptAt: null,
       },
     ],
     userBudgets: [

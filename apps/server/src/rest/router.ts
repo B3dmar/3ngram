@@ -963,6 +963,8 @@ export function restRouter(options: RestRouterOptions): Router {
           briefedMemories: session.briefedMemories,
           lastMessageExcerpt: session.lastMessageExcerpt ?? null,
           needsLook: session.needsLook,
+          closerFailureCount: session.closerFailureCount,
+          closerNextAttemptAt: session.closerNextAttemptAt?.toISOString() ?? null,
         })),
         userBudgets: data.userBudgets.map((budget) => ({
           id: budget.id,

@@ -70,9 +70,9 @@ async function seedAgentSession(
   await ownerPool.query(
     `INSERT INTO agent_sessions
        (user_id, agent, session_id, source, project, scope, selector, briefed_memories,
-        last_message_excerpt, needs_look)
+        last_message_excerpt, needs_look, closer_failure_count, closer_next_attempt_at)
      VALUES ($1, 'codex', $2, 'startup', '3ngram', 'work', '{"kind":"all"}'::jsonb, $3::jsonb, $4,
-             true)`,
+             true, 2, now() + interval '1 hour')`,
     [
       userId,
       sessionId,
@@ -228,7 +228,8 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(proposal.rows[0].value).toBe(ERASED_PII)
     expect(proposal.rows[0].rationale).toBeNull()
     const session = await ownerPool.query(
-      `SELECT project, scope, selector, briefed_memories, last_message_excerpt, needs_look
+      `SELECT project, scope, selector, briefed_memories, last_message_excerpt, needs_look,
+              closer_failure_count, closer_next_attempt_at
        FROM agent_sessions WHERE user_id = $1`,
       [userA],
     )
@@ -240,6 +241,10 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     // Reset with the watermark it is derived from: leaving it raised would park a
     // tombstoned account's whole session history in the closer's candidate index.
     expect(session.rows[0].needs_look).toBe(false)
+    // Same reasoning for the closer backoff (issue #184): a tombstoned account
+    // has no writer left that could ever clear a stale one.
+    expect(session.rows[0].closer_failure_count).toBe(0)
+    expect(session.rows[0].closer_next_attempt_at).toBeNull()
 
     // Identity erased; the email becomes the deletion marker.
     const user = await ownerPool.query('SELECT email, password_hash FROM users WHERE id = $1', [

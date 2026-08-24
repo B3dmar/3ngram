@@ -31,10 +31,12 @@
 // errors raised when the model returns something unparseable.
 import {
   claimSessionTriage,
+  closerBackoffDelayMs,
   finishSessionTriage,
   insertLlmUsage,
   listSessionEvents,
   readCloserSession,
+  recordCloserFailure,
   withTenant,
 } from '@3ngram/db'
 import type { CompletionResult, Gateway } from '@3ngram/llm'
@@ -136,6 +138,13 @@ export interface SessionCloserRepo {
   recordUsage(userId: string, usage: CloserUsage): Promise<void>
   /** The run's CURRENT activation epoch, or undefined if it vanished. */
   currentEpoch(userId: string, sessionRunId: string): Promise<number | undefined>
+  /**
+   * Stamp the per-row backoff after a FAILED pass (issue #184) — see
+   * {@link closeSessionRun}'s catch. Epoch-fenced, so a resurrection mid-pass
+   * makes it a no-op; best-effort from the caller's side (it must never mask
+   * the failure that triggered it).
+   */
+  recordFailure(userId: string, failure: CloserFailureInput): Promise<void>
 }
 
 /** Content-free accounting for one closer generation call. */
@@ -160,6 +169,16 @@ export interface CloserSessionInput {
   project: string | null
   scope: string | null
   closedAt: Date | null
+  /** Consecutive closer-pass failures observed BEFORE this attempt. See {@link closerBackoffDelayMs}. */
+  closerFailureCount: number
+}
+
+/** Fence + count the failure recording needs; see {@link SessionCloserRepo.recordFailure}. */
+export interface CloserFailureInput {
+  sessionRunId: string
+  activationEpoch: number
+  failureCount: number
+  nextAttemptAt: Date
 }
 
 export interface CloserEventPage {
@@ -195,6 +214,35 @@ export interface CloserOptions {
    * seam does. Absent → no gate (the same back-compat shape `EmbedOptions` uses).
    */
   budget?: BudgetEnforcement | undefined
+  /**
+   * Injected clock (issue #184) — core reads no clock of its own. The only use
+   * is stamping `nextAttemptAt` on a FAILED pass, so a fake gateway that never
+   * throws never needs to supply a meaningful one.
+   */
+  now: Date
+  /**
+   * Is this the LAST retry BullMQ will make for the enqueued job (issue #184
+   * audit F3)? Core has no notion of a "job" or an "attempt" — this is a plain
+   * boolean handed down from the one place that does: `apps/worker`'s queue
+   * processor, off `job.attemptsMade`/`job.opts.attempts` (`CLOSER_JOB_OPTS`:
+   * up to 3 tries, 30s/60s apart). WHY IT GATES THE STAMP: without it, a single
+   * enqueue that fails three times racks up THREE row-level failures within
+   * about ninety seconds — the row would be at the 4-HOUR cap before the first
+   * sweep tick even ran again, for what might have been a sub-two-minute blip.
+   * Stamping only on the attempt that will NOT retry makes one enqueued job
+   * cost at most one row-level failure, which is what makes "the backoff grows
+   * one step per sweep tick" (the doc/changeset claim) actually true rather
+   * than aspirational.
+   */
+  isLastAttempt: boolean
+  /**
+   * Best-effort observability hook (issue #184 audit F5): called with whatever
+   * `repo.recordFailure` threw, ONLY when it threw. Core never logs (hard rule
+   * 5) — this is the seam the worker uses to emit a content-free warning
+   * (run id + `err.name`, hard rule 6). Absent → the secondary failure is
+   * silently dropped, same as before this hook existed.
+   */
+  onRecordFailureError?: (err: unknown) => void
 }
 
 /**
@@ -490,6 +538,74 @@ export async function closeSessionRun(
   if (session.activationEpoch !== request.activationEpoch) return skip('fenced')
   if (session.closedAt === null) return skip('not-closed')
 
+  try {
+    return await runClosePass(repo, userId, request, options, session, skip)
+  } catch (err) {
+    // THE BACKOFF STAMP (issue #184). Everything `runClosePass` can throw past
+    // this point is a genuine FAILURE — never one of the `skip(...)` returns
+    // above or inside it, which either settle the row permanently
+    // (`settleWithoutWork`) or stay eligible on purpose (no-gateway,
+    // claim-lost, fenced). A row that keeps throwing must stop re-occupying
+    // the `ORDER BY closed_at LIMIT` batch window on every sweep tick — see
+    // `closerBackoffDelayMs` (packages/db/src/session-closer.ts) for the
+    // growth curve and cap.
+    //
+    // ONLY ON THE LAST ATTEMPT (issue #184 audit F3). Without this gate, one
+    // enqueued job that fails all of `CLOSER_JOB_OPTS`' 3 tries stamps the row
+    // THREE times inside ~90 seconds — the second stamp already pushes past
+    // the "one tick" the doc/changeset describe, and the third can reach the
+    // 4-hour cap before the next sweep tick even runs, for what may have been
+    // a sub-two-minute blip. `isLastAttempt` is what makes one JOB cost at
+    // most one row-level failure, matching the growth curve to the prose that
+    // describes it. BullMQ's own retry (unaffected — `throw err` below still
+    // always runs) is what covers attempts 1 and 2.
+    if (options.isLastAttempt) {
+      const failureCount = session.closerFailureCount + 1
+      // Best-effort: `recordFailure`'s own epoch fence already makes a
+      // resurrection a safe no-op, and a failure to WRITE the backoff must
+      // never mask the real error — the job still fails and BullMQ still
+      // retries either way. `onRecordFailureError` is the only way this
+      // secondary failure becomes OBSERVABLE at all: core reads/writes no
+      // logger of its own (hard rule 5), so a silent catch here would lose
+      // the signal for good rather than merely defer it to the caller.
+      await repo
+        .recordFailure(userId, {
+          sessionRunId: request.sessionRunId,
+          activationEpoch: session.activationEpoch,
+          failureCount,
+          nextAttemptAt: new Date(options.now.getTime() + closerBackoffDelayMs(failureCount)),
+        })
+        .catch((recordErr: unknown) => {
+          // The hook itself is best-effort too: if it throws, that rejection
+          // would otherwise escape this catch and REPLACE `err` below — the
+          // exact masking this whole block exists to prevent, just one layer
+          // deeper. Swallowing here is what keeps the promise real rather than
+          // aspirational.
+          try {
+            options.onRecordFailureError?.(recordErr)
+          } catch {
+            // Nothing further to do with a failure to report a failure.
+          }
+        })
+    }
+    throw err
+  }
+}
+
+/**
+ * The body of one closer pass, once the run is confirmed closed at the
+ * expected epoch. Split out so {@link closeSessionRun} can wrap it in the
+ * try/catch that stamps a backoff on failure — see the module doc above for
+ * the step-by-step shape this still follows unchanged.
+ */
+async function runClosePass(
+  repo: SessionCloserRepo,
+  userId: string,
+  request: { sessionRunId: string; activationEpoch: number },
+  options: CloserOptions,
+  session: CloserSessionInput,
+  skip: (reason: CloserSkipReason) => CloserResult,
+): Promise<CloserResult> {
   /**
    * Stamp a terminal status on a run the closer will do NO work on, so it stops
    * being selected. Claim first — `finish` is fenced on the attempt token — and
@@ -720,4 +836,6 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
     const row = await withTenant(userId, (tx) => readCloserSession(tx, userId, sessionRunId))
     return row?.activationEpoch
   },
+  recordFailure: (userId, failure) =>
+    withTenant(userId, (tx) => recordCloserFailure(tx, userId, failure)),
 }

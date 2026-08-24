@@ -216,9 +216,9 @@ its row here even when its name and kind are unchanged.
 | `CloserEventPage` | interface | `c5968370e704` |
 | `CloserEventSummary` | interface | `db5d75a9adca` |
 | `CloserFinish` | interface | `7cecec3fd92c` |
-| `CloserOptions` | interface | `f1a105e8c328` |
+| `CloserOptions` | interface | `0b91d92bdcd8` |
 | `CloserResult` | interface | `6f1996e181d0` |
-| `CloserSessionInput` | interface | `8f8f533b59f2` |
+| `CloserSessionInput` | interface | `8aa40d87a1a1` |
 | `CloserSkipReason` | type | `c378f5605331` |
 | `CloserVerdictError` | class | `644008da0f76` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
@@ -249,7 +249,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `b7e0d327dcbe` |
+| `ExportAgentSessionRow` | interface | `52a67a5ebb03` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -330,11 +330,11 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
-| `SessionCloserRepo` | interface | `8be036a03caf` |
+| `SessionCloserRepo` | interface | `930ba397f4eb` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
-| `SessionSweepRepo` | interface | `139be6accf62` |
+| `SessionSweepRepo` | interface | `ccf9ddfd0fe6` |
 | `SessionSweepResult` | interface | `e114e7717b5e` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
@@ -560,7 +560,8 @@ its row here even when its name and kind are unchanged.
 | `ChronologicalPage` | interface | `3a81f7904b73` |
 | `CloseSessionResult` | interface | `9ce31e28018e` |
 | `CloserCandidate` | interface | `95aa130ca604` |
-| `CloserSessionRow` | interface | `cc8f36f2ea4e` |
+| `CloserFailure` | interface | `c88693a38bb9` |
+| `CloserSessionRow` | interface | `9ba148b24c11` |
 | `CommitmentCreate` | interface | `b29fe27da0fc` |
 | `CommitmentExistsError` | class | `9d60b8790921` |
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
@@ -584,7 +585,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `b7e0d327dcbe` |
+| `ExportAgentSessionRow` | interface | `52a67a5ebb03` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -683,7 +684,7 @@ its row here even when its name and kind are unchanged.
 | `WrittenMemory` | interface | `bec591e2c3d0` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
-| `agentSessions` | const | `cfff10fb6f48` |
+| `agentSessions` | const | `2d8bd14addd4` |
 | `apiKeys` | const | `c5d36321993d` |
 | `appendImportedEvent` | function | `4654962471fe` |
 | `applyFactProposal` | function | `bb1b15f61cc0` |
@@ -699,6 +700,7 @@ its row here even when its name and kind are unchanged.
 | `claimSessionTriage` | function | `749516ec8997` |
 | `closeDb` | function | `07b382de379c` |
 | `closeSession` | function | `0f12d1991868` |
+| `closerBackoffDelayMs` | function | `a90ec2357606` |
 | `commitments` | const | `a414b2f62ba1` |
 | `completeSessionTriage` | function | `3a3467b20029` |
 | `consolidationProposals` | const | `c87ade1c93dc` |
@@ -757,7 +759,7 @@ its row here even when its name and kind are unchanged.
 | `insertUser` | function | `1526ee55b233` |
 | `listApiKeys` | function | `32a72d78eb47` |
 | `listClientsAuthorizedByUser` | function | `3b6f157f2e8b` |
-| `listCloserCandidates` | function | `c6c7935cb7c7` |
+| `listCloserCandidates` | function | `d25099863aa7` |
 | `listEmbedFailedMemories` | function | `c298e6ec9e3a` |
 | `listFactProposals` | function | `31620c7eb568` |
 | `listGarbageCollectableClients` | function | `a1e35c46687b` |
@@ -788,6 +790,7 @@ its row here even when its name and kind are unchanged.
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
 | `recentDecisions` | function | `386c29c370a3` |
+| `recordCloserFailure` | function | `2ec57e2f8795` |
 | `recordEmbedFailure` | function | `cf6208524a42` |
 | `registerClient` | function | `5c675b95f6b1` |
 | `rejectFactProposal` | function | `61e4ee4e59dd` |
@@ -943,6 +946,8 @@ its row here even when its name and kind are unchanged.
 | `BriefingToolOutputV3` | type | `08bdf195cede` |
 | `BriefingToolOutputV4` | type | `ea1ff510eac1` |
 | `BudgetStatusResponse` | type | `5b053b218552` |
+| `CLOSER_BACKOFF_BASE_MS` | const | `b4a789a552bc` |
+| `CLOSER_BACKOFF_MAX_MS` | const | `33bfc84631be` |
 | `COMMITMENT_TRANSITIONS` | const | `d253844e795e` |
 | `CONSOLIDATION_POLICIES` | const | `e13a8e9ec814` |
 | `CapabilityDescriptor` | type | `22f3971a9bcb` |

@@ -33,11 +33,13 @@
 import {
   type AgentSessionTriageStatus,
   type BriefedMemory,
+  CLOSER_BACKOFF_BASE_MS,
+  CLOSER_BACKOFF_MAX_MS,
   MAX_SESSION_EVENT_IDS,
   SESSION_LEASE_MS,
   SESSION_SWEEP_GRACE_MS,
 } from '@3ngram/schema'
-import { and, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { memoryEvents } from './schema/memory.js'
@@ -49,6 +51,24 @@ import { memoryEvents } from './schema/memory.js'
  * {@link listCloserCandidates}. `overflowed` is terminal and never eligible.
  */
 export const CLOSER_ELIGIBLE_STATUSES = ['idle', 'pending', 'expired'] as const
+
+/**
+ * THE BACKOFF CURVE (issue #184). Doubles per consecutive FAILURE
+ * (`recordCloserFailure`), capped so a persistently broken row is never
+ * unreachable: `min(CLOSER_BACKOFF_MAX_MS, CLOSER_BACKOFF_BASE_MS * 2^(n-1))`
+ * for `n` consecutive failures (`n <= 0` returns the base — a row cannot be
+ * BACKED OFF for zero failures, but the caller always passes the
+ * post-increment count, so this only guards against a stray 0).
+ *
+ * Exported so the curve is pinned WITHOUT a database — the property that
+ * matters is that it is monotonic in `n` and bounded above, not any one point
+ * on it, and a wrong exponent or a missing cap is a silent-forever-churn bug
+ * that a behavioural test over a live scan is the wrong tool to catch.
+ */
+export function closerBackoffDelayMs(failureCount: number): number {
+  const n = Math.max(1, failureCount)
+  return Math.min(CLOSER_BACKOFF_MAX_MS, CLOSER_BACKOFF_BASE_MS * 2 ** (n - 1))
+}
 
 /**
  * THE RE-ARM PREDICATE, in one place: this run holds a provenance event whose id
@@ -152,6 +172,8 @@ export interface CloserSessionRow {
   scope: string | null
   closedAt: Date | null
   lastSeenAt: Date
+  /** Consecutive closer-pass failures observed BEFORE this attempt. See {@link closerBackoffDelayMs}. */
+  closerFailureCount: number
 }
 
 /**
@@ -277,8 +299,19 @@ export async function sweepExpiredLeases(
  * The WHERE lives in {@link closerCandidatePredicate} so the integration suite can
  * EXPLAIN the shipped predicate instead of a hand-copied transcription of it — a
  * plan assertion against a second spelling proves nothing once the two drift.
+ *
+ * THE BACKOFF LEG (issue #184) is a WHERE-only conjunct, deliberately NOT folded
+ * into `agent_sessions_closer_idx` (0034) the way `needs_look` was. A partial
+ * index predicate must be IMMUTABLE, and `closer_next_attempt_at <= now()`
+ * depends on the call time — Postgres rejects that at `CREATE INDEX`, full
+ * stop. It also does not need the index: unlike the untriaged-event `EXISTS`,
+ * this is one column comparison against a row the index scan already fetched,
+ * so it costs a `Filter`, not a second probe. A backed-off row is still
+ * VISITED — that is the whole mechanism, it is what stops it being RETURNED —
+ * but visiting and discarding a column comparison is the cost the `needs_look`
+ * fix specifically avoided for the EXISTS probe, not for this.
  */
-export const closerCandidatePredicate = (userId: string) =>
+export const closerCandidatePredicate = (userId: string, now: Date) =>
   and(
     eq(agentSessions.userId, userId),
     isNotNull(agentSessions.closedAt),
@@ -287,17 +320,20 @@ export const closerCandidatePredicate = (userId: string) =>
     or(ne(agentSessions.triageStatus, 'completed'), eq(agentSessions.needsLook, true)),
     // The late-commit backstop, on flagged rows only.
     or(ne(agentSessions.triageStatus, 'completed'), hasUntriagedSessionEvent),
+    // The backoff gate: unset, or its window has already elapsed.
+    or(isNull(agentSessions.closerNextAttemptAt), lte(agentSessions.closerNextAttemptAt, now)),
   )
 
 export async function listCloserCandidates(
   tx: TenantTx,
   userId: string,
+  now: Date,
   limit: number,
 ): Promise<CloserCandidate[]> {
   const rows = await tx
     .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
     .from(agentSessions)
-    .where(closerCandidatePredicate(userId))
+    .where(closerCandidatePredicate(userId, now))
     .orderBy(agentSessions.closedAt)
     .limit(limit)
   return rows.map((row) => ({ sessionRunId: row.id, activationEpoch: row.activationEpoch }))
@@ -322,6 +358,7 @@ export async function readCloserSession(
       scope: agentSessions.scope,
       closedAt: agentSessions.closedAt,
       lastSeenAt: agentSessions.lastSeenAt,
+      closerFailureCount: agentSessions.closerFailureCount,
     })
     .from(agentSessions)
     .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
@@ -339,6 +376,7 @@ export async function readCloserSession(
     scope: row.scope,
     closedAt: row.closedAt,
     lastSeenAt: row.lastSeenAt,
+    closerFailureCount: row.closerFailureCount,
   }
 }
 
@@ -485,6 +523,14 @@ export async function finishSessionTriage(
       triageStatus: finish.triageStatus,
       lastTriagedEventIds: finish.visibleEventIds.slice(0, MAX_SESSION_EVENT_IDS),
       ...(finish.clearExcerpt ? { lastMessageExcerpt: null } : {}),
+      // RESET, not carried forward (issue #184). Reaching a durable write-back
+      // at all — whether this pass generated for real or `settleWithoutWork`
+      // stamped a permanent skip — means it did NOT throw, which is the only
+      // thing `recordCloserFailure` ever counts. A row that failed twice and
+      // then finished cleanly must not still be serving out its old backoff the
+      // next time it is genuinely re-armed.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
     })
     .where(
       and(
@@ -501,6 +547,63 @@ export async function finishSessionTriage(
   // committed after the listing it stamped. See {@link settleNeedsLook}.
   await settleNeedsLook(tx, userId, finish.sessionRunId)
   return true
+}
+
+/** One backoff stamp: the post-increment failure count and the computed gate. */
+export interface CloserFailure {
+  sessionRunId: string
+  activationEpoch: number
+  failureCount: number
+  nextAttemptAt: Date
+}
+
+/**
+ * Stamp the backoff after a closer pass FAILS for this row (issue #184): an
+ * exception, not a deliberate skip — see `closeSessionRun`'s catch in
+ * packages/core, which is the only caller.
+ *
+ * FENCED on `activationEpoch`, exactly like {@link claimSessionTriage} and
+ * {@link finishSessionTriage}. TWO SEPARATE PROPERTIES, not one, and it is
+ * worth keeping them apart:
+ *
+ *   1. RACE SAFETY. The fence alone is what makes this a safe no-op against a
+ *      CONCURRENT resurrection — a resurrect always bumps `activation_epoch`
+ *      (session-provenance.ts `resurrect`; session-lifecycle.ts `openSession`'s
+ *      `reopened` branch; `refreshLease`'s `resurrect` branch, Stop's own
+ *      path), so a stamp that observed the pre-resurrection epoch either
+ *      commits BEFORE the resurrect (harmless — the row it stamped is about to
+ *      be excluded from every candidate scan by `closed_at IS NOT NULL` the
+ *      instant the resurrect commits) or fails its own fence and writes
+ *      nothing (the epoch already moved). This holds whether or not a
+ *      resurrect touches the backoff columns at all — it is a property of the
+ *      fence, not of what the other writer does with it.
+ *   2. NO STALE WAIT ACROSS ACTIVATIONS. Separately, and for a different
+ *      reason, all three resurrect writers above ALSO reset both columns to
+ *      zero/NULL. That is not what the race above needs — it is what stops a
+ *      backoff earned by one activation surviving to gate the NEXT one: a row
+ *      that failed its way to the 4-hour cap, then resumed and did real work
+ *      for an hour, must not carry that cap into the fresh close a moment
+ *      later. Omitting it was exactly the bug this comment used to describe as
+ *      already fixed (issue #184 audit, finding F1) — it was not.
+ */
+export async function recordCloserFailure(
+  tx: TenantTx,
+  userId: string,
+  failure: CloserFailure,
+): Promise<void> {
+  await tx
+    .update(agentSessions)
+    .set({
+      closerFailureCount: failure.failureCount,
+      closerNextAttemptAt: failure.nextAttemptAt,
+    })
+    .where(
+      and(
+        eq(agentSessions.userId, userId),
+        eq(agentSessions.id, failure.sessionRunId),
+        eq(agentSessions.activationEpoch, failure.activationEpoch),
+      ),
+    )
 }
 
 /**

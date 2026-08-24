@@ -208,6 +208,20 @@ export async function eraseAccountData(
       // its only other writers are the attach heartbeat, already tombstone-gated,
       // and the triage stampers, which cannot run on a tombstoned account.
       needsLook: false,
+      // Same reset, DIFFERENT justification (issue #184 audit F7 — the
+      // original comment here overclaimed "no writer left"). `recordCloserFailure`
+      // IS a writer that can still fire post-erasure: a closer pass already
+      // in flight when erasure commits can fail afterward and stamp a backoff
+      // on this row. It is neutralized, not prevented — `briefedMemories: []`
+      // above means every post-erasure pass finds nothing briefed and settles
+      // via `nothing-briefed` (a permanent, non-throwing skip) before it ever
+      // reaches the code that could throw and call `recordCloserFailure`,
+      // UNLESS the read that decides that (`listEvents`) itself throws first,
+      // which is not something this write can rule out. So the reset below is
+      // for a genuinely stale value from BEFORE erasure — not a guarantee that
+      // nothing writes these columns again.
+      closerFailureCount: 0,
+      closerNextAttemptAt: null,
     })
     .returning({ id: agentSessions.id })
 

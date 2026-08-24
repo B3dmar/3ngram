@@ -150,6 +150,27 @@ describe('openSession', () => {
     expect(resumed.row.activationEpoch).toBe(2)
   })
 
+  it('resets a stale closer backoff on resume — the PRIMARY resurrect path (issue #184 audit F1)', async () => {
+    // The failure scenario the audit named: an outage drives a row to
+    // count=5/next=T+4h; the user resumes (this path, not the closer's own
+    // write-time attach) and works for a while; the session closes again
+    // minutes later. Without this reset the fresh candidate would still carry
+    // the 4-hour gate from the PREVIOUS activation.
+    const opened = await open(uid, { ...KEY, source: 'startup', project: '3ngram' })
+    await close(uid)
+    await ownerPool.query(
+      'UPDATE agent_sessions SET closer_failure_count = 5, closer_next_attempt_at = $2 WHERE id = $1',
+      [opened.row.id, new Date(LATER.getTime() + 4 * 60 * 60 * 1000)],
+    )
+
+    const resumed = await open(uid, { ...KEY, source: 'resume' }, LATER)
+
+    expect(resumed.reopened).toBe(true)
+    const row = await rawRow(opened.row.id)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
+  })
+
   it('reopens a lease-expired row even though closed_at is still null', async () => {
     await open(uid, { ...KEY, source: 'startup', project: '3ngram' }, STALE)
 
@@ -356,14 +377,24 @@ describe('heartbeatSession', () => {
   })
 
   it('resurrects an explicitly closed row — a stale close is transient', async () => {
-    await open(uid, { ...KEY, source: 'startup' })
+    const opened = await open(uid, { ...KEY, source: 'startup' })
     await close(uid)
+    // A stale closer backoff from the activation that just ended (issue #184
+    // audit F1) — Stop's own resurrect branch (`refreshLease`) must clear it
+    // too, not just the write-time attach path.
+    await ownerPool.query(
+      'UPDATE agent_sessions SET closer_failure_count = 3, closer_next_attempt_at = $2 WHERE id = $1',
+      [opened.row.id, new Date(LATER.getTime() + 60 * 60 * 1000)],
+    )
 
     const result = await beat(uid, KEY, LATER)
 
     expect(result.resurrected).toBe(true)
     expect(result.row.closedAt).toBeNull()
     expect(result.row.activationEpoch).toBe(2)
+    const row = await rawRow(opened.row.id)
+    expect(row.closer_failure_count).toBe(0)
+    expect(row.closer_next_attempt_at).toBeNull()
   })
 
   it('resurrects a lease-expired row and advances the epoch once', async () => {

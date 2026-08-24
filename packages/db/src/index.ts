@@ -339,12 +339,15 @@ export {
 export {
   CLOSER_ELIGIBLE_STATUSES,
   type CloserCandidate,
+  type CloserFailure,
   type CloserSessionRow,
   claimSessionTriage,
+  closerBackoffDelayMs,
   expireStaleExcerpts,
   finishSessionTriage,
   listCloserCandidates,
   readCloserSession,
+  recordCloserFailure,
   sweepExpiredLeases,
   sweepFloor,
 } from './session-closer.js'

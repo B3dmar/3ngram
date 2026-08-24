@@ -12,12 +12,14 @@
 //   - the watermark is taken AFTER the resolves, or the closer re-arms itself;
 //   - the pass is RESOLVE-ONLY — no seam exists for anything else.
 import type { CompleteOptions, Gateway } from '@3ngram/llm'
+import { CLOSER_BACKOFF_BASE_MS } from '@3ngram/schema'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   CLOSER_MAX_OUTPUT_TOKENS,
   CLOSER_OPERATION,
   type CloserClaim,
   type CloserEventPage,
+  type CloserFailureInput,
   type CloserFinish,
   type CloserSessionInput,
   type CloserUsage,
@@ -54,6 +56,7 @@ function sessionRow(overrides: Partial<CloserSessionInput> = {}): CloserSessionI
     project: '3ngram',
     scope: 'work',
     closedAt: new Date('2026-08-23T12:00:00.000Z'),
+    closerFailureCount: 0,
     ...overrides,
   }
 }
@@ -91,11 +94,13 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
   resolved: string[]
   usages: CloserUsage[]
   listCalls: number
+  failures: CloserFailureInput[]
 } {
   const claims: CloserClaim[] = []
   const finishes: CloserFinish[] = []
   const resolved: string[] = []
   const usages: CloserUsage[] = []
+  const failures: CloserFailureInput[] = []
   let listCalls = 0
   const base: SessionCloserRepo = {
     readSession: async () => sessionRow(),
@@ -119,6 +124,9 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
       usages.push(usage)
     },
     currentEpoch: async () => 3,
+    recordFailure: async (_userId, failure) => {
+      failures.push(failure)
+    },
   }
   const repo = { ...base, ...overrides }
   return {
@@ -138,10 +146,20 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
     get listCalls() {
       return listCalls
     },
+    get failures() {
+      return failures
+    },
   }
 }
 
-const OPTIONS = { newAttemptId: () => 'attempt-1' }
+const OPTIONS = {
+  newAttemptId: () => 'attempt-1',
+  now: new Date('2026-08-23T13:00:00.000Z'),
+  // The default in these tests is the LAST attempt, so the existing failure
+  // suite still exercises the stamp. The "not the last attempt" behaviour gets
+  // its own describe block below (issue #184 audit F3).
+  isLastAttempt: true,
+}
 
 describe('selectResolvable — the model may only name ids it was shown', () => {
   it('drops an id that is not in the briefed set, keeping the rest', () => {
@@ -589,6 +607,216 @@ describe('closeSessionRun — the early exits', () => {
       { ...OPTIONS, gateway },
     )
     expect(result.skipped).toBe('not-eligible')
+  })
+})
+
+describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184)', () => {
+  it('stamps the backoff and RE-THROWS when the generation call fails', async () => {
+    const repo = fakeRepo()
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('gateway is down')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway },
+      ),
+    ).rejects.toThrow('gateway is down')
+
+    expect(repo.failures).toEqual([
+      {
+        sessionRunId: RUN,
+        activationEpoch: 3,
+        failureCount: 1,
+        nextAttemptAt: new Date(OPTIONS.now.getTime() + CLOSER_BACKOFF_BASE_MS),
+      },
+    ])
+    // No terminal write-back — a failure is retried, not settled.
+    expect(repo.finishes).toEqual([])
+  })
+
+  it('grows the delay off the OBSERVED count, not a repo-local counter', async () => {
+    const repo = fakeRepo({ readSession: async () => sessionRow({ closerFailureCount: 2 }) })
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('still down')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway },
+      ),
+    ).rejects.toThrow('still down')
+
+    // Third consecutive failure: base * 2^2.
+    expect(repo.failures[0]).toMatchObject({
+      failureCount: 3,
+      nextAttemptAt: new Date(OPTIONS.now.getTime() + CLOSER_BACKOFF_BASE_MS * 4),
+    })
+  })
+
+  it('never lets a recordFailure error mask the real failure', async () => {
+    const repo = fakeRepo({
+      recordFailure: async () => {
+        throw new Error('db is also down')
+      },
+    })
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('the original error')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway },
+      ),
+    ).rejects.toThrow('the original error')
+  })
+
+  it('does NOT stamp a backoff for a deliberate skip — only a thrown failure', async () => {
+    // no-gateway is transient by design (see the early-exits suite); it must
+    // never touch the backoff columns.
+    const repo = fakeRepo()
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      OPTIONS,
+    )
+    expect(result.skipped).toBe('no-gateway')
+    expect(repo.failures).toEqual([])
+  })
+
+  it('does NOT stamp a backoff when settleWithoutWork permanently settles the row', async () => {
+    const repo = fakeRepo({ readSession: async () => sessionRow({ briefedMemories: [] }) })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway('unused') },
+    )
+    expect(result.skipped).toBe('nothing-briefed')
+    expect(repo.failures).toEqual([])
+  })
+})
+
+describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issue #184 audit F3)', () => {
+  it('RE-THROWS but does NOT stamp on a non-last attempt — BullMQ is still retrying', async () => {
+    // One enqueued job can fail up to 3 times (CLOSER_JOB_OPTS) inside ~90
+    // seconds. Stamping on every one of those would blow past "one failure per
+    // sweep tick" — see CloserOptions.isLastAttempt.
+    const repo = fakeRepo()
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('gateway is down')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway, isLastAttempt: false },
+      ),
+    ).rejects.toThrow('gateway is down')
+
+    expect(repo.failures).toEqual([])
+  })
+
+  it('stamps on the LAST attempt — the only case that should ever grow the row-level count', async () => {
+    const repo = fakeRepo()
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('gateway is down')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway, isLastAttempt: true },
+      ),
+    ).rejects.toThrow('gateway is down')
+
+    expect(repo.failures).toHaveLength(1)
+  })
+
+  it('reports a failed recordFailure through onRecordFailureError (issue #184 audit F5)', async () => {
+    const recordError = new Error('db is also down')
+    const repo = fakeRepo({
+      recordFailure: async () => {
+        throw recordError
+      },
+    })
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('the original error')),
+    }
+    const reported: unknown[] = []
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway, onRecordFailureError: (err) => reported.push(err) },
+      ),
+    ).rejects.toThrow('the original error')
+
+    expect(reported).toEqual([recordError])
+  })
+
+  it('never lets a THROWING onRecordFailureError mask the real error (audit N1)', async () => {
+    // The hook is best-effort too. Without its own guard, a hook that throws
+    // would replace `err` below with whatever the hook threw instead — the
+    // exact masking this whole mechanism exists to prevent, one layer deeper.
+    const repo = fakeRepo({
+      recordFailure: async () => {
+        throw new Error('db is also down')
+      },
+    })
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('the original error')),
+    }
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        {
+          ...OPTIONS,
+          gateway,
+          onRecordFailureError: () => {
+            throw new Error('the hook itself is broken')
+          },
+        },
+      ),
+    ).rejects.toThrow('the original error')
+  })
+
+  it('never calls onRecordFailureError when recordFailure succeeds', async () => {
+    const repo = fakeRepo()
+    const gateway: Gateway = {
+      embed: () => Promise.reject(new Error('the closer never embeds')),
+      complete: () => Promise.reject(new Error('gateway is down')),
+    }
+    const reported: unknown[] = []
+    await expect(
+      closeSessionRun(
+        repo,
+        USER,
+        { sessionRunId: RUN, activationEpoch: 3 },
+        { ...OPTIONS, gateway, onRecordFailureError: (err) => reported.push(err) },
+      ),
+    ).rejects.toThrow('gateway is down')
+
+    expect(reported).toEqual([])
   })
 })
 

@@ -802,6 +802,42 @@ lands on a `completed` run, and every watermark stamp recomputes it against the 
 it just wrote — a stamp that leaves an event untriaged re-raises it, which is what
 keeps the late-commit race covered.
 
+**A row that keeps FAILING backs off (issue #184).** `needs_look` bounds the scan
+by backlog; it says nothing about a row that IS a genuine candidate every tick and
+keeps throwing — a gateway outage, a persistently unparseable verdict, a DB blip on
+`finish`. Before this, `apps/worker`'s job dedup (`removeOnFail: true`) frees such a
+row's job id the moment its retries exhaust, so the next sweep tick re-enqueues it —
+every tick, forever, sorted first by `closed_at` — and it starves every newer
+session sharing the batch window. `agent_sessions.closer_failure_count` /
+`closer_next_attempt_at` fix this the same way `needs_look` fixed the history
+problem: upstream of the query, on the row.
+
+The stamp is **once per ENQUEUED JOB whose BullMQ retries are exhausted, not once
+per individual attempt** (audit finding F3 on the first pass at this page — the
+distinction is load-bearing, not pedantic). `CLOSER_JOB_OPTS` already retries a job
+up to 3 times, 30s/60s apart, before BullMQ gives up on it; stamping on every one of
+those would let a single sub-two-minute blip rack up three row-level failures and
+reach the 4-hour cap before the next sweep tick even ran. `CloserOptions.isLastAttempt`
+(packages/core), fed from `job.attemptsMade`/`job.opts.attempts` in
+`apps/worker/src/queues.ts`, is what keeps one enqueue costing at most one
+increment — which is what makes "the wait doubles roughly once per sweep tick, up
+to a 4-hour cap" a true description of the row's trajectory rather than an
+aspirational one. The gate itself lives in the candidate scan's WHERE clause
+rather than the partial index — `closer_next_attempt_at <= now()` depends on the
+call time, and a partial index predicate must be IMMUTABLE, so Postgres refuses it
+at `CREATE INDEX`. It also applies to the `completed`-with-`needs_look` leg exactly
+as it does to the unconditionally-eligible statuses: a flagged `completed` row can
+be backed off too, and is excluded by the same conjunct.
+
+Both columns reset to zero/`NULL` the moment a pass reaches a durable write-back
+(success, or a permanent skip via `settleWithoutWork` / the interactive handshake's
+own `completeSessionTriage`) or the row is genuinely re-armed by new work — all
+three resurrect writers (the write-time attach's `resurrect`, `openSession`'s
+`reopened` branch, and Stop's own `refreshLease` resurrect branch) reset it, not
+just the first: a backoff earned by one activation must not gate the next one's
+fresh close. The mechanism stays self-healing at any failure count: bounded churn,
+never a permanently ineligible row.
+
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That
 reconsolidation can follow this job; it is not a blocker for the closer itself.
