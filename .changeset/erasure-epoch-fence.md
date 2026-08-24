@@ -26,13 +26,20 @@ from that:
   Closing that fully would mean holding a lock across the network call, which the
   design explicitly rejects (couples erasure latency to the gateway's, inverts
   the repo's no-lock-across-network-call rule).
-- Each `resolve` the closer writes is now fenced **inside the same transaction
-  and the same statement as the write**: `transitionCommitment` (exported from
-  `@3ngram/db`) accepts a new `stampedSessionEpoch`, carried as an EXISTS
-  predicate on the commitment `UPDATE` itself, and raises the new
-  `SessionEpochFencedError` when the run's epoch has moved. This one **closes**
-  the gap rather than narrowing it — there is no statement boundary left for a
-  concurrent erasure or resurrection to land in.
+- Each `resolve` the closer writes is now fenced **inside the same transaction as
+  the write, ordered lock-then-read**: `transitionCommitment` (exported from
+  `@3ngram/db`) locks the commitment row (`FOR UPDATE`) before reading the run's
+  CURRENT `activation_epoch` in its own separate, freshly-snapshotted statement,
+  and raises the new `SessionEpochFencedError` when it no longer matches the
+  `stampedSessionEpoch` the caller supplies. Locking first is load-bearing: an
+  epoch check folded into the write's own `WHERE` (an `EXISTS(...)` against
+  `agent_sessions`) looks equivalent but is not — Postgres re-checks a
+  blocked-then-woken UPDATE's own target row fresh (EvalPlanQual), but a
+  sub-SELECT against another table inside that WHERE still runs under the
+  statement's original snapshot, so it can read a pre-erasure epoch even after
+  erasure has already committed. This one **closes** the gap rather than
+  narrowing it — both orderings (the closer's transaction locks the row first, or
+  erasure's bulk commitments UPDATE does) serialize correctly.
 
 A pass fenced at the gateway boundary releases its budget reservation, unbilled,
 and settles cleanly on the next sweep: the erasure also cleared

@@ -289,11 +289,13 @@ export async function resolveForClosedRun(
       // nothing.
       expectedFrom: current.status,
       stampedSessionRunId: sessionRunId,
-      // THE RESOLVE-PATH EPOCH FENCE (issue #185). `transitionCommitment` folds
-      // this into the SAME UPDATE statement that writes the commitment (an
-      // EXISTS predicate against agent_sessions.activation_epoch, no separate
-      // read), and raises SessionEpochFencedError instead of writing when it
-      // has moved — see the field doc in packages/db/src/commitments.ts.
+      // THE RESOLVE-PATH EPOCH FENCE (issue #185). `transitionCommitment` locks
+      // the commitment row BEFORE reading the run's activation_epoch in a
+      // separate, freshly-snapshotted statement, and raises
+      // SessionEpochFencedError instead of writing when it has moved — see the
+      // field doc in packages/db/src/commitments.ts for why the lock has to
+      // come first (an epoch check folded into the write's own WHERE looks
+      // equivalent but is unsound under EvalPlanQual).
       stampedSessionEpoch: expectedEpoch,
     })
   } catch (error) {

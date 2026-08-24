@@ -336,18 +336,34 @@ can reopen instead of being debriefed mid-conversation.
 **Erasure is a fourth writer of `activation_epoch`** (issue #185), folded into the
 same UPDATE as the PII redaction in `eraseAccountData`
 (`packages/db/src/account-delete.ts`) — every row of the account is bumped, closed
-or open. The closer fences its claim, a re-check after the budget reservation and
-immediately before the gateway call, and its final write-back on this epoch
-(below), so an in-flight pass that
-observed the pre-erasure epoch either never claims the row, is caught before it
-sends the excerpt or briefed topics being redacted, or has its resolves and
-bookkeeping rejected once it reaches its own epoch checks. **Residual, disclosed
-rather than closed:** a pass that already dispatched to the gateway before the
-erasure UPDATE commits has that request in flight, and no epoch bump recalls it —
-the fence stops a pass from *landing* work on the redacted row, not from
-*completing a round trip already under way*. That window is bounded by the
-gateway's request timeout (30s default), so erasure can report complete while one
-last request is still on the wire for up to that long.
+or open. Four things now stand between an in-flight pass and a post-erasure write,
+and they are not equally strong:
+
+- the claim itself (fenced at the epoch observed at step 1) — a pass whose epoch
+  already moved before it claims never runs at all;
+- the pre-gateway check, immediately before dispatch — this one only NARROWS the
+  window rather than closing it: it is a read, not a lock, adjacent to the
+  dispatch with no awaited work between them, but not serialized against the
+  erasure commit. **At most one request** may still dispatch racing that commit,
+  and if it does, it is on the wire for up to the gateway's request timeout (30s
+  default) before it completes — disclosed, not hidden, and not an absolute
+  "≤ timeout" guarantee (see the fence enumeration below for why closing it fully
+  would mean a lock across the network call, which the design rejects by
+  contract);
+- each `resolve` write itself — this one CLOSES its window rather than narrowing
+  it: `transitionCommitment` locks the commitment row before reading the run's
+  current epoch in a fresh statement, so a resolve racing an in-flight erasure
+  either happens strictly before it (the lock-holder wins and writes legitimately)
+  or is rejected with no write at all (erasure holds the lock first, the fresh
+  read after the wait sees the bump);
+- the final write-back, fenced on epoch AND attempt token — all-or-nothing.
+
+So an in-flight pass that observed the pre-erasure epoch either never claims the
+row, is very likely (though not provably, under adversarial scheduling) caught
+before it sends the excerpt or briefed topics to the gateway, has any `resolve`
+it attempts genuinely rejected at the write, and has its bookkeeping write-back
+rejected regardless. The one residual that is disclosed rather than closed is the
+pre-gateway one, above.
 
 **Documentation obligation.** Before this, an `activation_epoch` bump meant one
 thing: the session was resumed or resurrected, and every reader treated it that
@@ -858,10 +874,15 @@ fence rather than a closing one:
    resurrection during a slow generation stops the batch at the next candidate
    rather than at the end;
 4. **on the `resolve` write itself** (issue #185) — `transitionCommitment`
-   carries the pass's fenced epoch as an EXISTS predicate on the SAME UPDATE
-   that writes the commitment, evaluated by Postgres against the identical
-   snapshot as the write. No separate statement, no gap for anything to land
-   in between;
+   locks the commitment row (`FOR UPDATE`) BEFORE reading the run's epoch, in
+   a separate, freshly-snapshotted statement, and aborts on a mismatch before
+   ever attempting the write. The lock is what makes the read trustworthy: an
+   epoch check folded into the write's own `WHERE` (an `EXISTS(...)` against
+   `agent_sessions`) is NOT equivalent and does not work — a sub-SELECT inside
+   a blocked-then-woken UPDATE's `WHERE` still runs under that statement's
+   ORIGINAL snapshot even though Postgres re-checks the UPDATE's own target row
+   fresh (EvalPlanQual), so it can still read a pre-erasure epoch after erasure
+   has already committed. Locking first and reading second closes that;
 5. **on the final write-back**, together with the attempt token — the bookkeeping
    (terminal status, watermark, excerpt clear) is all-or-nothing.
 
@@ -878,15 +899,18 @@ guarantee. Closing it fully would require holding a lock across the gateway
 call — the design memo's option 2, rejected because it couples erasure latency
 to the gateway's and inverts the repo's no-lock-across-network-call rule.
 
-(3) is superseded by (4): the outer per-resolve read used to be the only fence
-on an individual resolve, so **an individual resolve could commit against a
-session that had just become active again** — that residual is now CLOSED, not
-merely disclosed, by the write-time EXISTS predicate. (3) still earns its keep
-as the cheap early exit that stops the REST of the batch without attempting a
-write destined to fail. Resolve is reversible regardless (`unresolve`), which is
-why v1 stayed resolve-only in the first place — a closer that could `remember`
-would need a stronger guarantee than even (4) gives on non-idempotent writes,
-and that is one of the costs the page rejects it for.
+(3) is superseded by (4) as the AUTHORITATIVE guard, not made redundant: the
+outer per-resolve read used to be the only fence on an individual resolve, so
+**an individual resolve could commit against a session that had just become
+active again** — that residual is now CLOSED, not merely disclosed, by (4)'s
+lock-then-read. (3) stays in place deliberately, as a cheap EARLY EXIT: it is a
+plain read with no lock, so it cannot itself guarantee anything, but it stops
+the REST of the batch at the first stale candidate rather than paying a doomed
+lock-wait-then-write attempt for every remaining one. Resolve is reversible
+regardless (`unresolve`), which is why v1 stayed resolve-only in the first
+place — a closer that could `remember` would need a stronger guarantee than
+even (4) gives on non-idempotent writes, and that is one of the costs the page
+rejects it for.
 
 Resolve is reversible, so a torn write is not a 28th-table problem. Actor is
 `worker` (settled above) — never `capture_hook`.
