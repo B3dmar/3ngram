@@ -214,18 +214,24 @@ export async function eraseAccountData(
   // it does). But the check is a READ, not a lock: it narrows the window to
   // "adjacent", it does not serialize the dispatch against this UPDATE's
   // commit, so "adjacent" is a source-code property, not a wall-clock
-  // guarantee under adversarial scheduling. The honest shape: AT MOST ONE
-  // request may dispatch racing this UPDATE's commit at the fence point, and
-  // if it does, nothing erasure does can recall it — the fence only stops a
-  // pass from LANDING resolves or bookkeeping on the redacted row, not from
-  // completing a round trip already under way — so it is on the wire for up
-  // to the gateway's request timeout (30s default, packages/llm/src/openai.ts)
+  // guarantee under adversarial scheduling. The honest shape is PER PASS, not
+  // account-wide: the claim (claimSessionTriage) is a fence, not an exclusive
+  // lease, so more than one of this account's runs can be claimed and mid-pass
+  // at once — ONE RACING DISPATCH PER CONCURRENTLY-EXECUTING CLOSER PASS,
+  // bounded by worker concurrency (one job at a time per replica today,
+  // apps/worker/src/queues.ts takes BullMQ's Worker default) times however
+  // many replicas are running, never a single request across the whole
+  // account. Nothing erasure does can recall a dispatch already under way —
+  // the fence only stops a pass from LANDING resolves or bookkeeping on the
+  // redacted row, not from completing a round trip already under way — so
+  // each one that does race this UPDATE's commit is on the wire for up to the
+  // gateway's request timeout (30s default, packages/llm/src/openai.ts)
   // before it completes. This is a narrowing fence, not a serialized handoff.
   // Closing the gap fully would require holding a lock (the account-lifecycle
-  // lock, or an equivalent) across the closer's network call — the design
-  // memo's option 2, which the owner rejected because it couples erasure
-  // latency to the gateway's and inverts the repo's no-lock-across-network-
-  // call rule.
+  // lock, or an equivalent) across every in-flight pass's network call — the
+  // design memo's option 2, which the owner rejected because it couples
+  // erasure latency to the gateway's and inverts the repo's
+  // no-lock-across-network-call rule.
   const erasedAgentSessions = await tx
     .update(agentSessions)
     .set({

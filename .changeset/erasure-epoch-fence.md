@@ -21,11 +21,15 @@ from that:
   leave the process. This is a **narrowing** fence, not a serialized handoff: the
   check and the dispatch are adjacent statements with no awaited work between
   them, but the check is a read, not a lock, so it does not serialize against an
-  erasure commit. At most one request may still dispatch racing that commit, on
-  the wire for up to the gateway's timeout (30s default) before it completes.
-  Closing that fully would mean holding a lock across the network call, which the
-  design explicitly rejects (couples erasure latency to the gateway's, inverts
-  the repo's no-lock-across-network-call rule).
+  erasure commit. The claim is a fence, not an exclusive lease, so more than one
+  of an account's runs can be claimed and mid-pass at once — the honest bound is
+  one racing dispatch **per concurrently-executing closer pass**, bounded by
+  worker concurrency (one job at a time per replica today) times replica count,
+  not a single request account-wide. Each one that does dispatch is on the wire
+  for up to the gateway's timeout (30s default) before it completes. Closing that
+  fully would mean holding a lock across every in-flight pass's network call,
+  which the design explicitly rejects (couples erasure latency to the gateway's,
+  inverts the repo's no-lock-across-network-call rule).
 - Each `resolve` the closer writes is now fenced **inside the same transaction as
   the write, ordered lock-then-read**: `transitionCommitment` (exported from
   `@3ngram/db`) locks the commitment row (`FOR UPDATE`) before reading the run's

@@ -541,14 +541,21 @@ function stripCodeFence(reply: string): string {
  *      execution the gap is negligible; under adversarial scheduling (a
  *      process pause, a GC stall, an event-loop delay between the check
  *      resolving and the call actually dispatching) it is not provably zero.
- *      The honest residual is therefore: AT MOST ONE request may dispatch
- *      racing the erasure commit at this exact point, and if it does, it is
- *      on the wire for up to the gateway's timeout before it completes — not
- *      an absolute "residual ≤ timeout" bound. Closing the gap fully would
- *      require holding a lock (the account-lifecycle lock, or an equivalent)
- *      across this network call — the design memo's option 2, which the owner
- *      rejected because it couples erasure latency to the gateway's and
- *      inverts the repo's no-lock-across-network-call rule.
+ *      The honest residual is PER PASS, not account-wide: the claim
+ *      (claimSessionTriage, packages/db) is a fence, not an exclusive lease,
+ *      so several of this account's runs can be claimed and mid-pass at
+ *      once — ONE RACING DISPATCH PER CONCURRENTLY-EXECUTING CLOSER PASS,
+ *      bounded by worker concurrency (one job at a time per replica today,
+ *      apps/worker/src/queues.ts takes BullMQ's `Worker` default) times
+ *      however many replicas are running, never a single request account-wide
+ *      no matter how many passes race the same commit. Each one that does
+ *      dispatch is still individually capped: on the wire for up to the
+ *      gateway's timeout before it completes — not an absolute
+ *      "residual ≤ timeout" bound. Closing the gap fully would require
+ *      holding a lock (the account-lifecycle lock, or an equivalent) across
+ *      every in-flight pass's network call — the design memo's option 2,
+ *      which the owner rejected because it couples erasure latency to the
+ *      gateway's and inverts the repo's no-lock-across-network-call rule.
  *   4. GENERATE. One call. The excerpt and topics go in as delimited data.
  *   5. RESOLVE. Per candidate, a LIVE re-read then a resolve. Skips are counted,
  *      not fatal.

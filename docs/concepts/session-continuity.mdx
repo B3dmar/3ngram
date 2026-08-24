@@ -344,12 +344,17 @@ and they are not equally strong:
 - the pre-gateway check, immediately before dispatch — this one only NARROWS the
   window rather than closing it: it is a read, not a lock, adjacent to the
   dispatch with no awaited work between them, but not serialized against the
-  erasure commit. **At most one request** may still dispatch racing that commit,
-  and if it does, it is on the wire for up to the gateway's request timeout (30s
-  default) before it completes — disclosed, not hidden, and not an absolute
-  "≤ timeout" guarantee (see the fence enumeration below for why closing it fully
-  would mean a lock across the network call, which the design rejects by
-  contract);
+  erasure commit. The claim is a fence, not an exclusive lease (`session-closer.ts`,
+  `claimSessionTriage`'s own doc), so more than one of the account's runs can be
+  claimed and mid-pass at once — **one racing dispatch per concurrently-executing
+  closer pass**, bounded by worker concurrency (one job at a time per replica
+  today, the BullMQ `Worker` default `apps/worker/src/queues.ts` does not
+  override) times however many replicas are running, not a single absolute
+  request account-wide. Each one that does dispatch is on the wire for up to the
+  gateway's request timeout (30s default) before it completes — disclosed, not
+  hidden, and not an absolute "≤ timeout" guarantee (see the fence enumeration
+  below for why closing it fully would mean a lock across the network call,
+  which the design rejects by contract);
 - each `resolve` write itself — this one CLOSES its window rather than narrowing
   it: `transitionCommitment` locks the commitment row before reading the run's
   current epoch in a fresh statement, so a resolve racing an in-flight erasure
@@ -891,13 +896,19 @@ the dispatch are adjacent statements — no awaited work sits between them — b
 the check is a READ, not a lock, so it does not serialize against an erasure
 commit. Under ordinary execution the gap is negligible; under adversarial
 scheduling (a process pause between the check resolving and the dispatch
-actually starting) it is not provably zero. The honest bound: **at most one
-request** may dispatch racing the erasure commit at that point, and if it does,
-it is on the wire for up to the gateway's timeout (30s default) before it
-completes — disclosed in the erasure section above, not an absolute "≤ timeout"
-guarantee. Closing it fully would require holding a lock across the gateway
-call — the design memo's option 2, rejected because it couples erasure latency
-to the gateway's and inverts the repo's no-lock-across-network-call rule.
+actually starting) it is not provably zero. The honest bound is per-pass, not
+account-wide: the claim is a fence, not an exclusive lease, so nothing stops
+several of the account's runs from being claimed and mid-pass at the same
+time — **one racing dispatch per concurrently-executing closer pass**, bounded
+by worker concurrency (one job at a time per replica today) times replica
+count, never a single request no matter how many passes are in flight. Each
+dispatch that does race the commit is still individually capped: on the wire
+for up to the gateway's timeout (30s default) before it completes — disclosed
+in the erasure section above, not an absolute "≤ timeout" guarantee. Closing
+it fully would require holding a lock across the gateway call for every
+in-flight pass — the design memo's option 2, rejected because it couples
+erasure latency to the gateway's and inverts the repo's
+no-lock-across-network-call rule.
 
 (3) is superseded by (4) as the AUTHORITATIVE guard, not made redundant: the
 outer per-resolve read used to be the only fence on an individual resolve, so
