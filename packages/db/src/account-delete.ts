@@ -199,6 +199,15 @@ export async function eraseAccountData(
       lastTriagedEventIds: [],
       briefedMemories: [],
       lastMessageExcerpt: ERASED_PII,
+      // Reset alongside the state it is derived from. `needs_look` means "this
+      // run may hold an event outside last_triaged_event_ids" (session-closer.ts),
+      // and the line above discards that watermark — leaving the flag set would
+      // point it at a set that no longer exists, and would keep a tombstoned
+      // account's whole session history in the closer's candidate index forever.
+      // Not user content, so the finality argument above does not apply to it;
+      // its only other writers are the attach heartbeat, already tombstone-gated,
+      // and the triage stampers, which cannot run on a tombstoned account.
+      needsLook: false,
     })
     .returning({ id: agentSessions.id })
 

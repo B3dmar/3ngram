@@ -108,7 +108,7 @@ import {
 import { and, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
-import { hasUntriagedSessionEvent } from './session-closer.js'
+import { hasUntriagedSessionEvent, settleNeedsLook } from './session-closer.js'
 import { listSessionEvents } from './session-events-read.js'
 import { isLeased } from './session-lease.js'
 import { AgentSessionNotFoundError } from './session-lifecycle.js'
@@ -515,6 +515,13 @@ export async function completeSessionTriage(
     )
     .returning({ id: agentSessions.id })
   if (stamped.length !== 1) throw new AgentSessionTriageConflictError(key, options.attemptId)
+  // The closer's scan discriminator, recomputed against the watermark this
+  // statement just stamped (issue #183). Here it is mostly a CLEAR: a run that
+  // was re-armed by a write and has now been re-triaged must stop paying for the
+  // closer's EXISTS probe. `lockTriageRow` has held the row since before the
+  // listing, so nothing can have slipped in between — but the flag is an
+  // invariant of the watermark, and the statement that moves one owes the other.
+  await settleNeedsLook(tx, userId, row.id)
 
   return {
     sessionRunId: row.id,

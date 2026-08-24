@@ -69,8 +69,10 @@ async function seedAgentSession(
 ): Promise<void> {
   await ownerPool.query(
     `INSERT INTO agent_sessions
-       (user_id, agent, session_id, source, project, scope, selector, briefed_memories, last_message_excerpt)
-     VALUES ($1, 'codex', $2, 'startup', '3ngram', 'work', '{"kind":"all"}'::jsonb, $3::jsonb, $4)`,
+       (user_id, agent, session_id, source, project, scope, selector, briefed_memories,
+        last_message_excerpt, needs_look)
+     VALUES ($1, 'codex', $2, 'startup', '3ngram', 'work', '{"kind":"all"}'::jsonb, $3::jsonb, $4,
+             true)`,
     [
       userId,
       sessionId,
@@ -226,7 +228,7 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(proposal.rows[0].value).toBe(ERASED_PII)
     expect(proposal.rows[0].rationale).toBeNull()
     const session = await ownerPool.query(
-      `SELECT project, scope, selector, briefed_memories, last_message_excerpt
+      `SELECT project, scope, selector, briefed_memories, last_message_excerpt, needs_look
        FROM agent_sessions WHERE user_id = $1`,
       [userA],
     )
@@ -235,6 +237,9 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     expect(session.rows[0].selector).toEqual({ kind: 'all' })
     expect(session.rows[0].briefed_memories).toEqual([])
     expect(session.rows[0].last_message_excerpt).toBe(ERASED_PII)
+    // Reset with the watermark it is derived from: leaving it raised would park a
+    // tombstoned account's whole session history in the closer's candidate index.
+    expect(session.rows[0].needs_look).toBe(false)
 
     // Identity erased; the email becomes the deletion marker.
     const user = await ownerPool.query('SELECT email, password_hash FROM users WHERE id = $1', [

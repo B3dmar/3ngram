@@ -233,6 +233,13 @@ export type ClosedRunResolveOutcome =
  * earlier. A transport handler that picked this out of the barrel and passed a
  * client-supplied run id would forge provenance across sessions, and (given a
  * foreign id) across tenants. It must NEVER receive a client-supplied id.
+ *
+ * Skipping the attach also skips the `needs_look` raise every other attributed
+ * write performs (session-provenance.ts), so these events are ordered against
+ * the closer's watermark by SEQUENCE, not by a row lock: they must all be
+ * committed before the caller takes the listing it stamps. `settleNeedsLook`
+ * re-probes after the stamp and catches any that were not. Calling this
+ * concurrently with the stamp would lose them.
  */
 export async function resolveForClosedRun(
   userId: string,

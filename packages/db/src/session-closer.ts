@@ -37,7 +37,7 @@ import {
   SESSION_LEASE_MS,
   SESSION_SWEEP_GRACE_MS,
 } from '@3ngram/schema'
-import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { memoryEvents } from './schema/memory.js'
@@ -79,6 +79,57 @@ export const hasUntriagedSessionEvent = sql`EXISTS (
        AND e.payload->>'sessionRunId' = ${agentSessions.id}::text
        AND NOT (${agentSessions.lastTriagedEventIds} @> to_jsonb(e.id::text))
   )`
+
+/**
+ * RECOMPUTE `needs_look` for one run, in its own statement, AFTER a watermark
+ * stamp has landed in the same transaction (issue #183).
+ *
+ * THE FLAG'S ONE MEANING: *false* is a promise that this run holds no provenance
+ * event outside `last_triaged_event_ids`, and it is what lets settled `completed`
+ * rows leave `agent_sessions_closer_idx` entirely. Only a statement that reads
+ * the watermark it just stamped can honestly make that promise, so every stamper
+ * of a terminal status calls this and nothing else clears the flag.
+ *
+ * WHY A SEPARATE STATEMENT, not a `CASE` folded into the stamp. It must see the
+ * ids the stamp just wrote, and — the part that is actually load-bearing — it
+ * must run on a FRESH snapshot. A stamp that waited on a row lock resumes under
+ * EvalPlanQual, which re-derives the target list from the updated tuple but
+ * gives no such guarantee to a sub-SELECT inside it; a probe that missed a
+ * just-committed event would clear the flag and lose that event permanently.
+ * READ COMMITTED gives each new statement its own snapshot, and this transaction
+ * holds the row lock throughout, so the two orderings are both covered:
+ *
+ *   - the attaching write committed FIRST -> its event is visible here, the flag
+ *     is set, and the closer's next sweep pays the EXISTS probe on the row;
+ *   - the attaching write commits AFTER -> it was blocked on our row lock, and
+ *     its own re-arm (session-provenance.ts) then flips `completed` back to
+ *     `idle` and raises the flag on the row version we left behind.
+ *
+ * It also CLEARS a stale flag, which is the leak the index change depends on: a
+ * row re-armed by a write and then legitimately re-triaged must stop paying for
+ * the probe forever.
+ *
+ * THE ONE ATTRIBUTED WRITE THAT DOES NOT LOCK THE ROW is the closer's own
+ * resolve (`resolveForClosedRun`, packages/core): it stamps `sessionRunId`
+ * verbatim in its own transaction and deliberately never touches
+ * `agent_sessions`, because the attach path would resurrect the very row the
+ * closer is closing. So the row lock is NOT what orders those events against
+ * this probe — sequence is. The closer runs its resolves to completion before it
+ * takes the listing it stamps, and this statement re-probes on a fresh snapshot
+ * afterwards, so every such event is either already in the watermark or found
+ * here. Making that path concurrent with the stamp, or folding this probe back
+ * into the stamp, breaks it.
+ */
+export async function settleNeedsLook(
+  tx: TenantTx,
+  userId: string,
+  sessionRunId: string,
+): Promise<void> {
+  await tx
+    .update(agentSessions)
+    .set({ needsLook: sql<boolean>`${hasUntriagedSessionEvent}` })
+    .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
+}
 
 /** One row the sweep implicitly closed, or found already closed and eligible. */
 export interface CloserCandidate {
@@ -191,9 +242,9 @@ export async function sweepExpiredLeases(
  *   3. `completed` rows holding a provenance event id that is NOT in
  *      `last_triaged_event_ids` — the page's re-arm rule.
  *
- * (3) cannot be dropped on the grounds that a write-time re-arm will flip such a
- * row back to `idle`: no write path in this repository does that yet (it is
- * step 7), and even once it exists there is a real race it cannot cover. A
+ * (3) cannot be dropped on the grounds that the write-time re-arm flips such a
+ * row back to `idle`. It does (step 7a shipped it — `rearmTriage`,
+ * session-provenance.ts), and it still leaves a race it cannot cover. A
  * memory-event row takes its uuidv7 `id` at INSERT but becomes visible at
  * COMMIT, so a transaction that started before the closer's final listing and
  * committed after it holds an id the watermark never saw. Its `sessionRunId`
@@ -202,13 +253,42 @@ export async function sweepExpiredLeases(
  * missed permanently — which is precisely the failure the watermark is a SET of
  * ids, rather than a high-water mark, to avoid.
  *
- * COST. The `completed` leg rides an EXISTS, not a per-row listing: it stops at
- * the first untriaged event. The inner scan is served by
- * `memory_events_session_idx` — `(user_id, (payload->>'sessionRunId'), id)`
- * partial on that key being present — which is the same index the typed
- * provenance read keysets on, so this adds no new index on the events side. The
- * outer scan is bounded by `agent_sessions_closer_idx` (migration 0033).
+ * COST, AND WHY THE PREDICATE IS SPELLED THE WAY IT IS (issue #183). The EXISTS
+ * is cheap per row — it rides `memory_events_session_idx`
+ * (`(user_id, (payload->>'sessionRunId'), id)` partial on that key being
+ * present, the same index the typed provenance read keysets on) and stops at the
+ * first untriaged event — but it was being paid on EVERY `completed` row, and
+ * `completed` is the terminal state of the happy path. `LIMIT` bounds rows
+ * returned, not rows probed, so the sweep's cost grew with the tenant's HISTORY.
+ *
+ * `needs_look` fixes that upstream of the query: settled `completed` rows are
+ * not in `agent_sessions_closer_idx` at all (0034), so they are never visited.
+ * The middle conjunct below therefore repeats the index predicate VERBATIM
+ * rather than leaving it implied by the leg beneath it — Postgres' predicate
+ * prover then discharges it against the index and drops it from the filter, and
+ * the plan assertion in the integration suite pins that it does. The bottom
+ * conjunct is the late-commit backstop (see above), now paid only on the flagged
+ * rows the index kept.
+ *
+ * `triage_status <> 'overflowed' AND triage_status <> 'completed'` is exactly
+ * {@link CLOSER_ELIGIBLE_STATUSES} over the CHECK-constrained enum, which is why
+ * the unconditional leg no longer needs its own `IN` list.
+ *
+ * The WHERE lives in {@link closerCandidatePredicate} so the integration suite can
+ * EXPLAIN the shipped predicate instead of a hand-copied transcription of it — a
+ * plan assertion against a second spelling proves nothing once the two drift.
  */
+export const closerCandidatePredicate = (userId: string) =>
+  and(
+    eq(agentSessions.userId, userId),
+    isNotNull(agentSessions.closedAt),
+    ne(agentSessions.triageStatus, 'overflowed'),
+    // `agent_sessions_closer_idx`' predicate, verbatim.
+    or(ne(agentSessions.triageStatus, 'completed'), eq(agentSessions.needsLook, true)),
+    // The late-commit backstop, on flagged rows only.
+    or(ne(agentSessions.triageStatus, 'completed'), hasUntriagedSessionEvent),
+  )
+
 export async function listCloserCandidates(
   tx: TenantTx,
   userId: string,
@@ -217,16 +297,7 @@ export async function listCloserCandidates(
   const rows = await tx
     .select({ id: agentSessions.id, activationEpoch: agentSessions.activationEpoch })
     .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.userId, userId),
-        isNotNull(agentSessions.closedAt),
-        or(
-          inArray(agentSessions.triageStatus, [...CLOSER_ELIGIBLE_STATUSES]),
-          and(eq(agentSessions.triageStatus, 'completed'), hasUntriagedSessionEvent),
-        ),
-      ),
-    )
+    .where(closerCandidatePredicate(userId))
     .orderBy(agentSessions.closedAt)
     .limit(limit)
   return rows.map((row) => ({ sessionRunId: row.id, activationEpoch: row.activationEpoch }))
@@ -424,7 +495,12 @@ export async function finishSessionTriage(
       ),
     )
     .returning({ id: agentSessions.id })
-  return rows.length === 1
+  if (rows.length !== 1) return false
+  // The stamp just moved the watermark, so the flag it implies must be recomputed
+  // against it — including the case this closer pass was RACED by a write that
+  // committed after the listing it stamped. See {@link settleNeedsLook}.
+  await settleNeedsLook(tx, userId, finish.sessionRunId)
+  return true
 }
 
 /**

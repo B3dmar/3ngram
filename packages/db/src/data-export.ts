@@ -243,6 +243,7 @@ export interface ExportAgentSessionRow {
   briefingDeliveredAt: Date | null
   briefedMemories: BriefedMemory[]
   lastMessageExcerpt: string | null
+  needsLook: boolean
 }
 
 /** The complete user-owned dataset for a portability export. */
@@ -453,6 +454,7 @@ export async function readUserDataExport(
       briefingDeliveredAt: agentSessions.briefingDeliveredAt,
       briefedMemories: agentSessions.briefedMemories,
       lastMessageExcerpt: agentSessions.lastMessageExcerpt,
+      needsLook: agentSessions.needsLook,
     })
     .from(agentSessions)
     .where(eq(agentSessions.userId, userId))

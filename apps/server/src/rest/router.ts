@@ -962,6 +962,7 @@ export function restRouter(options: RestRouterOptions): Router {
           briefingDeliveredAt: session.briefingDeliveredAt?.toISOString() ?? null,
           briefedMemories: session.briefedMemories,
           lastMessageExcerpt: session.lastMessageExcerpt ?? null,
+          needsLook: session.needsLook,
         })),
         userBudgets: data.userBudgets.map((budget) => ({
           id: budget.id,
