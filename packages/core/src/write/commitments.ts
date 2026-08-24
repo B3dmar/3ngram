@@ -23,6 +23,7 @@ import {
   getCommitmentByMemoryId,
   getMemoryById,
   IllegalCommitmentTransitionError,
+  SessionEpochFencedError,
   type WrittenCommitment,
   withTenant,
 } from '@3ngram/db'
@@ -203,6 +204,17 @@ export type ClosedRunResolveOutcome =
   | 'not-a-commitment'
   /** A live re-read found a status `resolved` is not reachable from. */
   | 'illegal-transition'
+  /**
+   * The run's `activation_epoch` moved between the caller's outer per-resolve
+   * check and this write (issue #185, resolve-path TOCTOU) — a resurrection or
+   * an account erasure raced the write, caught inside the same transaction
+   * that would have performed it. Distinct from every outcome above: those are
+   * about the COMMITMENT's state; this is about the SESSION the pass is fenced
+   * at, and the caller must ABANDON the pass (the same `fenced` skip every
+   * other epoch-fence hit produces), not treat it as one skipped candidate
+   * among others.
+   */
+  | 'epoch-fenced'
 
 /**
  * The session closer's ONLY write. Resolve one briefed commitment on behalf of a
@@ -240,12 +252,21 @@ export type ClosedRunResolveOutcome =
  * committed before the caller takes the listing it stamps. `settleNeedsLook`
  * re-probes after the stamp and catches any that were not. Calling this
  * concurrently with the stamp would lose them.
+ *
+ * `expectedEpoch` is REQUIRED, not optional: it is the epoch the closer's pass
+ * is fenced at (the same value its outer per-resolve check already reads), and
+ * this call threads it into the SAME transaction as the write so a
+ * resurrection or an erasure racing that outer check is still caught atomically
+ * with the write it would otherwise land alongside — issue #185's resolve-path
+ * fix. Making it required is deliberate: an omitted epoch would silently
+ * reopen exactly the gap this parameter exists to close.
  */
 export async function resolveForClosedRun(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
   sessionRunId: string,
+  expectedEpoch: number,
 ): Promise<ClosedRunResolveOutcome> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
   if (!current) return 'not-a-commitment'
@@ -268,8 +289,17 @@ export async function resolveForClosedRun(
       // nothing.
       expectedFrom: current.status,
       stampedSessionRunId: sessionRunId,
+      // THE RESOLVE-PATH EPOCH FENCE (issue #185). `transitionCommitment` folds
+      // this into the SAME UPDATE statement that writes the commitment (an
+      // EXISTS predicate against agent_sessions.activation_epoch, no separate
+      // read), and raises SessionEpochFencedError instead of writing when it
+      // has moved — see the field doc in packages/db/src/commitments.ts.
+      stampedSessionEpoch: expectedEpoch,
     })
   } catch (error) {
+    // THE SESSION moved, not the commitment: abandon the pass exactly like
+    // every other epoch-fence hit, never treat it as a per-candidate skip.
+    if (error instanceof SessionEpochFencedError) return 'epoch-fenced'
     // Lost the compare-and-set: somebody moved the row between the read and the
     // write. Re-read once to say WHICH way it went, so the pass reports an
     // honest outcome instead of guessing.

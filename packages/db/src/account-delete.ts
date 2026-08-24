@@ -205,19 +205,27 @@ export async function eraseAccountData(
   // and folding it into this one statement is what makes it atomic with the
   // redaction instead of racing it.
   //
-  // RESIDUAL, disclosed rather than hidden: a pass that already called the
-  // gateway before this UPDATE commits has that request in flight, and nothing
-  // erasure does can recall it — the closer's own epoch fence only stops a
+  // RESIDUAL, disclosed rather than hidden. The closer's pre-gateway epoch
+  // check and its dispatch to the gateway are ADJACENT statements — no
+  // awaited work sits between them, and the check runs AFTER the closer
+  // reserves its budget slot rather than before, so an unbounded advisory-
+  // lock wait on that reservation can never inflate this window
+  // (session-closer.ts's `closeSessionRun` documents why the check sits where
+  // it does). But the check is a READ, not a lock: it narrows the window to
+  // "adjacent", it does not serialize the dispatch against this UPDATE's
+  // commit, so "adjacent" is a source-code property, not a wall-clock
+  // guarantee under adversarial scheduling. The honest shape: AT MOST ONE
+  // request may dispatch racing this UPDATE's commit at the fence point, and
+  // if it does, nothing erasure does can recall it — the fence only stops a
   // pass from LANDING resolves or bookkeeping on the redacted row, not from
-  // completing a round trip already under way. That window is bounded by the
-  // gateway's request timeout (30s default, packages/llm/src/openai.ts), so
-  // erasure can report complete while a call is still on the wire for at most
-  // that long. That bound holds tightly because the closer's pre-gateway check
-  // runs AFTER it reserves its budget slot, not before — the reservation takes
-  // a per-user advisory lock that can itself block for an unbounded time behind
-  // another in-flight metered call, and checking before it would let that wait
-  // add to this window (session-closer.ts's `closeSessionRun` documents why the
-  // check sits where it does).
+  // completing a round trip already under way — so it is on the wire for up
+  // to the gateway's request timeout (30s default, packages/llm/src/openai.ts)
+  // before it completes. This is a narrowing fence, not a serialized handoff.
+  // Closing the gap fully would require holding a lock (the account-lifecycle
+  // lock, or an equivalent) across the closer's network call — the design
+  // memo's option 2, which the owner rejected because it couples erasure
+  // latency to the gateway's and inverts the repo's no-lock-across-network-
+  // call rule.
   const erasedAgentSessions = await tx
     .update(agentSessions)
     .set({

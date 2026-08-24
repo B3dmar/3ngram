@@ -27,6 +27,7 @@ import {
   isIllegalCommitmentTransition,
   isUniqueViolation,
 } from './pg-errors.js'
+import { agentSessions } from './schema/agent-sessions.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
 import { resolveSessionProvenance, sessionPayload } from './session-provenance.js'
 
@@ -112,6 +113,33 @@ export class CommitmentStateChangedError extends Error {
     this.name = 'CommitmentStateChangedError'
     this.commitmentId = commitmentId
     this.expectedFrom = expectedFrom
+  }
+}
+
+/**
+ * Thrown when a `stampedSessionRunId` write (the session closer's ONLY write
+ * path) carries a `stampedSessionEpoch` that no longer matches the run's
+ * CURRENT `activation_epoch`, read in the SAME transaction as the write
+ * (issue #185, resolve-path TOCTOU). A resurrection or an account erasure
+ * moved the epoch between the closer's outer per-resolve check
+ * (`session-closer.ts`, a separate transaction) and this statement — the
+ * write is aborted before it happens.
+ *
+ * Distinct from {@link CommitmentStateChangedError} on purpose: that one is
+ * about the COMMITMENT's own state (a legitimate skip a batch reports and
+ * moves on from); this one is about the SESSION the pass is fenced at, and the
+ * correct response is not "skip this one candidate" but "abandon the pass" —
+ * the same `fenced` outcome every other epoch-fence hit in `closeSessionRun`
+ * produces. Callers must map this to that abandon behavior, never retry it.
+ */
+export class SessionEpochFencedError extends Error {
+  readonly sessionRunId: string
+  readonly expectedEpoch: number
+  constructor(sessionRunId: string, expectedEpoch: number) {
+    super('session activation_epoch no longer matches the epoch this pass is fenced at')
+    this.name = 'SessionEpochFencedError'
+    this.sessionRunId = sessionRunId
+    this.expectedEpoch = expectedEpoch
   }
 }
 
@@ -336,6 +364,21 @@ export interface CommitmentTransition {
    * bookkeeping being consumed. It holds the row, so the id needs no resolution.
    */
   stampedSessionRunId?: string | undefined
+  /**
+   * Paired with `stampedSessionRunId`: the `activation_epoch` the closer's pass
+   * observed and is fenced at. When both are set, the commitment UPDATE below
+   * carries an EXISTS predicate against `agent_sessions` requiring this exact
+   * epoch — evaluated by Postgres against the SAME snapshot as the write
+   * itself, not a separate preceding statement — and raises
+   * {@link SessionEpochFencedError} (diagnosed after a zero-row result) instead
+   * of writing when it no longer matches (issue #185, resolve-path TOCTOU).
+   * The closer's outer per-resolve check (session-closer.ts) runs in a
+   * SEPARATE transaction and only narrows this window; this predicate closes
+   * it, atomically with the write it guards. Ignored (no guard) when
+   * `stampedSessionRunId` is absent — meaningless without the run it is the
+   * epoch of.
+   */
+  stampedSessionEpoch?: number | undefined
   now?: Date | undefined
 }
 
@@ -401,6 +444,30 @@ export async function transitionCommitment(
       // `resolved_at`/`updated_at`, and appends a SECOND `resolve` event under a
       // different session's provenance. Putting the observed status in the WHERE
       // turns that into a zero-row update the caller can classify.
+      //
+      // THE RESOLVE-PATH EPOCH FENCE (issue #185) rides the SAME WHERE, as an
+      // EXISTS predicate against `agent_sessions`, rather than as a separate
+      // SELECT-then-write. The closer's outer per-resolve check
+      // (session-closer.ts) reads `activation_epoch` in ITS OWN transaction
+      // before calling this one — a resurrection or an account erasure can
+      // still commit in the gap between that read and this call. A prior
+      // SELECT-then-UPDATE inside this transaction would still leave a (much
+      // smaller) gap between the two statements; folding the check into THIS
+      // statement's WHERE means Postgres evaluates it against the exact same
+      // snapshot as the UPDATE itself — there is no statement boundary left to
+      // race. Only applied when `stampedSessionEpoch` is supplied (the
+      // closer's own write; every other caller passes neither field).
+      const epochGuard =
+        input.stampedSessionRunId === undefined || input.stampedSessionEpoch === undefined
+          ? []
+          : [
+              sql`EXISTS (
+                SELECT 1 FROM ${agentSessions}
+                 WHERE ${agentSessions.userId} = ${input.userId}
+                   AND ${agentSessions.id} = ${input.stampedSessionRunId}
+                   AND ${agentSessions.activationEpoch} = ${input.stampedSessionEpoch}
+              )`,
+            ]
       const [row] = await tx
         .update(commitments)
         .set({ status: input.to, resolvedAt, updatedAt: sql`now()` })
@@ -411,10 +478,31 @@ export async function transitionCommitment(
             ...(input.expectedFrom === undefined
               ? []
               : [eq(commitments.status, input.expectedFrom)]),
+            ...epochGuard,
           ),
         )
         .returning({ id: commitments.id, status: commitments.status })
       if (!row) {
+        // Zero rows: the UPDATE already failed, so everything from here is
+        // DIAGNOSTIC — attributing the failure, not part of the gate (the gate
+        // was the WHERE above, evaluated atomically with the write). Epoch
+        // first: a resolve the session-epoch fence rejected must never be
+        // reported as an ordinary commitment-state race.
+        if (input.stampedSessionRunId !== undefined && input.stampedSessionEpoch !== undefined) {
+          const [session] = await tx
+            .select({ activationEpoch: agentSessions.activationEpoch })
+            .from(agentSessions)
+            .where(
+              and(
+                eq(agentSessions.userId, input.userId),
+                eq(agentSessions.id, input.stampedSessionRunId),
+              ),
+            )
+            .limit(1)
+          if (session === undefined || session.activationEpoch !== input.stampedSessionEpoch) {
+            throw new SessionEpochFencedError(input.stampedSessionRunId, input.stampedSessionEpoch)
+          }
+        }
         // The row exists (the SELECT above found it), so with `expectedFrom` set
         // a zero-row update means only one thing: somebody moved it first.
         if (input.expectedFrom !== undefined) {
@@ -437,7 +525,8 @@ export async function transitionCommitment(
     if (
       error instanceof CommitmentNotFoundError ||
       error instanceof CommitmentStateChangedError ||
-      error instanceof IllegalCommitmentTransitionError
+      error instanceof IllegalCommitmentTransitionError ||
+      error instanceof SessionEpochFencedError
     ) {
       throw error
     }

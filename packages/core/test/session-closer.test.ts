@@ -988,6 +988,73 @@ describe('closeSessionRun — the per-resolve epoch pre-check', () => {
     expect(result.skipped).toBe('fenced')
     expect(repo.resolved).toEqual([])
   })
+
+  it('threads the observed activationEpoch through to repo.resolve as expectedEpoch', async () => {
+    // The outer pre-check narrows the window; the epoch it observed must reach
+    // the write-time guard (packages/db/src/commitments.ts) for that guard to
+    // mean anything (issue #185).
+    let seenEpoch: number | undefined
+    const repo = fakeRepo({
+      resolve: async (_userId, memoryId, _sessionRunId, expectedEpoch) => {
+        seenEpoch = expectedEpoch
+        return memoryId === MEM_A ? 'resolved' : 'already-resolved'
+      },
+    })
+    await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A] })) },
+    )
+    expect(seenEpoch).toBe(3)
+  })
+})
+
+describe('closeSessionRun — the resolve-path epoch fence (issue #185)', () => {
+  it('abandons the pass on an epoch-fenced resolve, exactly like every other fence hit', async () => {
+    // resolveForClosedRun's write-time guard (transitionCommitment, same
+    // transaction as the write) is what actually closes the TOCTOU window the
+    // outer per-resolve check only narrows. When it fires, the closer must
+    // treat it as an abandon — not as one skipped candidate among others, and
+    // not as a candidate that gets retried.
+    const repo = fakeRepo({
+      resolve: async (_userId, memoryId) =>
+        memoryId === MEM_A ? 'resolved' : ('epoch-fenced' as const),
+    })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A, MEM_B] })) },
+    )
+
+    expect(result.skipped).toBe('fenced')
+    expect(result.resolved).toBe(1)
+    // Not counted as an ordinary skip — the pass was abandoned, not partially
+    // completed.
+    expect(result.skippedCandidates).toBe(0)
+    // No bookkeeping write-back once the pass is abandoned.
+    expect(repo.finishes).toEqual([])
+  })
+
+  it('stops at the FIRST epoch-fenced resolve, never attempting the rest of the batch', async () => {
+    const attempted: string[] = []
+    const repo = fakeRepo({
+      resolve: async (_userId, memoryId) => {
+        attempted.push(memoryId)
+        return 'epoch-fenced' as const
+      },
+    })
+    const result = await closeSessionRun(
+      repo,
+      USER,
+      { sessionRunId: RUN, activationEpoch: 3 },
+      { ...OPTIONS, gateway: fakeGateway(JSON.stringify({ completed: [MEM_A, MEM_B] })) },
+    )
+
+    expect(result.skipped).toBe('fenced')
+    expect(attempted).toEqual([MEM_A])
+  })
 })
 
 describe('closeSessionRun — the pre-gateway epoch fence (issue #185)', () => {

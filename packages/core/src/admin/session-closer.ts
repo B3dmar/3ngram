@@ -129,8 +129,17 @@ export interface SessionCloserRepo {
   listEvents(userId: string, sessionRunId: string): Promise<CloserEventPage>
   /** Atomic compare-and-set claim at the observed epoch. */
   claim(userId: string, claim: CloserClaim): Promise<boolean>
-  /** Live re-read + resolve of one briefed commitment, stamping the run's provenance. */
-  resolve(userId: string, memoryId: string, sessionRunId: string): Promise<ClosedRunResolveOutcome>
+  /**
+   * Live re-read + resolve of one briefed commitment, stamping the run's
+   * provenance. `expectedEpoch` is fenced INSIDE the same write transaction
+   * (issue #185) — see {@link ClosedRunResolveOutcome}'s `epoch-fenced` member.
+   */
+  resolve(
+    userId: string,
+    memoryId: string,
+    sessionRunId: string,
+    expectedEpoch: number,
+  ): Promise<ClosedRunResolveOutcome>
   /** Epoch-fenced write-back of the terminal status, watermark and excerpt clear. */
   finish(userId: string, finish: CloserFinish): Promise<boolean>
   /** Record one `llm_usage` row for the generation call. Best-effort by contract. */
@@ -524,6 +533,22 @@ function stripCodeFence(reply: string): string {
  *      runs only AFTER that round trip returns) is too late to stop the send,
  *      only to stop acting on the reply. Skip `fenced`, same as every other
  *      epoch miss; the reservation still gets released by the `finally` below.
+ *      THIS IS A NARROWING FENCE, NOT A SERIALIZED HANDOFF: the check is a
+ *      READ, not a lock, so it does not serialize against an erasure commit —
+ *      it is adjacent to the dispatch (no awaited work sits between the check
+ *      resolving and `gateway.complete` being called), but "adjacent" is a
+ *      source-code property, not a wall-clock guarantee. Under ordinary
+ *      execution the gap is negligible; under adversarial scheduling (a
+ *      process pause, a GC stall, an event-loop delay between the check
+ *      resolving and the call actually dispatching) it is not provably zero.
+ *      The honest residual is therefore: AT MOST ONE request may dispatch
+ *      racing the erasure commit at this exact point, and if it does, it is
+ *      on the wire for up to the gateway's timeout before it completes — not
+ *      an absolute "residual ≤ timeout" bound. Closing the gap fully would
+ *      require holding a lock (the account-lifecycle lock, or an equivalent)
+ *      across this network call — the design memo's option 2, which the owner
+ *      rejected because it couples erasure latency to the gateway's and
+ *      inverts the repo's no-lock-across-network-call rule.
  *   4. GENERATE. One call. The excerpt and topics go in as delimited data.
  *   5. RESOLVE. Per candidate, a LIVE re-read then a resolve. Skips are counted,
  *      not fatal.
@@ -740,9 +765,15 @@ async function runClosePass(
     // checking the epoch before reserving would leave the residual window "the
     // gateway's timeout PLUS however long that lock wait was" rather than just
     // the gateway's timeout. Checking here — the last statement before dispatch
-    // — is what makes the 30s figure in the erasure comment and the docs
-    // literally true. A fenced return here still hits the `finally` below, so
-    // the reservation is released, never billed.
+    // — is what keeps the residual bounded by the gateway's timeout ALONE
+    // rather than by that unbounded lock wait too. It does NOT make the
+    // residual an absolute "≤ timeout" guarantee: this check is a READ, not a
+    // lock, so a dispatch that starts a moment after it resolves can still
+    // race an erasure commit under adversarial scheduling — see the ordering
+    // note in this function's doc comment (step 3b) for the honest shape of
+    // that residual and the rejected serialized alternative. A fenced return
+    // here still hits the `finally` below, so the reservation is released,
+    // never billed.
     //
     // A bare epoch comparison is enough proof of freshness for THE ERASURE
     // CASE specifically — no need to re-read the excerpt/topics themselves.
@@ -800,14 +831,15 @@ async function runClosePass(
   let resolved = 0
   let skippedCandidates = 0
   for (const memoryId of candidates) {
-    // EPOCH PRE-CHECK before each resolve. The fence on `finish` protects the
-    // BOOKKEEPING, but the resolves run before it, so a resurrection during a
-    // slow generation would otherwise land every one of them on a session that
-    // is live again. This is a cheap best-effort read, not a lock — it cannot
-    // close the window, it narrows it from "the whole generation" to "one
-    // statement". That residue is acceptable precisely because the only verb
-    // here is `resolve`, which `unresolve` reverses; a closer that could
-    // `remember` would need a real transaction boundary instead.
+    // EPOCH PRE-CHECK before each resolve. A cheap best-effort read in its OWN
+    // transaction, separate from the write below — it narrows the window from
+    // "the whole generation" to "one statement" so a resurrection during a
+    // slow generation stops the batch at the next candidate rather than at the
+    // end, but it does not by itself CLOSE that one-statement window: the
+    // write in `repo.resolve` runs in a later, separate transaction of its
+    // own. That residual is what `expectedEpoch` below actually closes (issue
+    // #185) — this pre-check is the cheap early exit, the write-time guard is
+    // the authoritative one.
     const epoch = await repo.currentEpoch(userId, request.sessionRunId)
     if (epoch !== session.activationEpoch) {
       return {
@@ -819,7 +851,30 @@ async function runClosePass(
         skippedCandidates,
       }
     }
-    const outcome = await repo.resolve(userId, memoryId, request.sessionRunId)
+    // THE RESOLVE-PATH EPOCH FENCE (issue #185). `expectedEpoch` threads
+    // through to `transitionCommitment`, which re-reads `activation_epoch`
+    // INSIDE the same transaction as the commitment write and aborts instead
+    // of writing when it no longer matches — closing the gap between the
+    // read above and the write, not just narrowing it. A 'epoch-fenced'
+    // outcome means the write never happened, so this pass is ABANDONED
+    // exactly like every other epoch-fence hit — never counted as a per-
+    // candidate skip, and never retried.
+    const outcome = await repo.resolve(
+      userId,
+      memoryId,
+      request.sessionRunId,
+      session.activationEpoch,
+    )
+    if (outcome === 'epoch-fenced') {
+      return {
+        sessionRunId: request.sessionRunId,
+        skipped: 'fenced',
+        candidates: candidates.length,
+        rejected,
+        resolved,
+        skippedCandidates,
+      }
+    }
     if (outcome === 'resolved') resolved += 1
     else skippedCandidates += 1
   }
@@ -883,8 +938,8 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
     return { items, truncated }
   },
   claim: (userId, claim) => withTenant(userId, (tx) => claimSessionTriage(tx, userId, claim)),
-  resolve: (userId, memoryId, sessionRunId) =>
-    resolveForClosedRun(userId, memoryId, CLOSER_ACTOR_KIND, sessionRunId),
+  resolve: (userId, memoryId, sessionRunId, expectedEpoch) =>
+    resolveForClosedRun(userId, memoryId, CLOSER_ACTOR_KIND, sessionRunId, expectedEpoch),
   finish: (userId, finish) => withTenant(userId, (tx) => finishSessionTriage(tx, userId, finish)),
   recordUsage: (userId, usage) =>
     insertLlmUsage(userId, {

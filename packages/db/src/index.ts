@@ -135,6 +135,7 @@ export {
   getCommitmentByMemoryId,
   IllegalCommitmentTransitionError,
   NotCommitmentMemoryError,
+  SessionEpochFencedError,
   type SurfacingSweepResult,
   sweepCommitments,
   transitionCommitment,

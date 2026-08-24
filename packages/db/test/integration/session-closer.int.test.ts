@@ -20,8 +20,13 @@ import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
 import { and, eq, isNull, lt } from 'drizzle-orm'
 import { QueryBuilder } from 'drizzle-orm/pg-core'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
-import { createCommitment, transitionCommitment } from '../../src/commitments.js'
+import {
+  createCommitment,
+  SessionEpochFencedError,
+  transitionCommitment,
+} from '../../src/commitments.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
@@ -979,6 +984,81 @@ describe('stamped provenance never resurrects the run (audit P2)', () => {
       [uid, memoryId],
     )
     expect((events.rows[0] as { n: number }).n).toBe(1)
+  })
+})
+
+describe('the resolve-path epoch fence catches an erasure racing the write (issue #185)', () => {
+  it('rejects a stale-epoch resolve with SessionEpochFencedError and writes NOTHING', async () => {
+    // The exact TOCTOU Codex found: the closer's outer per-resolve check
+    // (session-closer.ts, a SEPARATE transaction) reads activation_epoch, then
+    // account erasure commits — bumping the epoch in the same statement as its
+    // redaction (account-delete.ts) — before the closer's write lands. The
+    // guard added to transitionCommitment must catch this INSIDE the write's
+    // own transaction, not merely rely on the outer check.
+    const opened = await open(uid, 'conv-erasure-race')
+    const before = await rawRow(opened.row.id)
+    const staleEpoch = before.activation_epoch as number
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    // Erasure commits BETWEEN the closer's outer check (which observed
+    // staleEpoch) and its write below — bumping activation_epoch on every row
+    // of the account in the same statement as the PII redaction.
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+    const afterErasure = await rawRow(opened.row.id)
+    expect(afterErasure.activation_epoch).not.toBe(staleEpoch)
+
+    await expect(
+      transitionCommitment({
+        userId: uid,
+        commitmentId: commitment.id,
+        to: 'resolved',
+        actorKind: 'worker',
+        expectedFrom: 'open',
+        stampedSessionRunId: opened.row.id,
+        // The STALE epoch the closer's outer check observed, before erasure.
+        stampedSessionEpoch: staleEpoch,
+      }),
+    ).rejects.toBeInstanceOf(SessionEpochFencedError)
+
+    // Nothing landed: the commitment is still open, and no resolve event was
+    // appended under the closer's (now-stale) provenance.
+    const commitmentRow = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [
+      commitment.id,
+    ])
+    expect((commitmentRow.rows[0] as { status: string }).status).toBe('open')
+    const events = await ownerPool.query(
+      `SELECT count(*)::int AS n FROM memory_events
+        WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'resolve'`,
+      [uid, memoryId],
+    )
+    expect((events.rows[0] as { n: number }).n).toBe(0)
+  })
+
+  it('still resolves normally when the epoch has NOT moved', async () => {
+    // The guard must not be a no-op false-positive: a pass whose epoch is
+    // genuinely still current writes exactly as before.
+    const opened = await open(uid, 'conv-epoch-current')
+    const row = await rawRow(opened.row.id)
+
+    const memoryId = await seedCommitmentMemory(uid)
+    const commitment = await createCommitment({ userId: uid, memoryId, actorKind: 'user_mcp' })
+
+    await transitionCommitment({
+      userId: uid,
+      commitmentId: commitment.id,
+      to: 'resolved',
+      actorKind: 'worker',
+      expectedFrom: 'open',
+      stampedSessionRunId: opened.row.id,
+      stampedSessionEpoch: row.activation_epoch as number,
+    })
+
+    const commitmentRow = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [
+      commitment.id,
+    ])
+    expect((commitmentRow.rows[0] as { status: string }).status).toBe('resolved')
   })
 })
 
