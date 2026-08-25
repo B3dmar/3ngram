@@ -104,8 +104,8 @@ scaling replicas, verify Redis is configured and Postgres connection pressure
 is acceptable.
 
 Database scaling is your Postgres provider's operation. Background workers use
-BullMQ; worker packaging and self-host compose support are still follow-up
-work.
+BullMQ, ship as their own image (`ghcr.io/b3dmar/3ngram-worker`), and are part
+of both Compose stacks (`docker-compose.yml`, `compose.selfhost.yml`).
 
 ## Recovery
 
@@ -125,4 +125,8 @@ path before declaring the incident closed.
 
 - Metrics counters are wired, but dashboards and alert policies are not
   complete.
-- Worker deployment packaging is not complete for self-host.
+- The session closer ships on the worker but stays `SESSION_CLOSER_ENABLED=false`
+  until its commitment-recall validation bar is measured (see
+  [Session continuity](/concepts/session-continuity)); with it off the sweep
+  scheduler is removed and closer jobs no-op, while consolidation, surfacing,
+  and OAuth-client GC always run.

@@ -62,3 +62,38 @@ gh attestation verify \
 The release is blocked when Trivy finds a fixable high or critical
 vulnerability. Unfixed upstream findings remain visible in the scan output but
 do not block a release.
+
+## Worker image
+
+The background worker publishes its own image, `ghcr.io/b3dmar/3ngram-worker`,
+alongside the server image on every release (multi-platform, same tag scheme:
+full version, major/minor, `latest`, `sha-<full-git-sha>`). It is built from
+[`apps/worker/Dockerfile`](https://github.com/B3dmar/3ngram/blob/main/apps/worker/Dockerfile)
+with the **repo root as build context** — the worker needs every workspace
+dependency's manifest, lockfile, and sources, not just its own directory. The
+`@3ngram/worker` npm package itself stays private; the image is the only
+published artifact.
+
+```bash
+docker pull ghcr.io/b3dmar/3ngram-worker:latest
+```
+
+The worker has no HTTP surface: no `EXPOSE`, no `PORT`, and its `HEALTHCHECK`
+is a process-liveness probe (`node -e "process.exit(0)"`) rather than an
+endpoint check — a missing `REDIS_URL` is a hard boot failure and a lost
+connection surfaces as a BullMQ job failure, so a live process is the
+liveness signal.
+
+It validates the same production environment contract as the server
+(`packages/config/src/env.ts`) minus `PORT`: `BASE_URL` (https) is still
+required even though the worker serves no HTTP, along with `REDIS_URL`,
+a `DATABASE_URL` whose username matches `RUNTIME_DB_ROLE` (default
+`app_user`), no `DATABASE_URL_UNPOOLED`, and a non-placeholder
+`LOG_HASH_SALT`. `SESSION_CLOSER_ENABLED` (default `false`) gates the
+session-sweep scheduler and closer job processors — with it off, the
+scheduler is removed entirely and closer jobs no-op; consolidation,
+surfacing, and OAuth-client GC run regardless.
+
+The worker never runs migrations — there is no `migrations` stage in its
+Dockerfile. The server image owns schema management, so self-host has exactly
+one migrator and two deployables cannot race each other over the schema.
