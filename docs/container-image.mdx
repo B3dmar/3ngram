@@ -89,7 +89,10 @@ It validates the same production environment contract as the server
 required even though the worker serves no HTTP, along with `REDIS_URL`,
 a `DATABASE_URL` whose username matches `RUNTIME_DB_ROLE` (default
 `app_user`), no `DATABASE_URL_UNPOOLED`, and a non-placeholder
-`LOG_HASH_SALT`. `SESSION_CLOSER_ENABLED` (default `false`) gates the
+`LOG_HASH_SALT`. `OAUTH_JWKS` is also required in production even though
+the worker has no OAuth surface — the shared validation does not yet
+distinguish the consuming process (tracked in issue #204); supply the
+server's value until then. `SESSION_CLOSER_ENABLED` (default `false`) gates the
 session-sweep scheduler and closer job processors — with it off, the
 scheduler is removed entirely and closer jobs no-op; consolidation,
 surfacing, and OAuth-client GC run regardless.
