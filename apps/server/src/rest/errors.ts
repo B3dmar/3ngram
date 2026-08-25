@@ -13,6 +13,7 @@
 //   duplicate_memory     -> 409  (content already live for the tenant)
 //   resource_limit_exceeded -> 409 (injected resource capacity reached)
 //   invalid_transition   -> 409  (illegal FSM transition)
+//   account_deleted      -> 410  (the account was erased while the request was in flight)
 //   invalid_output       -> 500  (a RESULT failed its output schema — server fault)
 // auth statuses (401 unauthorized, 403 insufficient_scope, 503 resolver-or-DB)
 // are emitted UPSTREAM (apiKeyAuth / scope.ts), so the mapper covers the core
@@ -26,6 +27,7 @@
 import { log } from '@3ngram/config'
 import {
   AccessDeniedError,
+  AccountDeletedError,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   AgentSessionTriageConflictError,
@@ -205,6 +207,16 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
   ) {
     log().warn({ route, err: err.name }, 'rest: conflict')
     return { status: 409, reason: 'conflict' }
+  }
+  // The account was erased while this authenticated request was in flight — the
+  // session open ran after the erasure took the account-lifecycle lock and
+  // refused rather than writing a row past the final content write
+  // (packages/db/src/account-delete.ts). 410 Gone is the honest status: the
+  // credential was valid when the request started and the resource it addresses
+  // no longer exists. Carries no account detail — the class name only.
+  if (err instanceof AccountDeletedError) {
+    log().warn({ route, err: err.name }, 'rest: account erased mid-request')
+    return { status: 410, reason: 'account_deleted' }
   }
   if (
     err instanceof InvalidCommitmentTransitionError ||

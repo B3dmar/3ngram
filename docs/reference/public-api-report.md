@@ -180,6 +180,7 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `AccessDeniedError` | class | `945522ecb966` |
 | `AccessGate` | interface | `68f4e3b0905f` |
+| `AccountDeletedError` | class | `f886d02839f5` |
 | `AccountDeletionResult` | interface | `8e3595b94fe4` |
 | `AccountErasureResult` | interface | `93d351d3d44b` |
 | `AgentSessionNotFoundError` | class | `8ea3b43ae438` |

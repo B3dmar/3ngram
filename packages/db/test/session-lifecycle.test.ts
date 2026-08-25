@@ -16,9 +16,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const lockSessionAttach = vi.fn(async () => undefined)
 const lockAccountLifecycleShared = vi.fn(async () => undefined)
+const lockAccountLifecycle = vi.fn(async () => undefined)
 vi.mock('../src/client.js', () => ({
   lockSessionAttach: (...a: unknown[]) => lockSessionAttach(...a),
   lockAccountLifecycleShared: (...a: unknown[]) => lockAccountLifecycleShared(...a),
+  // Unused here, but credential-guard.ts (openSession's tombstone guard) imports
+  // it, and an ESM module mock must provide every named export its importers bind.
+  lockAccountLifecycle: (...a: unknown[]) => lockAccountLifecycle(...a),
 }))
 
 const {
@@ -28,6 +32,7 @@ const {
   heartbeatSession,
   openSession,
 } = await import('../src/session-lifecycle.js')
+const { AccountDeletedError } = await import('../src/credential-guard.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
 const RUN = '01890b6e-0000-7000-8000-0000000000aa'
@@ -56,17 +61,18 @@ const row = (over: Record<string, unknown> = {}) => ({
 const stale = (over: Record<string, unknown> = {}) =>
   row({ lastSeenAt: new Date(NOW.getTime() - SESSION_LEASE_MS - 60_000), ...over })
 
-/** A live (non-tombstoned) account, the default the excerpt guard reads. */
-const LIVE_USER = { email: 'live@example.test' }
-/** The deletion tombstone `deletedEmail(USER)` produces. */
-const TOMBSTONED_USER = { email: `deleted-${USER}@deleted.invalid` }
+/** A live (non-tombstoned) account, the default both tombstone guards read. */
+const LIVE_USER = { email: 'live@example.test', passwordHash: 'argon2id$live' }
+/** The deletion tombstone `deletedEmail(USER)` + `ERASED_PASSWORD_HASH` produce. */
+const TOMBSTONED_USER = { email: `deleted-${USER}@deleted.invalid`, passwordHash: '!erased' }
 
 /**
  * Fake tenant tx. `reads` feeds agent_sessions SELECTs FIFO, `updates` feeds
  * each `.returning()` of an UPDATE (undefined = the guarded WHERE matched
- * nothing), `insert` feeds the INSERT, and `user` answers the `users` lookup the
- * excerpt guard makes (routed by the projected column set, since that is the
- * only thing distinguishing the two selects).
+ * nothing), `insert` feeds the INSERT, and `user` answers the `users` lookup
+ * both tombstone guards make — the excerpt guard's `{email}` and the open
+ * guard's `{email, passwordHash}` (routed by the projected column set, since
+ * that is the only thing distinguishing them from an agent_sessions read).
  */
 function makeTx(
   script: {
@@ -74,7 +80,7 @@ function makeTx(
     updates?: Row[]
     insert?: Row
     insertError?: unknown
-    /** The `users` row the excerpt guard reads. Defaults to a live account. */
+    /** The `users` row the tombstone guards read. Defaults to a live account. */
     user?: Record<string, unknown>
     /** No `users` row at all — the guard must treat that as "do not write". */
     userAbsent?: boolean
@@ -430,6 +436,63 @@ describe('openSession — lock discipline', () => {
     expect(lockedProjects()).toEqual([PROJECT])
     expect(rowLocks).toEqual([false, true])
   })
+
+  it('takes the shared account-lifecycle lock FIRST, before the attach lock', async () => {
+    // Repo lock order: account-lifecycle -> session-attach -> row. Erasure takes
+    // account-lifecycle and never takes session-attach, so acquiring it ahead of
+    // the attach lock is what keeps the two orders acyclic.
+    const { tx } = makeTx({ insert: row() })
+
+    await openSession(tx, USER, openInput(), NOW)
+
+    expect(lockAccountLifecycleShared).toHaveBeenCalledTimes(1)
+    expect(lockAccountLifecycleShared.mock.calls[0]?.[1]).toBe(USER)
+    expect(lockAccountLifecycleShared.mock.invocationCallOrder[0]).toBeLessThan(
+      lockSessionAttach.mock.invocationCallOrder[0] as number,
+    )
+  })
+})
+
+describe('openSession — erased account', () => {
+  // Erasure must be the FINAL content write (account-delete.ts). An /open still
+  // in flight when erasure commits would otherwise INSERT a fresh row — selector
+  // and briefing rows and all — or restamp the briefing on reopen, both AFTER
+  // the bulk redaction. Unlike the heartbeat's excerpt, there is nothing left to
+  // write once the content is refused, so this REFUSES the request.
+  it('refuses a startup INSERT onto a tombstoned account', async () => {
+    const { tx, inserted, rowLocks } = makeTx({ user: TOMBSTONED_USER, insert: row() })
+
+    await expect(openSession(tx, USER, openInput(), NOW)).rejects.toBeInstanceOf(
+      AccountDeletedError,
+    )
+    expect(inserted).toHaveLength(0)
+    // Refused before the probe, so nothing downstream of the guard ran at all.
+    expect(rowLocks).toEqual([])
+    expect(lockSessionAttach).not.toHaveBeenCalled()
+  })
+
+  it('refuses a resume that would reopen and restamp an existing row', async () => {
+    const closed = row({ closedAt: NOW })
+    const { tx, sets } = makeTx({
+      user: TOMBSTONED_USER,
+      reads: [closed, closed],
+      updates: [row({ activationEpoch: 2 })],
+    })
+
+    await expect(
+      openSession(tx, USER, openInput({ source: 'resume' }), NOW),
+    ).rejects.toBeInstanceOf(AccountDeletedError)
+    expect(sets).toHaveLength(0)
+  })
+
+  it('refuses when the users row is gone entirely', async () => {
+    const { tx, inserted } = makeTx({ userAbsent: true, insert: row() })
+
+    await expect(openSession(tx, USER, openInput(), NOW)).rejects.toBeInstanceOf(
+      AccountDeletedError,
+    )
+    expect(inserted).toHaveLength(0)
+  })
 })
 
 describe('closeSession', () => {
@@ -583,6 +646,30 @@ describe('heartbeatSession', () => {
 
     expect(lockAccountLifecycleShared).toHaveBeenCalledTimes(1)
     expect(lockAccountLifecycleShared.mock.calls[0]?.[1]).toBe(USER)
+  })
+
+  it('takes it BEFORE the attach lock on the resurrect path, not below it', async () => {
+    // openSession holds account-lifecycle SHARED while it waits for the attach
+    // lock. A heartbeat that requested them the other way round would close a
+    // cycle once an erasure queues exclusively in between, so the excerpt guard's
+    // acquisition is hoisted above lockSessionAttach here.
+    const { tx } = makeTx({ reads: [stale(), stale()], updates: [row({ activationEpoch: 2 })] })
+
+    await heartbeatSession(tx, USER, { ...KEY, lastMessageExcerpt: 'shipped' }, NOW)
+
+    expect(lockAccountLifecycleShared.mock.invocationCallOrder[0]).toBeLessThan(
+      lockSessionAttach.mock.invocationCallOrder[0] as number,
+    )
+  })
+
+  it('takes NO account-lifecycle lock on an excerpt-free resurrect', async () => {
+    // The hoist is conditional: a heartbeat writing only structural skeleton has
+    // nothing to order against erasure and must not pay for the lock.
+    const { tx } = makeTx({ reads: [stale(), stale()], updates: [row({ activationEpoch: 2 })] })
+
+    await heartbeatSession(tx, USER, KEY, NOW)
+
+    expect(lockAccountLifecycleShared).not.toHaveBeenCalled()
   })
 
   it('DROPS the excerpt when the account is a deletion tombstone', async () => {

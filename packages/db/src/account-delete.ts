@@ -182,14 +182,16 @@ export async function eraseAccountData(
   // one-way, one-time mutation for lock-order convergence — any new writer of
   // project must revisit that locking first.
   //
-  // INVARIANT: erasure is the FINAL content write for this account. The one
-  // other writer of last_message_excerpt is the session heartbeat
-  // (session-lifecycle.ts), which is why it takes lockAccountLifecycleShared and
-  // re-checks the deletion tombstone before writing that column — this tx holds
-  // the same key EXCLUSIVELY (line ~119), so no in-flight heartbeat can write an
-  // excerpt back after this redaction commits. Any new writer of user content on
-  // this table must take that shared lock and re-check too, or the redaction
-  // below stops being final.
+  // INVARIANT: erasure is the FINAL content write for this account. Both other
+  // writers of user content on this table live in session-lifecycle.ts and take
+  // lockAccountLifecycleShared, then re-check the deletion tombstone, before
+  // writing: the heartbeat, which DROPS `last_message_excerpt` and lets the
+  // structural lease refresh land, and `open`, which REFUSES outright
+  // (AccountDeletedError) because its INSERT carries the selector and briefing
+  // rows and a reopening startup restamps them. This tx holds the same key
+  // EXCLUSIVELY (line ~119), so neither can write content back after this
+  // redaction commits. Any new writer of user content on this table must take
+  // that shared lock and re-check too, or the redaction below stops being final.
   //
   // INVARIANT (issue #185): this UPDATE also increments `activation_epoch` on
   // EVERY row, in the SAME statement as the content redaction above. The closer
