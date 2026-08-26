@@ -80,16 +80,19 @@ docker pull ghcr.io/b3dmar/3ngram-worker:latest
 
 The worker has no HTTP surface: no `EXPOSE`, no `PORT`, and its `HEALTHCHECK`
 is a process-liveness probe (`node -e "process.exit(0)"`) rather than an
-endpoint check — a missing `REDIS_URL` is a hard boot failure and a lost
-connection surfaces as a BullMQ job failure, so a live process is the
-liveness signal.
+endpoint check. This is **PID-only liveness**: a missing `REDIS_URL` is a
+hard boot failure, but a Redis outage after startup only logs reconnect
+warnings while the retry loop spins — the process stays alive and the
+container stays "healthy" with every job stalled. Monitor Redis and queue
+throughput separately; the healthcheck cannot see them.
 
 It validates the same production environment contract as the server
 (`packages/config/src/env.ts`) minus `PORT`: `BASE_URL` (https) is still
 required even though the worker serves no HTTP, along with `REDIS_URL`,
 a `DATABASE_URL` whose username matches `RUNTIME_DB_ROLE` (default
-`app_user`), no `DATABASE_URL_UNPOOLED`, and a non-placeholder
-`LOG_HASH_SALT`. `OAUTH_JWKS` is also required in production even though
+`app_user`) and whose password is strong (12+ characters, not a shipped
+dev/example value — weak passwords are rejected at boot), no
+`DATABASE_URL_UNPOOLED`, and a non-placeholder `LOG_HASH_SALT`. `OAUTH_JWKS` is also required in production even though
 the worker has no OAuth surface — the shared validation does not yet
 distinguish the consuming process (tracked in issue #204); supply the
 server's value until then. `SESSION_CLOSER_ENABLED` (default `false`) gates the
