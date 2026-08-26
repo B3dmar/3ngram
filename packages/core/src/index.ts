@@ -226,6 +226,7 @@ export {
 } from './scope/index.js'
 // --- hook-facing agent-session bookkeeping: open / close / heartbeat / triage ---
 export {
+  AccountDeletedError,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   type AgentSessionRecord,

@@ -9,11 +9,14 @@
 // are separate processes holding the harness conversation id and nothing else,
 // and the page forbids a local run-id mapping file.
 //
-// LOCK ORDER (repo-wide): advisory BEFORE row. `open` and a RESURRECTING
-// heartbeat change the leased-open set, so they take lockSessionAttach() on the
-// row's project and only then row-lock. `close` takes no advisory lock at all —
-// it must fit the SessionEnd hook budget — which is safe precisely because it
-// never waits on one, so it cannot invert the order. Its row lock is what the
+// LOCK ORDER (repo-wide): account-lifecycle BEFORE session-attach BEFORE row.
+// `open` and a RESURRECTING heartbeat change the leased-open set, so they take
+// lockSessionAttach() on the row's project and only then row-lock. The two paths
+// that write user CONTENT take the account-lifecycle lock in SHARED mode ahead of
+// both: `open` (which inserts the selector and briefing rows, or restamps them on
+// reopen) and a heartbeat carrying an excerpt. `close` takes no advisory lock at
+// all — it must fit the SessionEnd hook budget — which is safe precisely because
+// it never waits on one, so it cannot invert the order. Its row lock is what the
 // attach path's `SELECT ... FOR UPDATE` queues against (session-provenance.ts).
 import type {
   AgentSessionHeartbeatInput,
@@ -25,6 +28,7 @@ import type {
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { deletedEmail } from './account-delete.js'
 import { lockAccountLifecycleShared, lockSessionAttach, type TenantTx } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { users } from './schema/identity.js'
@@ -257,6 +261,13 @@ async function insertSession(
  * legitimately arrive from a moved cwd with `project` omitted, and the page
  * freezes the row's identity anyway, so comparing there would 409 every resume
  * of a live session instead of refreshing its lease.
+ *
+ * REFUSES an erased account. Both branches below write user content — the INSERT
+ * carries the selector and the briefing rows, and a reopening `startup` restamps
+ * them — so an `/open` still in flight when erasure commits would land content
+ * after the redaction that must be the FINAL content write (account-delete.ts).
+ * {@link guardSessionMutation} is therefore the FIRST statement, before the
+ * unlocked probe and the attach lock, per the file's lock order.
  */
 export async function openSession(
   tx: TenantTx,
@@ -264,6 +275,7 @@ export async function openSession(
   input: AgentSessionOpenInput,
   now: Date,
 ): Promise<OpenSessionResult> {
+  await guardSessionMutation(tx, userId)
   // Probe unlocked to learn the row's CURRENT project: the advisory key is the
   // row's project, not the request's, so an attacher counting leased-open rows
   // for that project is serialized against this INSERT/resurrect. Held to commit
@@ -384,7 +396,15 @@ export interface HeartbeatSessionResult {
  *
  * LOCK ORDER: account-lifecycle BEFORE the session-attach advisory lock and
  * before any row lock. Erasure takes account-lifecycle and never takes
- * session-attach, so the two orders share a prefix and cannot cycle.
+ * session-attach, so the two orders share a prefix and cannot cycle. Acquiring
+ * here is therefore either the transaction's first lock (the fast heartbeat
+ * path) or a re-acquisition of one {@link heartbeatSession} already hoisted
+ * above its attach lock for exactly this reason.
+ *
+ * DROPS the excerpt rather than throwing, unlike {@link openSession}, which
+ * refuses outright: the rest of a heartbeat is structural skeleton erasure
+ * preserves, so the lease refresh still means something on a tombstoned account,
+ * whereas an open exists only to write the row it is refused.
  */
 async function excerptPatch(
   tx: TenantTx,
@@ -497,6 +517,17 @@ export async function heartbeatSession(
     // A close committed between the probe and the UPDATE. Fall through.
   }
 
+  // LOCK ORDER, and the reason this is hoisted rather than left to
+  // {@link excerptPatch}: that guard runs BELOW the attach lock, so a heartbeat
+  // carrying an excerpt would request account-lifecycle while holding
+  // session-attach — the opposite order from {@link openSession}, which now
+  // holds account-lifecycle SHARED while it waits for session-attach. With an
+  // erasure queued exclusively in between, Postgres makes a new shared request
+  // wait behind that waiter, and the two orders close a cycle. Taking it here
+  // keeps every account-lifecycle holder ahead of every attach holder. Only when
+  // the hook actually carries content: an excerpt-free heartbeat writes nothing
+  // erasure touches and must not pay for the lock.
+  if (input.lastMessageExcerpt !== undefined) await lockAccountLifecycleShared(tx, userId)
   await lockSessionAttach(tx, userId, observed.project)
   const fresh = await readByKey(tx, userId, input, { forUpdate: true })
   if (fresh === undefined) throw new AgentSessionNotFoundError(input)

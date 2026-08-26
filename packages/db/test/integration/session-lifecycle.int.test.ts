@@ -13,6 +13,7 @@ import { SESSION_LEASE_MS } from '@3ngram/schema'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
+import { AccountDeletedError } from '../../src/credential-guard.js'
 import { isUniqueViolation } from '../../src/pg-errors.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
@@ -284,6 +285,41 @@ describe('openSession', () => {
 
     expect(codex.created).toBe(true)
     expect(codex.row.id).not.toBe(claude.row.id)
+  })
+
+  it('refuses to INSERT a session row onto an ERASED account', async () => {
+    // Erasure must be the FINAL content write (account-delete.ts). An /open that
+    // was in flight when erasure committed must not create a fresh row carrying
+    // a selector and briefing rows on the tombstone.
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+
+    await expect(open(uid, { ...KEY, source: 'startup' }, LATER)).rejects.toBeInstanceOf(
+      AccountDeletedError,
+    )
+    const rows = await ownerPool.query('SELECT id FROM agent_sessions WHERE user_id = $1', [uid])
+    expect(rows.rowCount).toBe(0)
+  })
+
+  it('refuses to REOPEN and restamp an existing row after erasure', async () => {
+    const opened = await open(uid, { ...KEY, source: 'startup' })
+    await close(uid)
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+    const erased = await rawRow(opened.row.id)
+
+    await expect(open(uid, { ...KEY, source: 'resume' }, LATER)).rejects.toBeInstanceOf(
+      AccountDeletedError,
+    )
+    const after = await rawRow(opened.row.id)
+    expect(after.closed_at).not.toBeNull()
+    expect(after.activation_epoch).toBe(erased.activation_epoch)
+    expect(after.briefing_delivered_at).toEqual(erased.briefing_delivered_at)
+  })
+
+  it('still opens for a live account (the guard is not a blanket refusal)', async () => {
+    const opened = await open(uid, { ...KEY, source: 'startup', project: '3ngram' })
+
+    expect(opened.created).toBe(true)
+    expect((await rawRow(opened.row.id)).project).toBe('3ngram')
   })
 })
 

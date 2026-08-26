@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Agent-session bookkeeping facade (docs/concepts/session-continuity.mdx).
 export {
+  AccountDeletedError,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   type AgentSessionRecord,

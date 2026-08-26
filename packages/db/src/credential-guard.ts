@@ -11,9 +11,13 @@
 // refuses to write when the user is a deletion tombstone. Deletion and issuance
 // therefore serialize — an issuance either commits-then-gets-revoked by the
 // deletion, or runs after it and is refused.
+//
+// {@link guardSessionMutation} is the SHARED-mode sibling for writers of user
+// CONTENT rather than auth material, which must not land after erasure either
+// (account-delete.ts: erasure is the FINAL content write).
 import { eq } from 'drizzle-orm'
 import { isAccountTombstoned } from './account-delete.js'
-import { lockAccountLifecycle, type TenantTx } from './client.js'
+import { lockAccountLifecycle, lockAccountLifecycleShared, type TenantTx } from './client.js'
 import { users } from './schema/identity.js'
 
 /**
@@ -51,5 +55,35 @@ export async function userIsLiveForIssuance(tx: TenantTx, userId: string): Promi
  */
 export async function guardCredentialIssuance(tx: TenantTx, userId: string): Promise<void> {
   await lockAccountLifecycle(tx, userId)
+  if (!(await userIsLiveForIssuance(tx, userId))) throw new AccountDeletedError()
+}
+
+/**
+ * The same refusal for a path that writes user CONTENT rather than credentials:
+ * take the account-lifecycle lock in SHARED mode and throw
+ * {@link AccountDeletedError} when the user is tombstoned. Must be the FIRST
+ * statement in the transaction (lock order: account-lifecycle before every other
+ * advisory and row lock).
+ *
+ * SHARED is the correct mode. These writers must not interleave with an erasure,
+ * but they have no reason to exclude EACH OTHER — a session open serializing
+ * against every other session open would put an exclusive per-user lock on the
+ * hot SessionStart path. Erasure's exclusive acquisition still waits for every
+ * holder and then locks them all out, which is all the invariant needs.
+ *
+ * The tombstone re-check AFTER the lock is not optional. Under READ COMMITTED a
+ * statement that waits on a concurrently-updated row re-evaluates its qual
+ * against the new row version but reads other relations from the ORIGINAL
+ * snapshot, so an `EXISTS (... users ...)` guard would still see a live account
+ * (client.ts). Acquiring the lock first and reading `users` in a fresh statement
+ * after it is what makes the answer current.
+ *
+ * THROWS rather than silently dropping the write, unlike the heartbeat's excerpt
+ * guard (session-lifecycle.ts): a session open is a user-visible request whose
+ * whole purpose is the row it would create, not a background stamp riding along
+ * with structural bookkeeping that stays valid without it.
+ */
+export async function guardSessionMutation(tx: TenantTx, userId: string): Promise<void> {
+  await lockAccountLifecycleShared(tx, userId)
   if (!(await userIsLiveForIssuance(tx, userId))) throw new AccountDeletedError()
 }
