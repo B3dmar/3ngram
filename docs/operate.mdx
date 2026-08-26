@@ -13,13 +13,14 @@ platform are handled by the maintainers and are not covered in this repository.
 
 ## Runtime topology
 
-A 3ngram deployment is three portable pieces:
+A 3ngram deployment is four portable pieces:
 
 | Layer | Runtime | Purpose |
 |---|---|---|
 | Server | Node.js — one deployable | REST API, OAuth authorization server, OAuth resource server, and MCP endpoint |
+| Worker | Node.js — one deployable (`ghcr.io/b3dmar/3ngram-worker`) | Background jobs: consolidation, surfacing, OAuth-client GC, and the flag-gated session closer |
 | Database | Postgres + pgvector | Durable identity, memory, audit, eval, and usage data |
-| Redis | Redis | Cross-instance rate limiting and queue-compatible shared state |
+| Redis | Redis | Cross-instance rate limiting and the worker's job queue |
 
 Everything runs on stock Postgres and Redis, so deploy to whatever you already
 operate: the bundled Compose stack on a single host, a PaaS such as Railway or
@@ -104,8 +105,8 @@ scaling replicas, verify Redis is configured and Postgres connection pressure
 is acceptable.
 
 Database scaling is your Postgres provider's operation. Background workers use
-BullMQ; worker packaging and self-host compose support are still follow-up
-work.
+BullMQ, ship as their own image (`ghcr.io/b3dmar/3ngram-worker`), and are part
+of both Compose stacks (`docker-compose.yml`, `compose.selfhost.yml`).
 
 ## Recovery
 
@@ -125,4 +126,8 @@ path before declaring the incident closed.
 
 - Metrics counters are wired, but dashboards and alert policies are not
   complete.
-- Worker deployment packaging is not complete for self-host.
+- The session closer ships on the worker but stays `SESSION_CLOSER_ENABLED=false`
+  until its commitment-recall validation bar is measured (see
+  [Session continuity](/concepts/session-continuity)); with it off the sweep
+  scheduler is removed and closer jobs no-op, while consolidation, surfacing,
+  and OAuth-client GC always run.
