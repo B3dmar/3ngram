@@ -363,6 +363,16 @@ and they are not equally strong:
   read after the wait sees the bump);
 - the final write-back, fenced on epoch AND attempt token — all-or-nothing.
 
+**Erasure is also the FINAL content write**, which the epoch fence alone does not
+give you: it fences the closer, not the hook. Both session writers of user content
+take the account-lifecycle advisory lock in **shared** mode and re-check the deletion
+tombstone under it, so neither can land after the redaction commits — the heartbeat
+**drops** `last_message_excerpt` and lets the structural lease refresh through, while
+`open` **refuses** (`410 account_deleted`), because its insert carries the selector
+and `briefed_memories` and a reopening `startup` restamps them, leaving nothing worth
+writing once the content is dropped. Shared mode is deliberate: these paths must not
+interleave with an erasure, but must not serialize against each other.
+
 So an in-flight pass that observed the pre-erasure epoch either never claims the
 row, is very likely (though not provably, under adversarial scheduling) caught
 before it sends the excerpt or briefed topics to the gateway, has any `resolve`
@@ -1027,7 +1037,7 @@ there would `409` every resume of a live session instead of refreshing its lease
 
 | Method | Path | Job |
 |---|---|---|
-| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate (shipped) |
+| `POST` | `/api/v1/agent-sessions/open` | startup insert / resume; body includes surviving `briefed_memories` after local truncate; `410` when the account was erased mid-request (shipped) |
 | `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch (shipped) |
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key; optional bounded `last_message_excerpt` (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |

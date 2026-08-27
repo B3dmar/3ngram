@@ -40,7 +40,15 @@ export type {
   HeartbeatSessionResult,
   OpenSessionResult,
 } from '@3ngram/db'
-export { AgentSessionNotFoundError, AgentSessionParamsConflictError } from '@3ngram/db'
+// AccountDeletedError rides along: `openSession` refuses an erased account
+// rather than writing a session row after erasure (packages/db/account-delete.ts
+// — erasure is the FINAL content write), so a transport mapping this facade's
+// failures has to name it.
+export {
+  AccountDeletedError,
+  AgentSessionNotFoundError,
+  AgentSessionParamsConflictError,
+} from '@3ngram/db'
 
 /** Injected clock — the worker and tests pass a fixed instant; a transport passes none. */
 export interface SessionClockOptions {

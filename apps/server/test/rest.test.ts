@@ -187,6 +187,14 @@ class AgentSessionParamsConflictError extends Error {
     this.sessionId = key.sessionId
   }
 }
+// The account was erased while an authenticated request was in flight; the
+// session open refuses rather than writing past the final content write.
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account_deleted')
+    this.name = 'AccountDeletedError'
+  }
+}
 class AgentSessionTriageConflictError extends Error {
   readonly agent: string
   readonly sessionId: string
@@ -237,6 +245,7 @@ vi.mock('@3ngram/core', async () => ({
   getAgentSession,
   beginAgentSessionTriage,
   completeAgentSessionTriage,
+  AccountDeletedError,
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   AgentSessionTriageConflictError,
@@ -2688,6 +2697,20 @@ describe('agent-session lifecycle routes', () => {
       })
       expect(res.status).toBe(409)
       expect(await res.json()).toEqual({ error: 'conflict' })
+    })
+
+    it('410s an open whose account was erased while the request was in flight', async () => {
+      // Erasure is the FINAL content write: the open refused rather than
+      // inserting a row past the redaction. 410 Gone — the credential was valid
+      // when the request started and the account it addresses no longer exists.
+      openAgentSession.mockRejectedValue(new AccountDeletedError())
+      const res = await call('/api/v1/agent-sessions/open', {
+        method: 'POST',
+        key: VALID_KEY,
+        body: { agent: KEY.agent, sessionId: KEY.sessionId, source: 'startup' },
+      })
+      expect(res.status).toBe(410)
+      expect(await res.json()).toEqual({ error: 'account_deleted' })
     })
 
     it('400s a bad source, a non-kebab agent and an over-cap briefing list', async () => {
