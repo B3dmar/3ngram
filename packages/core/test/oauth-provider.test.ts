@@ -6,6 +6,7 @@
 // consume-then-verify ordering, and the rotation contract are all asserted
 // against the same rows the real tables would hold.
 import { createHash } from 'node:crypto'
+import { clientIdMetadataDocumentSchema } from '@3ngram/schema'
 import { exportJWK, generateKeyPair } from 'jose'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OAuthJwk, OAuthVerifyConfig } from '../src/auth/oauth.js'
@@ -625,6 +626,26 @@ describe('resolveRegisteredRedirectUri (RFC 8252 loopback ports)', () => {
     )
     expect(resolved).toBeDefined()
     expect(resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, resolved)).toBe(resolved)
+  })
+
+  // An IPv6-only native client can bind no loopback literal but `[::1]`. The
+  // matcher's `[::1]` branch is only reachable if the SCHEMA boundary lets such
+  // a document register in the first place, so parse a real CIMD document here
+  // rather than hand-rolling a client object past that boundary.
+  it('matches an ephemeral port for an IPv6-loopback CIMD registration', () => {
+    const document = clientIdMetadataDocumentSchema.parse({
+      client_id: 'https://client.example/oauth/client.json',
+      client_name: 'IPv6-only Client',
+      redirect_uris: ['http://[::1]/callback'],
+    })
+    expect(document.redirect_uris).toEqual(['http://[::1]/callback'])
+    expect(resolveRegisteredRedirectUri(document, 'http://[::1]:53421/callback')).toBe(
+      'http://[::1]:53421/callback',
+    )
+    // Still its own host: an IPv4 loopback request does not match it.
+    expect(
+      resolveRegisteredRedirectUri(document, 'http://127.0.0.1:53421/callback'),
+    ).toBeUndefined()
   })
 
   // The REQUESTED (ported) URI is what the code carries, so the byte-exact

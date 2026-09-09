@@ -132,19 +132,25 @@ export type IssueApiKeyInput = z.infer<typeof issueApiKeyInputSchema>
 
 /**
  * Redirect-URI policy for RFC 7591 registration:
- * https is required everywhere except the RFC 8252 loopback hosts
- * (http://localhost / http://127.0.0.1, any port — the hostname pattern never
- * sees the port), and a fragment is banned outright (RFC 6749 §3.1.2 — a `#`
- * anywhere in an absolute URI starts one). z.url() validates WITHOUT
- * transforming, so URIs are stored EXACTLY as presented — no normalization —
- * and the authorize endpoint can byte-equality match a presented
- * redirect_uri against the registered list (its one relaxation, RFC 8252 §7.3
- * loopback ports, is a matching policy in core — not a shape rule here).
+ * https is required everywhere except the three RFC 8252 §7.3 loopback hosts
+ * (http://localhost, http://127.0.0.1 and the IPv6 literal http://[::1] — any
+ * port, since the hostname pattern never sees the port), and a fragment is
+ * banned outright (RFC 6749 §3.1.2 — a `#` anywhere in an absolute URI starts
+ * one). z.url() validates WITHOUT transforming, so URIs are stored EXACTLY as
+ * presented — no normalization — and the authorize endpoint can byte-equality
+ * match a presented redirect_uri against the registered list (its one
+ * relaxation, RFC 8252 §7.3 loopback ports, is a matching policy in core — not
+ * a shape rule here).
+ *
+ * The hostname pattern is applied to WHATWG `URL.hostname`, so an IPv6 host
+ * arrives BRACKETED and already canonicalized: `[0:0:0:0:0:0:0:1]` is read as
+ * `[::1]`. Matching the canonical spelling alone therefore admits every
+ * spelling of the IPv6 loopback and no other address.
  */
 export const redirectUriSchema = z
   .union([
     z.url({ protocol: /^https$/ }).max(2048),
-    z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1)$/ }).max(2048),
+    z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1|\[::1\])$/ }).max(2048),
   ])
   .refine((value) => !value.includes('#'), {
     message: 'redirect_uri must not contain a fragment',

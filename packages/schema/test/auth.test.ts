@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   clientIdMetadataDocumentSchema,
   clientIdMetadataUrlSchema,
+  clientRegistrationInputSchema,
   oauthClientIdParamSchema,
+  redirectUriSchema,
 } from '../src/auth.js'
 
 const clientId = 'https://client.example/oauth/client.json'
@@ -138,5 +140,58 @@ describe('clientIdMetadataDocumentSchema', () => {
       document({ response_types: ['code', 'y'.repeat(300)] }),
     )
     expect(parsed.response_types).toEqual(['code'])
+  })
+})
+
+// RFC 8252 §7.3 names THREE loopback literals — `localhost`, `127.0.0.1` and
+// the IPv6 `[::1]` — and an IPv6-only native client can bind no other. The
+// http allowlist covered the first two, so core's loopback port matching could
+// never see a registered `[::1]`: the registration (DCR) or the metadata
+// document (CIMD) was rejected at this boundary first.
+describe('redirectUriSchema (RFC 8252 loopback hosts)', () => {
+  it.each([
+    'http://localhost/callback',
+    'http://localhost:4000/callback',
+    'http://127.0.0.1/callback',
+    'http://127.0.0.1:4000/callback',
+    'http://[::1]/callback',
+    'http://[::1]:4000/callback',
+    'https://client.example/callback',
+    'https://client.example:8443/callback',
+  ])('accepts %s and preserves it byte-exactly', (uri) => {
+    expect(redirectUriSchema.parse(uri)).toBe(uri)
+  })
+
+  // The pattern sees WHATWG `URL.hostname`, which is BRACKETED and already
+  // canonicalized — so every spelling of the IPv6 loopback arrives as `[::1]`,
+  // and the value is still STORED exactly as it was presented.
+  it('accepts a non-canonical spelling of the IPv6 loopback, unmodified', () => {
+    expect(redirectUriSchema.parse('http://[0:0:0:0:0:0:0:1]/callback')).toBe(
+      'http://[0:0:0:0:0:0:0:1]/callback',
+    )
+  })
+
+  it.each([
+    // Another IPv6 address is not the loopback, however close it reads.
+    'http://[::2]/callback',
+    'http://[fe80::1]/callback',
+    'http://[::ffff:127.0.0.1]/callback',
+    // http stays loopback-only; everything else must be https.
+    'http://client.example/callback',
+    'http://127.0.0.2/callback',
+    // A fragment is banned outright (RFC 6749 §3.1.2), loopback included.
+    'http://[::1]/callback#fragment',
+  ])('rejects %s', (uri) => {
+    expect(redirectUriSchema.safeParse(uri).success).toBe(false)
+  })
+
+  it('accepts an IPv6-loopback redirect through the DCR and CIMD boundaries', () => {
+    const uri = 'http://[::1]/callback'
+    expect(clientRegistrationInputSchema.parse({ redirect_uris: [uri] }).redirect_uris).toEqual([
+      uri,
+    ])
+    expect(
+      clientIdMetadataDocumentSchema.parse(document({ redirect_uris: [uri] })).redirect_uris,
+    ).toEqual([uri])
   })
 })
