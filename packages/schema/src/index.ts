@@ -102,6 +102,7 @@ export {
   clientRegistrationInputSchema,
   consentSubmissionSchema,
   forgotPasswordInputSchema,
+  hasForbiddenUriCharacter,
   issueApiKeyInputSchema,
   loginInputSchema,
   oauthClientIdParamSchema,

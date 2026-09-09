@@ -1258,6 +1258,7 @@ its row here even when its name and kind are unchanged.
 | `handoffToolOutputV4Schema` | const | `9cb1f2aa6fc5` |
 | `handoffTruncatedSchema` | const | `d97e0ca4fb77` |
 | `harnessSessionIdSchema` | const | `e84a82f37d1d` |
+| `hasForbiddenUriCharacter` | function | `b8a6381df173` |
 | `importCommitmentSchema` | const | `921d8ea3ab89` |
 | `importEdgeInputSchema` | const | `b225599c98f4` |
 | `importEventInputSchema` | const | `80b7e3d41eac` |

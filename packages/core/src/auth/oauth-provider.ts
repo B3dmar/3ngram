@@ -32,6 +32,7 @@ import {
   resolveOauthToken,
   rotateOauthRefreshToken,
 } from '@3ngram/db'
+import { hasForbiddenUriCharacter } from '@3ngram/schema'
 import { type LimitsResolver, resolveResourceLimits } from '../budget/index.js'
 import {
   MEMORY_READ_SCOPE,
@@ -201,15 +202,6 @@ function assertResourceMatches(resource: URL | undefined, expected: string): voi
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
- * A character the RFC 3986 URI grammar never allows: anything outside printable
- * ASCII, plus the printables excluded from a URI. `\` is the load-bearing one —
- * the WHATWG parser treats it as `/` for special schemes, so a raw slice would
- * read `http://localhost\@evil.com/cb` as the path `/cb` while the parser (and
- * the 302 that follows) reads it as `/@evil.com/cb`.
- */
-const NON_URI_CHARACTER = /[^\u0021-\u007e]|["<>\\^`{|}]/
-
-/**
  * Port-insensitive identity of an `http` loopback redirect URI: the PARSED
  * hostname (so it is normalized exactly as the parser normalizes it — case
  * folding, percent-decoding) plus the RAW path+query as presented. undefined =
@@ -217,14 +209,15 @@ const NON_URI_CHARACTER = /[^\u0021-\u007e]|["<>\\^`{|}]/
  *
  * The tail is sliced from the ORIGINAL string rather than read off the parsed
  * URL so that URL normalization cannot widen the match (`/a/../cb` stays
- * distinct from `/cb`) — which only holds while the raw bytes delimit the
- * authority the same way the parser does, so a URI carrying a character the URI
- * grammar forbids is refused rather than keyed. Also refused: a non-http
- * scheme, a non-loopback host, userinfo, the authority-less `http:host/cb`
- * form, and a fragment (banned outright by RFC 6749 §3.1.2).
+ * distinct from `/cb`). Refused: a non-http scheme, a non-loopback host,
+ * userinfo, the authority-less `http:host/cb` form, and a fragment — whose `#`
+ * the raw tail would otherwise swallow into the path (and which RFC 6749 §3.1.2
+ * bans outright anyway). The CHARACTER policy that makes a raw read agree with
+ * the parser is applied by the caller, to both sides: see
+ * matchesLoopbackIgnoringPort.
  */
 function loopbackPortInsensitiveKey(uri: string): string | undefined {
-  if (uri.includes('#') || NON_URI_CHARACTER.test(uri)) return undefined
+  if (uri.includes('#')) return undefined
   const authorityStart = uri.indexOf('://')
   if (authorityStart === -1) return undefined
   let parsed: URL
@@ -254,6 +247,19 @@ function loopbackPortInsensitiveKey(uri: string): string | undefined {
  * registration that named a port does not pin it).
  */
 export function matchesLoopbackIgnoringPort(registered: string, requested: string): boolean {
+  // Neither side may carry a character the URI grammar forbids, because keying
+  // the RAW bytes only agrees with the parser while both readings coincide:
+  // `http://localhost\@evil.com/cb` keys as `/cb` but MEANS `/@evil.com/cb`.
+  //
+  // This is not a second validation boundary — the constraint is still DEFINED
+  // once, in schema, and imported here. Every URI the current redirectUriSchema
+  // admits passes trivially, so the rule bites in exactly two places: the
+  // REQUESTED value, which authorizeRequestSchema deliberately carries as an
+  // opaque string and never shape-checks; and a LEGACY oauth_clients row
+  // registered before that schema refine existed. Such a row simply falls back
+  // to byte-exact matching — what it had before this change — rather than
+  // gaining a relaxation whose key could disagree with the parser.
+  if (hasForbiddenUriCharacter(registered) || hasForbiddenUriCharacter(requested)) return false
   const registeredKey = loopbackPortInsensitiveKey(registered)
   return registeredKey !== undefined && registeredKey === loopbackPortInsensitiveKey(requested)
 }

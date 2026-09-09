@@ -185,6 +185,31 @@ describe('redirectUriSchema (RFC 8252 loopback hosts)', () => {
     expect(redirectUriSchema.safeParse(uri).success).toBe(false)
   })
 
+  // RFC 6749 §3.1.2 requires an absolute RFC 3986 URI, so anything outside that
+  // grammar is percent-encoded by the client. Enforcing it HERE (rather than in
+  // core, where the port matcher first needed it) keeps one validation boundary
+  // and means every accepted redirect_uri gets the same port relaxation.
+  it.each([
+    ['a non-ASCII path', 'http://localhost/caf\u00e9'],
+    ['a raw space', 'http://localhost/call back'],
+    // The WHATWG parser reads `\` as `/`, so this URI MEANS /@evil.com/callback.
+    ['a backslash', 'http://localhost\\@evil.com/callback'],
+    ['a double quote', 'https://example.com/cb"x'],
+    ['a caret', 'https://example.com/cb^x'],
+    ['a brace', 'https://example.com/cb{x}'],
+    ['a control character', 'https://example.com/cb\u0007'],
+  ])('rejects %s', (_label, uri) => {
+    expect(redirectUriSchema.safeParse(uri).success).toBe(false)
+  })
+
+  it.each([
+    ['the percent-encoded form of the same path', 'http://localhost/caf%C3%A9'],
+    ['a query of sub-delims and unreserved characters', 'http://localhost/cb?a+b=c&d~e=%20'],
+    ['a port with a percent-encoded path', 'http://127.0.0.1:4000/caf%C3%A9'],
+  ])('accepts %s', (_label, uri) => {
+    expect(redirectUriSchema.parse(uri)).toBe(uri)
+  })
+
   it('accepts an IPv6-loopback redirect through the DCR and CIMD boundaries', () => {
     const uri = 'http://[::1]/callback'
     expect(clientRegistrationInputSchema.parse({ redirect_uris: [uri] }).redirect_uris).toEqual([
@@ -193,5 +218,15 @@ describe('redirectUriSchema (RFC 8252 loopback hosts)', () => {
     expect(
       clientIdMetadataDocumentSchema.parse(document({ redirect_uris: [uri] })).redirect_uris,
     ).toEqual([uri])
+  })
+
+  // Both boundaries compose redirectUriSchema, so neither can register a URI
+  // whose raw bytes and parsed meaning disagree.
+  it('rejects a backslash redirect through the DCR and CIMD boundaries', () => {
+    const uri = 'http://localhost\\@evil.com/callback'
+    expect(clientRegistrationInputSchema.safeParse({ redirect_uris: [uri] }).success).toBe(false)
+    expect(
+      clientIdMetadataDocumentSchema.safeParse(document({ redirect_uris: [uri] })).success,
+    ).toBe(false)
   })
 })

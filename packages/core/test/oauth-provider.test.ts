@@ -543,6 +543,13 @@ describe('resolveRegisteredRedirectUri (RFC 8252 loopback ports)', () => {
       'http://localhost/callback?x=1',
       'http://localhost:1/callback?x=1',
     ],
+    // A percent-encoded path is a plain URI character sequence: it keys like any
+    // other and gets the same port relaxation (nothing is decoded on either side).
+    [
+      'a percent-encoded path gains a port',
+      'http://localhost/caf%C3%A9',
+      'http://localhost:5000/caf%C3%A9',
+    ],
     // An absent path IS `/` to the parser, on both sides.
     ['a path-less registration gains a port', 'http://localhost', 'http://localhost:5000'],
     [
@@ -569,18 +576,36 @@ describe('resolveRegisteredRedirectUri (RFC 8252 loopback ports)', () => {
     ['an authority-less scheme form', 'http://localhost/callback', 'http:localhost/callback'],
     // A backslash terminates the authority for the WHATWG parser but not for a
     // raw slice: the 302 would go to /@evil.com/callback, a path nobody
-    // registered. Any character the URI grammar forbids is refused.
+    // registered. The REQUESTED side is never shape-validated, so the character
+    // policy is applied to it here (the registered side gets it at the schema
+    // boundary — see 'a schema-invalid registration' below).
     [
       'a backslash authority terminator',
       'http://localhost/callback',
       'http://localhost\\@evil.com/callback',
     ],
-    [
-      'a backslash on the registered side',
-      'http://localhost\\@evil.com/callback',
-      'http://localhost:53421/@evil.com/callback',
-    ],
     ['a space in the path', 'http://localhost/callback', 'http://localhost:53421/call back'],
+    // LEGACY oauth_clients rows predate the schema's character refine, and DCR
+    // is open registration — so the same rule guards the REGISTERED side, or a
+    // clean request would relax onto a row whose parsed path is /@evil.com/cb.
+    // Such a row keeps byte-exact matching; it gains nothing and loses nothing.
+    [
+      'a legacy registered URI containing a backslash',
+      'http://localhost\\@evil.com/callback',
+      'http://localhost:53421/callback',
+    ],
+    [
+      'a legacy registered URI containing non-ASCII',
+      'http://localhost/caf\u00e9',
+      'http://localhost:5000/caf\u00e9',
+    ],
+    // Percent-encoding is how a client presents anything outside the URI
+    // grammar; the RAW form of the same path is not the same URI.
+    [
+      'a raw non-ASCII path against its encoded registration',
+      'http://localhost/caf%C3%A9',
+      'http://localhost:5000/caf\u00e9',
+    ],
     // A query with NO path: `?` also terminates the authority, so the key can
     // never collapse a query-carrying URI onto a path-less registration.
     ['a query on a path-less registration', 'http://localhost', 'http://localhost:5000?evil=1'],
@@ -626,6 +651,25 @@ describe('resolveRegisteredRedirectUri (RFC 8252 loopback ports)', () => {
     )
     expect(resolved).toBeDefined()
     expect(resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, resolved)).toBe(resolved)
+  })
+
+  // A legacy row loses only the RELAXATION, never the registration: the exact
+  // URI still resolves through the byte-exact branch ahead of the matcher.
+  it('still resolves a legacy registered URI presented byte-exactly', () => {
+    const legacy = 'http://localhost/caf\u00e9'
+    expect(resolveRegisteredRedirectUri({ redirect_uris: [legacy] }, legacy)).toBe(legacy)
+  })
+
+  // No such row can be created any more — the character policy is DEFINED at
+  // the schema boundary, and both registration paths compose it.
+  it('rejects a schema-invalid registration at the boundary', () => {
+    expect(
+      clientIdMetadataDocumentSchema.safeParse({
+        client_id: 'https://client.example/oauth/client.json',
+        client_name: 'Backslash Client',
+        redirect_uris: ['http://localhost\\@evil.com/callback'],
+      }).success,
+    ).toBe(false)
   })
 
   // An IPv6-only native client can bind no loopback literal but `[::1]`. The
