@@ -1,5 +1,7 @@
 # @3ngram/worker
 
+## 1.6.3
+
 ## 1.6.2
 
 ### Patch Changes
