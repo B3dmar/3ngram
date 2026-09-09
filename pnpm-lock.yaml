@@ -90,8 +90,8 @@ importers:
         specifier: 5.11.1
         version: 5.11.1
       nodemailer:
-        specifier: 9.0.1
-        version: 9.0.1
+        specifier: 9.1.1
+        version: 9.1.1
       rate-limiter-flexible:
         specifier: 11.2.0
         version: 11.2.0
@@ -2049,8 +2049,8 @@ packages:
     resolution: {integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==}
     hasBin: true
 
-  nodemailer@9.0.1:
-    resolution: {integrity: sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw==}
+  nodemailer@9.1.1:
+    resolution: {integrity: sha512-izw9mVKFix6YSnC9eLgV6g1opl9DUlRio9ZNcq+Wu9Ujn2UwF+8Nl0B8nz22kEC+CTZCvinkxwJ0DeFbb6NwcQ==}
     engines: {node: '>=6.0.0'}
 
   nwsapi@2.2.24:
@@ -4233,7 +4233,7 @@ snapshots:
       detect-libc: 2.1.2
     optional: true
 
-  nodemailer@9.0.1: {}
+  nodemailer@9.1.1: {}
 
   nwsapi@2.2.24:
     optional: true
