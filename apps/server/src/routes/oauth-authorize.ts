@@ -7,9 +7,13 @@
 //
 // Status contract:
 //   GET  200 the consent form; 400 for a schema-invalid request, an unknown
-//        client_id, or a redirect_uri that does not BYTE-EXACTLY match a
-//        registered one (never a redirect to an unvetted URI — exact match, no path/query/port relaxation).
-//   POST 302 to the registered redirect_uri with code+state on success;
+//        client_id, or a redirect_uri that does not match a registered one
+//        (never a redirect to an unvetted URI — byte-exact match, no path or
+//        query relaxation; the ONE exception is RFC 8252 §7.3, where an http
+//        URI on the SAME loopback host — hosts compared as the URL parser
+//        normalizes them, and localhost/127.0.0.1/[::1] never cross-match —
+//        matches ignoring the port a native client bound).
+//   POST 302 to the resolved redirect_uri with code+state on success;
 //        400/403 (schema / CSRF) as above; 401 re-renders the form on wrong
 //        credentials (uniform — no user enumeration, login() handles timing).
 //

@@ -131,22 +131,59 @@ export const issueApiKeyInputSchema = z.object({
 export type IssueApiKeyInput = z.infer<typeof issueApiKeyInputSchema>
 
 /**
+ * A character RFC 3986 never allows unencoded in a URI: anything outside
+ * printable ASCII (controls and the space included), plus the printables the
+ * grammar excludes — `"`, `<`, `>`, `\`, `^`, `` ` ``, `{`, `|`, `}`.
+ */
+const FORBIDDEN_URI_CHARACTER = /[^\u0021-\u007e]|["<>\\^`{|}]/
+
+/**
+ * The redirect-URI CHARACTER policy, in one place (hard rule 2). RFC 6749
+ * §3.1.2 requires redirect_uri to be an absolute RFC 3986 URI, so a client
+ * percent-encodes anything outside that grammar — `http://localhost/caf%C3%A9`,
+ * never `http://localhost/café`.
+ *
+ * It is exported because core needs the SAME policy for the one redirect URI
+ * this schema never sees: the value presented at /oauth/authorize, which
+ * `authorizeRequestSchema` deliberately carries as an opaque bounded string.
+ * `\` is why it matters — the WHATWG parser reads it as `/` for an http URL,
+ * so `http://localhost\@evil.com/cb` means the path `/@evil.com/cb` while a
+ * raw read of the same bytes says `/cb`, and any policy that keys one against
+ * the other must refuse it rather than guess.
+ */
+export function hasForbiddenUriCharacter(value: string): boolean {
+  return FORBIDDEN_URI_CHARACTER.test(value)
+}
+
+/**
  * Redirect-URI policy for RFC 7591 registration:
- * https is required everywhere except the RFC 8252 loopback hosts
- * (http://localhost / http://127.0.0.1, any port — the hostname pattern never
- * sees the port), and a fragment is banned outright (RFC 6749 §3.1.2 — a `#`
- * anywhere in an absolute URI starts one). z.url() validates WITHOUT
- * transforming, so URIs are stored EXACTLY as presented — no normalization —
- * and the authorize endpoint can byte-equality match a presented
- * redirect_uri against the registered list.
+ * https is required everywhere except the three RFC 8252 §7.3 loopback hosts
+ * (http://localhost, http://127.0.0.1 and the IPv6 literal http://[::1] — any
+ * port, since the hostname pattern never sees the port), and a fragment is
+ * banned outright (RFC 6749 §3.1.2 — a `#` anywhere in an absolute URI starts
+ * one), as is any character outside the RFC 3986 grammar (see
+ * hasForbiddenUriCharacter). z.url() validates WITHOUT transforming, so URIs
+ * are stored EXACTLY as
+ * presented — no normalization — and the authorize endpoint can byte-equality
+ * match a presented redirect_uri against the registered list (its one
+ * relaxation, RFC 8252 §7.3 loopback ports, is a matching policy in core — not
+ * a shape rule here).
+ *
+ * The hostname pattern is applied to WHATWG `URL.hostname`, so an IPv6 host
+ * arrives BRACKETED and already canonicalized: `[0:0:0:0:0:0:0:1]` is read as
+ * `[::1]`. Matching the canonical spelling alone therefore admits every
+ * spelling of the IPv6 loopback and no other address.
  */
 export const redirectUriSchema = z
   .union([
     z.url({ protocol: /^https$/ }).max(2048),
-    z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1)$/ }).max(2048),
+    z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1|\[::1\])$/ }).max(2048),
   ])
   .refine((value) => !value.includes('#'), {
     message: 'redirect_uri must not contain a fragment',
+  })
+  .refine((value) => !hasForbiddenUriCharacter(value), {
+    message: 'redirect_uri must use RFC 3986 URI characters (percent-encode anything else)',
   })
 
 /**
@@ -335,8 +372,9 @@ const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
  * validation boundary for the authorization request shape (hard rule 2).
  * authorization_code + PKCE S256 is the ONLY supported flow, so
  * response_type/code_challenge_method are literals — anything else is a 400
- * before any redirect can be issued. redirect_uri is matched byte-exact against
- * the registered list in core (policy, not shape — it needs the stored client).
+ * before any redirect can be issued. redirect_uri is matched against the
+ * registered list in core (policy, not shape — it needs the stored client):
+ * byte-exact, except that RFC 8252 §7.3 loopback URIs match ignoring the port.
  */
 export const authorizeRequestSchema = z.object({
   client_id: z.string().min(1).max(2048),

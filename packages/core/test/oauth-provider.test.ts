@@ -6,6 +6,7 @@
 // consume-then-verify ordering, and the rotation contract are all asserted
 // against the same rows the real tables would hold.
 import { createHash } from 'node:crypto'
+import { clientIdMetadataDocumentSchema } from '@3ngram/schema'
 import { exportJWK, generateKeyPair } from 'jose'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OAuthJwk, OAuthVerifyConfig } from '../src/auth/oauth.js'
@@ -514,6 +515,226 @@ describe('resolveRegisteredRedirectUri (byte-exact)', () => {
         undefined,
       ),
     ).toBeUndefined()
+  })
+})
+
+// RFC 8252 §7.3: a native client binds an EPHEMERAL loopback port, so the AS
+// MUST allow any port at request time. Claude Code registers via a CIMD
+// document whose redirect_uris carry NO port and then asks for
+// http://localhost:<ephemeral>/callback — byte-exact matching 400s it.
+describe('resolveRegisteredRedirectUri (RFC 8252 loopback ports)', () => {
+  it.each([
+    ['localhost gains a port', 'http://localhost/callback', 'http://localhost:53421/callback'],
+    ['127.0.0.1 gains a port', 'http://127.0.0.1/callback', 'http://127.0.0.1:53421/callback'],
+    ['[::1] gains a port', 'http://[::1]/callback', 'http://[::1]:53421/callback'],
+    // The registration naming a port does not PIN it (RFC 8252: any port).
+    [
+      'a registered port changes',
+      'http://localhost:3000/callback',
+      'http://localhost:4000/callback',
+    ],
+    [
+      'a query matches exactly',
+      'http://localhost/callback?x=1',
+      'http://localhost:53421/callback?x=1',
+    ],
+    [
+      'a query matches exactly on a low port',
+      'http://localhost/callback?x=1',
+      'http://localhost:1/callback?x=1',
+    ],
+    // A percent-encoded path is a plain URI character sequence: it keys like any
+    // other and gets the same port relaxation (nothing is decoded on either side).
+    [
+      'a percent-encoded path gains a port',
+      'http://localhost/caf%C3%A9',
+      'http://localhost:5000/caf%C3%A9',
+    ],
+    // An absent path IS `/` to the parser, on both sides.
+    ['a path-less registration gains a port', 'http://localhost', 'http://localhost:5000'],
+    [
+      'a path-less registration meets a rooted request',
+      'http://localhost',
+      'http://localhost:5000/',
+    ],
+  ])('accepts and returns the requested URI when %s', (_label, registered, requested) => {
+    expect(resolveRegisteredRedirectUri({ redirect_uris: [registered] }, requested)).toBe(requested)
+  })
+
+  it.each([
+    // Each loopback host is its own host — never cross-matched.
+    ['localhost vs 127.0.0.1', 'http://localhost/callback', 'http://127.0.0.1:53421/callback'],
+    ['127.0.0.1 vs localhost', 'http://127.0.0.1/callback', 'http://localhost:53421/callback'],
+    ['localhost vs [::1]', 'http://localhost/callback', 'http://[::1]:53421/callback'],
+    // The relaxation is the PORT only — path, query and scheme stay exact.
+    ['a different path', 'http://localhost/callback', 'http://localhost:53421/other'],
+    ['an added query', 'http://localhost/callback', 'http://localhost:53421/callback?x=1'],
+    ['a dropped query', 'http://localhost/callback?x=1', 'http://localhost:53421/callback'],
+    ['a fragment', 'http://localhost/callback', 'http://localhost:53421/callback#f'],
+    ['a dot-segment path', 'http://localhost/callback', 'http://localhost:53421/x/../callback'],
+    ['smuggled userinfo', 'http://localhost/callback', 'http://evil@localhost:53421/callback'],
+    ['an authority-less scheme form', 'http://localhost/callback', 'http:localhost/callback'],
+    // A backslash terminates the authority for the WHATWG parser but not for a
+    // raw slice: the 302 would go to /@evil.com/callback, a path nobody
+    // registered. The REQUESTED side is never shape-validated, so the character
+    // policy is applied to it here (the registered side gets it at the schema
+    // boundary — see 'a schema-invalid registration' below).
+    [
+      'a backslash authority terminator',
+      'http://localhost/callback',
+      'http://localhost\\@evil.com/callback',
+    ],
+    ['a space in the path', 'http://localhost/callback', 'http://localhost:53421/call back'],
+    // LEGACY oauth_clients rows predate the schema's character refine, and DCR
+    // is open registration — so the same rule guards the REGISTERED side, or a
+    // clean request would relax onto a row whose parsed path is /@evil.com/cb.
+    // Such a row keeps byte-exact matching; it gains nothing and loses nothing.
+    [
+      'a legacy registered URI containing a backslash',
+      'http://localhost\\@evil.com/callback',
+      'http://localhost:53421/callback',
+    ],
+    [
+      'a legacy registered URI containing non-ASCII',
+      'http://localhost/caf\u00e9',
+      'http://localhost:5000/caf\u00e9',
+    ],
+    // Percent-encoding is how a client presents anything outside the URI
+    // grammar; the RAW form of the same path is not the same URI.
+    [
+      'a raw non-ASCII path against its encoded registration',
+      'http://localhost/caf%C3%A9',
+      'http://localhost:5000/caf\u00e9',
+    ],
+    // A query with NO path: `?` also terminates the authority, so the key can
+    // never collapse a query-carrying URI onto a path-less registration.
+    ['a query on a path-less registration', 'http://localhost', 'http://localhost:5000?evil=1'],
+    ['a query on a rooted registration', 'http://localhost/', 'http://localhost:5000?evil=1'],
+    // Port relaxation is loopback-HTTP only.
+    ['https on a loopback host', 'https://localhost/callback', 'https://localhost:8443/callback'],
+    ['a non-loopback http host', 'http://app.example/callback', 'http://app.example:8080/callback'],
+    ['https elsewhere', 'https://example.com/callback', 'https://example.com:8443/callback'],
+  ])('rejects %s', (_label, registered, requested) => {
+    expect(resolveRegisteredRedirectUri({ redirect_uris: [registered] }, requested)).toBeUndefined()
+  })
+
+  // The live Claude Code CIMD document (client_id =
+  // https://claude.ai/oauth/claude-code-client-metadata) as fetched in prod.
+  const CLAUDE_CODE_CIMD = {
+    client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
+    client_name: 'Claude Code',
+    redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback'],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none' as const,
+  }
+
+  it('accepts the ephemeral port Claude Code actually presents', () => {
+    expect(resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, 'http://localhost:53421/callback')).toBe(
+      'http://localhost:53421/callback',
+    )
+    expect(resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, 'http://127.0.0.1:8129/callback')).toBe(
+      'http://127.0.0.1:8129/callback',
+    )
+    expect(
+      resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, 'http://localhost:53421/evil'),
+    ).toBeUndefined()
+  })
+
+  // The consent POST re-resolves using the hidden redirect_uri field, which
+  // carries the ALREADY-RESOLVED (ported) URI — resolution must be idempotent
+  // or the second hop 400s.
+  it('re-resolves its own output (the consent POST round-trip)', () => {
+    const resolved = resolveRegisteredRedirectUri(
+      CLAUDE_CODE_CIMD,
+      'http://localhost:53421/callback',
+    )
+    expect(resolved).toBeDefined()
+    expect(resolveRegisteredRedirectUri(CLAUDE_CODE_CIMD, resolved)).toBe(resolved)
+  })
+
+  // A legacy row loses only the RELAXATION, never the registration: the exact
+  // URI still resolves through the byte-exact branch ahead of the matcher.
+  it('still resolves a legacy registered URI presented byte-exactly', () => {
+    const legacy = 'http://localhost/caf\u00e9'
+    expect(resolveRegisteredRedirectUri({ redirect_uris: [legacy] }, legacy)).toBe(legacy)
+  })
+
+  // No such row can be created any more — the character policy is DEFINED at
+  // the schema boundary, and both registration paths compose it.
+  it('rejects a schema-invalid registration at the boundary', () => {
+    expect(
+      clientIdMetadataDocumentSchema.safeParse({
+        client_id: 'https://client.example/oauth/client.json',
+        client_name: 'Backslash Client',
+        redirect_uris: ['http://localhost\\@evil.com/callback'],
+      }).success,
+    ).toBe(false)
+  })
+
+  // An IPv6-only native client can bind no loopback literal but `[::1]`. The
+  // matcher's `[::1]` branch is only reachable if the SCHEMA boundary lets such
+  // a document register in the first place, so parse a real CIMD document here
+  // rather than hand-rolling a client object past that boundary.
+  it('matches an ephemeral port for an IPv6-loopback CIMD registration', () => {
+    const document = clientIdMetadataDocumentSchema.parse({
+      client_id: 'https://client.example/oauth/client.json',
+      client_name: 'IPv6-only Client',
+      redirect_uris: ['http://[::1]/callback'],
+    })
+    expect(document.redirect_uris).toEqual(['http://[::1]/callback'])
+    expect(resolveRegisteredRedirectUri(document, 'http://[::1]:53421/callback')).toBe(
+      'http://[::1]:53421/callback',
+    )
+    // Still its own host: an IPv4 loopback request does not match it.
+    expect(
+      resolveRegisteredRedirectUri(document, 'http://127.0.0.1:53421/callback'),
+    ).toBeUndefined()
+  })
+
+  // The REQUESTED (ported) URI is what the code carries, so the byte-exact
+  // token-endpoint comparison sees the same value the client presents there.
+  it('carries the ported URI through authorize into the token exchange', async () => {
+    const ported = resolveRegisteredRedirectUri(
+      CLAUDE_CODE_CIMD,
+      'http://localhost:53421/callback',
+    ) as string
+    insertOauthCode.mockResolvedValue(undefined)
+    const res = { redirect: vi.fn((_status: number, _url: string) => {}) }
+    const client = { ...CLIENT, ...CLAUDE_CODE_CIMD }
+    await provider().authorize(
+      client,
+      {
+        userId: USER_ID,
+        codeChallenge: s256Challenge(VERIFIER),
+        redirectUri: ported,
+        redirectUriSupplied: true,
+      },
+      res,
+    )
+    const [, row] = insertOauthCode.mock.calls[0] as [string, Record<string, unknown>]
+    expect(row.redirectUri).toBe(ported)
+    const [, location] = res.redirect.mock.calls[0] as [number, string]
+    expect(new URL(location).host).toBe('localhost:53421')
+
+    consumeOauthCode.mockResolvedValue({
+      userId: USER_ID,
+      clientId: client.client_id,
+      redirectUri: row.redirectUri,
+      redirectUriSupplied: true,
+      codeChallenge: s256Challenge(VERIFIER),
+      scope: 'memory:read memory:write',
+    })
+    const tokens = await provider().exchangeAuthorizationCode(client, 'the-code', VERIFIER, ported)
+    expect(tokens.token_type).toBe('bearer')
+    await expect(
+      provider().exchangeAuthorizationCode(
+        client,
+        'the-code',
+        VERIFIER,
+        'http://localhost:9/callback',
+      ),
+    ).rejects.toBeInstanceOf(OAuthGrantError)
   })
 })
 
