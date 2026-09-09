@@ -8,7 +8,8 @@
 // Grant mechanics:
 // - authorize: mint a 32-byte CSPRNG code, store its SHA-256 hash (the code
 //   value never touches the DB — token_hash pattern) PKCE-bound with a 60s TTL,
-//   302 back to the byte-exact registered redirect_uri with state preserved.
+//   302 back to the resolved redirect_uri (byte-exact registered, or an RFC
+//   8252 loopback URI whose port the native client chose) with state preserved.
 // - exchangeAuthorizationCode: CONSUME-THEN-VERIFY — the atomic
 //   auth_consume_oauth_code resolver burns the code first (single-use under
 //   concurrency), THEN client binding, PKCE S256, and redirect_uri are checked.
@@ -193,20 +194,94 @@ function assertResourceMatches(resource: URL | undefined, expected: string): voi
 }
 
 /**
+ * RFC 8252 §7.3 loopback hosts, as the WHATWG URL parser reports them. Each is
+ * its OWN host: a registration naming `localhost` never matches a request for
+ * `127.0.0.1` (or `[::1]`) — only the PORT is relaxed, never the host.
+ */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * A character the RFC 3986 URI grammar never allows: anything outside printable
+ * ASCII, plus the printables excluded from a URI. `\` is the load-bearing one —
+ * the WHATWG parser treats it as `/` for special schemes, so a raw slice would
+ * read `http://localhost\@evil.com/cb` as the path `/cb` while the parser (and
+ * the 302 that follows) reads it as `/@evil.com/cb`.
+ */
+const NON_URI_CHARACTER = /[^\u0021-\u007e]|["<>\\^`{|}]/
+
+/**
+ * Port-insensitive identity of an `http` loopback redirect URI: the PARSED
+ * hostname (so it is normalized exactly as the parser normalizes it — case
+ * folding, percent-decoding) plus the RAW path+query as presented. undefined =
+ * not eligible for the RFC 8252 port relaxation.
+ *
+ * The tail is sliced from the ORIGINAL string rather than read off the parsed
+ * URL so that URL normalization cannot widen the match (`/a/../cb` stays
+ * distinct from `/cb`) — which only holds while the raw bytes delimit the
+ * authority the same way the parser does, so a URI carrying a character the URI
+ * grammar forbids is refused rather than keyed. Also refused: a non-http
+ * scheme, a non-loopback host, userinfo, the authority-less `http:host/cb`
+ * form, and a fragment (banned outright by RFC 6749 §3.1.2).
+ */
+function loopbackPortInsensitiveKey(uri: string): string | undefined {
+  if (uri.includes('#') || NON_URI_CHARACTER.test(uri)) return undefined
+  const authorityStart = uri.indexOf('://')
+  if (authorityStart === -1) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(uri)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'http:') return undefined
+  if (!LOOPBACK_HOSTNAMES.has(parsed.hostname)) return undefined
+  if (parsed.username !== '' || parsed.password !== '') return undefined
+  const authorityAndTail = uri.slice(authorityStart + 3)
+  const tailStart = authorityAndTail.search(/[/?]/)
+  const rawTail = tailStart === -1 ? '' : authorityAndTail.slice(tailStart)
+  // An absent or query-only path IS `/` to the parser (and to the request the
+  // client will make), so normalize that one case rather than keying `` and
+  // `?x=1` as if they named something other than `/` and `/?x=1`.
+  return `${parsed.hostname}${rawTail.startsWith('/') ? rawTail : `/${rawTail}`}`
+}
+
+/**
+ * RFC 8252 §7.3: a native client binds an EPHEMERAL loopback port, so the AS
+ * MUST allow any port at request time. True when both URIs are `http` on the
+ * same loopback host (compared as the URL parser normalizes a host, so
+ * `LOCALHOST` is `localhost` — but the three loopback names stay distinct) with
+ * an identical path and query — the port alone may differ (on either side: a
+ * registration that named a port does not pin it).
+ */
+export function matchesLoopbackIgnoringPort(registered: string, requested: string): boolean {
+  const registeredKey = loopbackPortInsensitiveKey(registered)
+  return registeredKey !== undefined && registeredKey === loopbackPortInsensitiveKey(requested)
+}
+
+/**
  * Resolve the effective redirect URI for an authorization request: a presented
- * value must BYTE-EXACTLY match a registered one (no
- * wildcards, no path-prefix or query relaxation, no loopback port games); an
+ * value must byte-exactly match a registered one (no wildcards, no path-prefix
+ * or query relaxation), with ONE exception — RFC 8252 §7.3 loopback URIs, where
+ * the port is ignored on both sides (see matchesLoopbackIgnoringPort). An
  * omitted value is only valid when exactly one URI is registered. undefined =
  * reject (the transport 400s WITHOUT redirecting — never to an unvetted URI).
+ *
+ * The REQUESTED value (ephemeral port and all) is what comes back, because that
+ * is the URI the 302 targets, the value stored on the authorization code, and
+ * the one /oauth/token compares byte-exact against.
  */
 export function resolveRegisteredRedirectUri(
   client: Pick<OAuthClientInformation, 'redirect_uris'>,
   requested: string | undefined,
 ): string | undefined {
-  if (requested !== undefined) {
-    return client.redirect_uris.includes(requested) ? requested : undefined
+  if (requested === undefined) {
+    return client.redirect_uris.length === 1 ? client.redirect_uris[0] : undefined
   }
-  return client.redirect_uris.length === 1 ? client.redirect_uris[0] : undefined
+  if (client.redirect_uris.includes(requested)) return requested
+  const loopbackMatch = client.redirect_uris.some((registered) =>
+    matchesLoopbackIgnoringPort(registered, requested),
+  )
+  return loopbackMatch ? requested : undefined
 }
 
 interface MintedTokenPair {

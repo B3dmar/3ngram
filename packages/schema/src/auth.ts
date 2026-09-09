@@ -138,7 +138,8 @@ export type IssueApiKeyInput = z.infer<typeof issueApiKeyInputSchema>
  * anywhere in an absolute URI starts one). z.url() validates WITHOUT
  * transforming, so URIs are stored EXACTLY as presented — no normalization —
  * and the authorize endpoint can byte-equality match a presented
- * redirect_uri against the registered list.
+ * redirect_uri against the registered list (its one relaxation, RFC 8252 §7.3
+ * loopback ports, is a matching policy in core — not a shape rule here).
  */
 export const redirectUriSchema = z
   .union([
@@ -335,8 +336,9 @@ const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
  * validation boundary for the authorization request shape (hard rule 2).
  * authorization_code + PKCE S256 is the ONLY supported flow, so
  * response_type/code_challenge_method are literals — anything else is a 400
- * before any redirect can be issued. redirect_uri is matched byte-exact against
- * the registered list in core (policy, not shape — it needs the stored client).
+ * before any redirect can be issued. redirect_uri is matched against the
+ * registered list in core (policy, not shape — it needs the stored client):
+ * byte-exact, except that RFC 8252 §7.3 loopback URIs match ignoring the port.
  */
 export const authorizeRequestSchema = z.object({
   client_id: z.string().min(1).max(2048),
