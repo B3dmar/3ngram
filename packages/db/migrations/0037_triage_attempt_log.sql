@@ -1,0 +1,2 @@
+ALTER TABLE "agent_sessions" ADD COLUMN "triage_attempt_log" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "agent_sessions" ADD COLUMN "triage_attempt_count" integer DEFAULT 0 NOT NULL;

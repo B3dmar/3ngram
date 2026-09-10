@@ -30,6 +30,7 @@ import {
   describeEnvironment,
   type ExportEnricher,
   exportUserData,
+  getAgentSessionRun,
   getBudgetStatus,
   getCurrentUser,
   getFacts,
@@ -350,6 +351,69 @@ export function restRouter(options: RestRouterOptions): Router {
         })),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         truncated: page.truncated,
+      })
+    })
+  })
+
+  // GET /api/v1/agent-sessions/:sessionRunId — the bookkeeping-row read
+  // (issue #203). The #166 validation phase scores closer commitment recall by
+  // comparing `briefedMemories` (what the run was shown) against what its
+  // events resolved; the agent-sessions surface was POST-only, so that metric
+  // was not computable over REST. Read-only: being measured must never refresh
+  // a lease or resurrect a closed row. Same id boundary and error shape as the
+  // events route — an unknown/foreign id raises UnknownSessionRunError -> 400
+  // invalid_input, and the path id parses through sessionRunIdSchema so an
+  // uppercase spelling is canonicalized rather than matching nothing.
+  // `last_message_excerpt` and the watermark ids are deliberately not
+  // projected (the excerpt is content with exactly one consumer, the closer;
+  // the run's events are the events endpoint's job).
+  router.get('/api/v1/agent-sessions/:sessionRunId', (req, res) => {
+    void guard('agent-sessions.get', res, async () => {
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      // ACCESS GUARD: the row carries tenant data (briefed topics, facets), so
+      // read access is asserted BEFORE the read (self-host allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      const run = await getAgentSessionRun(tenant(req), sessionRunId)
+      res.status(200).json({
+        sessionRunId: run.id,
+        agent: run.agent,
+        sessionId: run.sessionId,
+        source: run.source,
+        project: run.project,
+        scope: run.scope,
+        selector: run.selector,
+        activationEpoch: run.activationEpoch,
+        triageStatus: run.triageStatus,
+        openedAt: run.openedAt.toISOString(),
+        closedAt: run.closedAt?.toISOString() ?? null,
+        lastSeenAt: run.lastSeenAt.toISOString(),
+        briefingDeliveredAt: run.briefingDeliveredAt?.toISOString() ?? null,
+        briefedMemories: run.briefedMemories,
+      })
+    })
+  })
+
+  // GET /api/v1/agent-sessions/:sessionRunId/triage-attempts — the run's
+  // interactive nudge history (issue #203), oldest first. The other half of
+  // the validation bar: nudge ignore-rate needs attempt outcomes (`expired` =
+  // armed with zero writes vs `completed`), which the row's terminal status
+  // alone loses once a run re-arms. The log is bounded (newest
+  // MAX_TRIAGE_ATTEMPT_LOG entries); `count` is the true total ever armed and
+  // `truncated` says when the two disagree. An entry with no `outcome` was
+  // never finalized — in flight while the row is `pending`, abandoned
+  // otherwise. Same id boundary and error shape as the routes above.
+  router.get('/api/v1/agent-sessions/:sessionRunId/triage-attempts', (req, res) => {
+    void guard('agent-sessions.triage-attempts', res, async () => {
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      // ACCESS GUARD: attempt bookkeeping is per-tenant audit data, so read
+      // access is asserted BEFORE the read (self-host allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      const run = await getAgentSessionRun(tenant(req), sessionRunId)
+      res.status(200).json({
+        sessionRunId: run.id,
+        items: run.triageAttemptLog,
+        count: run.triageAttemptCount,
+        truncated: run.triageAttemptCount > run.triageAttemptLog.length,
       })
     })
   })

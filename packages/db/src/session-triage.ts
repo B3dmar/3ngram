@@ -102,10 +102,12 @@ import {
   type AgentSessionTriageStatus,
   MAX_SESSION_EVENT_IDS,
   MAX_SESSION_EVENTS_LIMIT,
+  MAX_TRIAGE_ATTEMPT_LOG,
+  type TriageAttemptLogEntry,
   type TriageDeclineReason,
   type TriageOutcomeStatus,
 } from '@3ngram/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { hasUntriagedSessionEvent, settleNeedsLook } from './session-closer.js'
@@ -171,6 +173,7 @@ interface TriageRow {
   triageStatus: AgentSessionTriageStatus
   triageAttemptId: string | null
   triageArmedAt: Date | null
+  triageAttemptLog: TriageAttemptLogEntry[]
   lastTriagedEventIds: string[]
 }
 
@@ -182,8 +185,41 @@ const TRIAGE_COLUMNS = {
   triageStatus: agentSessions.triageStatus,
   triageAttemptId: agentSessions.triageAttemptId,
   triageArmedAt: agentSessions.triageArmedAt,
+  triageAttemptLog: agentSessions.triageAttemptLog,
   lastTriagedEventIds: agentSessions.lastTriagedEventIds,
 } as const
+
+/**
+ * Append one armed attempt to the bounded nudge log (issue #203), dropping the
+ * OLDEST entry past the cap — `triage_attempt_count` (incremented in the same
+ * UPDATE) keeps the true total, so a trimmed log stays detectable. Computed in
+ * TS from the ROW-LOCKED read rather than jsonb surgery in SQL: the lock has
+ * held the row since {@link lockTriageRow}, so the array the decision read is
+ * the array this write replaces.
+ */
+function appendAttemptEntry(
+  log: TriageAttemptLogEntry[],
+  entry: TriageAttemptLogEntry,
+): TriageAttemptLogEntry[] {
+  return [...log, entry].slice(-MAX_TRIAGE_ATTEMPT_LOG)
+}
+
+/**
+ * Stamp the outcome onto the entry this attempt armed. A no-op when the entry
+ * is gone (dropped by the cap, or a row armed before the log existed) — the
+ * attempt's terminal status still lands on the row either way. Entries nothing
+ * ever finalizes are LEFT OPEN deliberately: an abandoned handshake (the
+ * session died; the closer retired the row) is a different fact from a
+ * zero-write continuation, and stamping `expired` on it would fold the two
+ * into one ignore-rate bucket.
+ */
+function finalizeAttemptEntry(
+  log: TriageAttemptLogEntry[],
+  attemptId: string,
+  patch: { finalizedAt: string; outcome: TriageOutcomeStatus },
+): TriageAttemptLogEntry[] {
+  return log.map((entry) => (entry.attemptId === attemptId ? { ...entry, ...patch } : entry))
+}
 
 function keyPredicate(userId: string, key: AgentSessionNaturalKey) {
   return and(
@@ -538,25 +574,36 @@ async function armAttempt(
     options.ceiling ?? MAX_SESSION_EVENT_IDS,
   )
   const overflowed = visible.truncated
+  // THE STAMP IS READ HERE, not at the request boundary. `options.now` is
+  // older than this point by the whole cost of the transaction, the row lock
+  // and the listing above; stamping it would publish an attempt that is
+  // already partly aged, and a low `minAttemptAgeMs` would then let the very
+  // next `begin` finalize it. See BeginTriageOptions.armNow.
+  //
+  // It stays an app clock, not `now()` in SQL: every other decision in this
+  // module reads the injected clock, which is what keeps the entry rule and
+  // the debounce testable without a database. Read ONCE: the log entry and
+  // `triage_armed_at` must date the same attempt with the same instant.
+  const armedAt = options.armNow?.() ?? options.now
   await tx
     .update(agentSessions)
     .set({
       triageStatus: overflowed ? 'overflowed' : 'pending',
-      // THE STAMP IS READ HERE, not at the request boundary. `options.now` is
-      // older than this point by the whole cost of the transaction, the row lock
-      // and the listing above; stamping it would publish an attempt that is
-      // already partly aged, and a low `minAttemptAgeMs` would then let the very
-      // next `begin` finalize it. See BeginTriageOptions.armNow.
-      //
-      // It stays an app clock, not `now()` in SQL: every other decision in this
-      // module reads the injected clock, which is what keeps the entry rule and
-      // the debounce testable without a database.
       ...(overflowed
         ? {}
         : {
             triageAttemptId: options.attemptId,
-            triageArmedAt: options.armNow?.() ?? options.now,
+            triageArmedAt: armedAt,
             lastTriagedEventIds: visible.ids,
+            // The nudge history (issue #203): one entry per ARMED attempt —
+            // the overflow branch above armed nothing and injects nothing, so
+            // it logs nothing. The count is a plain SQL increment so it never
+            // saturates with the bounded log.
+            triageAttemptLog: appendAttemptEntry(row.triageAttemptLog, {
+              attemptId: options.attemptId,
+              armedAt: armedAt.toISOString(),
+            }),
+            triageAttemptCount: sql`${agentSessions.triageAttemptCount} + 1`,
           }),
     })
     .where(keyPredicate(userId, key))
@@ -579,6 +626,12 @@ async function armAttempt(
 export interface CompleteTriageOptions {
   /** The attempt this call claims to be finishing. The fence. */
   attemptId: string
+  /**
+   * The Stop's clock, injected like `begin`'s — this module reads no wall-clock
+   * of its own. Dates the log entry's `finalizedAt` (issue #203) and nothing
+   * else: the outcome decision is set arithmetic, not time.
+   */
+  now: Date
   /** Test-only per-run ceiling override; see {@link BeginTriageOptions.ceiling}. */
   ceiling?: number | undefined
 }
@@ -642,6 +695,13 @@ export async function completeSessionTriage(
     .set({
       triageStatus,
       lastTriagedEventIds: visible.ids.slice(0, MAX_SESSION_EVENT_IDS),
+      // Stamp the outcome onto the attempt's log entry (issue #203). Safe under
+      // the same fence as the status: the row lock has held since
+      // lockTriageRow, so `row.triageAttemptLog` is the array this replaces.
+      triageAttemptLog: finalizeAttemptEntry(row.triageAttemptLog, options.attemptId, {
+        finalizedAt: options.now.toISOString(),
+        outcome: triageStatus,
+      }),
       // Same reset `finishSessionTriage` makes on the closer's own terminal
       // write-back (issue #184 audit F4): this IS the interactive handshake's
       // equivalent durable write-back, and the reset rule is stated once, for

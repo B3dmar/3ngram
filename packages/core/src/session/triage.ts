@@ -117,14 +117,17 @@ export async function completeAgentSessionTriage(
   userId: string,
   /** Raw, for the same reason `begin` takes raw: the parse below is the boundary. */
   input: unknown,
+  /** Injected clock — dates the attempt-log entry's `finalizedAt` (issue #203). */
+  options?: SessionClockOptions,
 ): Promise<CompleteTriageResult> {
   const parsed = agentSessionTriageCompleteBodySchema.parse(input)
+  const now = options?.now ?? new Date()
   return withTenant(userId, (tx) =>
     completeSessionTriageDb(
       tx,
       userId,
       { agent: parsed.agent, sessionId: parsed.sessionId },
-      { attemptId: parsed.attemptId },
+      { attemptId: parsed.attemptId, now },
     ),
   )
 }

@@ -46,6 +46,7 @@ const openAgentSession = vi.fn()
 const closeAgentSession = vi.fn()
 const heartbeatAgentSession = vi.fn()
 const getAgentSession = vi.fn()
+const getAgentSessionRun = vi.fn()
 // --- the Stop-nudge handshake (issue #166 step 7a) ---
 const beginAgentSessionTriage = vi.fn()
 const completeAgentSessionTriage = vi.fn()
@@ -243,6 +244,7 @@ vi.mock('@3ngram/core', async () => ({
   closeAgentSession,
   heartbeatAgentSession,
   getAgentSession,
+  getAgentSessionRun,
   beginAgentSessionTriage,
   completeAgentSessionTriage,
   AccountDeletedError,
@@ -392,6 +394,8 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
     ['POST', `/api/v1/proposals/${NEW_ID}/apply`],
     ['POST', `/api/v1/proposals/${NEW_ID}/reject`],
     ['GET', `/api/v1/agent-sessions/${NEW_ID}/events`],
+    ['GET', `/api/v1/agent-sessions/${NEW_ID}`],
+    ['GET', `/api/v1/agent-sessions/${NEW_ID}/triage-attempts`],
     ['POST', '/api/v1/agent-sessions/open'],
     ['POST', '/api/v1/agent-sessions/close'],
     ['POST', '/api/v1/agent-sessions/heartbeat'],
@@ -2588,6 +2592,141 @@ describe('GET /api/v1/agent-sessions/:sessionRunId/events', () => {
     const res = await call(`/api/v1/agent-sessions/${RUN}/events`, { key: VALID_KEY })
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'invalid_input' })
+  })
+})
+
+// GET /api/v1/agent-sessions/:sessionRunId and .../triage-attempts: the
+// issue #203 validation-phase reads. Thin-adapter contract only — ownership
+// (UnknownSessionRunError) and the row/log projection are core/db's job; the
+// routes validate the path id, call core once, and shape ISO timestamps.
+describe('agent-session run reads (issue #203)', () => {
+  const RUN = crypto.randomUUID()
+  const ATTEMPT = crypto.randomUUID()
+  const BRIEFED = crypto.randomUUID()
+  const run = () => ({
+    id: RUN,
+    agent: 'claude-code',
+    sessionId: 'conv-1',
+    source: 'startup',
+    project: 'proj',
+    scope: 'work',
+    selector: { kind: 'all' },
+    activationEpoch: 2,
+    triageStatus: 'completed',
+    openedAt: new Date('2026-09-01T08:00:00.000Z'),
+    closedAt: new Date('2026-09-01T09:00:00.000Z'),
+    lastSeenAt: new Date('2026-09-01T08:59:00.000Z'),
+    briefingDeliveredAt: new Date('2026-09-01T08:00:01.000Z'),
+    briefedMemories: [{ id: BRIEFED, topic: 'ship #203', status: 'open' }],
+    triageAttemptLog: [
+      {
+        attemptId: ATTEMPT,
+        armedAt: '2026-09-01T08:30:00.000Z',
+        finalizedAt: '2026-09-01T08:31:00.000Z',
+        outcome: 'completed',
+      },
+    ],
+    triageAttemptCount: 1,
+  })
+
+  it('GET /:sessionRunId shapes the row and never the excerpt or watermark', async () => {
+    getAgentSessionRun.mockResolvedValue(run())
+    const res = await call(`/api/v1/agent-sessions/${RUN}`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      sessionRunId: RUN,
+      agent: 'claude-code',
+      sessionId: 'conv-1',
+      source: 'startup',
+      project: 'proj',
+      scope: 'work',
+      selector: { kind: 'all' },
+      activationEpoch: 2,
+      triageStatus: 'completed',
+      openedAt: '2026-09-01T08:00:00.000Z',
+      closedAt: '2026-09-01T09:00:00.000Z',
+      lastSeenAt: '2026-09-01T08:59:00.000Z',
+      briefingDeliveredAt: '2026-09-01T08:00:01.000Z',
+      briefedMemories: [{ id: BRIEFED, topic: 'ship #203', status: 'open' }],
+    })
+    expect(getAgentSessionRun).toHaveBeenCalledWith(TENANT, RUN)
+  })
+
+  it('GET /:sessionRunId serialises a never-closed, never-briefed row with nulls', async () => {
+    getAgentSessionRun.mockResolvedValue({
+      ...run(),
+      project: null,
+      scope: null,
+      closedAt: null,
+      briefingDeliveredAt: null,
+      briefedMemories: [],
+    })
+    const res = await call(`/api/v1/agent-sessions/${RUN}`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.closedAt).toBeNull()
+    expect(body.briefingDeliveredAt).toBeNull()
+    expect(body.briefedMemories).toEqual([])
+  })
+
+  it('GET /:sessionRunId/triage-attempts shapes items, count and truncated', async () => {
+    getAgentSessionRun.mockResolvedValue(run())
+    const res = await call(`/api/v1/agent-sessions/${RUN}/triage-attempts`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      sessionRunId: RUN,
+      items: [
+        {
+          attemptId: ATTEMPT,
+          armedAt: '2026-09-01T08:30:00.000Z',
+          finalizedAt: '2026-09-01T08:31:00.000Z',
+          outcome: 'completed',
+        },
+      ],
+      count: 1,
+      truncated: false,
+    })
+    expect(getAgentSessionRun).toHaveBeenCalledWith(TENANT, RUN)
+  })
+
+  it('triage-attempts reports truncated when the true count outruns the bounded log', async () => {
+    getAgentSessionRun.mockResolvedValue({ ...run(), triageAttemptCount: 51 })
+    const res = await call(`/api/v1/agent-sessions/${RUN}/triage-attempts`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { count: number; truncated: boolean }
+    expect(body.count).toBe(51)
+    expect(body.truncated).toBe(true)
+  })
+
+  it('400s a malformed run id before core is reached, on both routes', async () => {
+    for (const path of [
+      '/api/v1/agent-sessions/not-a-uuid',
+      '/api/v1/agent-sessions/not-a-uuid/triage-attempts',
+    ]) {
+      const res = await call(path, { key: VALID_KEY })
+      expect(res.status, path).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
+    expect(getAgentSessionRun).not.toHaveBeenCalled()
+  })
+
+  it('canonicalizes an uppercase run id before handing it to core', async () => {
+    getAgentSessionRun.mockResolvedValue(run())
+    const res = await call(`/api/v1/agent-sessions/${RUN.toUpperCase()}`, { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    expect(getAgentSessionRun).toHaveBeenCalledWith(TENANT, RUN)
+  })
+
+  it('maps a foreign/unknown run id to 400 invalid_input, matching the events read', async () => {
+    getAgentSessionRun.mockRejectedValue(new UnknownSessionRunError(RUN))
+    for (const path of [
+      `/api/v1/agent-sessions/${RUN}`,
+      `/api/v1/agent-sessions/${RUN}/triage-attempts`,
+    ]) {
+      const res = await call(path, { key: VALID_KEY })
+      expect(res.status, path).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid_input' })
+    }
   })
 })
 

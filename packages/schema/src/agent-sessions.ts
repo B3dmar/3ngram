@@ -438,6 +438,38 @@ export const triageOutcomeStatusSchema = z.enum(['completed', 'expired', 'overfl
 export type TriageOutcomeStatus = z.infer<typeof triageOutcomeStatusSchema>
 
 /**
+ * Per-row bound on `triage_attempt_log`. Appends past it drop the OLDEST entry;
+ * `triage_attempt_count` keeps the true total, so a reader can tell a trimmed
+ * log from a complete one. Fifty is far past any non-pathological run: every
+ * re-arm needs a provenance event outside the watermark, and the per-run event
+ * ceiling ({@link MAX_SESSION_EVENT_IDS}) terminates a run long before its
+ * attempts could matter at this scale.
+ */
+export const MAX_TRIAGE_ATTEMPT_LOG = 50
+
+/**
+ * One INTERACTIVE nudge attempt, as `triage_attempt_log` records it
+ * (issue #203). Appended when `begin` arms; `finalizedAt`/`outcome` are stamped
+ * by the `complete` that finishes the attempt. An entry with NO outcome is an
+ * attempt nothing ever finalized: still in flight while the row is `pending`,
+ * abandoned otherwise (the session died mid-handshake, or the closer took the
+ * row over — the closer's own claims are deliberately not logged here, because
+ * the log measures the Stop nudge, not the background worker).
+ *
+ * Timestamps are ISO strings because the entries live in a jsonb column; ids
+ * and instants only — no memory content rides here.
+ */
+export const triageAttemptLogEntrySchema = z
+  .object({
+    attemptId: z.uuid(),
+    armedAt: z.iso.datetime(),
+    finalizedAt: z.iso.datetime().optional(),
+    outcome: triageOutcomeStatusSchema.optional(),
+  })
+  .strict()
+export type TriageAttemptLogEntry = z.infer<typeof triageAttemptLogEntrySchema>
+
+/**
  * The absorb receipt. COUNTS ONLY — the event ids themselves are audit-log
  * identifiers for memories this run wrote, and the hook has no use for them
  * (hard rule 6 keeps the response to ids and counts; here it is only counts).
@@ -576,6 +608,58 @@ export const sessionEventsResponseSchema = z
   })
   .strict()
 export type SessionEventsResponse = z.infer<typeof sessionEventsResponseSchema>
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/agent-sessions/:sessionRunId — the bookkeeping-row read
+// GET /api/v1/agent-sessions/:sessionRunId/triage-attempts — the nudge history
+// (issue #203: the #166 validation phase needs `briefed_memories` to score
+// closer commitment recall, and attempt outcomes to score nudge ignore-rate;
+// neither was readable from the REST surface).
+// ---------------------------------------------------------------------------
+
+/**
+ * The bookkeeping row for one run, addressed by `sessionRunId` — read-only and
+ * tenant-scoped like the events read beside it. Everything here is bookkeeping
+ * the tenant's own hook wrote at open time plus the row's lifecycle state;
+ * `last_message_excerpt` and the watermark ids are deliberately NOT projected —
+ * the excerpt is user/assistant content with exactly one consumer (the closer),
+ * and the audit driver reads the run's events through the events endpoint.
+ */
+export const agentSessionRunResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    agent: agentNameSchema,
+    sessionId: harnessSessionIdSchema,
+    source: agentSessionSourceSchema,
+    project: projectSchema.nullable(),
+    scope: scopeSchema.nullable(),
+    selector: briefingSelectorV2Schema,
+    activationEpoch: z.number().int().positive(),
+    triageStatus: agentSessionTriageStatusSchema,
+    openedAt: z.iso.datetime(),
+    closedAt: z.iso.datetime().nullable(),
+    lastSeenAt: z.iso.datetime(),
+    briefingDeliveredAt: z.iso.datetime().nullable(),
+    briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
+  })
+  .strict()
+export type AgentSessionRunResponse = z.infer<typeof agentSessionRunResponseSchema>
+
+/**
+ * One run's interactive nudge attempts, oldest first. `count` is the true
+ * total ever armed; `truncated` is `count > items.length` — the log keeps the
+ * newest {@link MAX_TRIAGE_ATTEMPT_LOG} entries, so a trimmed history announces
+ * itself instead of silently under-counting an ignore-rate denominator.
+ */
+export const sessionTriageAttemptsResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    items: z.array(triageAttemptLogEntrySchema).max(MAX_TRIAGE_ATTEMPT_LOG),
+    count: z.number().int().min(0),
+    truncated: z.boolean(),
+  })
+  .strict()
+export type SessionTriageAttemptsResponse = z.infer<typeof sessionTriageAttemptsResponseSchema>
 
 // ---------------------------------------------------------------------------
 // Closer v1 — the model's verdict (docs/concepts/session-continuity.mdx layer 5)
