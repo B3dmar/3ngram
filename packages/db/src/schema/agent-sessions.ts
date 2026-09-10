@@ -8,6 +8,7 @@ import {
   agentSessionTriageStatusSchema,
   type BriefedMemory,
   type BriefingSelectorV2Input,
+  type TriageAttemptLogEntry,
 } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
@@ -53,6 +54,20 @@ export const agentSessions = pgTable(
     // armAttempt and never cleared: a terminal status already says the attempt
     // is over, so clearing would only cost a write and lose the last arm time.
     triageArmedAt: timestamp('triage_armed_at', { withTimezone: true }),
+    // THE INTERACTIVE NUDGE HISTORY (issue #203). Appended by `armAttempt`,
+    // finalized in place by `completeSessionTriage`; the closer's claims are
+    // not logged — the log measures the Stop nudge (ignore-rate), not the
+    // background worker. Bounded at MAX_TRIAGE_ATTEMPT_LOG, dropping the
+    // OLDEST; `triage_attempt_count` keeps the true total — of attempts armed
+    // since the column shipped (migration 0037 backfills the one recoverable
+    // in-flight `pending` attempt; terminal pre-log attempts left no
+    // recoverable identity and are not invented) — so a trimmed log is
+    // detectable. Ids, instants and outcome words only — no memory content.
+    triageAttemptLog: jsonb('triage_attempt_log')
+      .notNull()
+      .default([])
+      .$type<TriageAttemptLogEntry[]>(),
+    triageAttemptCount: integer('triage_attempt_count').notNull().default(0),
     lastTriagedEventIds: jsonb('last_triaged_event_ids').notNull().default([]).$type<string[]>(),
     briefingDeliveredAt: timestamp('briefing_delivered_at', { withTimezone: true }),
     briefedMemories: jsonb('briefed_memories').notNull().default([]).$type<BriefedMemory[]>(),

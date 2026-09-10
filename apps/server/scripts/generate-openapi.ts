@@ -25,6 +25,7 @@ import {
   agentSessionHeartbeatResponseSchema,
   agentSessionOpenBodySchema,
   agentSessionOpenResponseSchema,
+  agentSessionRunResponseSchema,
   agentSessionTriageBeginBodySchema,
   agentSessionTriageBeginResponseSchema,
   agentSessionTriageCompleteBodySchema,
@@ -68,7 +69,9 @@ import {
   searchRestResponseV2Schema,
   sessionEventsQuerySchema,
   sessionEventsResponseSchema,
+  sessionTriageAttemptsResponseSchema,
   statsResponseSchema,
+  triageAttemptLogEntrySchema,
   versionResponseSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
@@ -277,6 +280,8 @@ const exportAgentSession = z
     triageStatus: z.string(),
     triageAttemptId: z.uuid().nullable(),
     triageArmedAt: z.string().datetime().nullable(),
+    triageAttemptLog: z.array(triageAttemptLogEntrySchema),
+    triageAttemptCount: z.number().int(),
     lastTriagedEventIds: z.array(z.uuid()),
     briefingDeliveredAt: z.string().datetime().nullable(),
     briefedMemories: z.array(
@@ -447,6 +452,8 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'post', path: '/api/v1/agent-sessions/triage/complete', operationId: 'completeAgentSessionTriage', summary: 'Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark.', body: agentSessionTriageCompleteBodySchema, status: 200, response: agentSessionTriageCompleteResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }, { status: 409, description: 'The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row', reasons: ['conflict'] }] },
   { method: 'get', path: '/api/v1/prompts/debrief', operationId: 'getDebriefPrompt', summary: 'Render the debrief prompt the MCP debrief registrar serves, so a Stop hook can inject it. Instructions are server-authored; the scope and project facets and the run\'s briefed commitments render as delimited data, never as imperative sentences.', query: debriefPromptQuerySchema, status: 200, response: debriefPromptResponseSchema, errors: [{ status: 404, description: 'A natural key was supplied but this tenant owns no session with it', reasons: ['not_found'] }] },
   { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId/events', operationId: 'listSessionEvents', summary: 'List the audit events one agent-session run produced (bounded, keyset-paginated). Each page is its own read-committed snapshot, so a write that commits after a page was read may be absent from that walk even if its id sorts earlier; treat one walk as a bounded observation, not the complete record of a run.', query: sessionEventsQuerySchema, status: 200, response: sessionEventsResponseSchema, errors: [{ status: 400, description: 'Malformed run id, cursor or limit, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
+  { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId', operationId: 'getAgentSessionRun', summary: 'The bookkeeping row for one run, addressed by sessionRunId: identity, lifecycle timestamps, activation_epoch, triage status and the briefed memories the run was shown. Read-only — the read never refreshes the lease or resurrects a closed row. The last assistant-message excerpt and the watermark ids are not projected.', status: 200, response: agentSessionRunResponseSchema, errors: [{ status: 400, description: 'Malformed run id, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
+  { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId/triage-attempts', operationId: 'listSessionTriageAttempts', summary: 'The run\'s interactive nudge attempts, oldest first: when each was armed and how it finished (completed with provenance, expired on a zero-write continuation, overflowed past the ceiling). An entry with no outcome was never finalized — in flight while the row is pending, abandoned otherwise. The log keeps the newest entries up to a bound; count is the true total and truncated says when they disagree.', status: 200, response: sessionTriageAttemptsResponseSchema, errors: [{ status: 400, description: 'Malformed run id, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/scopes', operationId: 'listScopes', summary: 'List the tenant\'s registered scope names', status: 200, response: scopesList },
   { method: 'get', path: '/api/v1/stats', operationId: 'getStats', summary: 'Bounded count aggregates (counts only, never content)', status: 200, response: statsResponseSchema },
   { method: 'get', path: '/api/v1/me', operationId: 'getMe', summary: 'The authenticated identity', status: 200, response: meResponseSchema },

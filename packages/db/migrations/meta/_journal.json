@@ -260,6 +260,13 @@
       "when": 1787584823589,
       "tag": "0036_triage_armed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789027442336,
+      "tag": "0037_triage_attempt_log",
+      "breakpoints": true
     }
   ]
 }

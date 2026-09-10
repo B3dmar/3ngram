@@ -364,6 +364,7 @@ export {
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   type AgentSessionRecord,
+  type AgentSessionRunRead,
   type CloseSessionResult,
   closeSession,
   type HeartbeatSessionResult,
@@ -371,6 +372,7 @@ export {
   type OpenSessionResult,
   openSession,
   readAgentSession,
+  readAgentSessionRun,
 } from './session-lifecycle.js'
 export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
 // --- Stop-nudge handshake: arm an attempt, then absorb the continuation ---

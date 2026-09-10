@@ -22,8 +22,10 @@ import type {
   AgentSessionHeartbeatInput,
   AgentSessionNaturalKey,
   AgentSessionOpenInput,
+  AgentSessionTriageStatus,
   BriefedMemory,
   BriefingSelectorV2Input,
+  TriageAttemptLogEntry,
 } from '@3ngram/schema'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { deletedEmail } from './account-delete.js'
@@ -136,6 +138,47 @@ export async function readAgentSession(
   key: AgentSessionNaturalKey,
 ): Promise<AgentSessionRecord | undefined> {
   return readByKey(tx, userId, key)
+}
+
+/**
+ * The record plus the triage state and the bounded nudge history — what the
+ * issue #203 read endpoints project. Deliberately NOT the whole row:
+ * `last_message_excerpt` (user/assistant content with exactly one consumer, the
+ * closer) and the watermark ids (readable as the run's events through the
+ * events endpoint) stay off the wire.
+ */
+export interface AgentSessionRunRead extends AgentSessionRecord {
+  triageStatus: AgentSessionTriageStatus
+  triageAttemptLog: TriageAttemptLogEntry[]
+  triageAttemptCount: number
+}
+
+/**
+ * Read one row by `sessionRunId`, or undefined. Read-only for the same reason
+ * {@link readAgentSession} is: a validation-phase audit read must never refresh
+ * a lease — or worse, resurrect a closed row — as a side effect of measuring
+ * it. RLS makes not-owned and not-found one answer; the caller maps undefined
+ * to the same failure the write path gives an unowned run id.
+ */
+export async function readAgentSessionRun(
+  tx: TenantTx,
+  userId: string,
+  sessionRunId: string,
+): Promise<AgentSessionRunRead | undefined> {
+  const [row] = await tx
+    .select({
+      ...RECORD_COLUMNS,
+      triageStatus: agentSessions.triageStatus,
+      triageAttemptLog: agentSessions.triageAttemptLog,
+      triageAttemptCount: agentSessions.triageAttemptCount,
+    })
+    .from(agentSessions)
+    .where(and(eq(agentSessions.userId, userId), eq(agentSessions.id, sessionRunId)))
+    .limit(1)
+  if (row === undefined) return undefined
+  // TEXT column with a generated CHECK, so the driver types it as string; the
+  // CHECK is what makes the narrowing true (same shape readCloserSession uses).
+  return { ...row, triageStatus: row.triageStatus as AgentSessionTriageStatus }
 }
 
 /**
