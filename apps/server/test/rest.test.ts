@@ -2165,6 +2165,15 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         triageStatus: 'idle',
         triageAttemptId: null,
         triageArmedAt: new Date('2026-01-01T00:00:00.000Z'),
+        triageAttemptLog: [
+          {
+            attemptId: COMMIT_ID,
+            armedAt: '2026-01-01T00:00:00.000Z',
+            finalizedAt: '2026-01-01T00:01:00.000Z',
+            outcome: 'expired',
+          },
+        ],
+        triageAttemptCount: 1,
         lastTriagedEventIds: [],
         briefingDeliveredAt: null,
         briefedMemories: [{ id: NEW_ID, topic: 'ship v1.4.4', status: 'open' }],

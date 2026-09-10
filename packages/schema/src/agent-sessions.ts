@@ -624,6 +624,17 @@ export type SessionEventsResponse = z.infer<typeof sessionEventsResponseSchema>
  * `last_message_excerpt` and the watermark ids are deliberately NOT projected —
  * the excerpt is user/assistant content with exactly one consumer (the closer),
  * and the audit driver reads the run's events through the events endpoint.
+ *
+ * `briefedMemories` is the CURRENT activation's delivery, not a per-activation
+ * history: a reopening `startup` restamps it (and `briefingDeliveredAt`) while
+ * the events endpoint keeps every event of every activation under the one
+ * `sessionRunId`. A reader computing per-briefing metrics (closer commitment
+ * recall) over a reopened run must therefore scope the run's events to
+ * `createdAt >= briefingDeliveredAt` — the stamp dates exactly the snapshot
+ * this response carries, and the closer's epoch fences keep a prior
+ * activation's resolves from landing after the restamp. The row stores one
+ * snapshot by shipped contract (the concept page's layer 1); this endpoint
+ * mirrors it rather than growing a second history store.
  */
 export const agentSessionRunResponseSchema = z
   .object({

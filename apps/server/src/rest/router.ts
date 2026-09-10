@@ -366,7 +366,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // uppercase spelling is canonicalized rather than matching nothing.
   // `last_message_excerpt` and the watermark ids are deliberately not
   // projected (the excerpt is content with exactly one consumer, the closer;
-  // the run's events are the events endpoint's job).
+  // the run's events are the events endpoint's job). `briefedMemories` is the
+  // CURRENT activation's snapshot — a reopening startup restamps it — so a
+  // recall reader over a reopened run scopes events by `briefingDeliveredAt`
+  // (agentSessionRunResponseSchema documents the contract).
   router.get('/api/v1/agent-sessions/:sessionRunId', (req, res) => {
     void guard('agent-sessions.get', res, async () => {
       const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
@@ -1023,6 +1026,8 @@ export function restRouter(options: RestRouterOptions): Router {
           triageStatus: session.triageStatus,
           triageAttemptId: session.triageAttemptId ?? null,
           triageArmedAt: session.triageArmedAt?.toISOString() ?? null,
+          triageAttemptLog: session.triageAttemptLog,
+          triageAttemptCount: session.triageAttemptCount,
           lastTriagedEventIds: session.lastTriagedEventIds,
           briefingDeliveredAt: session.briefingDeliveredAt?.toISOString() ?? null,
           briefedMemories: session.briefedMemories,

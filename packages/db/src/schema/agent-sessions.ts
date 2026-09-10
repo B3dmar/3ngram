@@ -58,7 +58,10 @@ export const agentSessions = pgTable(
     // finalized in place by `completeSessionTriage`; the closer's claims are
     // not logged — the log measures the Stop nudge (ignore-rate), not the
     // background worker. Bounded at MAX_TRIAGE_ATTEMPT_LOG, dropping the
-    // OLDEST; `triage_attempt_count` keeps the true total so a trimmed log is
+    // OLDEST; `triage_attempt_count` keeps the true total — of attempts armed
+    // since the column shipped (migration 0037 backfills the one recoverable
+    // in-flight `pending` attempt; terminal pre-log attempts left no
+    // recoverable identity and are not invented) — so a trimmed log is
     // detectable. Ids, instants and outcome words only — no memory content.
     triageAttemptLog: jsonb('triage_attempt_log')
       .notNull()

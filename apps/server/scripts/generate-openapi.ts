@@ -71,6 +71,7 @@ import {
   sessionEventsResponseSchema,
   sessionTriageAttemptsResponseSchema,
   statsResponseSchema,
+  triageAttemptLogEntrySchema,
   versionResponseSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
@@ -279,6 +280,8 @@ const exportAgentSession = z
     triageStatus: z.string(),
     triageAttemptId: z.uuid().nullable(),
     triageArmedAt: z.string().datetime().nullable(),
+    triageAttemptLog: z.array(triageAttemptLogEntrySchema),
+    triageAttemptCount: z.number().int(),
     lastTriagedEventIds: z.array(z.uuid()),
     briefingDeliveredAt: z.string().datetime().nullable(),
     briefedMemories: z.array(

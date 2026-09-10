@@ -1051,7 +1051,7 @@ there would `409` every resume of a live session instead of refreshing its lease
 | `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
-| `GET` | `/api/v1/agent-sessions/{sessionRunId}` | the bookkeeping-row read: identity, lifecycle, epoch, triage status, `briefed_memories` — never the excerpt or the watermark ids (shipped, issue #203) |
+| `GET` | `/api/v1/agent-sessions/{sessionRunId}` | the bookkeeping-row read: identity, lifecycle, epoch, triage status, `briefed_memories` — never the excerpt or the watermark ids. The briefing is the CURRENT activation's snapshot (a reopening startup restamps it), so a recall reader over a reopened run scopes the run's events by `briefing_delivered_at` (shipped, issue #203) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/triage-attempts` | the run's interactive nudge history: armed/finalized instants and outcomes off the bounded `triage_attempt_log`, with the true `count` and a `truncated` flag (shipped, issue #203) |
 | `GET` | `/api/v1/prompts/debrief` | render the same registrar (shipped) |
 
