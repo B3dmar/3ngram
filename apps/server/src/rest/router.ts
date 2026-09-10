@@ -36,6 +36,7 @@ import {
   getFacts,
   getMemoryById,
   getMemoryHistory,
+  getSessionTriageAttempts,
   type LimitsResolver,
   listMemories,
   listMemoryFacets,
@@ -411,13 +412,10 @@ export function restRouter(options: RestRouterOptions): Router {
       // ACCESS GUARD: attempt bookkeeping is per-tenant audit data, so read
       // access is asserted BEFORE the read (self-host allows all).
       if (options.access) await options.access.assertRead(tenant(req))
-      const run = await getAgentSessionRun(tenant(req), sessionRunId)
-      res.status(200).json({
-        sessionRunId: run.id,
-        items: run.triageAttemptLog,
-        count: run.triageAttemptCount,
-        truncated: run.triageAttemptCount > run.triageAttemptLog.length,
-      })
+      // Core owns the `truncated` derivation (hard rule 5) — this route is
+      // serialization only, and the payload is already JSON-shaped.
+      const attempts = await getSessionTriageAttempts(tenant(req), sessionRunId)
+      res.status(200).json(attempts)
     })
   })
 

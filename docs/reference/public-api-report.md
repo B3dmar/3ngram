@@ -338,6 +338,7 @@ its row here even when its name and kind are unchanged.
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
 | `SessionSweepRepo` | interface | `ccf9ddfd0fe6` |
 | `SessionSweepResult` | interface | `e114e7717b5e` |
+| `SessionTriageAttempts` | interface | `967ff9c7e974` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingRepo` | interface | `9d64e4c86d6c` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
@@ -386,6 +387,7 @@ its row here even when its name and kind are unchanged.
 | `getMemoriesByIds` | function | `a9fa490782cc` |
 | `getMemoryById` | function | `b5680c6aeae8` |
 | `getMemoryHistory` | function | `5bec4c08ade8` |
+| `getSessionTriageAttempts` | function | `4dfad0e2bc9c` |
 | `handoff` | function | `e5bc072664c7` |
 | `hashPassword` | function | `f2db7abeaf84` |
 | `heartbeatAgentSession` | function | `952816b8fcca` |
@@ -689,7 +691,7 @@ its row here even when its name and kind are unchanged.
 | `WrittenMemory` | interface | `bec591e2c3d0` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
-| `agentSessions` | const | `f8c3bb374326` |
+| `agentSessions` | const | `a8e7698df3bc` |
 | `apiKeys` | const | `c5d36321993d` |
 | `appendImportedEvent` | function | `4654962471fe` |
 | `applyFactProposal` | function | `bb1b15f61cc0` |
@@ -1367,14 +1369,14 @@ its row here even when its name and kind are unchanged.
 | `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |
 | `sessionProvenancePayloadSchema` | const | `1f6f03db6b5d` |
 | `sessionRunIdSchema` | const | `f3fe775e7cde` |
-| `sessionTriageAttemptsResponseSchema` | const | `a9e064d246e7` |
+| `sessionTriageAttemptsResponseSchema` | const | `2f55a3f1d093` |
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
 | `statsResponseSchema` | const | `8bf52ea1e959` |
 | `tagSchema` | const | `d32d1e9837a9` |
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
-| `triageAttemptLogEntrySchema` | const | `9901760059ec` |
+| `triageAttemptLogEntrySchema` | const | `6b2f1c1f81f2` |
 | `triageDeclineReasonSchema` | const | `0d7abf3381fe` |
 | `triageOutcomeStatusSchema` | const | `7044bf7dd8b4` |
 | `userCredentialsSchema` | const | `39a616eb6d60` |

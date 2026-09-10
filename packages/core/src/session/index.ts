@@ -10,11 +10,13 @@ export {
   closeAgentSession,
   getAgentSession,
   getAgentSessionRun,
+  getSessionTriageAttempts,
   type HeartbeatSessionResult,
   heartbeatAgentSession,
   type OpenSessionResult,
   openAgentSession,
   type SessionClockOptions,
+  type SessionTriageAttempts,
 } from './lifecycle.js'
 export {
   AgentSessionTriageConflictError,

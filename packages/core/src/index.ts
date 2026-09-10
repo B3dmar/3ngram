@@ -243,11 +243,13 @@ export {
   evaluateTriageEntry,
   getAgentSession,
   getAgentSessionRun,
+  getSessionTriageAttempts,
   type HeartbeatSessionResult,
   heartbeatAgentSession,
   type OpenSessionResult,
   openAgentSession,
   type SessionClockOptions,
+  type SessionTriageAttempts,
   type TriageDebounceThresholds,
   type TriageEntryDecision,
 } from './session/index.js'

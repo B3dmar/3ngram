@@ -449,24 +449,36 @@ export const MAX_TRIAGE_ATTEMPT_LOG = 50
 
 /**
  * One INTERACTIVE nudge attempt, as `triage_attempt_log` records it
- * (issue #203). Appended when `begin` arms; `finalizedAt`/`outcome` are stamped
- * by the `complete` that finishes the attempt. An entry with NO outcome is an
- * attempt nothing ever finalized: still in flight while the row is `pending`,
- * abandoned otherwise (the session died mid-handshake, or the closer took the
- * row over — the closer's own claims are deliberately not logged here, because
- * the log measures the Stop nudge, not the background worker).
+ * (issue #203). Appended when `begin` arms; the `complete` that finishes the
+ * attempt stamps `finalizedAt` AND `outcome` together. An OPEN entry (neither
+ * field) is an attempt nothing ever finalized: still in flight while the row
+ * is `pending`, abandoned otherwise (the session died mid-handshake, or the
+ * closer took the row over — the closer's own claims are deliberately not
+ * logged here, because the log measures the Stop nudge, not the background
+ * worker).
+ *
+ * A UNION, not two independent optionals: the write path only ever produces
+ * the two variants below, and a half-finalized entry (an outcome with no
+ * instant, or the reverse) is unclassifiable to a validation reader — so the
+ * boundary refuses to represent it rather than trusting every consumer to.
  *
  * Timestamps are ISO strings because the entries live in a jsonb column; ids
  * and instants only — no memory content rides here.
  */
-export const triageAttemptLogEntrySchema = z
-  .object({
-    attemptId: z.uuid(),
-    armedAt: z.iso.datetime(),
-    finalizedAt: z.iso.datetime().optional(),
-    outcome: triageOutcomeStatusSchema.optional(),
-  })
-  .strict()
+const triageAttemptArmedShape = {
+  attemptId: z.uuid(),
+  armedAt: z.iso.datetime(),
+}
+export const triageAttemptLogEntrySchema = z.union([
+  z
+    .object({
+      ...triageAttemptArmedShape,
+      finalizedAt: z.iso.datetime(),
+      outcome: triageOutcomeStatusSchema,
+    })
+    .strict(),
+  z.object(triageAttemptArmedShape).strict(),
+])
 export type TriageAttemptLogEntry = z.infer<typeof triageAttemptLogEntrySchema>
 
 /**
@@ -658,9 +670,12 @@ export type AgentSessionRunResponse = z.infer<typeof agentSessionRunResponseSche
 
 /**
  * One run's interactive nudge attempts, oldest first. `count` is the true
- * total ever armed; `truncated` is `count > items.length` — the log keeps the
- * newest {@link MAX_TRIAGE_ATTEMPT_LOG} entries, so a trimmed history announces
- * itself instead of silently under-counting an ignore-rate denominator.
+ * attempt total the row knows of; `truncated` is `count > items.length`, and
+ * it announces EVERY incomplete history rather than only a cap trim: the log
+ * keeps the newest {@link MAX_TRIAGE_ATTEMPT_LOG} entries, and migration 0037
+ * seeds `count` without an entry for a legacy pending attempt whose arm time
+ * predates `triage_armed_at` — either way the reader learns the list is not
+ * the whole denominator instead of silently under-counting an ignore rate.
  */
 export const sessionTriageAttemptsResponseSchema = z
   .object({

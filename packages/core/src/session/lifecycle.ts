@@ -35,6 +35,7 @@ import {
   agentSessionHeartbeatBodySchema,
   agentSessionNaturalKeySchema,
   agentSessionOpenBodySchema,
+  type TriageAttemptLogEntry,
 } from '@3ngram/schema'
 
 export type {
@@ -162,4 +163,35 @@ export async function getAgentSessionRun(
   const row = await withTenant(userId, (tx) => readAgentSessionRunDb(tx, userId, sessionRunId))
   if (row === undefined) throw new UnknownSessionRunError(sessionRunId)
   return row
+}
+
+/** One run's interactive nudge history, as the triage-attempts read serves it. */
+export interface SessionTriageAttempts {
+  sessionRunId: string
+  /** Oldest first; the newest MAX_TRIAGE_ATTEMPT_LOG entries the row kept. */
+  items: TriageAttemptLogEntry[]
+  /** The true attempt total the row knows of (see the schema's doc). */
+  count: number
+  /** `count > items.length` — a cap trim, or a legacy seed with no entry. */
+  truncated: boolean
+}
+
+/**
+ * The run's interactive nudge history (issue #203). The `truncated`
+ * derivation — "the list is not the whole denominator" — is the domain
+ * invariant relating the bounded log to the count column, so it lives HERE
+ * rather than in a transport (hard rule 5): every consumer gets the same
+ * answer, and a route is left with serialization only.
+ */
+export async function getSessionTriageAttempts(
+  userId: string,
+  sessionRunId: string,
+): Promise<SessionTriageAttempts> {
+  const row = await getAgentSessionRun(userId, sessionRunId)
+  return {
+    sessionRunId: row.id,
+    items: row.triageAttemptLog,
+    count: row.triageAttemptCount,
+    truncated: row.triageAttemptCount > row.triageAttemptLog.length,
+  }
 }

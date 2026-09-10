@@ -47,6 +47,7 @@ const closeAgentSession = vi.fn()
 const heartbeatAgentSession = vi.fn()
 const getAgentSession = vi.fn()
 const getAgentSessionRun = vi.fn()
+const getSessionTriageAttempts = vi.fn()
 // --- the Stop-nudge handshake (issue #166 step 7a) ---
 const beginAgentSessionTriage = vi.fn()
 const completeAgentSessionTriage = vi.fn()
@@ -245,6 +246,7 @@ vi.mock('@3ngram/core', async () => ({
   heartbeatAgentSession,
   getAgentSession,
   getAgentSessionRun,
+  getSessionTriageAttempts,
   beginAgentSessionTriage,
   completeAgentSessionTriage,
   AccountDeletedError,
@@ -2678,11 +2680,10 @@ describe('agent-session run reads (issue #203)', () => {
     expect(body.briefedMemories).toEqual([])
   })
 
-  it('GET /:sessionRunId/triage-attempts shapes items, count and truncated', async () => {
-    getAgentSessionRun.mockResolvedValue(run())
-    const res = await call(`/api/v1/agent-sessions/${RUN}/triage-attempts`, { key: VALID_KEY })
-    expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({
+  it('GET /:sessionRunId/triage-attempts serialises the core result verbatim', async () => {
+    // The `truncated` derivation is CORE's (hard rule 5) — the route only
+    // serialises, so what core answers is what the wire carries.
+    const attempts = {
       sessionRunId: RUN,
       items: [
         {
@@ -2692,19 +2693,14 @@ describe('agent-session run reads (issue #203)', () => {
           outcome: 'completed',
         },
       ],
-      count: 1,
-      truncated: false,
-    })
-    expect(getAgentSessionRun).toHaveBeenCalledWith(TENANT, RUN)
-  })
-
-  it('triage-attempts reports truncated when the true count outruns the bounded log', async () => {
-    getAgentSessionRun.mockResolvedValue({ ...run(), triageAttemptCount: 51 })
+      count: 2,
+      truncated: true,
+    }
+    getSessionTriageAttempts.mockResolvedValue(attempts)
     const res = await call(`/api/v1/agent-sessions/${RUN}/triage-attempts`, { key: VALID_KEY })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { count: number; truncated: boolean }
-    expect(body.count).toBe(51)
-    expect(body.truncated).toBe(true)
+    expect(await res.json()).toEqual(attempts)
+    expect(getSessionTriageAttempts).toHaveBeenCalledWith(TENANT, RUN)
   })
 
   it('400s a malformed run id before core is reached, on both routes', async () => {
@@ -2717,6 +2713,7 @@ describe('agent-session run reads (issue #203)', () => {
       expect(await res.json()).toEqual({ error: 'invalid_input' })
     }
     expect(getAgentSessionRun).not.toHaveBeenCalled()
+    expect(getSessionTriageAttempts).not.toHaveBeenCalled()
   })
 
   it('canonicalizes an uppercase run id before handing it to core', async () => {
@@ -2728,6 +2725,7 @@ describe('agent-session run reads (issue #203)', () => {
 
   it('maps a foreign/unknown run id to 400 invalid_input, matching the events read', async () => {
     getAgentSessionRun.mockRejectedValue(new UnknownSessionRunError(RUN))
+    getSessionTriageAttempts.mockRejectedValue(new UnknownSessionRunError(RUN))
     for (const path of [
       `/api/v1/agent-sessions/${RUN}`,
       `/api/v1/agent-sessions/${RUN}/triage-attempts`,
