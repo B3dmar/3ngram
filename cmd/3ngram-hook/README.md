@@ -168,8 +168,19 @@ validation bar on that page, and it has not been measured yet.
 
 ```bash
 cd cmd/3ngram-hook
-CGO_ENABLED=0 go build -ldflags="-s -w" -o 3ngram-hook .
+CGO_ENABLED=0 go build -trimpath \
+  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty)" \
+  -o 3ngram-hook .
 ```
+
+A plain `go build` leaves `main.version` at its `"dev"` default, so
+`3ngram-hook version` prints `3ngram-hook dev` and nothing records which commit
+the binary came from. The `-X main.version=` stamp above fixes that, and
+`-trimpath` matches what the release workflow does. With no `3ngram-hook-v*` tag
+in the repo yet (see [Install](#install-released-binaries)), `git describe`
+falls back to the abbreviated commit sha, so a source build reports something
+like `3ngram-hook a1b2c3d` — `-dirty` appended when the worktree has uncommitted
+changes.
 
 `contract_gen.go` is generated and committed, so a source build needs no Node
 toolchain. It carries the two bounds the hook must honour before it builds a
@@ -183,19 +194,36 @@ for shapes.
 Cross-compile:
 
 ```bash
-GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o 3ngram-hook-darwin-arm64 .
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
+  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty)" \
+  -o 3ngram-hook-darwin-arm64 .
 ```
 
 ## Install (released binaries)
 
-Prebuilt binaries are published to
-[GitHub Releases](https://github.com/B3dmar/3ngram/releases) for Linux and
-macOS (`amd64` + `arm64`) on every `3ngram-hook-v*` tag (see
-[`.github/workflows/release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml)).
-Verify the `sha256` checksum in `checksums.txt`, unpack onto your `PATH`, then
-continue with [Bootstrap](#bootstrap).
+> **Not yet published.** No `3ngram-hook-v*` tag has ever been pushed, so there
+> are no hook binaries on GitHub Releases and
+> [`release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml)
+> has never run. Until a maintainer cuts the first tag,
+> [Build (from source)](#build-from-source) is the only supported install route.
+
+Two things that mislead here:
+
+- The repo's `v*` tags (`v1.6.3`, …) release the **npm packages**, not the hook.
+  `cmd/` is not a pnpm workspace member, so changesets can never emit a
+  `3ngram-hook-v*` tag — the hook's version series is independent and advances
+  only when someone pushes such a tag deliberately (see [Releasing](#releasing)).
+- `npm i -g 3ngram` installs the CLI from `apps/cli`. It does not provide
+  `3ngram-hook`, which is Go-only and ships no npm package.
+
+Once the first tag is pushed, the workflow publishes per-target `.tar.gz`
+archives for Linux and macOS (`amd64` + `arm64`) plus a `checksums.txt`
+(sha256) to [GitHub Releases](https://github.com/B3dmar/3ngram/releases).
+Verify the `sha256` checksum, unpack onto your `PATH`, then continue with
+[Bootstrap](#bootstrap). A released binary reports its tag rather than a sha:
 
 ```bash
+# after 3ngram-hook-v1.0.0 is published — not available today
 3ngram-hook --version
 # 3ngram-hook 3ngram-hook-v1.0.0
 ```
@@ -431,6 +459,12 @@ export THREENGRAM_API_KEY=3ng_localdevkey
 ```
 
 ## Releasing
+
+Hook releases are **independent of the npm `v*` series**. `cmd/` sits outside
+the pnpm workspace, so changesets never version or tag the hook: the only way to
+cut a hook release is to push a `3ngram-hook-v*` tag by hand. None has been
+pushed yet, so the workflow has never run and the first such tag starts the
+series.
 
 Push a `3ngram-hook-v*` tag to trigger
 [`.github/workflows/release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml):
