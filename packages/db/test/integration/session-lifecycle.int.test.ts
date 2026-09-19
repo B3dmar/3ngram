@@ -23,6 +23,7 @@ import {
   heartbeatSession,
   openSession,
   readAgentSession,
+  readAgentSessionRun,
 } from '../../src/session-lifecycle.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
@@ -501,5 +502,46 @@ describe('readAgentSession', () => {
     await open(uid, { ...KEY, source: 'startup' })
 
     expect(await read(other)).toBeUndefined()
+  })
+})
+
+describe('readAgentSessionRun (issue #203)', () => {
+  const readRun = (userId: string, id: string) =>
+    withTenant(userId, (tx) => readAgentSessionRun(tx, userId, id))
+
+  it('returns the record plus triage state and the empty nudge log, and writes nothing', async () => {
+    const briefedMemories = [
+      { id: '01890b6e-0000-7000-8000-0000000000c1', topic: 'ship #203', status: 'open' },
+    ]
+    const opened = await open(uid, {
+      ...KEY,
+      source: 'startup',
+      project: '3ngram',
+      scope: 'work',
+      briefedMemories,
+    })
+
+    const row = await readRun(uid, opened.row.id)
+
+    expect(row).toMatchObject({
+      id: opened.row.id,
+      agent: KEY.agent,
+      sessionId: KEY.sessionId,
+      project: '3ngram',
+      scope: 'work',
+      activationEpoch: 1,
+      triageStatus: 'idle',
+      triageAttemptLog: [],
+      triageAttemptCount: 0,
+      briefedMemories,
+    })
+    // An audit read must never refresh the lease it is measuring.
+    expect(row?.lastSeenAt.toISOString()).toBe(opened.row.lastSeenAt.toISOString())
+  })
+
+  it('is undefined for another tenant run id (RLS): not-owned and not-found are one answer', async () => {
+    const opened = await open(uid, { ...KEY, source: 'startup' })
+
+    expect(await readRun(other, opened.row.id)).toBeUndefined()
   })
 })

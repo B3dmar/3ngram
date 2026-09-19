@@ -112,13 +112,15 @@ const complete = (userId: string, attemptId = attempt(1), ceiling?: number) =>
   withTenant(userId, (tx) =>
     completeSessionTriage(tx, userId, KEY, {
       attemptId,
+      now: NOW,
       ...(ceiling === undefined ? {} : { ceiling }),
     }),
   )
 
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const r = await ownerPool.query(
-    `SELECT triage_status, triage_attempt_id, triage_armed_at, last_triaged_event_ids,
+    `SELECT triage_status, triage_attempt_id, triage_armed_at, triage_attempt_log,
+            triage_attempt_count, last_triaged_event_ids,
             last_message_excerpt, closer_failure_count, closer_next_attempt_at
        FROM agent_sessions WHERE id = $1`,
     [id],
@@ -154,6 +156,19 @@ describe('begin/complete round trip', () => {
     expect(done).toMatchObject({ triageStatus: 'completed', sinceBeginCount: 1, truncated: false })
     expect(done.eventCount).toBe(1)
     expect(await watermark(runId)).toHaveLength(1)
+
+    // The nudge history (issue #203): the arm appended one entry, the complete
+    // stamped its outcome, and the count column tracked the total.
+    const after = await rawRow(runId)
+    expect(after.triage_attempt_count).toBe(1)
+    expect(after.triage_attempt_log).toEqual([
+      {
+        attemptId: attempt(1),
+        armedAt: expect.any(String),
+        finalizedAt: NOW.toISOString(),
+        outcome: 'completed',
+      },
+    ])
   })
 
   it('stamps the CUMULATIVE watermark, not the since-begin slice', async () => {
@@ -182,7 +197,10 @@ describe('begin/complete round trip', () => {
     const done = await complete(uid, armed.attemptId)
 
     expect(done).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 0, eventCount: 1 })
-    expect((await rawRow(runId)).triage_status).toBe('expired')
+    const after = await rawRow(runId)
+    expect(after.triage_status).toBe('expired')
+    // The ignore-rate half of issue #203: the ignored nudge's log entry says so.
+    expect(after.triage_attempt_log).toMatchObject([{ outcome: 'expired' }])
   })
 
   it('never clears last_message_excerpt — only the closer consumes it', async () => {
@@ -300,6 +318,10 @@ describe('the attempt-id fence', () => {
     const row = await rawRow(runId)
     expect(row.triage_attempt_id).toBe(attempt(7))
     expect(row.triage_status).toBe('completed')
+    // The abandoned attempt's log entry stays OPEN (no outcome): a handshake
+    // nothing finalized is a different fact from a zero-write continuation,
+    // and the triage-attempts read reports it as such (issue #203).
+    expect(row.triage_attempt_log).toEqual([{ attemptId: attempt(1), armedAt: expect.any(String) }])
   })
 
   // THE FULL INTERLEAVING, through the REAL statements on both sides — the

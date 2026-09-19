@@ -23,7 +23,13 @@ the injection decision stays with the hook. `agent_sessions` and the
 `memory_events` session expression index shipped in migration 0032. Native
 remember / revise / resolve accept optional `sessionRunId` and stamp
 `{ sessionRunId }` on the audit events those writes emit, and
-`GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. `POST
+`GET /api/v1/agent-sessions/{sessionRunId}/events` lists them. The
+validation-phase reads (issue #203) ship beside it:
+`GET /api/v1/agent-sessions/{sessionRunId}` returns the bookkeeping row
+(`briefed_memories` included, never the excerpt) and
+`.../triage-attempts` the run's interactive nudge history off the bounded
+`triage_attempt_log`, so the bar's two P1 metrics — closer commitment
+recall and nudge ignore-rate — are computable over REST. `POST
 /api/v1/agent-sessions/open|close|heartbeat` and `GET /api/v1/prompts/debrief`
 ship the hook-facing half of step 5, and `3ngram-hook briefing|stop|close`
 (step 5b) calls them from SessionStart, Stop and SessionEnd. Step 6 ships the
@@ -253,6 +259,8 @@ agent_sessions (
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
   triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline. NULL = unknown (pre-guard rows) = finalize
+  triage_attempt_log   jsonb not null default '[]', -- the INTERACTIVE nudge history (issue #203): one {attemptId, armedAt, finalizedAt?, outcome?} per armed attempt, bounded (oldest dropped); closer claims are not logged. Ids, instants and outcome words only
+  triage_attempt_count int not null default 0, -- true total ever armed, so a trimmed log is detectable
   last_triaged_event_ids jsonb not null default '[]', -- event ids ACCOUNTED FOR by triage: all ids visible at the last complete/expire, and the ids visible when the current attempt began — never a since-attempt-begin slice
   briefing_delivered_at timestamptz null,    -- when a briefing was shown; NOT a change-feed cursor
   briefed_memories     jsonb not null default '[]', -- [{id, topic, status}] bounded, not bare UUIDs
@@ -1043,6 +1051,8 @@ there would `409` every resume of a live session instead of refreshing its lease
 | `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
+| `GET` | `/api/v1/agent-sessions/{sessionRunId}` | the bookkeeping-row read: identity, lifecycle, epoch, triage status, `briefed_memories` — never the excerpt or the watermark ids. The briefing is the CURRENT activation's snapshot (a reopening startup restamps it), so a recall reader over a reopened run scopes the run's events by `briefing_delivered_at` (shipped, issue #203) |
+| `GET` | `/api/v1/agent-sessions/{sessionRunId}/triage-attempts` | the run's interactive nudge history: armed/finalized instants and outcomes off the bounded `triage_attempt_log`, with the true `count` and a `truncated` flag (shipped, issue #203) |
 | `GET` | `/api/v1/prompts/debrief` | render the same registrar (shipped) |
 
 No new MCP tool.

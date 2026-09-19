@@ -15,6 +15,7 @@
 import {
   AgentSessionNotFoundError,
   type AgentSessionRecord,
+  type AgentSessionRunRead,
   type CloseSessionResult,
   closeSession as closeSessionDb,
   type HeartbeatSessionResult,
@@ -22,6 +23,8 @@ import {
   type OpenSessionResult,
   openSession as openSessionDb,
   readAgentSession as readAgentSessionDb,
+  readAgentSessionRun as readAgentSessionRunDb,
+  UnknownSessionRunError,
   withTenant,
 } from '@3ngram/db'
 import {
@@ -32,10 +35,12 @@ import {
   agentSessionHeartbeatBodySchema,
   agentSessionNaturalKeySchema,
   agentSessionOpenBodySchema,
+  type TriageAttemptLogEntry,
 } from '@3ngram/schema'
 
 export type {
   AgentSessionRecord,
+  AgentSessionRunRead,
   CloseSessionResult,
   HeartbeatSessionResult,
   OpenSessionResult,
@@ -137,4 +142,56 @@ export async function getAgentSession(
   const row = await withTenant(userId, (tx) => readAgentSessionDb(tx, userId, parsed))
   if (row === undefined) throw new AgentSessionNotFoundError(parsed)
   return row
+}
+
+/**
+ * The bookkeeping row for one run, addressed by `sessionRunId` (issue #203).
+ * Read-only like {@link getAgentSession}: a validation-phase audit read must
+ * never refresh a lease — or resurrect a closed row — by being taken.
+ *
+ * An unknown or foreign id FAILS with {@link UnknownSessionRunError}, exactly
+ * as `listSessionEvents` does for the same path parameter: RLS makes not-owned
+ * and not-found one answer, and the read matches the write path's contract
+ * rather than inventing an empty result. The transport parses the path id
+ * through `sessionRunIdSchema` (canonicalizing the spelling) before calling —
+ * same division as the events route.
+ */
+export async function getAgentSessionRun(
+  userId: string,
+  sessionRunId: string,
+): Promise<AgentSessionRunRead> {
+  const row = await withTenant(userId, (tx) => readAgentSessionRunDb(tx, userId, sessionRunId))
+  if (row === undefined) throw new UnknownSessionRunError(sessionRunId)
+  return row
+}
+
+/** One run's interactive nudge history, as the triage-attempts read serves it. */
+export interface SessionTriageAttempts {
+  sessionRunId: string
+  /** Oldest first; the newest MAX_TRIAGE_ATTEMPT_LOG entries the row kept. */
+  items: TriageAttemptLogEntry[]
+  /** The true attempt total the row knows of (see the schema's doc). */
+  count: number
+  /** `count > items.length` — a cap trim, or a legacy seed with no entry. */
+  truncated: boolean
+}
+
+/**
+ * The run's interactive nudge history (issue #203). The `truncated`
+ * derivation — "the list is not the whole denominator" — is the domain
+ * invariant relating the bounded log to the count column, so it lives HERE
+ * rather than in a transport (hard rule 5): every consumer gets the same
+ * answer, and a route is left with serialization only.
+ */
+export async function getSessionTriageAttempts(
+  userId: string,
+  sessionRunId: string,
+): Promise<SessionTriageAttempts> {
+  const row = await getAgentSessionRun(userId, sessionRunId)
+  return {
+    sessionRunId: row.id,
+    items: row.triageAttemptLog,
+    count: row.triageAttemptCount,
+    truncated: row.triageAttemptCount > row.triageAttemptLog.length,
+  }
 }

@@ -40,7 +40,12 @@
 // value to assemble the OWNER's own export (its JTBD, like getMemoryById) but
 // logs NOTHING; callers log ids/counts only and never the password hash, which is
 // never selected here.
-import type { BriefedMemory, BriefingSelectorV2Input, RetrievalScopeMode } from '@3ngram/schema'
+import type {
+  BriefedMemory,
+  BriefingSelectorV2Input,
+  RetrievalScopeMode,
+  TriageAttemptLogEntry,
+} from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
@@ -240,6 +245,8 @@ export interface ExportAgentSessionRow {
   triageStatus: string
   triageAttemptId: string | null
   triageArmedAt: Date | null
+  triageAttemptLog: TriageAttemptLogEntry[]
+  triageAttemptCount: number
   lastTriagedEventIds: string[]
   briefingDeliveredAt: Date | null
   briefedMemories: BriefedMemory[]
@@ -454,6 +461,8 @@ export async function readUserDataExport(
       triageStatus: agentSessions.triageStatus,
       triageAttemptId: agentSessions.triageAttemptId,
       triageArmedAt: agentSessions.triageArmedAt,
+      triageAttemptLog: agentSessions.triageAttemptLog,
+      triageAttemptCount: agentSessions.triageAttemptCount,
       lastTriagedEventIds: agentSessions.lastTriagedEventIds,
       briefingDeliveredAt: agentSessions.briefingDeliveredAt,
       briefedMemories: agentSessions.briefedMemories,
