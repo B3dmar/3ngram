@@ -56,7 +56,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `df7e64b75915` |
+| `envSchema` | const | `0e9be93c5f8d` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -112,7 +112,7 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `df7e64b75915` |
+| `envSchema` | const | `0e9be93c5f8d` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
@@ -290,6 +290,7 @@ its row here even when its name and kind are unchanged.
 | `ImportWriteOptions` | interface | `70555ec58158` |
 | `InvalidCommitmentTransitionError` | class | `35bdd3c53d32` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `LEGACY_SURFACING_POLICY` | const | `ec760cc39997` |
 | `Limits` | interface | `8dfe7e48d9c8` |
 | `LimitsResolver` | type | `e9184939e253` |
 | `ListOptions` | interface | `99ab60efc9f2` |
@@ -345,7 +346,7 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageAttempts` | interface | `967ff9c7e974` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingPolicy` | interface | `c9069f15c342` |
-| `SurfacingRepo` | interface | `ceab95e9b3c2` |
+| `SurfacingRepo` | interface | `4b2156e6726b` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
 | `TriageDebounceThresholds` | interface | `80eeac1034f2` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
@@ -429,7 +430,7 @@ its row here even when its name and kind are unchanged.
 | `selectResolvable` | function | `6026659c6ba3` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
-| `surface` | function | `0fd615f19fe9` |
+| `surface` | function | `3f6d72f3d59f` |
 | `sweepSessions` | function | `2a9d3ff6860e` |
 | `transition` | function | `5311082e3cc6` |
 | `verifyPassword` | function | `ff7837e2e5df` |
@@ -835,7 +836,7 @@ its row here even when its name and kind are unchanged.
 | `setScopeAliases` | function | `7c6087427d8f` |
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
-| `sweepCommitments` | function | `f2f0be93f162` |
+| `sweepCommitments` | function | `61fdca16f338` |
 | `sweepExpiredLeases` | function | `9814898ac80b` |
 | `sweepFloor` | function | `2212e4e03aa8` |
 | `touchApiKeyLastUsed` | function | `0f9df1ba3d81` |

@@ -64,6 +64,7 @@ export {
   type GcClientsResult,
   garbageCollectClients,
   isCloserEligible,
+  LEGACY_SURFACING_POLICY,
   listAllProposals,
   listProposals,
   ProposalNotFoundError,

@@ -30,9 +30,10 @@ export interface SurfacingRepo {
   listTenantIds(): Promise<string[]>
   /**
    * Run the advisory overdue/surfacing sweep for one tenant at `now`, expiring
-   * only commitments whose `due_at` is before `expireBefore` (<= `now`).
+   * only commitments whose `due_at` is before `expireBefore` (<= `now`; an
+   * implementation that omits it expires at `now`).
    */
-  sweepCommitments(userId: string, now: Date, expireBefore: Date): Promise<SurfacingSweepResult>
+  sweepCommitments(userId: string, now: Date, expireBefore?: Date): Promise<SurfacingSweepResult>
 }
 
 /** The sweep's policy knobs, resolved by the harness from config (issue #221). */
@@ -40,6 +41,14 @@ export interface SurfacingPolicy {
   /** Days past `due_at` an open|waiting commitment stays overdue before it expires. */
   expiryGraceDays: number
 }
+
+/**
+ * The policy a caller gets by omitting one: NO grace, i.e. the pre-#221
+ * behaviour, so existing library consumers keep their semantics across a patch
+ * release. The worker never relies on it — it passes `loadSurfacingConfig()`,
+ * whose default is the documented 14 days.
+ */
+export const LEGACY_SURFACING_POLICY: SurfacingPolicy = { expiryGraceDays: 0 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -66,7 +75,7 @@ export interface SurfacingResult {
 export async function surface(
   repo: SurfacingRepo,
   now: Date,
-  policy: SurfacingPolicy,
+  policy: SurfacingPolicy = LEGACY_SURFACING_POLICY,
 ): Promise<SurfacingResult> {
   const tenants = await repo.listTenantIds()
   const expireBefore = expiryCutoff(now, policy)

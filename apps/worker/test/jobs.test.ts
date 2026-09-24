@@ -287,6 +287,20 @@ describe('surface (F2)', () => {
     expect(expiryCutoff(now, { expiryGraceDays: 0 }).getTime()).toBe(now.getTime())
   })
 
+  it('an omitted policy keeps the legacy semantics: the cutoff is `now`', async () => {
+    const now = new Date('2026-06-09T12:00:00.000Z')
+    const seen: Date[] = []
+    const repo: SurfacingRepo = {
+      listTenantIds: async () => ['t1'],
+      sweepCommitments: async (_userId, _now, expireBefore) => {
+        if (expireBefore) seen.push(expireBefore)
+        return { expired: 0, surfaced: 0 }
+      },
+    }
+    await surface(repo, now)
+    expect(seen.map((d) => d.getTime())).toEqual([now.getTime()])
+  })
+
   it('propagates a per-tenant sweep failure (no falsely-green run)', async () => {
     const repo: SurfacingRepo = {
       listTenantIds: async () => ['t1'],

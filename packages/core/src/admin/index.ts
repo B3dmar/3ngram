@@ -76,6 +76,7 @@ export {
 export {
   dbSurfacingRepo,
   expiryCutoff,
+  LEGACY_SURFACING_POLICY,
   type SurfacingPolicy,
   type SurfacingRepo,
   type SurfacingResult,

@@ -315,7 +315,13 @@ export const envSchema = z
     // not the fate of every past-due row: a commitment now stays open (and in
     // the briefing's overdue section) for this many days past due_at before the
     // worker expires it. 0 restores the old immediate expiry.
-    COMMITMENT_EXPIRY_GRACE_DAYS: z.coerce.number().int().min(0).max(365).default(14),
+    // A blank value (an injector that always sets the key) is UNSET, not 0:
+    // z.coerce would turn '' into 0 and expire every past-due row on the next
+    // tick, which is the one failure this window exists to prevent.
+    COMMITMENT_EXPIRY_GRACE_DAYS: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.coerce.number().int().min(0).max(365).default(14),
+    ),
     // Stop-nudge debounce (docs/concepts/session-continuity.mdx layer 4,
     // "Debounce"; issue #166 step 7a). "Briefed ids non-empty and never triaged"
     // is true at turn 1 of almost every session with open commitments, so the
