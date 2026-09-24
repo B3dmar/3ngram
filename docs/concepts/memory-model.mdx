@@ -36,7 +36,7 @@ Every memory carries a `memory_type`, and each type keeps its own lifecycle inst
 - **`note`** — general knowledge worth keeping
 - **`event`** — dated, episodic entries (session debriefs, digests)
 
-Commitments have an explicit state machine — `open → waiting → resolved | expired` — driven by the `resolve` tool. Blockers are deliberately simpler: resolving one archives the blocker memory (`active → archived`, whatever status you pass), dropping it from the briefing's active blockers. The `briefing` tool surfaces what is open, overdue, or going stale.
+Commitments have an explicit state machine — `open → waiting → resolved | expired` — driven by the `resolve` tool. Blockers are deliberately simpler: resolving one archives the blocker memory (`active → archived`, whatever status you pass), dropping it from the briefing's active blockers. The `briefing` tool surfaces what is open, overdue, or going stale. A commitment past its due date stays open (or waiting), and therefore overdue in the briefing, for a grace window (`COMMITMENT_EXPIRY_GRACE_DAYS`, default 14 days) before the worker's surfacing sweep expires it: expiry is housekeeping for items nobody acted on, not the first thing that happens when a date passes.
 
 ## Bi-temporal facts
 
