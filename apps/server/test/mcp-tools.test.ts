@@ -1408,6 +1408,9 @@ describe('revise tool', () => {
     const successorId = crypto.randomUUID()
     revise.mockResolvedValue({
       id: successorId,
+      scope: 'work',
+      project: 'inherited',
+      tags: [],
       embed: { settled: new Promise<boolean>(() => undefined) },
     })
     const result = await Promise.race([
@@ -1421,13 +1424,22 @@ describe('revise tool', () => {
       (result as { structuredContent: unknown }).structuredContent,
     )
     expect(parsed.memory.id).toBe(successorId)
-    expect(parsed.memory.scope).toBe('personal') // default applied at the boundary
+    // Omitted scope/project are NOT defaulted at the boundary any more: the echo
+    // is what the write resolved, i.e. the predecessor's filing (#222).
+    expect(parsed.memory.scope).toBe('work')
+    expect(parsed.memory.project).toBe('inherited')
+    const coreInput = revise.mock.calls[0]?.[1] as { scope?: string; tags?: string[] }
+    expect(coreInput.scope).toBeUndefined()
+    expect(coreInput.tags).toBeUndefined()
     expect(parsed.embedded).toBe('pending')
   })
 
   it('reports `off` when no gateway is configured', async () => {
     revise.mockResolvedValue({
       id: crypto.randomUUID(),
+      scope: 'personal',
+      project: null,
+      tags: [],
       embed: { settled: Promise.resolve(false) },
     })
     const result = await call('revise', validReviseArgs(), ctx({ gateway: undefined }))
@@ -1445,7 +1457,13 @@ describe('revise tool', () => {
   it('round-trips an explicit scope + project to core AND echoes them (#284)', async () => {
     // FULL `.strict()` registration: a supplied scope:'work'/project:'3ngram'
     // survives to the handler and is echoed, not stripped to personal/null.
-    revise.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    revise.mockResolvedValue({
+      id: MEMO_ID,
+      scope: 'work',
+      project: '3ngram',
+      tags: [],
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'revise',
       { ...validReviseArgs(), scope: 'work', project: '3ngram' },

@@ -785,19 +785,20 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
       "maxLength": 2000
     },
     "scope": {
-      "default": "personal",
+      "description": "Scope of the successor. Omitted: inherited from the predecessor.",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
       "pattern": "^[a-z0-9][a-z0-9-]*$"
     },
     "project": {
+      "description": "Project of the successor. Omitted: inherited from the predecessor.",
       "type": "string",
       "minLength": 1,
       "maxLength": 256
     },
     "tags": {
-      "default": [],
+      "description": "Tags of the successor. Omitted: inherited from the predecessor.",
       "maxItems": 32,
       "type": "array",
       "items": {

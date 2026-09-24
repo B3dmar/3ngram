@@ -104,6 +104,22 @@ describe('reviseInput', () => {
     }
   })
 
+  it('does not default scope, project or tags: an omitted field is inherited later (#222)', () => {
+    const { scope: _s, project: _p, tags: _t, ...bare } = { ...validRemember, project: 'x' }
+    const parsed = reviseInputSchema.parse({ ...bare, predecessorId: UUID_A })
+    expect(parsed.scope).toBeUndefined()
+    expect(parsed.project).toBeUndefined()
+    expect(parsed.tags).toBeUndefined()
+    const explicit = reviseInputSchema.parse({
+      ...bare,
+      predecessorId: UUID_A,
+      scope: 'work',
+      project: 'x',
+      tags: ['a'],
+    })
+    expect([explicit.scope, explicit.project, explicit.tags]).toEqual(['work', 'x', ['a']])
+  })
+
   it('rejects a missing or malformed predecessor id', () => {
     expect(reviseInputSchema.safeParse({ ...validRemember }).success).toBe(false)
     expect(

@@ -155,8 +155,9 @@ export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 export const reviseToolInputSchema = nativeReviseInputSchema
 export type ReviseToolInput = z.infer<typeof reviseToolInputSchema>
 /**
- * Caller-side (pre-parse) shape: `z.input` where server-defaulted fields
- * (`scope`, `tags`, `edgeIntent`) are OPTIONAL. See {@link RememberToolArgs}.
+ * Caller-side (pre-parse) shape: `z.input` where `edgeIntent` is server-defaulted
+ * and `scope`/`project`/`tags` are OPTIONAL because an omitted value is inherited
+ * from the predecessor (issue #222). See {@link RememberToolArgs}.
  */
 export type ReviseToolArgs = z.input<typeof reviseToolInputSchema>
 

@@ -74,12 +74,19 @@ function contentHash(content: string): string {
  * superseded predecessor. The carry matrix lives in packages/db reviseMemory /
  * carryCommitment.
  */
+/** {@link WriteResult} plus the filing the successor ended up with (issue #222). */
+export interface ReviseResult extends WriteResult {
+  scope: string
+  project: string | null
+  tags: string[]
+}
+
 export async function revise(
   userId: string,
   input: unknown,
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
-): Promise<WriteResult> {
+): Promise<ReviseResult> {
   const parsed = nativeReviseInputSchema.parse(input)
   // PRE-PERSIST GUARDS (before reviseMemory so a denied revise never lands a
   // successor row): (1) ACCESS — the injected access gate denies a write when the

@@ -326,6 +326,7 @@ its row here even when its name and kind are unchanged.
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
 | `RetryFailedEmbedsResult` | interface | `5ce9653631d7` |
+| `ReviseResult` | interface | `0ba33e4e40f7` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `SELFHOST_LIMITS` | const | `8a65a36d9637` |
 | `STALE_CANDIDATE_TYPES` | const | `b1e57e2979fd` |
@@ -423,7 +424,7 @@ its row here even when its name and kind are unchanged.
 | `resolveResourceLimits` | function | `a4a0b13ca9fa` |
 | `resolveRetrievalPolicy` | function | `8d2d78bd62d8` |
 | `retryFailedEmbeds` | function | `814fcebeb911` |
-| `revise` | function | `3598bc7436c4` |
+| `revise` | function | `3f4cc72c85ff` |
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
@@ -669,7 +670,8 @@ its row here even when its name and kind are unchanged.
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
-| `ReviseWrite` | interface | `27da382ce3ca` |
+| `ReviseWrite` | interface | `e0b4d7ac9cc4` |
+| `RevisedMemory` | interface | `4c778cfd1c5b` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `RlsGuardOptions` | interface | `c1981ba2e2f7` |
 | `ScopeNameConflictError` | class | `40f6516361ee` |
@@ -820,7 +822,7 @@ its row here even when its name and kind are unchanged.
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
 | `retryUnverifiedSignupWithEmailVerificationToken` | function | `b4a3ba8d69ed` |
-| `reviseMemory` | function | `87136c4b2522` |
+| `reviseMemory` | function | `de0e1f8d434c` |
 | `revokeApiKey` | function | `44d18e5177c8` |
 | `revokeClientForUser` | function | `0bfff611c5c1` |
 | `rotateOauthRefreshToken` | function | `4b536a12980b` |
@@ -1305,7 +1307,7 @@ its row here even when its name and kind are unchanged.
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `079ad390af60` |
-| `nativeReviseInputSchema` | const | `40ec69d28da6` |
+| `nativeReviseInputSchema` | const | `008be3067068` |
 | `oauthClientIdParamSchema` | const | `13dbe689b959` |
 | `oauthClientRegistrationMethodSchema` | const | `9fbe195ac6eb` |
 | `planTierSchema` | const | `6eb47fe4ea0c` |
@@ -1344,8 +1346,8 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsRegisterOutputShapeV2` | const | `b1853a58a44b` |
 | `reviewProposalsRegisterShape` | const | `399283e722f1` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
-| `reviseInputSchema` | const | `a4962faae750` |
-| `reviseToolInputSchema` | const | `77b3cf4d9fb1` |
+| `reviseInputSchema` | const | `09ffd4a9974d` |
+| `reviseToolInputSchema` | const | `1d077958627a` |
 | `reviseToolOutputSchema` | const | `1217ef364cc8` |
 | `scopeAliasesSchema` | const | `3b20b9ac8157` |
 | `scopeNameSchema` | const | `3d34f13b9953` |
