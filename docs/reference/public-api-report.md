@@ -635,7 +635,7 @@ its row here even when its name and kind are unchanged.
 | `MEMORY_HISTORY_LINEAGE_EDGE_LIMIT` | const | `6c2393a1b249` |
 | `MEMORY_HISTORY_LINEAGE_NODE_LIMIT` | const | `29489b97b5dc` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
-| `MemoryBatchRow` | interface | `89e378c967f4` |
+| `MemoryBatchRow` | interface | `e2d3ee999549` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryEventWrite` | interface | `998f63354986` |
 | `MemoryFacets` | interface | `e6538468d5f2` |

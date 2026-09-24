@@ -15,11 +15,7 @@ import {
   type MemoryDetailRow,
   withTenant,
 } from '@3ngram/db'
-import {
-  DEFAULT_GET_CONTENT_CHARS,
-  reviseEdgeIntentSchema,
-  type SupersededBy,
-} from '@3ngram/schema'
+import { DEFAULT_GET_CONTENT_CHARS, type SupersededBy } from '@3ngram/schema'
 import { excerptContent } from './excerpt.js'
 
 export type { MemoryDetailRow } from '@3ngram/db'
@@ -80,13 +76,16 @@ export interface MemoryBatchItem
   supersededBy: SupersededBy | null
 }
 
-/** Apply the shared superseded definition to a batch row's newest revision edge. */
+/**
+ * Apply the shared superseded definition to a batch row's newest revision
+ * edge. The edge type arrives already typed by the db projection (the query
+ * filters on the two revision kinds); nothing is re-validated here (rule 2).
+ */
 function supersededBy(row: MemoryBatchRow): SupersededBy | null {
   if (row.validTo === null || row.successorId === null || row.successorEdgeType === null) {
     return null
   }
-  const edgeType = reviseEdgeIntentSchema.safeParse(row.successorEdgeType)
-  return edgeType.success ? { id: row.successorId, edgeType: edgeType.data } : null
+  return { id: row.successorId, edgeType: row.successorEdgeType }
 }
 
 /** A batch read result: the found rows plus the ids that resolved to nothing. */
