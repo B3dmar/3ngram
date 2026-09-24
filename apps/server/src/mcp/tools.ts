@@ -376,9 +376,11 @@ const reviseTool: ToolDefinition = {
     // rule 1: no write path destroys memory data. revise closes the
     // predecessor's validity and APPENDS a successor row — the predecessor's
     // content is never rewritten (packages/db/src/memory-revise.ts), and archive
-    // moves `status`, not content. Not idempotent: each call appends a new
-    // successor, and a repeat against an already-superseded predecessor is a
-    // typed rejection rather than a no-op.
+    // moves `status`, not content. The move disposition (issue #233) rewrites
+    // filing metadata only (scope/project/tags) and keeps the previous filing in
+    // its audit event. Not idempotent: each successor call appends a new row,
+    // and a repeat against an already-superseded predecessor is a typed
+    // rejection rather than a no-op (a repeated move is a harmless no-op).
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -399,12 +401,14 @@ const reviseTool: ToolDefinition = {
         : { gateway: ctx.gateway, budget: ctx.budget, access: ctx.access, limits: ctx.limits }
     const written = await revise(ctx.userId, input, 'user_mcp', gatewayOpts)
     void written.embed.settled.catch(() => false)
-    const embedded = ctx.gateway === undefined ? 'off' : 'pending'
+    // A move appends no row, so there is nothing to embed: `off`, not `pending`.
+    const isMove = 'kind' in input && input.kind === 'move'
+    const embedded = isMove || ctx.gateway === undefined ? 'off' : 'pending'
     const output = parseOutput('revise', reviseToolOutputSchema, {
       memory: {
         id: written.id,
-        memoryType: input.memoryType,
-        topic: input.topic,
+        memoryType: written.memoryType,
+        topic: written.topic,
         scope: written.scope,
         project: written.project,
       },

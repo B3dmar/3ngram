@@ -47,6 +47,11 @@ export const EDGE_TYPES = edgeTypeSchema.options
  */
 export const eventKindSchema = z.enum([
   'create',
+  // 'revise' has three producers: a commitment transition to `waiting`
+  // (packages/db/src/commitments.ts), imported events, and the revise tool's
+  // move disposition (issue #233), whose payload is `{ disposition: 'move',
+  // from, to }` — `payload.disposition` is what singles a move out. A
+  // successor write is audited as 'create' + 'supersede', never as 'revise'.
   'revise',
   'supersede',
   'resolve',

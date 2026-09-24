@@ -597,75 +597,122 @@ await client.revise(memoryId, {
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "memoryType": {
-      "type": "string",
-      "enum": [
-        "decision",
-        "commitment",
-        "blocker",
-        "fact",
-        "preference",
-        "pattern",
-        "note",
-        "event"
-      ]
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "move",
+          "description": "Refile in place: no successor, dates and content untouched."
+        },
+        "scope": {
+          "description": "New scope. Omitted: unchanged.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "project": {
+          "description": "New project. Omitted: unchanged. A project can be replaced, not cleared.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tags": {
+          "description": "New tag list, replacing the old one (order is significant). Omitted: unchanged.",
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "sessionRunId": {
+          "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
     },
-    "topic": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256
-    },
-    "content": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 2000
-    },
-    "scope": {
-      "description": "Scope of the successor. Omitted: inherited from the predecessor.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
-      "pattern": "^[a-z0-9][a-z0-9-]*$"
-    },
-    "project": {
-      "description": "Project of the successor. Omitted: inherited from the predecessor.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256
-    },
-    "tags": {
-      "description": "Tags of the successor. Omitted: inherited from the predecessor.",
-      "maxItems": 32,
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 64
-      }
-    },
-    "edgeIntent": {
-      "default": "supersedes",
-      "type": "string",
-      "enum": [
-        "supersedes",
-        "updates"
-      ]
-    },
-    "sessionRunId": {
-      "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-      "type": "string",
-      "format": "uuid",
-      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    {
+      "type": "object",
+      "properties": {
+        "memoryType": {
+          "type": "string",
+          "enum": [
+            "decision",
+            "commitment",
+            "blocker",
+            "fact",
+            "preference",
+            "pattern",
+            "note",
+            "event"
+          ]
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "scope": {
+          "description": "Scope of the successor. Omitted: inherited from the predecessor.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "project": {
+          "description": "Project of the successor. Omitted: inherited from the predecessor.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tags": {
+          "description": "Tags of the successor. Omitted: inherited from the predecessor.",
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "edgeIntent": {
+          "default": "supersedes",
+          "type": "string",
+          "enum": [
+            "supersedes",
+            "updates"
+          ]
+        },
+        "sessionRunId": {
+          "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "memoryType",
+        "topic",
+        "content"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "memoryType",
-    "topic",
-    "content"
-  ],
-  "additionalProperties": false
+  ]
 }
 ```
 

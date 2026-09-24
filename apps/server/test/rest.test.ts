@@ -1321,6 +1321,8 @@ describe('POST /api/v1/memories/:id/revise', () => {
   it('happy path: merges :id as predecessorId, calls core, echoes the successor', async () => {
     revise.mockResolvedValue({
       id: COMMIT_ID,
+      memoryType: 'note',
+      topic: 't',
       scope: 'work',
       project: 'inherited',
       tags: [],
@@ -1341,6 +1343,33 @@ describe('POST /api/v1/memories/:id/revise', () => {
     expect(revise).toHaveBeenCalledWith(
       TENANT,
       expect.objectContaining({ predecessorId: NEW_ID, edgeIntent: 'supersedes' }),
+      'user_api',
+      expect.anything(),
+    )
+  })
+
+  it('move disposition rides the same route with the URL id (#233)', async () => {
+    revise.mockResolvedValue({
+      id: NEW_ID,
+      memoryType: 'note',
+      topic: 't',
+      scope: 'work',
+      project: 'rdg-npd',
+      tags: [],
+      embed: { settled: Promise.resolve(false) },
+    })
+    const res = await call(`/api/v1/memories/${NEW_ID}/revise`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { kind: 'move', project: 'rdg-npd' },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.memory).toMatchObject({ id: NEW_ID, project: 'rdg-npd' })
+    expect(body.embedded).toBe('off')
+    expect(revise).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ kind: 'move', predecessorId: NEW_ID, project: 'rdg-npd' }),
       'user_api',
       expect.anything(),
     )

@@ -144,9 +144,16 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // (no embeddings regen). MCP pays it on tools/list per turn, REST on the
       // request surface once, CLI has no revise command. MEASURED on this
       // PR's actual base (staging post-v1.7.0 version bump), not summed.
-      mcp: [27129, 218848, 54718],
+      // MCP +450/+3600/+877, REST +449/+449/+449 (issue #233, revise move
+      // disposition): the revise input schema becomes a two-branch anyOf union
+      // (move | successor), and the move branch's field descriptions ride with
+      // it; MCP pays it on tools/list per turn, REST on the request surface once.
+      // CLI has no revise command. The tool description is unchanged (no
+      // embeddings regen). MEASURED on this PR's actual base (staging
+      // post-#222), not summed; #223 in flight moves the MCP line separately.
+      mcp: [27579, 222448, 55595],
       cli: [333, 1236, 1236],
-      rest: [3367, 4384, 4384],
+      rest: [3816, 4833, 4833],
     },
   )
 })

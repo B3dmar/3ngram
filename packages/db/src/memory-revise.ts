@@ -54,7 +54,7 @@
 // inserted so neither the MOVE (a) nor the auto-create (d) can collide. The FK is
 // composite tenant-qualified; both target the just-inserted successor, still live
 // inside this tx.
-import type { ActorKind, EdgeType } from '@3ngram/schema'
+import { type ActorKind, type EdgeType, reviseMoveEventPayloadSchema } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
 import { EdgeConflictError, insertEdge } from './memory-edges.js'
@@ -117,9 +117,111 @@ export interface ReviseWrite extends Omit<MemoryWrite, 'scope' | 'tags'> {
 
 /** The written successor plus the filing metadata it ended up with. */
 export interface RevisedMemory extends WrittenMemory {
+  memoryType: string
+  topic: string
   scope: string
   project: string | null
   tags: string[]
+}
+
+/** Inputs for a MOVE: filing metadata changes on an existing row (issue #233). */
+export interface MoveWrite {
+  userId: string
+  memoryId: string
+  scope?: string | undefined
+  project?: string | undefined
+  tags?: string[] | undefined
+  actorKind: ActorKind
+  sessionRunId?: string | undefined
+  now?: Date | undefined
+}
+
+/** The moved row's identity and the filing it carries after the move. */
+export interface MovedMemory {
+  id: string
+  memoryType: string
+  topic: string
+  scope: string
+  project: string | null
+  tags: string[]
+  /** False when every requested value already matched: no UPDATE, no event. */
+  changed: boolean
+}
+
+const sameTags = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((tag, index) => tag === b[index])
+
+/**
+ * Change a memory's scope, project and/or tags IN PLACE (issue #233). Never
+ * touches content, topic, status or the bi-temporal columns, so hard rule 1
+ * holds the way it does for the archive status flip: filing metadata moves,
+ * memory data is neither merged nor deleted, and the previous filing survives
+ * in the `revise` audit event's payload. Works on any row the tenant owns —
+ * live, superseded or archived — because refiling closed history is the
+ * driving case. A no-op move (every value already equal) writes nothing.
+ *
+ * @throws {@link PredecessorNotFoundError} no memory by this id for the tenant.
+ */
+export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
+  return withTenant(input.userId, async (tx) => {
+    const filing = {
+      memoryType: memories.memoryType,
+      topic: memories.topic,
+      scope: memories.scope,
+      project: memories.project,
+      tags: memories.tags,
+    }
+    const target = and(eq(memories.userId, input.userId), eq(memories.id, input.memoryId))
+    // Unlocked peek, only to hand provenance the project the row will carry.
+    const [peek] = await tx
+      .select({ project: memories.project })
+      .from(memories)
+      .where(target)
+      .limit(1)
+    if (!peek) throw new PredecessorNotFoundError(input.memoryId)
+
+    // LOCK ORDER (canonical, see reviseMemory): provenance — which may take the
+    // tenant/project attach advisory lock — BEFORE the row lock below.
+    const runId = await resolveSessionProvenance(tx, input.userId, {
+      sessionRunId: input.sessionRunId,
+      project: input.project ?? peek.project ?? undefined,
+      now: input.now ?? new Date(),
+    })
+
+    // Row lock, then decide from the LOCKED filing: two concurrent moves that
+    // each set one field must both land, and each event's `from` must be true.
+    const [current] = await tx.select(filing).from(memories).where(target).limit(1).for('update')
+    if (!current) throw new PredecessorNotFoundError(input.memoryId)
+    const next = {
+      scope: input.scope ?? current.scope,
+      project: input.project ?? current.project,
+      tags: input.tags ?? current.tags,
+    }
+    const changed =
+      next.scope !== current.scope ||
+      next.project !== current.project ||
+      !sameTags(next.tags, current.tags)
+    const base = { id: input.memoryId, memoryType: current.memoryType, topic: current.topic }
+    if (!changed) return { ...base, ...next, changed: false }
+
+    await tx
+      .update(memories)
+      .set({ scope: next.scope, project: next.project, tags: next.tags, updatedAt: sql`now()` })
+      .where(target)
+    await tx.insert(memoryEvents).values({
+      userId: input.userId,
+      memoryId: input.memoryId,
+      eventKind: 'revise',
+      actorKind: input.actorKind,
+      payload: reviseMoveEventPayloadSchema.parse({
+        ...(sessionPayload(runId) ?? {}),
+        disposition: 'move',
+        from: { scope: current.scope, project: current.project, tags: current.tags },
+        to: next,
+      }),
+    })
+    return { ...base, ...next, changed: true }
+  })
 }
 
 /**
@@ -327,6 +429,8 @@ export async function reviseMemory(input: ReviseWrite): Promise<RevisedMemory> {
 
       return {
         ...successor,
+        memoryType: input.memoryType,
+        topic: input.topic,
         scope: successorWrite.scope,
         project: successorWrite.project ?? null,
         tags: successorWrite.tags,

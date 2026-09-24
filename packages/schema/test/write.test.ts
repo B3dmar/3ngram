@@ -10,6 +10,7 @@ import {
   MAX_FACTS_PER_WRITE,
   MAX_TAGS,
   nativeRememberInputSchema,
+  nativeReviseInputSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,
   reviseInputSchema,
@@ -125,6 +126,52 @@ describe('reviseInput', () => {
     expect(
       reviseInputSchema.safeParse({ ...validRemember, predecessorId: 'not-a-uuid' }).success,
     ).toBe(false)
+  })
+})
+
+describe('reviseInput move disposition (#233)', () => {
+  it('accepts a move that sets at least one filing field, no content required', () => {
+    const parsed = reviseInputSchema.parse({
+      kind: 'move',
+      predecessorId: UUID_A,
+      project: 'rdg-npd',
+    })
+    expect(parsed).toEqual({ kind: 'move', predecessorId: UUID_A, project: 'rdg-npd' })
+    expect(
+      reviseInputSchema.safeParse({ kind: 'move', predecessorId: UUID_A, scope: 'work', tags: [] })
+        .success,
+    ).toBe(true)
+  })
+
+  it('rejects a move that changes nothing, and one carrying successor fields', () => {
+    expect(reviseInputSchema.safeParse({ kind: 'move', predecessorId: UUID_A }).success).toBe(false)
+    expect(
+      reviseInputSchema.safeParse({
+        kind: 'move',
+        predecessorId: UUID_A,
+        project: 'x',
+        content: 'c',
+      }).success,
+    ).toBe(false)
+    expect(reviseInputSchema.safeParse({ kind: 'archive', predecessorId: UUID_A }).success).toBe(
+      false,
+    )
+  })
+
+  it('keeps the successor kind parsing exactly as before (no kind key)', () => {
+    const parsed = reviseInputSchema.parse({ ...validRemember, predecessorId: UUID_A })
+    expect('kind' in parsed).toBe(false)
+    expect(parsed.predecessorId).toBe(UUID_A)
+  })
+
+  it('native move accepts sessionRunId', () => {
+    const parsed = nativeReviseInputSchema.parse({
+      kind: 'move',
+      predecessorId: UUID_A,
+      tags: ['a'],
+      sessionRunId: UUID_A,
+    })
+    expect('kind' in parsed && parsed.kind).toBe('move')
   })
 })
 

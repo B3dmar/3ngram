@@ -110,7 +110,8 @@ export type WrittenMemoryOutput = z.infer<typeof writtenMemorySchema>
  * the embed as not-yet-resolved at response time:
  *   - `pending` — a gateway is configured; a background embed was kicked and is
  *      in flight (its outcome lands asynchronously, never blocks this response).
- *   - `off`     — no gateway is configured; no embed was attempted.
+ *   - `off`     — no gateway is configured, or the call wrote nothing that
+ *      could be embedded (a `revise` move only refiles); no embed was attempted.
  * `done`/`failed` are reserved for a future surface that can report a settled
  * outcome (e.g. a follow-up read); the synchronous tool never returns them.
  * A settled-outcome read surface was evaluated and deliberately NOT scheduled

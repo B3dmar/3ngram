@@ -242,7 +242,7 @@ export type ReviseEdgeIntent = z.infer<typeof reviseEdgeIntentSchema>
  * defaults; a revise that forgot `scope` used to move a `work` memory to
  * `personal` and drop its project while closing the original.
  */
-export const reviseInputSchema = rememberInputSchema
+export const reviseSuccessorInputSchema = rememberInputSchema
   .extend({
     scope: scopeSchema
       .optional()
@@ -257,12 +257,86 @@ export const reviseInputSchema = rememberInputSchema
     edgeIntent: reviseEdgeIntentSchema.default('supersedes'),
   })
   .strict()
-export type ReviseInput = z.infer<typeof reviseInputSchema>
+export type ReviseSuccessorInput = z.infer<typeof reviseSuccessorInputSchema>
 
-/** Native revise: same optional sessionRunId as {@link nativeRememberInputSchema}. */
-export const nativeReviseInputSchema = reviseInputSchema.safeExtend({
+/** Native successor revise: same optional sessionRunId as {@link nativeRememberInputSchema}. */
+export const nativeReviseSuccessorInputSchema = reviseSuccessorInputSchema.safeExtend({
   sessionRunId: sessionRunIdField,
 })
+
+/**
+ * `revise` MOVE disposition (issue #233): change the scope, project and/or tags
+ * of an existing memory IN PLACE. No successor, no edge; content, topic,
+ * status, `valid_from`, `valid_to` and `recorded_at` are untouched, so a refile
+ * neither floods the target project's "recent" section nor breaks `asOf`
+ * reads. The change is audited by a `revise` memory event whose payload
+ * records the filing before and after. Allowed on superseded and archived rows
+ * too: refiling closed history is the driving case. `predecessorId` is the
+ * memory being moved (the same field the successor kind uses, so REST can
+ * merge the URL id into both). At least one of the three fields is required.
+ */
+const reviseMoveFields = {
+  kind: z.literal('move').describe('Refile in place: no successor, dates and content untouched.'),
+  scope: scopeSchema.optional().describe('New scope. Omitted: unchanged.'),
+  project: projectSchema
+    .optional()
+    .describe('New project. Omitted: unchanged. A project can be replaced, not cleared.'),
+  tags: tagsSchema
+    .optional()
+    .describe('New tag list, replacing the old one (order is significant). Omitted: unchanged.'),
+}
+
+/**
+ * Payload of the `revise` memory event a move writes (issue #233): the filing
+ * before and after, plus the session provenance every write event carries.
+ * `payload.disposition === 'move'` is what identifies a move among the
+ * `revise` events (commitment transitions to `waiting` and imports write that
+ * kind too).
+ */
+const filingSchema = z
+  .object({ scope: scopeSchema, project: projectSchema.nullable(), tags: tagsSchema })
+  .strict()
+export const reviseMoveEventPayloadSchema = z
+  .object({
+    sessionRunId: sessionRunIdField,
+    disposition: z.literal('move'),
+    from: filingSchema,
+    to: filingSchema,
+  })
+  .strict()
+export type ReviseMoveEventPayload = z.infer<typeof reviseMoveEventPayloadSchema>
+const MOVE_NEEDS_A_FIELD = 'a move must set at least one of scope, project or tags'
+const hasMoveChange = (value: { scope?: unknown; project?: unknown; tags?: unknown }) =>
+  value.scope !== undefined || value.project !== undefined || value.tags !== undefined
+export const reviseMoveInputSchema = z
+  .object({ predecessorId: z.uuid(), ...reviseMoveFields })
+  .strict()
+  .refine(hasMoveChange, { message: MOVE_NEEDS_A_FIELD })
+export type ReviseMoveInput = z.infer<typeof reviseMoveInputSchema>
+export const nativeReviseMoveInputSchema = z
+  .object({ predecessorId: z.uuid(), ...reviseMoveFields, sessionRunId: sessionRunIdField })
+  .strict()
+  .refine(hasMoveChange, { message: MOVE_NEEDS_A_FIELD })
+/** REST body of a move: `predecessorId` is the URL id, so it is not in the body. */
+export const nativeReviseMoveBodySchema = z
+  .object({ ...reviseMoveFields, sessionRunId: sessionRunIdField })
+  .strict()
+  .refine(hasMoveChange, { message: MOVE_NEEDS_A_FIELD })
+
+/**
+ * `revise` input: a successor write (the default kind, unchanged shape) or a
+ * move. A union rather than an optional discriminator on one object (ADR-0011:
+ * unions grow by variant): the two kinds share only `predecessorId`, and a
+ * successor body carries no `kind` so every existing caller parses as before.
+ */
+export const reviseInputSchema = z.union([reviseMoveInputSchema, reviseSuccessorInputSchema])
+export type ReviseInput = z.infer<typeof reviseInputSchema>
+
+/** Native revise: both kinds accept the optional sessionRunId. */
+export const nativeReviseInputSchema = z.union([
+  nativeReviseMoveInputSchema,
+  nativeReviseSuccessorInputSchema,
+])
 export type NativeReviseInput = z.infer<typeof nativeReviseInputSchema>
 
 /**
