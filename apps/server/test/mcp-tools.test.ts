@@ -2507,12 +2507,29 @@ describe('get_memories tool (batched full-content follow-up read)', () => {
     project: null,
     status: 'active',
     commitmentStatus: null,
+    supersededBy: null,
     tags: ['ops'],
     validFrom: new Date('2026-01-01T00:00:00.000Z'),
     validTo: null,
     recordedAt: new Date('2026-01-01T00:00:00.000Z'),
     createdAt: new Date('2026-01-02T00:00:00.000Z'),
     ...over,
+  })
+
+  it('echoes supersededBy for a superseded row (#223)', async () => {
+    const successor = crypto.randomUUID()
+    getMemoriesByIds.mockResolvedValue({
+      memories: [
+        coreRow({
+          validTo: new Date('2026-02-01T00:00:00.000Z'),
+          supersededBy: { id: successor, edgeType: 'supersedes' },
+        }),
+      ],
+      notFound: [],
+    })
+    const result = await call('get_memories', { ids: [rowId] }, ctx())
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.memories[0]?.supersededBy).toEqual({ id: successor, edgeType: 'supersedes' })
   })
 
   it('passes validated ids + maxContentChars to core and shapes schema-valid output', async () => {

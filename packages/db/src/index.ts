@@ -239,6 +239,7 @@ export {
   listMemories,
   listMemoryFacets,
   type MemoriesListQuery,
+  type MemoryBatchRow,
   type MemoryDetailRow,
   type MemoryFacets,
   type MemoryListRow,

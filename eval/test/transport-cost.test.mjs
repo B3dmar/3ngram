@@ -137,7 +137,15 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // `sessionRunId` on remember/revise/resolve input schemas. MCP pays it
       // per turn on tools/list; REST pays the request-surface once. CLI
       // unchanged. MEASURED on this PR's actual base, not summed.
-      mcp: [27091, 218544, 54643],
+      // MCP +198/+1584/+387 (issue #223, supersededBy on get_memories): every
+      // item of the get_memories OUTPUT schema gains a nullable `{ id, edgeType }`
+      // successor object, and an output schema rides tools/list every MCP turn.
+      // REST and CLI are unchanged: REST's response shape is the hand-maintained
+      // summary string (see the supersession-visibility note above) and the CLI
+      // has no get_memories command. The tool description is unchanged (no
+      // embeddings regen). MEASURED on this PR's actual base (staging
+      // post-v1.7.0), not summed.
+      mcp: [27289, 220128, 55030],
       cli: [333, 1236, 1236],
       rest: [3329, 4346, 4346],
     },

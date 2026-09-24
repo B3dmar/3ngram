@@ -11,10 +11,15 @@
 import {
   getMemoriesByIds as getMemoriesByIdsDb,
   getMemoryById as getMemoryByIdDb,
+  type MemoryBatchRow,
   type MemoryDetailRow,
   withTenant,
 } from '@3ngram/db'
-import { DEFAULT_GET_CONTENT_CHARS } from '@3ngram/schema'
+import {
+  DEFAULT_GET_CONTENT_CHARS,
+  reviseEdgeIntentSchema,
+  type SupersededBy,
+} from '@3ngram/schema'
 import { excerptContent } from './excerpt.js'
 
 export type { MemoryDetailRow } from '@3ngram/db'
@@ -61,10 +66,27 @@ export interface GetMemoriesOptions {
  * stored length, `truncated` = the cut flag). Read-side shaping only — the
  * stored row is never touched (docs/concepts/memory-model.mdx).
  */
-export interface MemoryBatchItem extends Omit<MemoryDetailRow, 'content'> {
+export interface MemoryBatchItem
+  extends Omit<MemoryBatchRow, 'content' | 'successorId' | 'successorEdgeType'> {
   content: string
   contentLength: number
   truncated: boolean
+  /**
+   * The direct successor when this row is SUPERSEDED (issue #223): closed
+   * validity AND a `supersedes`/`updates` edge pointing at it — the definition
+   * search.ts `supersededExists` and REST history's `lifecycleState` share, so
+   * an imported `updates` edge on a still-live row reads `null` here too.
+   */
+  supersededBy: SupersededBy | null
+}
+
+/** Apply the shared superseded definition to a batch row's newest revision edge. */
+function supersededBy(row: MemoryBatchRow): SupersededBy | null {
+  if (row.validTo === null || row.successorId === null || row.successorEdgeType === null) {
+    return null
+  }
+  const edgeType = reviseEdgeIntentSchema.safeParse(row.successorEdgeType)
+  return edgeType.success ? { id: row.successorId, edgeType: edgeType.data } : null
 }
 
 /** A batch read result: the found rows plus the ids that resolved to nothing. */
@@ -100,7 +122,11 @@ export async function getMemoriesByIds(
   const found = new Set(rows.map((row) => row.id))
   const notFound = requestedIds.filter((id) => !found.has(id))
   return {
-    memories: rows.map((row) => ({ ...row, ...excerptContent(row.content, maxContentChars) })),
+    memories: rows.map(({ successorId, successorEdgeType, ...row }) => ({
+      ...row,
+      ...excerptContent(row.content, maxContentChars),
+      supersededBy: supersededBy({ ...row, successorId, successorEdgeType }),
+    })),
     notFound,
   }
 }
