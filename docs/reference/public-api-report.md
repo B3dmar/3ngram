@@ -1358,7 +1358,7 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsRegisterShape` | const | `399283e722f1` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
 | `reviseInputSchema` | const | `df1dc0ce70b2` |
-| `reviseMoveEventPayloadSchema` | const | `82d527d3fb43` |
+| `reviseMoveEventPayloadSchema` | const | `40e10b62fdac` |
 | `reviseMoveInputSchema` | const | `f9e5f032d1a3` |
 | `reviseSuccessorInputSchema` | const | `94c789b4f552` |
 | `reviseToolInputSchema` | const | `dafa57c9d776` |

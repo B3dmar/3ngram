@@ -172,19 +172,36 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
       tags: memories.tags,
     }
     const target = and(eq(memories.userId, input.userId), eq(memories.id, input.memoryId))
-    // Unlocked peek, only to hand provenance the project the row will carry.
-    const [peek] = await tx
-      .select({ project: memories.project })
-      .from(memories)
-      .where(target)
-      .limit(1)
+    const resolve = (row: { scope: string; project: string | null; tags: string[] }) => {
+      const next = {
+        scope: input.scope ?? row.scope,
+        project: input.project ?? row.project,
+        tags: input.tags ?? row.tags,
+      }
+      const changed =
+        next.scope !== row.scope || next.project !== row.project || !sameTags(next.tags, row.tags)
+      return { next, changed }
+    }
+
+    // Unlocked peek. A no-op move returns HERE, before provenance: attaching a
+    // session (heartbeat, lease, triage re-arm) is a side effect a move that
+    // writes nothing must not have.
+    const [peek] = await tx.select(filing).from(memories).where(target).limit(1)
     if (!peek) throw new PredecessorNotFoundError(input.memoryId)
+    const base = { id: input.memoryId, memoryType: peek.memoryType, topic: peek.topic }
+    const planned = resolve(peek)
+    if (!planned.changed) return { ...base, ...planned.next, changed: false }
 
     // LOCK ORDER (canonical, see reviseMemory): provenance — which may take the
-    // tenant/project attach advisory lock — BEFORE the row lock below.
+    // tenant/project attach advisory lock — BEFORE the row lock below. The
+    // project handed to it is the one the row will carry; when the caller left
+    // `project` out, that is the peeked value, and a concurrent move that
+    // changes the project between this peek and the row lock is attributed to
+    // the session of the project seen here (the lock order forbids re-running
+    // provenance under the row lock; the window is one statement wide).
     const runId = await resolveSessionProvenance(tx, input.userId, {
       sessionRunId: input.sessionRunId,
-      project: input.project ?? peek.project ?? undefined,
+      project: planned.next.project ?? undefined,
       now: input.now ?? new Date(),
     })
 
@@ -192,16 +209,7 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
     // each set one field must both land, and each event's `from` must be true.
     const [current] = await tx.select(filing).from(memories).where(target).limit(1).for('update')
     if (!current) throw new PredecessorNotFoundError(input.memoryId)
-    const next = {
-      scope: input.scope ?? current.scope,
-      project: input.project ?? current.project,
-      tags: input.tags ?? current.tags,
-    }
-    const changed =
-      next.scope !== current.scope ||
-      next.project !== current.project ||
-      !sameTags(next.tags, current.tags)
-    const base = { id: input.memoryId, memoryType: current.memoryType, topic: current.topic }
+    const { next, changed } = resolve(current)
     if (!changed) return { ...base, ...next, changed: false }
 
     await tx
@@ -216,8 +224,8 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
       payload: reviseMoveEventPayloadSchema.parse({
         ...(sessionPayload(runId) ?? {}),
         disposition: 'move',
-        from: { scope: current.scope, project: current.project, tags: current.tags },
-        to: next,
+        from: { scope: current.scope, project: current.project, tagCount: current.tags.length },
+        to: { scope: next.scope, project: next.project, tagCount: next.tags.length },
       }),
     })
     return { ...base, ...next, changed: true }

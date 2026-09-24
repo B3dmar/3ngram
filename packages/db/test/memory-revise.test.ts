@@ -230,8 +230,8 @@ describe('moveMemory (issue #233)', () => {
         eventKind: 'revise',
         payload: {
           disposition: 'move',
-          from: { scope: 'work', project: 'rdg', tags: ['a'] },
-          to: { scope: 'work', project: 'rdg-npd', tags: ['a'] },
+          from: { scope: 'work', project: 'rdg', tagCount: 1 },
+          to: { scope: 'work', project: 'rdg-npd', tagCount: 1 },
         },
       },
     )

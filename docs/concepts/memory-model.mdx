@@ -4,7 +4,7 @@ description: "How 3ngram stores memories: append-and-supersede writes, typed mem
 icon: "database"
 ---
 
-3ngram's memory model is built on one rule: **the write path never destroys data**. Everything else — typed edges, bi-temporal validity, advisory consolidation — follows from it. Filing metadata (scope, project, tags) is the one thing that may change in place, through the revise tool's move disposition, and even that leaves the previous filing in the audit event.
+3ngram's memory model is built on one rule: **the write path never destroys data**. Everything else — typed edges, bi-temporal validity, advisory consolidation — follows from it. Filing metadata (scope, project, tags) is the one thing that may change in place, through the revise tool's move disposition (hard rule 1's single carve-out, issue #233): the previous filing stays in the audit event, and an `asOf` read reports a moved memory under its current filing, not the one it had at that time.
 
 ## Append-and-supersede
 

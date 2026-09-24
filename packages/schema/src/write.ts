@@ -291,10 +291,16 @@ const reviseMoveFields = {
  * before and after, plus the session provenance every write event carries.
  * `payload.disposition === 'move'` is what identifies a move among the
  * `revise` events (commitment transitions to `waiting` and imports write that
- * kind too).
+ * kind too). Tags are user text that account erasure redacts on `memories`
+ * but cannot reach in the INSERT-only `memory_events` table, so the payload
+ * carries only their count; scope and project are filing labels, not content.
  */
 const filingSchema = z
-  .object({ scope: scopeSchema, project: projectSchema.nullable(), tags: tagsSchema })
+  .object({
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+    tagCount: z.number().int().min(0),
+  })
   .strict()
 export const reviseMoveEventPayloadSchema = z
   .object({

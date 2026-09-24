@@ -148,9 +148,11 @@ describe('revise move disposition (issue #233, runtime role)', () => {
     expect(events.rowCount).toBe(1)
     expect(events.rows[0].payload).toMatchObject({
       disposition: 'move',
-      from: { scope: 'work', project: 'rdg', tags: ['ops'] },
-      to: { scope: 'work', project: 'rdg-npd', tags: ['ops', 'npd'] },
+      from: { scope: 'work', project: 'rdg', tagCount: 1 },
+      to: { scope: 'work', project: 'rdg-npd', tagCount: 2 },
     })
+    // Tags are erasable user text and never land in the INSERT-only event table.
+    expect(JSON.stringify(events.rows[0].payload)).not.toContain('"tags"')
   })
 
   it('moves a superseded row (closed history is the driving case) and leaves a commitment alone', async () => {
