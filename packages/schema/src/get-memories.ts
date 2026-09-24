@@ -97,10 +97,11 @@ export type GetMemoriesArgs = z.input<typeof getMemoriesInputSchema>
  * `commitmentStatus` is present only for a commitment-type memory (REST
  * detail parity). `supersededBy` names the direct successor of a superseded
  * row (issue #223): the memory whose `supersedes`/`updates` edge points at
- * this one, reported only when this row's validity is closed — the same
- * definition `search` uses for its `superseded` flag and REST history uses
- * for `lifecycleState`, so a cited id that is out of date resolves to its
- * replacement in one read. `null` for a current row. One hop, never lineage:
+ * this one, reported only when this row is not archived and its validity is
+ * closed — REST history's `lifecycleState` precedence (archived first), which
+ * for active rows matches `search`'s `superseded` flag — so a cited id that
+ * is out of date resolves to its replacement in one read. `null` for a
+ * current, archived or edge-less historical row. One hop, never lineage:
  * that is `GET /api/v1/memories/:id/history`.
  */
 export const supersededBySchema = z

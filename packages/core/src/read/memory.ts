@@ -68,10 +68,12 @@ export interface MemoryBatchItem
   contentLength: number
   truncated: boolean
   /**
-   * The direct successor when this row is SUPERSEDED (issue #223): closed
-   * validity AND a `supersedes`/`updates` edge pointing at it — the definition
-   * search.ts `supersededExists` and REST history's `lifecycleState` share, so
-   * an imported `updates` edge on a still-live row reads `null` here too.
+   * The direct successor when this row is SUPERSEDED (issue #223): not
+   * archived, closed validity AND a `supersedes`/`updates` edge pointing at
+   * it — REST history's `lifecycleState` precedence. For active rows this is
+   * also what search.ts `supersededExists` answers; search does not look at
+   * status, so an explicitly searched archived row can read `superseded: true`
+   * there while it reads `null` here, exactly as history classifies it.
    */
   supersededBy: SupersededBy | null
 }

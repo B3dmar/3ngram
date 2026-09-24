@@ -303,7 +303,7 @@ its row here even when its name and kind are unchanged.
 | `MemoriesBatchRead` | interface | `8da3c2c0eb2f` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
 | `MemoriesPage` | interface | `7ab4f1f2be69` |
-| `MemoryBatchItem` | interface | `07ef4477ec0d` |
+| `MemoryBatchItem` | interface | `0b8a8abf044f` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
 | `MemoryHistoryRead` | interface | `863fd20534bd` |
