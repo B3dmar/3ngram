@@ -116,6 +116,19 @@ describe('revise (validation boundary)', () => {
 
     expect(mockRevise.mock.calls[0]?.[0].edgeType).toBe('supersedes')
   })
+
+  it('passes omitted scope/project/tags through as undefined and echoes what the db resolved (#222)', async () => {
+    mockRevise.mockResolvedValue({ id: 'successor-3', scope: 'work', project: 'x', tags: ['a'] })
+    const { project: _p, tags: _t, ...bare } = { ...validInput(), project: 'p' }
+
+    const result = await revise(USER, bare, ACTOR)
+
+    const call = mockRevise.mock.calls[0]?.[0]
+    expect(call.scope).toBeUndefined()
+    expect(call.project).toBeUndefined()
+    expect(call.tags).toBeUndefined()
+    expect([result.scope, result.project, result.tags]).toEqual(['work', 'x', ['a']])
+  })
 })
 
 describe('revise (typed errors)', () => {

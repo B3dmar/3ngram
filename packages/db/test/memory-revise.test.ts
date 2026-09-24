@@ -71,6 +71,8 @@ interface Recorder {
 function makeTx(opts: {
   predecessorLive: boolean
   predecessorHasCommitment: boolean
+  /** Predecessor filing handed back by the first SELECT (issue #222). */
+  predecessorProject?: string | null
   predecessorCommitmentStatus?: string
   /**
    * Simulates the TOCTOU race with sweepCommitments: the
@@ -86,7 +88,15 @@ function makeTx(opts: {
   const rec: Recorder = { inserts: [], updates: [] }
   // SELECT order in reviseMemory: (1) predecessor validity, (2) predecessor commitment.
   const selectResults: unknown[][] = [
-    [{ validTo: opts.predecessorLive ? null : new Date() }],
+    [
+      {
+        validTo: opts.predecessorLive ? null : new Date(),
+        scope: 'work',
+        project:
+          opts.predecessorProject === undefined ? 'inherited-project' : opts.predecessorProject,
+        tags: ['inherited'],
+      },
+    ],
     opts.predecessorHasCommitment
       ? [{ id: COMMITMENT_ID, status: opts.predecessorCommitmentStatus ?? 'open' }]
       : [],
@@ -151,6 +161,60 @@ afterEach(() => {
   withTenant.mockClear()
   insertMemoryWithEvent.mockClear()
   insertEdge.mockClear()
+})
+
+describe('reviseMemory filing inheritance (issue #222)', () => {
+  const successorWrite = () =>
+    insertMemoryWithEvent.mock.calls[0]?.[1] as {
+      scope: string
+      project?: string
+      tags: string[]
+    }
+
+  it('copies scope, project and tags from the predecessor when omitted', async () => {
+    const { tx } = makeTx({ predecessorLive: true, predecessorHasCommitment: false })
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+    const { scope: _s, tags: _t, ...bare } = baseInput('note')
+
+    const out = await reviseMemory(bare)
+
+    expect(successorWrite().scope).toBe('work')
+    expect(successorWrite().project).toBe('inherited-project')
+    expect(successorWrite().tags).toEqual(['inherited'])
+    expect([out.scope, out.project, out.tags]).toEqual(['work', 'inherited-project', ['inherited']])
+  })
+
+  it('keeps a predecessor without a project project-less (no default sneaks in)', async () => {
+    const { tx } = makeTx({
+      predecessorLive: true,
+      predecessorHasCommitment: false,
+      predecessorProject: null,
+    })
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+    const { scope: _s, tags: _t, ...bare } = baseInput('note')
+
+    const out = await reviseMemory(bare)
+
+    expect(successorWrite().project).toBeUndefined()
+    expect(out.project).toBeNull()
+  })
+
+  it('lets an explicit value override the inherited one', async () => {
+    const { tx } = makeTx({ predecessorLive: true, predecessorHasCommitment: false })
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+
+    const out = await reviseMemory({
+      ...baseInput('note'),
+      scope: 'personal',
+      project: 'other',
+      tags: ['x'],
+    })
+
+    expect(successorWrite().scope).toBe('personal')
+    expect(successorWrite().project).toBe('other')
+    expect(successorWrite().tags).toEqual(['x'])
+    expect([out.scope, out.project, out.tags]).toEqual(['personal', 'other', ['x']])
+  })
 })
 
 describe('reviseMemory commitment carry (four-case branch matrix)', () => {

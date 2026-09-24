@@ -275,6 +275,7 @@ export {
   type ResolveStatus,
   type RetryFailedEmbedsOptions,
   type RetryFailedEmbedsResult,
+  type ReviseResult,
   remember,
   resolveByMemoryId,
   retryFailedEmbeds,

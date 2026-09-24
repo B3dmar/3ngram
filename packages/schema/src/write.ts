@@ -235,9 +235,24 @@ export type ReviseEdgeIntent = z.infer<typeof reviseEdgeIntentSchema>
  * the edge intent. `predecessorId` is the memory being superseded; the core
  * slice closes its `valid_to` and writes the typed edge in one transaction
  * (docs/concepts/data-model.mdx §5).
+ *
+ * Filing metadata is INHERITED, not defaulted (issue #222): `scope`, `project`
+ * and `tags` carry no default here, so an omitted field means "same as the
+ * predecessor" and the db layer copies it. `remember` keeps its literal
+ * defaults; a revise that forgot `scope` used to move a `work` memory to
+ * `personal` and drop its project while closing the original.
  */
 export const reviseInputSchema = rememberInputSchema
   .extend({
+    scope: scopeSchema
+      .optional()
+      .describe('Scope of the successor. Omitted: inherited from the predecessor.'),
+    project: projectSchema
+      .optional()
+      .describe('Project of the successor. Omitted: inherited from the predecessor.'),
+    tags: tagsSchema
+      .optional()
+      .describe('Tags of the successor. Omitted: inherited from the predecessor.'),
     predecessorId: z.uuid(),
     edgeIntent: reviseEdgeIntentSchema.default('supersedes'),
   })

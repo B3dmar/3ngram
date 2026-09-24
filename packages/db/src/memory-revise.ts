@@ -58,7 +58,12 @@ import type { ActorKind, EdgeType } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
 import { EdgeConflictError, insertEdge } from './memory-edges.js'
-import { DuplicateMemoryError, insertMemoryWithEvent, type MemoryWrite } from './memory-write.js'
+import {
+  DuplicateMemoryError,
+  insertMemoryWithEvent,
+  type MemoryWrite,
+  type WrittenMemory,
+} from './memory-write.js'
 import { isUniqueViolation } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
 import {
@@ -96,11 +101,25 @@ export class PredecessorAlreadySupersededError extends Error {
   }
 }
 
-/** Inputs for a revision: the successor memory plus the predecessor + edge type. */
-export interface ReviseWrite extends MemoryWrite {
+/**
+ * Inputs for a revision: the successor memory plus the predecessor + edge type.
+ * `scope`, `project` and `tags` are optional here, unlike {@link MemoryWrite}:
+ * an omitted value is inherited from the predecessor inside the transaction
+ * (issue #222), so a revise never re-files a memory by accident.
+ */
+export interface ReviseWrite extends Omit<MemoryWrite, 'scope' | 'tags'> {
+  scope?: string | undefined
+  tags?: string[] | undefined
   predecessorId: string
   /** Edge type from successor -> predecessor ('supersedes' | 'updates'). */
   edgeType: EdgeType
+}
+
+/** The written successor plus the filing metadata it ended up with. */
+export interface RevisedMemory extends WrittenMemory {
+  scope: string
+  project: string | null
+  tags: string[]
 }
 
 /**
@@ -212,20 +231,35 @@ async function carryCommitment(
  * @throws {@link DuplicateMemoryError} successor duplicates OTHER live content.
  * @throws {@link EdgeConflictError} the edge already exists (idempotency index).
  */
-export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> {
+export async function reviseMemory(input: ReviseWrite): Promise<RevisedMemory> {
   try {
     return await withTenant(input.userId, async (tx) => {
       // Distinguish not-found (RLS: zero rows) from already-superseded BEFORE
       // closing, so each failure mode maps to its own typed error. A single
-      // SELECT of the predecessor's current validity does both.
+      // SELECT of the predecessor's current validity does both, and carries the
+      // filing metadata an omitted input inherits (issue #222).
       const [predecessor] = await tx
-        .select({ validTo: memories.validTo })
+        .select({
+          validTo: memories.validTo,
+          scope: memories.scope,
+          project: memories.project,
+          tags: memories.tags,
+        })
         .from(memories)
         .where(and(eq(memories.userId, input.userId), eq(memories.id, input.predecessorId)))
         .limit(1)
       if (!predecessor) throw new PredecessorNotFoundError(input.predecessorId)
       if (predecessor.validTo !== null) {
         throw new PredecessorAlreadySupersededError(input.predecessorId)
+      }
+      // The successor's filing: explicit input wins, otherwise the predecessor's.
+      // Resolved BEFORE provenance so a project-attached session run sees the
+      // project the successor will actually carry.
+      const successorWrite: MemoryWrite = {
+        ...input,
+        scope: input.scope ?? predecessor.scope,
+        project: input.project ?? predecessor.project ?? undefined,
+        tags: input.tags ?? predecessor.tags,
       }
 
       // LOCK ORDER (canonical for every write path that stamps provenance):
@@ -234,7 +268,7 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
       // inverting it in one path is an AB-BA deadlock against this one.
       const runId = await resolveSessionProvenance(tx, input.userId, {
         sessionRunId: input.sessionRunId,
-        project: input.project,
+        project: successorWrite.project,
         now: input.now ?? new Date(),
       })
       const payload = sessionPayload(runId)
@@ -261,7 +295,10 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
       // Append the successor (reuses remember()'s insert + create-event +
       // duplicate guard). The predecessor is already closed, so re-asserting its
       // exact content here is legal — the partial-hash guard sees only live rows.
-      const successor = await insertMemoryWithEvent(tx, input, { kind: 'create', payload })
+      const successor = await insertMemoryWithEvent(tx, successorWrite, {
+        kind: 'create',
+        payload,
+      })
 
       // Typed edge FROM successor TO predecessor (direction is load-bearing).
       await insertEdge(tx, {
@@ -288,7 +325,12 @@ export async function reviseMemory(input: ReviseWrite): Promise<{ id: string }> 
       // now-superseded predecessor.
       await carryCommitment(tx, input, successor.id, payload)
 
-      return { id: successor.id }
+      return {
+        ...successor,
+        scope: successorWrite.scope,
+        project: successorWrite.project ?? null,
+        tags: successorWrite.tags,
+      }
     })
   } catch (error) {
     // Pass typed domain errors through untouched. The unique-violation -> typed

@@ -677,8 +677,9 @@ export function restRouter(options: RestRouterOptions): Router {
           id: written.id,
           memoryType: input.memoryType,
           topic: input.topic,
-          scope: input.scope,
-          project: input.project ?? null,
+          // Inherited from the predecessor when omitted (issue #222).
+          scope: written.scope,
+          project: written.project,
         },
         embedded,
       })

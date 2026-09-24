@@ -72,6 +72,41 @@ afterAll(async () => {
   await closePools()
 })
 
+describe('revise filing inheritance (issue #222)', () => {
+  it('copies scope, project and tags from the predecessor when omitted, explicit values win', async () => {
+    const { id: predId } = await remember(
+      userA,
+      { ...baseMemory(), scope: 'work', project: 'ops-hub', tags: ['ops', 'release'] },
+      ACTOR,
+    )
+    const { tags: _t, ...bare } = successor(predId)
+
+    const inherited = await revise(userA, bare, ACTOR)
+    expect([inherited.scope, inherited.project, inherited.tags]).toEqual([
+      'work',
+      'ops-hub',
+      ['ops', 'release'],
+    ])
+    const row = await ownerPool.query('SELECT scope, project, tags FROM memories WHERE id = $1', [
+      inherited.id,
+    ])
+    expect(row.rows[0]).toEqual({ scope: 'work', project: 'ops-hub', tags: ['ops', 'release'] })
+
+    const moved = await revise(
+      userA,
+      {
+        ...successor(inherited.id),
+        content: 'moved on purpose',
+        scope: 'personal',
+        project: 'elsewhere',
+        tags: [],
+      },
+      ACTOR,
+    )
+    expect([moved.scope, moved.project, moved.tags]).toEqual(['personal', 'elsewhere', []])
+  })
+})
+
 describe('revise (runtime role, real withTenant)', () => {
   it('closes the predecessor, appends the successor, writes the edge + events atomically', async () => {
     const { id: predId } = await remember(userA, baseMemory(), ACTOR)

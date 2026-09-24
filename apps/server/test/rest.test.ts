@@ -1319,14 +1319,25 @@ describe('GET /api/v1/briefing', () => {
 
 describe('POST /api/v1/memories/:id/revise', () => {
   it('happy path: merges :id as predecessorId, calls core, echoes the successor', async () => {
-    revise.mockResolvedValue({ id: COMMIT_ID, embed: { settled: Promise.resolve(true) } })
+    revise.mockResolvedValue({
+      id: COMMIT_ID,
+      scope: 'work',
+      project: 'inherited',
+      tags: [],
+      embed: { settled: Promise.resolve(true) },
+    })
     const res = await call(`/api/v1/memories/${NEW_ID}/revise`, {
       method: 'POST',
       key: VALID_KEY,
       body: { memoryType: 'note', topic: 't', content: 'corrected', edgeIntent: 'supersedes' },
     })
     expect(res.status).toBe(200)
-    expect((await res.json()).memory.id).toBe(COMMIT_ID)
+    const body = await res.json()
+    expect(body.memory.id).toBe(COMMIT_ID)
+    // Echo comes from the write, not the input: an omitted scope/project is the
+    // predecessor's (#222).
+    expect(body.memory.scope).toBe('work')
+    expect(body.memory.project).toBe('inherited')
     expect(revise).toHaveBeenCalledWith(
       TENANT,
       expect.objectContaining({ predecessorId: NEW_ID, edgeIntent: 'supersedes' }),

@@ -388,9 +388,10 @@ const reviseTool: ToolDefinition = {
   },
   async handler(args, ctx) {
     // core revise() is THE validation boundary; pass args straight through. It
-    // returns the successor id only, so the output echoes the NORMALIZED revise
-    // input (scope default + null project applied here) for the rest. Embedding
-    // is best-effort and never blocks (same ack-before-embed as remember).
+    // returns the successor id plus the filing it ended up with — an omitted
+    // scope/project/tags is inherited from the predecessor (issue #222), so the
+    // echo comes from the write, not from the input. Embedding is best-effort
+    // and never blocks (same ack-before-embed as remember).
     const input = reviseToolInputSchema.parse(args)
     const gatewayOpts =
       ctx.gateway === undefined
@@ -404,8 +405,8 @@ const reviseTool: ToolDefinition = {
         id: written.id,
         memoryType: input.memoryType,
         topic: input.topic,
-        scope: input.scope,
-        project: input.project ?? null,
+        scope: written.scope,
+        project: written.project,
       },
       embedded,
     })

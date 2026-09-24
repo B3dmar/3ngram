@@ -250,6 +250,7 @@ export {
   BlockerNotFoundError,
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
+  type RevisedMemory,
   type ReviseWrite,
   reviseMemory,
 } from './memory-revise.js'
