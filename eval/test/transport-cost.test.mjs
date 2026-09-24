@@ -144,14 +144,22 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // (no embeddings regen). MCP pays it on tools/list per turn, REST on the
       // request surface once, CLI has no revise command. MEASURED on this
       // PR's actual base (staging post-v1.7.0 version bump), not summed.
+      // MCP +198/+1584/+386 (issue #223, supersededBy on get_memories): every
+      // item of the get_memories OUTPUT schema gains a nullable `{ id, edgeType }`
+      // successor object, and an output schema rides tools/list every MCP turn.
+      // REST and CLI are unchanged: REST's response shape is the hand-maintained
+      // summary string (see the supersession-visibility note above) and the CLI
+      // has no get_memories command. The tool description is unchanged (no
+      // embeddings regen). MEASURED on this PR's actual base (staging
+      // post-#222), not summed.
       // MCP +450/+3600/+877, REST +449/+449/+449 (issue #233, revise move
       // disposition): the revise input schema becomes a two-branch anyOf union
       // (move | successor), and the move branch's field descriptions ride with
       // it; MCP pays it on tools/list per turn, REST on the request surface once.
       // CLI has no revise command. The tool description is unchanged (no
       // embeddings regen). MEASURED on this PR's actual base (staging
-      // post-#222), not summed; #223 in flight moves the MCP line separately.
-      mcp: [27579, 222448, 55595],
+      // post-#223), not summed.
+      mcp: [27777, 224032, 55981],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },

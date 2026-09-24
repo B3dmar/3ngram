@@ -1371,6 +1371,30 @@
                     "type": "string",
                     "enum": ["active", "archived"]
                   },
+                  "supersededBy": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "edgeType": {
+                            "type": "string",
+                            "enum": ["supersedes", "updates"]
+                          }
+                        },
+                        "required": ["id", "edgeType"],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Direct successor when this row is superseded (closed validity plus a supersedes/updates edge); null otherwise, whether current, archived or historical without a revision edge."
+                  },
                   "commitmentStatus": {
                     "type": "string",
                     "enum": ["open", "waiting", "resolved", "expired"]
@@ -1414,6 +1438,7 @@
                   "scope",
                   "project",
                   "status",
+                  "supersededBy",
                   "tags",
                   "validFrom",
                   "validTo",

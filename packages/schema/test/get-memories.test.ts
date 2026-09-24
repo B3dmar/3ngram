@@ -107,6 +107,7 @@ describe('getMemoriesOutputSchema — envelope with notFound as data', () => {
     scope: 'work',
     project: null,
     status: 'active',
+    supersededBy: null,
     tags: ['a'],
     validFrom: new Date().toISOString(),
     validTo: null,
@@ -122,6 +123,21 @@ describe('getMemoriesOutputSchema — envelope with notFound as data', () => {
     })
     expect(result.count).toBe(2)
     expect(result.notFound).toHaveLength(1)
+  })
+
+  it('carries supersededBy as a one-hop successor or null, revision edges only (#223)', () => {
+    const successor = uuid()
+    const parsed = getMemoriesItemSchema.parse(
+      item({ supersededBy: { id: successor, edgeType: 'updates' } }),
+    )
+    expect(parsed.supersededBy).toEqual({ id: successor, edgeType: 'updates' })
+    expect(
+      getMemoriesItemSchema.safeParse(
+        item({ supersededBy: { id: successor, edgeType: 'extends' } }),
+      ).success,
+    ).toBe(false)
+    const { supersededBy: _drop, ...missing } = item()
+    expect(getMemoriesItemSchema.safeParse(missing).success).toBe(false)
   })
 
   it('bounds per-item content at MAX_GET_CONTENT_CHARS (never an import-scale echo)', () => {

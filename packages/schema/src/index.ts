@@ -204,6 +204,8 @@ export {
   MAX_GET_MEMORIES_IDS,
   MAX_GET_TOTAL_CHARS,
   MIN_GET_CONTENT_CHARS,
+  type SupersededBy,
+  supersededBySchema,
 } from './get-memories.js'
 // --- import write contracts (groundwork for batch importers) ---
 export type {

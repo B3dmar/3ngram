@@ -13,7 +13,7 @@ import { MAX_EXCERPT_LENGTH } from './mcp.js'
 import { memoryStatusSchema, memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { scopeSchema } from './scope.js'
-import { projectSchema } from './write.js'
+import { projectSchema, reviseEdgeIntentSchema } from './write.js'
 
 /**
  * Upper bound on a get_memories id batch. A follow-up read fans out over the
@@ -95,8 +95,24 @@ export type GetMemoriesArgs = z.input<typeof getMemoriesInputSchema>
  * {@link MAX_GET_CONTENT_CHARS}), `contentLength` is the FULL stored length,
  * and `truncated` flags a cut (the text then ends with EXCERPT_MARKER, mcp.ts).
  * `commitmentStatus` is present only for a commitment-type memory (REST
- * detail parity).
+ * detail parity). `supersededBy` names the direct successor of a superseded
+ * row (issue #223): the memory whose `supersedes`/`updates` edge points at
+ * this one, reported only when this row is not archived and its validity is
+ * closed — REST history's `lifecycleState` precedence (archived first), which
+ * for active rows matches `search`'s `superseded` flag — so a cited id that
+ * is out of date resolves to its replacement in one read. `null` for a
+ * current, archived or edge-less historical row. One hop, never lineage:
+ * that is `GET /api/v1/memories/:id/history`.
  */
+export const supersededBySchema = z
+  .object({
+    id: z.uuid(),
+    edgeType: reviseEdgeIntentSchema,
+  })
+  .strict()
+  .meta(OPEN_OUTPUT_META)
+export type SupersededBy = z.infer<typeof supersededBySchema>
+
 export const getMemoriesItemSchema = z
   .object({
     id: z.uuid(),
@@ -108,6 +124,11 @@ export const getMemoriesItemSchema = z
     scope: scopeSchema,
     project: projectSchema.nullable(),
     status: memoryStatusSchema,
+    supersededBy: supersededBySchema
+      .nullable()
+      .describe(
+        'Direct successor when this row is superseded (closed validity plus a supersedes/updates edge); null otherwise, whether current, archived or historical without a revision edge.',
+      ),
     commitmentStatus: commitmentStatusSchema.optional(),
     tags: z.array(z.string()),
     validFrom: z.iso.datetime(),

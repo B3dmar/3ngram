@@ -303,7 +303,7 @@ its row here even when its name and kind are unchanged.
 | `MemoriesBatchRead` | interface | `8da3c2c0eb2f` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
 | `MemoriesPage` | interface | `7ab4f1f2be69` |
-| `MemoryBatchItem` | interface | `85fdee9d7d41` |
+| `MemoryBatchItem` | interface | `0b8a8abf044f` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
 | `MemoryHistoryRead` | interface | `863fd20534bd` |
@@ -636,6 +636,7 @@ its row here even when its name and kind are unchanged.
 | `MEMORY_HISTORY_LINEAGE_EDGE_LIMIT` | const | `6c2393a1b249` |
 | `MEMORY_HISTORY_LINEAGE_NODE_LIMIT` | const | `29489b97b5dc` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
+| `MemoryBatchRow` | interface | `e2d3ee999549` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryEventWrite` | interface | `998f63354986` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
@@ -748,7 +749,7 @@ its row here even when its name and kind are unchanged.
 | `getCommitmentByMemoryId` | function | `0629c8a41d7f` |
 | `getEnvironmentStats` | function | `e15c275ef074` |
 | `getFacts` | function | `fa54c70ac1dc` |
-| `getMemoriesByIds` | function | `959f257891eb` |
+| `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `f98653cf2421` |
 | `getRetrievalPolicy` | function | `80728d8897ec` |
@@ -1179,6 +1180,7 @@ its row here even when its name and kind are unchanged.
 | `SetRetrievalDefaultInput` | type | `7bdf14e37d90` |
 | `SignupInput` | type | `27484a57f0f4` |
 | `StatsResponse` | type | `b434990c3408` |
+| `SupersededBy` | type | `e8c33297c146` |
 | `Tag` | type | `106995a067ae` |
 | `TokenEndpointAuthMethod` | type | `47fdb0fd634d` |
 | `TokenRequest` | type | `afa63ef00ea6` |
@@ -1270,8 +1272,8 @@ its row here even when its name and kind are unchanged.
 | `factsToolOutputSchema` | const | `fe477256bd85` |
 | `forgotPasswordInputSchema` | const | `bd34c5196ff8` |
 | `getMemoriesInputSchema` | const | `9bdf15008f83` |
-| `getMemoriesItemSchema` | const | `49be8620b222` |
-| `getMemoriesOutputSchema` | const | `7ac3dfb74002` |
+| `getMemoriesItemSchema` | const | `9564ab67c44c` |
+| `getMemoriesOutputSchema` | const | `7395c7455015` |
 | `handoffCommitmentSchema` | const | `8d80b1deb054` |
 | `handoffCountsSchema` | const | `19a4f4765dbf` |
 | `handoffMemorySchema` | const | `8bece3348a56` |
@@ -1394,6 +1396,7 @@ its row here even when its name and kind are unchanged.
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
 | `statsResponseSchema` | const | `8bf52ea1e959` |
+| `supersededBySchema` | const | `1260eb422bd6` |
 | `tagSchema` | const | `d32d1e9837a9` |
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
