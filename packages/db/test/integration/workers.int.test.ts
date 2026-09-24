@@ -252,6 +252,113 @@ describe('findSimilarPairs (F1)', () => {
   })
 })
 
+describe('findSimilarPairs excludes settled pairs (issue #220)', () => {
+  /** Insert a proposal row directly (owner) with the given status. */
+  async function seedProposal(
+    userId: string,
+    fromId: string,
+    toId: string,
+    status: 'proposed' | 'applied' | 'rejected',
+  ): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO consolidation_proposals
+         (user_id, from_id, to_id, edge_type, memory_type, similarity, status)
+       VALUES ($1, $2, $3, 'extends', 'fact', 0.99, $4)`,
+      [userId, fromId, toId, status],
+    )
+  }
+
+  it('does not re-propose a pair whose proposal was rejected', async () => {
+    const older = await seedMemory(userA, 'fact', 'rejected-older', 21)
+    const newer = await seedMemory(userA, 'fact', 'rejected-newer', 21)
+    // Sanity: the pair is a candidate before any proposal exists.
+    const before = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(before.length).toBe(1)
+
+    await seedProposal(userA, newer, older, 'rejected')
+    const after = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(after.length).toBe(0)
+  })
+
+  it('does not re-propose a pair whose proposal was applied, whatever its orientation', async () => {
+    const older = await seedMemory(userA, 'fact', 'applied-older', 23)
+    const newer = await seedMemory(userA, 'fact', 'applied-newer', 23)
+    // Stored the "wrong" way round on purpose: exclusion must be orientation-agnostic.
+    await seedProposal(userA, older, newer, 'applied')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not re-propose a pair with an OPEN proposal (any status counts as settled)', async () => {
+    const older = await seedMemory(userA, 'fact', 'open-older', 31)
+    const newer = await seedMemory(userA, 'fact', 'open-newer', 31)
+    // Before #220 an open proposal was only deduped at insert time by
+    // proposals_open_idx; now the pair never reaches the insert at all.
+    await seedProposal(userA, newer, older, 'proposed')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not propose a pair already joined by an additive edge', async () => {
+    const older = await seedMemory(userA, 'fact', 'edge-older', 25)
+    const newer = await seedMemory(userA, 'fact', 'edge-newer', 25)
+    // An `extends` edge leaves BOTH rows live (no valid_to), which is exactly the
+    // case the live-only filter cannot catch.
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'extends', 'worker')`,
+      [userA, newer, older],
+    )
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not propose a pair whose edge is stored in the reverse orientation', async () => {
+    const older = await seedMemory(userA, 'fact', 'rev-edge-older', 33)
+    const newer = await seedMemory(userA, 'fact', 'rev-edge-newer', 33)
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'derives', 'worker')`,
+      [userA, older, newer],
+    )
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('still proposes a fresh successor against a memory whose old pair was settled', async () => {
+    const older = await seedMemory(userA, 'fact', 'settled-older', 27)
+    const rejectedTwin = await seedMemory(userA, 'fact', 'settled-twin', 27)
+    await seedProposal(userA, rejectedTwin, older, 'rejected')
+    // A NEW memory id on the same subject is a new question, not the settled one.
+    const fresh = await seedMemory(userA, 'fact', 'settled-fresh', 27)
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    const unordered = pairs.map((p) => [p.fromId, p.toId].sort().join('|'))
+    expect(unordered).toContain([fresh, older].sort().join('|'))
+    expect(unordered).toContain([fresh, rejectedTwin].sort().join('|'))
+    expect(unordered).not.toContain([rejectedTwin, older].sort().join('|'))
+  })
+
+  it("another tenant's settled pairs do not affect mine", async () => {
+    const olderA = await seedMemory(userA, 'fact', 'a-older', 29)
+    const newerA = await seedMemory(userA, 'fact', 'a-newer', 29)
+    // userB has its own settled pair; it must not affect userA's candidates. (The
+    // composite (user_id, id) FKs make a true cross-tenant match unrepresentable,
+    // so this is a sanity check on the anti-join, not an RLS proof.)
+    const olderB = await seedMemory(userB, 'fact', 'b-older', 29)
+    const newerB = await seedMemory(userB, 'fact', 'b-newer', 29)
+    await seedProposal(userB, newerB, olderB, 'rejected')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(1)
+    expect([pairs[0]?.fromId, pairs[0]?.toId].sort()).toEqual([olderA, newerA].sort())
+  })
+})
+
 describe('sweepCommitments (F2)', () => {
   it('expires overdue commitments (with archive event) and surfaces due ones', async () => {
     const now = new Date('2026-06-09T12:00:00.000Z')

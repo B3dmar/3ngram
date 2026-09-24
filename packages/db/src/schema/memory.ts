@@ -264,7 +264,10 @@ export const consolidationProposals = pgTable(
       columns: [t.userId, t.toId],
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
-    // one OPEN proposal per candidate edge; re-proposal after rejection allowed
+    // one OPEN proposal per candidate edge — a concurrency guard for the insert
+    // path only. Settled pairs (applied OR rejected, any orientation) are excluded
+    // at candidate time by findSimilarPairs (issue #220), so a rejection is final
+    // for the pair and this index never has to see the repeat.
     uniqueIndex('proposals_open_idx')
       .on(t.userId, t.fromId, t.toId, t.edgeType)
       .where(sql`status = 'proposed'`),
