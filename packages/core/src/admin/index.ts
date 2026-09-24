@@ -75,6 +75,8 @@ export {
 } from './session-sweep.js'
 export {
   dbSurfacingRepo,
+  expiryCutoff,
+  type SurfacingPolicy,
   type SurfacingRepo,
   type SurfacingResult,
   surface,

@@ -216,6 +216,9 @@ services:
       # .env.selfhost); with either missing every pass reports `no-gateway` and
       # writes nothing.
       SESSION_CLOSER_ENABLED: ${SESSION_CLOSER_ENABLED:-false}
+      # Days an overdue commitment stays open before the surfacing sweep
+      # expires it (issue #221). 0 expires at the first tick past due_at.
+      COMMITMENT_EXPIRY_GRACE_DAYS: ${COMMITMENT_EXPIRY_GRACE_DAYS:-14}
     # No ports: the worker serves no HTTP. It dials out to Postgres and Redis.
     healthcheck:
       # The worker has no HTTP surface and no degraded mode — a broken boot exits

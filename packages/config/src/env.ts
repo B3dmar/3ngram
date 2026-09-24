@@ -308,6 +308,14 @@ export const envSchema = z
     // With the flag off the sweep is never scheduled, so no row is implicitly
     // closed and no generation is billed.
     SESSION_CLOSER_ENABLED: z.stringbool().default(false),
+    // Overdue grace window for the surfacing sweep (issue #221). The sweep used
+    // to expire every open|waiting commitment the moment due_at passed, and no
+    // briefing section reads `expired`, so an overdue item was visible for at
+    // most one 15-minute tick. Expiry is housekeeping for items nobody acts on,
+    // not the fate of every past-due row: a commitment now stays open (and in
+    // the briefing's overdue section) for this many days past due_at before the
+    // worker expires it. 0 restores the old immediate expiry.
+    COMMITMENT_EXPIRY_GRACE_DAYS: z.coerce.number().int().min(0).max(365).default(14),
     // Stop-nudge debounce (docs/concepts/session-continuity.mdx layer 4,
     // "Debounce"; issue #166 step 7a). "Briefed ids non-empty and never triaged"
     // is true at turn 1 of almost every session with open commitments, so the
@@ -756,6 +764,21 @@ export interface SessionCloserConfig {
  */
 export function loadSessionCloserConfig(): SessionCloserConfig {
   return { enabled: loadEnv().SESSION_CLOSER_ENABLED }
+}
+
+/** Resolved surfacing-sweep policy (issue #221; docs/concepts/memory-model.mdx). */
+export interface SurfacingConfig {
+  /** Days past `due_at` an open|waiting commitment stays overdue before it expires. */
+  expiryGraceDays: number
+}
+
+/**
+ * Resolve the surfacing-sweep policy. Always returns a value: the grace window
+ * has a bounded default, so the worker boots with the same behaviour on every
+ * deployment unless one opts into a different window.
+ */
+export function loadSurfacingConfig(): SurfacingConfig {
+  return { expiryGraceDays: loadEnv().COMMITMENT_EXPIRY_GRACE_DAYS }
 }
 
 /**

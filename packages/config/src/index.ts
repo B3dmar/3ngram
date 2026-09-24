@@ -22,6 +22,7 @@ export {
   loadSessionCloserConfig,
   loadSessionTriageConfig,
   loadSmtpConfig,
+  loadSurfacingConfig,
   OAUTH_RESOURCE_PATH,
   type OAuthConfig,
   type OAuthJwk,
@@ -30,6 +31,7 @@ export {
   type SessionCloserConfig,
   type SessionTriageConfig,
   type SmtpConfig,
+  type SurfacingConfig,
 } from './env.js'
 export { contextBindings, createLogger, log, logger, setLogDestination } from './logger.js'
 // otel.ts is intentionally NOT re-exported: importing it has SDK side effects.

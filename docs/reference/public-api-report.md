@@ -46,6 +46,7 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `Surface` | type | `ec490e7783d6` |
+| `SurfacingConfig` | interface | `c27fd84b0133` |
 | `bindContext` | function | `d9a0d26e17cf` |
 | `budgetGateLookupFailure` | const | `92bdf3a14892` |
 | `consolidationAccepted` | const | `62fa4b1ddb9b` |
@@ -55,7 +56,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `2bc85a3b3191` |
+| `envSchema` | const | `df7e64b75915` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -68,6 +69,7 @@ its row here even when its name and kind are unchanged.
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
+| `loadSurfacingConfig` | function | `cbd828f4ef34` |
 | `log` | function | `4ac742b7b963` |
 | `logger` | const | `dac2f188ebee` |
 | `mcpHeaderRequests` | const | `f3d558321eec` |
@@ -109,7 +111,8 @@ its row here even when its name and kind are unchanged.
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
-| `envSchema` | const | `2bc85a3b3191` |
+| `SurfacingConfig` | interface | `c27fd84b0133` |
+| `envSchema` | const | `df7e64b75915` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
@@ -119,6 +122,7 @@ its row here even when its name and kind are unchanged.
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
+| `loadSurfacingConfig` | function | `cbd828f4ef34` |
 | `parseEnv` | function | `6fb096f7581e` |
 | `resetEnvCache` | function | `a1660e0fd58c` |
 
@@ -340,7 +344,8 @@ its row here even when its name and kind are unchanged.
 | `SessionSweepResult` | interface | `e114e7717b5e` |
 | `SessionTriageAttempts` | interface | `967ff9c7e974` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
-| `SurfacingRepo` | interface | `9d64e4c86d6c` |
+| `SurfacingPolicy` | interface | `c9069f15c342` |
+| `SurfacingRepo` | interface | `ceab95e9b3c2` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
 | `TriageDebounceThresholds` | interface | `80eeac1034f2` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
@@ -376,6 +381,7 @@ its row here even when its name and kind are unchanged.
 | `deleteScope` | function | `8e460c0839b0` |
 | `describeEnvironment` | function | `4ba1439f061f` |
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
+| `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
@@ -423,7 +429,7 @@ its row here even when its name and kind are unchanged.
 | `selectResolvable` | function | `6026659c6ba3` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
-| `surface` | function | `38e1713a17b6` |
+| `surface` | function | `0fd615f19fe9` |
 | `sweepSessions` | function | `2a9d3ff6860e` |
 | `transition` | function | `5311082e3cc6` |
 | `verifyPassword` | function | `ff7837e2e5df` |
@@ -829,7 +835,7 @@ its row here even when its name and kind are unchanged.
 | `setScopeAliases` | function | `7c6087427d8f` |
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
-| `sweepCommitments` | function | `67525f8877a1` |
+| `sweepCommitments` | function | `f2f0be93f162` |
 | `sweepExpiredLeases` | function | `9814898ac80b` |
 | `sweepFloor` | function | `2212e4e03aa8` |
 | `touchApiKeyLastUsed` | function | `0f9df1ba3d81` |

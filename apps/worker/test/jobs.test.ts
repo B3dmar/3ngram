@@ -16,6 +16,7 @@ import {
   type ConsolidateRepo,
   chooseProposedEdge,
   consolidate,
+  expiryCutoff,
   GC_CLIENT_IDLE_DAYS,
   type GcClientsRepo,
   garbageCollectClients,
@@ -258,16 +259,16 @@ describe('garbageCollectClients', () => {
 describe('surface (F2)', () => {
   it('aggregates the per-tenant overdue/surfacing sweep counts', async () => {
     const now = new Date('2026-06-09T12:00:00.000Z')
-    const calls: { userId: string; now: Date }[] = []
+    const calls: { userId: string; now: Date; expireBefore: Date }[] = []
     const repo: SurfacingRepo = {
       listTenantIds: async () => ['t1', 't2'],
-      sweepCommitments: async (userId, sweepNow) => {
-        calls.push({ userId, now: sweepNow })
+      sweepCommitments: async (userId, sweepNow, expireBefore) => {
+        calls.push({ userId, now: sweepNow, expireBefore })
         return userId === 't1' ? { expired: 2, surfaced: 1 } : { expired: 0, surfaced: 3 }
       },
     }
 
-    const result = await surface(repo, now)
+    const result = await surface(repo, now, { expiryGraceDays: 14 })
 
     expect(result.tenantsScanned).toBe(2)
     expect(result.expired).toBe(2)
@@ -275,6 +276,15 @@ describe('surface (F2)', () => {
     // The injected instant is threaded to every per-tenant sweep (no clock in core).
     expect(calls.every((c) => c.now === now)).toBe(true)
     expect(calls.map((c) => c.userId)).toEqual(['t1', 't2'])
+    // The grace window is resolved ONCE in core and handed to every sweep as an
+    // absolute cutoff (issue #221): 14 days before `now`, to the millisecond.
+    const expected = new Date('2026-05-26T12:00:00.000Z')
+    expect(calls.every((c) => c.expireBefore.getTime() === expected.getTime())).toBe(true)
+  })
+
+  it('a zero grace window expires at `now` (the pre-#221 behaviour)', () => {
+    const now = new Date('2026-06-09T12:00:00.000Z')
+    expect(expiryCutoff(now, { expiryGraceDays: 0 }).getTime()).toBe(now.getTime())
   })
 
   it('propagates a per-tenant sweep failure (no falsely-green run)', async () => {
@@ -285,7 +295,7 @@ describe('surface (F2)', () => {
       },
     }
 
-    await expect(surface(repo, new Date())).rejects.toThrow('db down')
+    await expect(surface(repo, new Date(), { expiryGraceDays: 14 })).rejects.toThrow('db down')
   })
 })
 

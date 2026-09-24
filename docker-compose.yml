@@ -124,6 +124,9 @@ services:
       # LLM_GATEWAY_API_KEY to run it; with either missing, every closer pass
       # reports `no-gateway` and writes nothing.
       SESSION_CLOSER_ENABLED: ${SESSION_CLOSER_ENABLED:-false}
+      # Days an overdue commitment stays open before the surfacing sweep
+      # expires it (issue #221). 0 expires at the first tick past due_at.
+      COMMITMENT_EXPIRY_GRACE_DAYS: ${COMMITMENT_EXPIRY_GRACE_DAYS:-14}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_API_KEY: ${LLM_GATEWAY_API_KEY:-}
     healthcheck:

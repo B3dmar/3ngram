@@ -8,7 +8,8 @@
 //     unchanged across an insertProposals call
 //   - findSimilarPairs returns near-duplicate pairs over stored embeddings by the
 //     pgvector cosine operator, scoped to the tenant by RLS
-//   - sweepCommitments expires overdue (due_at past) open|waiting commitments —
+//   - sweepCommitments expires open|waiting commitments whose due_at is before the
+//     grace cutoff (expireBefore) —
 //     writing an 'archive' audit event — and clears fired next_surfacing_at, while
 //     leaving not-yet-due / not-yet-surfacing rows untouched, and NEVER touches the
 //     riding memory
@@ -267,7 +268,7 @@ describe('sweepCommitments (F2)', () => {
       'SELECT id, content, content_hash, valid_to, status FROM memories ORDER BY id',
     )
 
-    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now))
+    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now, now))
     expect(result.expired).toBe(1)
     expect(result.surfaced).toBe(1)
 
@@ -294,5 +295,46 @@ describe('sweepCommitments (F2)', () => {
       'SELECT id, content, content_hash, valid_to, status FROM memories ORDER BY id',
     )
     expect(memoriesAfter.rows).toEqual(memoriesBefore.rows)
+  })
+
+  it('keeps a commitment inside the grace window open, expires one beyond it (issue #221)', async () => {
+    const now = new Date('2026-06-09T12:00:00.000Z')
+    const expireBefore = new Date('2026-05-26T12:00:00.000Z') // now - 14 days
+    const dueThreeDaysAgo = new Date('2026-06-06T12:00:00.000Z')
+    const dueTwentyDaysAgo = new Date('2026-05-20T12:00:00.000Z')
+
+    // Also due to surface: leg 2 must still clear the fired instant on a row that
+    // leg 1 now leaves open (before #221 leg 1 expired it first).
+    const insideWindow = await seedCommitment(userA, 'inside', {
+      dueAt: dueThreeDaysAgo,
+      nextSurfacingAt: dueThreeDaysAgo,
+    })
+    const beyondWindow = await seedCommitment(userA, 'beyond', {
+      dueAt: dueTwentyDaysAgo,
+      status: 'waiting',
+    })
+
+    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now, expireBefore))
+    expect(result.expired).toBe(1)
+    expect(result.surfaced).toBe(1)
+
+    const statuses = await ownerPool.query(
+      'SELECT id, status, next_surfacing_at FROM commitments WHERE user_id = $1',
+      [userA],
+    )
+    const byId = new Map(statuses.rows.map((r) => [r.id, r]))
+    // Past due but inside the window: still open, so briefing keeps it as overdue,
+    // and its fired surfacing instant is cleared by leg 2 as for any live row.
+    expect(byId.get(insideWindow.commitmentId)?.status).toBe('open')
+    expect(byId.get(insideWindow.commitmentId)?.next_surfacing_at).toBeNull()
+    // Past the window: expired, from `waiting` as well as from `open`.
+    expect(byId.get(beyondWindow.commitmentId)?.status).toBe('expired')
+
+    // Only the expired row got the archive audit event.
+    const events = await ownerPool.query(
+      `SELECT memory_id FROM memory_events WHERE user_id = $1 AND event_kind = 'archive'`,
+      [userA],
+    )
+    expect(events.rows.map((r) => r.memory_id)).toEqual([beyondWindow.memoryId])
   })
 })
