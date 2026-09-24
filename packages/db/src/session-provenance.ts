@@ -299,11 +299,25 @@ async function attachSingleOpen(
  * @throws {@link UnknownSessionRunError} the id is not a row of this tenant.
  */
 export async function assertSessionRunOwned(userId: string, sessionRunId: string): Promise<void> {
-  await withTenant(userId, async (tx) => {
-    if ((await readSession(tx, userId, sessionRunId)) === undefined) {
-      throw new UnknownSessionRunError(sessionRunId)
-    }
-  })
+  await withTenant(userId, (tx) => assertSessionRunOwnedIn(tx, userId, sessionRunId))
+}
+
+/**
+ * {@link assertSessionRunOwned} for a caller ALREADY inside withTenant(). The
+ * standalone form opens its own transaction, which from inside another one
+ * would take a second pool connection per request and starve the pool under
+ * concurrency; this form runs the same inert lookup on the caller's `tx`.
+ *
+ * @throws {@link UnknownSessionRunError} the id is not a row of this tenant.
+ */
+export async function assertSessionRunOwnedIn(
+  tx: TenantTx,
+  userId: string,
+  sessionRunId: string,
+): Promise<void> {
+  if ((await readSession(tx, userId, sessionRunId)) === undefined) {
+    throw new UnknownSessionRunError(sessionRunId)
+  }
 }
 
 /**

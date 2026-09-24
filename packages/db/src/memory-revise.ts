@@ -68,7 +68,7 @@ import {
 import { isUniqueViolation } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
 import {
-  assertSessionRunOwned,
+  assertSessionRunOwnedIn,
   resolveSessionProvenance,
   sessionPayload,
   UnknownSessionRunError,
@@ -200,9 +200,11 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
     const planned = resolve(peek)
     if (!planned.changed) {
       // The contract says an unowned run id fails every write, no-op included;
-      // the ownership-only check has none of provenance's attach side effects.
+      // the ownership-only check has none of provenance's attach side effects,
+      // and runs on THIS tx (a nested withTenant would hold a second pool
+      // connection per in-flight move).
       if (input.sessionRunId !== undefined) {
-        await assertSessionRunOwned(input.userId, input.sessionRunId)
+        await assertSessionRunOwnedIn(tx, input.userId, input.sessionRunId)
       }
       return { ...base, ...planned.next, changed: false }
     }

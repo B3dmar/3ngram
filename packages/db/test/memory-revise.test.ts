@@ -43,7 +43,7 @@ vi.mock('../src/credential-guard.js', () => ({
 
 vi.mock('../src/session-provenance.js', () => ({
   resolveSessionProvenance: async () => undefined,
-  assertSessionRunOwned: async () => undefined,
+  assertSessionRunOwnedIn: async () => undefined,
   sessionPayload: () => undefined,
   UnknownSessionRunError: class UnknownSessionRunError extends Error {
     sessionRunId: string
