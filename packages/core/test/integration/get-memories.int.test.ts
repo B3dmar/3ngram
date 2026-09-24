@@ -24,6 +24,7 @@ import {
   seedUser,
 } from '../../../db/test/integration/helpers.js'
 import { getMemoriesByIds } from '../../src/read/memory.js'
+import { revise } from '../../src/write/revise.js'
 
 let userA: string
 let userB: string
@@ -47,6 +48,89 @@ afterAll(async () => {
   await resetDomainTables()
   await closeDb()
   await closePools()
+})
+
+describe('getMemoriesByIds supersededBy (issue #223)', () => {
+  it('names the direct successor of a revised row and null for the current one', async () => {
+    const predecessor = await seedMemory(userA, 'cadence', 'weekly')
+    const { id: successor } = await revise(
+      userA,
+      { memoryType: 'note', topic: 'cadence', content: 'fortnightly', predecessorId: predecessor },
+      'user_api',
+    )
+
+    const result = await getMemoriesByIds(userA, [predecessor, successor])
+
+    const byId = new Map(result.memories.map((m) => [m.id, m]))
+    expect(byId.get(predecessor)?.supersededBy).toEqual({ id: successor, edgeType: 'supersedes' })
+    expect(byId.get(successor)?.supersededBy).toBeNull()
+  })
+
+  it('reads null for a live row that only carries an imported updates edge', async () => {
+    // search.ts supersededExists: an edge alone does not supersede; the target's
+    // validity has to be closed as well. Mirror that so one surface never says
+    // "superseded" while another says "current".
+    const target = await seedMemory(userA, 'live', 'still current')
+    const other = await seedMemory(userA, 'other', 'a later note')
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'user_api')`,
+      [userA, other, target],
+    )
+
+    const result = await getMemoriesByIds(userA, [target])
+
+    expect(result.memories[0]?.supersededBy).toBeNull()
+  })
+
+  it('reads null for an archived row even with closed validity and an incoming edge', async () => {
+    // The blocker archive path sets status='archived' AND valid_to; an imported
+    // updates edge may point at it. REST history classifies by status first.
+    const archived = await seedMemory(userA, 'blocker gone', 'was blocking')
+    const later = await seedMemory(userA, 'later', 'a later note')
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'user_api')`,
+      [userA, later, archived],
+    )
+    await ownerPool.query(
+      "UPDATE memories SET status = 'archived', valid_to = now() WHERE user_id = $1 AND id = $2",
+      [userA, archived],
+    )
+
+    const result = await getMemoriesByIds(userA, [archived])
+
+    expect(result.memories[0]?.status).toBe('archived')
+    expect(result.memories[0]?.supersededBy).toBeNull()
+  })
+
+  it('reports an updates edge on a closed row, ignores additive edges, newest revision wins', async () => {
+    const closed = await seedMemory(userA, 'closed', 'old value')
+    const first = await seedMemory(userA, 'first', 'newer value')
+    const second = await seedMemory(userA, 'second', 'newest value')
+    const derived = await seedMemory(userA, 'derived', 'a derivation')
+    await ownerPool.query('UPDATE memories SET valid_to = now() WHERE user_id = $1 AND id = $2', [
+      userA,
+      closed,
+    ])
+    for (const [from, edge, at] of [
+      [first, 'updates', '2026-01-01T00:00:00Z'],
+      [derived, 'derives', '2026-01-03T00:00:00Z'],
+      [second, 'updates', '2026-01-02T00:00:00Z'],
+    ] as const) {
+      await ownerPool.query(
+        `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by, created_at)
+         VALUES ($1, $2, $3, $4, 'user_api', $5)`,
+        [userA, from, closed, edge, at],
+      )
+    }
+
+    const result = await getMemoriesByIds(userA, [closed])
+
+    // The derives edge is newest but not a revision; among revision edges the
+    // newest wins.
+    expect(result.memories[0]?.supersededBy).toEqual({ id: second, edgeType: 'updates' })
+  })
 })
 
 describe('getMemoriesByIds (runtime role, real withTenant)', () => {

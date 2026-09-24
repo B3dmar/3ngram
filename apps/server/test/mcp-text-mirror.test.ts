@@ -62,6 +62,7 @@ const getMemoriesByIds = vi.fn(() =>
       project: '3ngram',
       status: 'active' as const,
       commitmentStatus: null,
+      supersededBy: null,
       tags: ['alpha', 'beta', 'gamma'],
       validFrom: new Date('2026-01-01T00:00:00.000Z'),
       validTo: null,
