@@ -60,7 +60,7 @@ import {
   proposalsListQuerySchema,
   rememberToolInputV2Schema,
   resolveToolInputSchema,
-  reviseToolInputSchema,
+  reviseToolRequestSchema,
   sessionEventsQuerySchema,
   sessionRunIdSchema,
 } from '@3ngram/schema'
@@ -660,7 +660,7 @@ export function restRouter(options: RestRouterOptions): Router {
   router.post('/api/v1/memories/:id/revise', (req, res) => {
     void guard('revise', res, async () => {
       const merged = { ...(req.body as Record<string, unknown>), predecessorId: req.params.id }
-      const input = reviseToolInputSchema.parse(merged)
+      const input = reviseToolRequestSchema.parse(merged)
       const gatewayOpts =
         options.gateway === undefined
           ? { access: options.access, limits: options.limits }

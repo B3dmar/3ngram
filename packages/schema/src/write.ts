@@ -242,7 +242,7 @@ export type ReviseEdgeIntent = z.infer<typeof reviseEdgeIntentSchema>
  * defaults; a revise that forgot `scope` used to move a `work` memory to
  * `personal` and drop its project while closing the original.
  */
-export const reviseSuccessorInputSchema = rememberInputSchema
+export const reviseInputSchema = rememberInputSchema
   .extend({
     scope: scopeSchema
       .optional()
@@ -257,12 +257,13 @@ export const reviseSuccessorInputSchema = rememberInputSchema
     edgeIntent: reviseEdgeIntentSchema.default('supersedes'),
   })
   .strict()
-export type ReviseSuccessorInput = z.infer<typeof reviseSuccessorInputSchema>
+export type ReviseInput = z.infer<typeof reviseInputSchema>
 
 /** Native successor revise: same optional sessionRunId as {@link nativeRememberInputSchema}. */
-export const nativeReviseSuccessorInputSchema = reviseSuccessorInputSchema.safeExtend({
+export const nativeReviseInputSchema = reviseInputSchema.safeExtend({
   sessionRunId: sessionRunIdField,
 })
+export type NativeReviseInput = z.infer<typeof nativeReviseInputSchema>
 
 /**
  * `revise` MOVE disposition (issue #233): change the scope, project and/or tags
@@ -330,20 +331,22 @@ export const nativeReviseMoveBodySchema = z
   .refine(hasMoveChange, { message: MOVE_NEEDS_A_FIELD })
 
 /**
- * `revise` input: a successor write (the default kind, unchanged shape) or a
- * move. A union rather than an optional discriminator on one object (ADR-0011:
- * unions grow by variant): the two kinds share only `predecessorId`, and a
- * successor body carries no `kind` so every existing caller parses as before.
+ * The full `revise` request: a successor write (`reviseInputSchema`, the
+ * object every existing caller composes with `.omit()`/`.extend()`, unchanged)
+ * or a move. A union under a NEW name rather than a widened object (ADR-0011:
+ * unions grow by variant, and the object exports keep their shape for
+ * composition): the two kinds share only `predecessorId`, and a successor body
+ * carries no `kind`, so every existing payload parses as before.
  */
-export const reviseInputSchema = z.union([reviseMoveInputSchema, reviseSuccessorInputSchema])
-export type ReviseInput = z.infer<typeof reviseInputSchema>
+export const reviseRequestSchema = z.union([reviseMoveInputSchema, reviseInputSchema])
+export type ReviseRequest = z.infer<typeof reviseRequestSchema>
 
-/** Native revise: both kinds accept the optional sessionRunId. */
-export const nativeReviseInputSchema = z.union([
+/** Native revise request: both kinds accept the optional sessionRunId. */
+export const nativeReviseRequestSchema = z.union([
   nativeReviseMoveInputSchema,
-  nativeReviseSuccessorInputSchema,
+  nativeReviseInputSchema,
 ])
-export type NativeReviseInput = z.infer<typeof nativeReviseInputSchema>
+export type NativeReviseRequest = z.infer<typeof nativeReviseRequestSchema>
 
 /**
  * Edge-creation input (typed edges: supersedes/updates/extends/derives). The

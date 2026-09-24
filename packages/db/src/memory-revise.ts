@@ -54,9 +54,10 @@
 // inserted so neither the MOVE (a) nor the auto-create (d) can collide. The FK is
 // composite tenant-qualified; both target the just-inserted successor, still live
 // inside this tx.
-import { type ActorKind, type EdgeType, reviseMoveEventPayloadSchema } from '@3ngram/schema'
+import type { ActorKind, EdgeType, ReviseMoveEventPayload } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { EdgeConflictError, insertEdge } from './memory-edges.js'
 import {
   DuplicateMemoryError,
@@ -67,6 +68,7 @@ import {
 import { isUniqueViolation } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
 import {
+  assertSessionRunOwned,
   resolveSessionProvenance,
   sessionPayload,
   UnknownSessionRunError,
@@ -171,6 +173,12 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
       project: memories.project,
       tags: memories.tags,
     }
+    // FIRST statement (lock order: account-lifecycle before every other advisory
+    // and row lock): a move writes user content (tags) back onto a row, so it
+    // must not interleave with account erasure, which holds this lock
+    // exclusively and must stay the final content write for the account.
+    await guardSessionMutation(tx, input.userId)
+
     const target = and(eq(memories.userId, input.userId), eq(memories.id, input.memoryId))
     const resolve = (row: { scope: string; project: string | null; tags: string[] }) => {
       const next = {
@@ -190,7 +198,14 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
     if (!peek) throw new PredecessorNotFoundError(input.memoryId)
     const base = { id: input.memoryId, memoryType: peek.memoryType, topic: peek.topic }
     const planned = resolve(peek)
-    if (!planned.changed) return { ...base, ...planned.next, changed: false }
+    if (!planned.changed) {
+      // The contract says an unowned run id fails every write, no-op included;
+      // the ownership-only check has none of provenance's attach side effects.
+      if (input.sessionRunId !== undefined) {
+        await assertSessionRunOwned(input.userId, input.sessionRunId)
+      }
+      return { ...base, ...planned.next, changed: false }
+    }
 
     // LOCK ORDER (canonical, see reviseMemory): provenance — which may take the
     // tenant/project attach advisory lock — BEFORE the row lock below. The
@@ -221,12 +236,14 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
       memoryId: input.memoryId,
       eventKind: 'revise',
       actorKind: input.actorKind,
-      payload: reviseMoveEventPayloadSchema.parse({
+      // Built under the schema's inferred type, not parsed: validation happens
+      // once, at the boundary (hard rule 2).
+      payload: {
         ...(sessionPayload(runId) ?? {}),
         disposition: 'move',
         from: { scope: current.scope, project: current.project, tagCount: current.tags.length },
         to: { scope: next.scope, project: next.project, tagCount: next.tags.length },
-      }),
+      } satisfies ReviseMoveEventPayload,
     })
     return { ...base, ...next, changed: true }
   })

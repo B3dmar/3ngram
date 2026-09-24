@@ -9,11 +9,11 @@ import {
   factsQueryInputSchema,
   factsToolOutputSchema,
   nativeReviseMoveBodySchema,
-  nativeReviseSuccessorInputSchema,
   rememberToolInputV2Schema,
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
+  reviseToolInputSchema,
   reviseToolOutputSchema,
   searchQuerySchema,
   searchRestResponseV2Schema,
@@ -32,7 +32,7 @@ const SCHEMAS = {
   revise: {
     input: z.union([
       nativeReviseMoveBodySchema,
-      nativeReviseSuccessorInputSchema.omit({ predecessorId: true }),
+      reviseToolInputSchema.omit({ predecessorId: true }),
     ]),
     output: reviseToolOutputSchema,
   },

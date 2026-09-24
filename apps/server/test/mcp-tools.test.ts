@@ -110,6 +110,12 @@ class AccessDeniedError extends Error {
     this.name = 'AccessDeniedError'
   }
 }
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account deleted')
+    this.name = 'AccountDeletedError'
+  }
+}
 class ResourceLimitExceededError extends Error {
   constructor(readonly resource: 'live_memories' | 'active_mcp_clients') {
     super('resource limit reached')
@@ -276,6 +282,7 @@ vi.mock('@3ngram/core', () => ({
   getMemoriesByIds,
   BudgetExceededError,
   AccessDeniedError,
+  AccountDeletedError,
   ResourceLimitExceededError,
   DuplicateMemoryError,
   InvalidEmbeddingError,

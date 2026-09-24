@@ -30,7 +30,12 @@ import { OPEN_OUTPUT_META } from './output-openness.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
-import { nativeReviseInputSchema, projectSchema, rememberInputSchema } from './write.js'
+import {
+  nativeReviseInputSchema,
+  nativeReviseRequestSchema,
+  projectSchema,
+  rememberInputSchema,
+} from './write.js'
 
 /** Upper bound on a search result window — the no-firehose ceiling (docs/concepts/mcp-design.mdx). */
 export const MAX_SEARCH_LIMIT = 25
@@ -156,9 +161,19 @@ export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 export const reviseToolInputSchema = nativeReviseInputSchema
 export type ReviseToolInput = z.infer<typeof reviseToolInputSchema>
 /**
- * Caller-side (pre-parse) shape: `z.input` where `edgeIntent` is server-defaulted
- * and `scope`/`project`/`tags` are OPTIONAL because an omitted value is inherited
- * from the predecessor (issue #222). See {@link RememberToolArgs}.
+ * What the tool actually accepts (issue #233): the successor object above OR a
+ * move. Registered as the tool's input schema and parsed by both transports;
+ * `reviseToolInputSchema` keeps its object shape for callers that compose it.
+ */
+export const reviseToolRequestSchema = nativeReviseRequestSchema
+export type ReviseToolRequest = z.infer<typeof reviseToolRequestSchema>
+/** Caller-side shape of either kind; what the SDK's revise body derives from. */
+export type ReviseToolRequestArgs = z.input<typeof reviseToolRequestSchema>
+/**
+ * Caller-side (pre-parse) shape of a SUCCESSOR write: `z.input` where `edgeIntent`
+ * is server-defaulted and `scope`/`project`/`tags` are OPTIONAL because an omitted
+ * value is inherited from the predecessor (issue #222). See {@link RememberToolArgs};
+ * {@link ReviseToolRequestArgs} covers the move kind as well.
  */
 export type ReviseToolArgs = z.input<typeof reviseToolInputSchema>
 

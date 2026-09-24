@@ -37,8 +37,13 @@ vi.mock('../src/memory-edges.js', () => ({
   EdgeConflictError: class EdgeConflictError extends Error {},
 }))
 vi.mock('../src/pg-errors.js', () => ({ isUniqueViolation: () => false }))
+vi.mock('../src/credential-guard.js', () => ({
+  guardSessionMutation: async () => undefined,
+}))
+
 vi.mock('../src/session-provenance.js', () => ({
   resolveSessionProvenance: async () => undefined,
+  assertSessionRunOwned: async () => undefined,
   sessionPayload: () => undefined,
   UnknownSessionRunError: class UnknownSessionRunError extends Error {
     sessionRunId: string

@@ -41,8 +41,8 @@ import {
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
-  reviseToolInputSchema,
   reviseToolOutputSchema,
+  reviseToolRequestSchema,
 } from '@3ngram/schema'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server'
 import type { ZodType } from 'zod'
@@ -348,7 +348,7 @@ const getFactsTool: ToolDefinition = {
  * "correct or update what I know"). Wraps core revise(): closes the
  * predecessor's validity and appends a typed-edge-linked successor in one
  * transaction. The edge intent is constrained to the supersession family
- * ('supersedes' | 'updates') by reviseToolInputSchema — NOT widened to the
+ * ('supersedes' | 'updates') by reviseToolRequestSchema — NOT widened to the
  * additive 'extends'/'derives' edges. Embedding is non-blocking, same
  * ack-before-embed as remember (pending with a gateway, off without).
  *
@@ -370,7 +370,7 @@ const reviseTool: ToolDefinition = {
     // FULL `.strict()` object (not `.shape`): the SDK parses strictly at the
     // boundary so a supplied `scope`/`project` reaches the handler and an unknown
     // key is rejected, never silently stripped.
-    inputSchema: reviseToolInputSchema,
+    inputSchema: reviseToolRequestSchema,
     outputSchema: reviseToolOutputSchema,
     // destructiveHint: false is the claim worth making visible. AGENTS.md hard
     // rule 1: no write path destroys memory data. revise closes the
@@ -394,7 +394,7 @@ const reviseTool: ToolDefinition = {
     // scope/project/tags is inherited from the predecessor (issue #222), so the
     // echo comes from the write, not from the input. Embedding is best-effort
     // and never blocks (same ack-before-embed as remember).
-    const input = reviseToolInputSchema.parse(args)
+    const input = reviseToolRequestSchema.parse(args)
     const gatewayOpts =
       ctx.gateway === undefined
         ? { access: ctx.access, limits: ctx.limits }

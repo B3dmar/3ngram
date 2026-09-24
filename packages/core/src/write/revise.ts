@@ -17,7 +17,7 @@
 // only. This module logs nothing; callers that do must honour the same rule.
 import { createHash } from 'node:crypto'
 import { moveMemory, reviseMemory } from '@3ngram/db'
-import { type ActorKind, nativeReviseInputSchema } from '@3ngram/schema'
+import { type ActorKind, nativeReviseRequestSchema } from '@3ngram/schema'
 import { assertWithinBudget } from '../budget/index.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 import type { WriteResult } from './remember.js'
@@ -45,7 +45,7 @@ function contentHash(content: string): string {
  * Supersede `predecessorId` with a new memory for `userId`.
  *
  * Single validation boundary: callers pass the RAW payload and `revise`
- * validates it exactly once via nativeReviseInputSchema. Transports must NOT
+ * validates it exactly once via nativeReviseRequestSchema. Transports must NOT
  * pre-validate — they hand the unparsed request body straight through.
  *
  * @param userId  Tenant whose RLS context the revision runs under.
@@ -94,7 +94,7 @@ export async function revise(
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
 ): Promise<ReviseResult> {
-  const parsed = nativeReviseInputSchema.parse(input)
+  const parsed = nativeReviseRequestSchema.parse(input)
   // PRE-PERSIST GUARDS (before reviseMemory so a denied revise never lands a
   // successor row): (1) ACCESS — the injected access gate denies a write when the
   // platform policy forbids it (self-host allowAllAccess allows all), throwing
