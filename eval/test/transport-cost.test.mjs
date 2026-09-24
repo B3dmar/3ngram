@@ -137,17 +137,24 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // `sessionRunId` on remember/revise/resolve input schemas. MCP pays it
       // per turn on tools/list; REST pays the request-surface once. CLI
       // unchanged. MEASURED on this PR's actual base, not summed.
-      // MCP +198/+1584/+387 (issue #223, supersededBy on get_memories): every
+      // MCP +38/+304/+75, REST +38/+38/+38 (issue #222, revise inherits
+      // filing): `scope`/`project`/`tags` on the revise input lose their
+      // defaults and gain a one-line description each saying an omitted value
+      // is inherited from the predecessor. The tool description is unchanged
+      // (no embeddings regen). MCP pays it on tools/list per turn, REST on the
+      // request surface once, CLI has no revise command. MEASURED on this
+      // PR's actual base (staging post-v1.7.0 version bump), not summed.
+      // MCP +198/+1584/+386 (issue #223, supersededBy on get_memories): every
       // item of the get_memories OUTPUT schema gains a nullable `{ id, edgeType }`
       // successor object, and an output schema rides tools/list every MCP turn.
       // REST and CLI are unchanged: REST's response shape is the hand-maintained
       // summary string (see the supersession-visibility note above) and the CLI
       // has no get_memories command. The tool description is unchanged (no
       // embeddings regen). MEASURED on this PR's actual base (staging
-      // post-v1.7.0), not summed.
-      mcp: [27289, 220128, 55030],
+      // post-#222), not summed.
+      mcp: [27327, 220432, 55104],
       cli: [333, 1236, 1236],
-      rest: [3329, 4346, 4346],
+      rest: [3367, 4384, 4384],
     },
   )
 })

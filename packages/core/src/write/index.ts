@@ -40,5 +40,6 @@ export {
   EdgeConflictError,
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
+  type ReviseResult,
   revise,
 } from './revise.js'

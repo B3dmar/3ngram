@@ -82,6 +82,10 @@ export interface MemoryBatchItem
  * filters on the two revision kinds); nothing is re-validated here (rule 2).
  */
 function supersededBy(row: MemoryBatchRow): SupersededBy | null {
+  // Status first, as REST history's lifecycleState does: an archived row is
+  // archived even when it also carries closed validity and an incoming
+  // revision edge (the blocker archive path sets both).
+  if (row.status === 'archived') return null
   if (row.validTo === null || row.successorId === null || row.successorEdgeType === null) {
     return null
   }

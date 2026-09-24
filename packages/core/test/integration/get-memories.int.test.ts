@@ -83,6 +83,27 @@ describe('getMemoriesByIds supersededBy (issue #223)', () => {
     expect(result.memories[0]?.supersededBy).toBeNull()
   })
 
+  it('reads null for an archived row even with closed validity and an incoming edge', async () => {
+    // The blocker archive path sets status='archived' AND valid_to; an imported
+    // updates edge may point at it. REST history classifies by status first.
+    const archived = await seedMemory(userA, 'blocker gone', 'was blocking')
+    const later = await seedMemory(userA, 'later', 'a later note')
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'updates', 'user_api')`,
+      [userA, later, archived],
+    )
+    await ownerPool.query(
+      "UPDATE memories SET status = 'archived', valid_to = now() WHERE user_id = $1 AND id = $2",
+      [userA, archived],
+    )
+
+    const result = await getMemoriesByIds(userA, [archived])
+
+    expect(result.memories[0]?.status).toBe('archived')
+    expect(result.memories[0]?.supersededBy).toBeNull()
+  })
+
   it('reports an updates edge on a closed row, ignores additive edges, newest revision wins', async () => {
     const closed = await seedMemory(userA, 'closed', 'old value')
     const first = await seedMemory(userA, 'first', 'newer value')
