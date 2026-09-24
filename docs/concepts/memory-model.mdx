@@ -51,6 +51,6 @@ This separation matters because corrections arrive late: you might learn today t
 
 ## Consolidation is advisory
 
-A background worker detects candidate duplicates and contradictions and **proposes** edges with a rationale — it does not apply them by default. Proposals surface through the `review_proposals` tool, where you accept or reject them.
+A background worker detects candidate duplicates and contradictions and **proposes** edges with a rationale — it does not apply them by default. Proposals surface through the `review_proposals` tool, where you accept or reject them. A decision is final for that pair: a rejected pair is not proposed again, and neither is a pair already joined by an edge. Only a new memory (a successor written by `revise`, or a fresh `remember`) can put the question back on the table.
 
 Event-type memories are never auto-linked, regardless of similarity: recurring episodic entries (daily digests, session debriefs) are textually near-identical by construction, which makes automatic merging the most dangerous exactly where it looks most confident.
