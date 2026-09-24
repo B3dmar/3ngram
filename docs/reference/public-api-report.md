@@ -326,6 +326,7 @@ its row here even when its name and kind are unchanged.
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
 | `RetryFailedEmbedsResult` | interface | `5ce9653631d7` |
+| `ReviseResult` | interface | `0ba33e4e40f7` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `SELFHOST_LIMITS` | const | `8a65a36d9637` |
 | `STALE_CANDIDATE_TYPES` | const | `b1e57e2979fd` |
