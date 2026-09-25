@@ -1,5 +1,20 @@
 # @3ngram/db
 
+## 0.12.0
+
+### Minor Changes
+
+- f04e568: `get_memories` items carry `supersededBy`: the direct successor (`{ id, edgeType }`, edge type `supersedes` or `updates`) when the row is superseded, `null` otherwise (current, archived, or historical without a revision edge). Superseded means not archived, closed validity and a revision edge, the precedence REST history's `lifecycleState` applies; for active rows it matches `search`'s `superseded` flag, and an imported `updates` edge on a live row still reads `null`. One hop only; lineage remains on REST `GET /api/v1/memories/:id/history` (issue #223).
+- 35bff20: `revise` gains a move disposition: `{ kind: "move", predecessorId, scope?, project?, tags? }` changes a memory's filing in place. No successor and no edge are written; content, topic, status, `valid_from`, `valid_to` and `recorded_at` are untouched, so a refile neither floods the target project's recent section nor breaks `asOf` reads. The change is audited by a `revise` memory event whose payload records scope, project and tag count before and after (tags themselves stay out of the INSERT-only event table because account erasure cannot reach it). AGENTS.md hard rule 1 gains this single carve-out. Superseded and archived rows can be moved too. A move that changes nothing writes nothing. The successor kind keeps its exact shape; the input schema is now a two-branch union, and the response's `memoryType`/`topic` come from the written or moved row (issue #233). The tool's one-line description still reads "never edits in place" until the tool-selection embeddings are regenerated; the field descriptions and the concept docs carry the move semantics.
+
+### Patch Changes
+
+- fd10617: `revise` inherits `scope`, `project` and `tags` from the predecessor when they are omitted, instead of defaulting to `personal`, no project and no tags. A revise that left out `scope` used to move a `work` memory out of its scope and drop it from its project briefing while closing the original. Explicit values still override. The MCP and REST responses now echo the filing the successor was written with (issue #222).
+- Updated dependencies [f04e568]
+- Updated dependencies [fd10617]
+- Updated dependencies [35bff20]
+  - @3ngram/schema@0.11.0
+
 ## 0.11.0
 
 ### Minor Changes
