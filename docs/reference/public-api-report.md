@@ -1413,7 +1413,7 @@ its row here even when its name and kind are unchanged.
 | `versionResponseSchema` | const | `95603c3e8e8b` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.8.0
+## `@3ngram/server` 1.8.2
 
 ### `./app`
 
