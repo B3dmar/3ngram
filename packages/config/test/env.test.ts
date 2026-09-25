@@ -467,3 +467,20 @@ describe('MCP origin allowlist (issue #101: Streamable HTTP Origin MUST)', () =>
     expect(isAllowedMcpOrigin('')).toBe(false)
   })
 })
+
+describe('COMMITMENT_EXPIRY_GRACE_DAYS (issue #221)', () => {
+  it('defaults to a 14-day window', () => {
+    expect(parseEnv({}).COMMITMENT_EXPIRY_GRACE_DAYS).toBe(14)
+  })
+
+  it('treats a blank value as unset, never as a zero-day window', () => {
+    expect(parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '' }).COMMITMENT_EXPIRY_GRACE_DAYS).toBe(14)
+    expect(parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '   ' }).COMMITMENT_EXPIRY_GRACE_DAYS).toBe(14)
+  })
+
+  it('accepts an explicit 0 and rejects values outside 0..365', () => {
+    expect(parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '0' }).COMMITMENT_EXPIRY_GRACE_DAYS).toBe(0)
+    expect(() => parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '366' })).toThrow()
+    expect(() => parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '-1' })).toThrow()
+  })
+})

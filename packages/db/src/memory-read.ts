@@ -19,6 +19,8 @@
 // Content discipline (hard rule 6): topic/content/tags are content-adjacent and
 // are NEVER logged here; callers log ids/lengths only. The list select omits
 // content entirely; the detail select returns it because inspect is its JTBD.
+
+import type { ReviseEdgeIntent } from '@3ngram/schema'
 import {
   and,
   asc,
@@ -31,6 +33,7 @@ import {
   isNull,
   lte,
   type SQL,
+  sql,
 } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { commitments, memories } from './schema/memory.js'
@@ -279,6 +282,33 @@ export async function getMemoryById(
   return row
 }
 
+/** A batch-read row: the detail row plus the newest revision edge pointing at it. */
+export interface MemoryBatchRow extends MemoryDetailRow {
+  /** Successor id of the newest `supersedes`/`updates` edge targeting this row, or null. */
+  successorId: string | null
+  /**
+   * Its edge type, already one of the two revision kinds: the subquery filters
+   * on them and the column carries a generated enum CHECK, so no re-validation
+   * happens downstream (hard rule 2).
+   */
+  successorEdgeType: ReviseEdgeIntent | null
+}
+
+/**
+ * One column of the newest revision edge whose predecessor is the memory row
+ * being selected (issue #223). Correlated on BOTH user_id and id (two-layer
+ * tenant isolation, as every edge subquery in search.ts); the batch is at most
+ * MAX_GET_MEMORIES_IDS rows, so a per-row subselect over the tenant's edges is
+ * bounded. Whether the edge MEANS the row is superseded (closed validity as
+ * well) is decided in core, matching search.ts `supersededExists`.
+ */
+function successorEdgeColumn<T extends string>(column: 'from_id' | 'edge_type'): SQL<T | null> {
+  return sql<T | null>`(SELECT e.${sql.raw(column)} FROM memory_edges e
+    WHERE e.user_id = ${memories.userId} AND e.to_id = ${memories.id}
+      AND e.edge_type IN ('supersedes', 'updates')
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1)`
+}
+
 /**
  * Fetch a BATCH of memories by id for the tenant in ONE query (id = ANY —
  * never a per-id loop). Same contract as {@link getMemoryById} per row: the
@@ -293,7 +323,7 @@ export async function getMemoriesByIds(
   tx: TenantTx,
   userId: string,
   memoryIds: string[],
-): Promise<MemoryDetailRow[]> {
+): Promise<MemoryBatchRow[]> {
   if (memoryIds.length === 0) return []
   return tx
     .select({
@@ -305,6 +335,8 @@ export async function getMemoriesByIds(
       project: memories.project,
       status: memories.status,
       commitmentStatus: commitments.status,
+      successorId: successorEdgeColumn<string>('from_id'),
+      successorEdgeType: successorEdgeColumn<ReviseEdgeIntent>('edge_type'),
       tags: memories.tags,
       validFrom: memories.validFrom,
       validTo: memories.validTo,

@@ -623,9 +623,14 @@ const LIVE_COMMITMENT_STATES = ['open', 'waiting'] as const
  * commitment legitimately UPDATEs its own status column, the createCommitment /
  * transitionCommitment precedent):
  *
- *   1. OVERDUE: open|waiting commitments whose `due_at` is strictly in the PAST
- *      transition to 'expired' (a legal FSM edge from both states — the DB FSM
- *      trigger is the backstop). Each fires an 'archive' audit event against its
+ *   1. OVERDUE: open|waiting commitments whose `due_at` is strictly before
+ *      `expireBefore` transition to 'expired' (a legal FSM edge from both states —
+ *      the DB FSM trigger is the backstop). `expireBefore` is `now` minus the
+ *      grace window the caller resolved (issue #221): a commitment inside the
+ *      window is past due but stays open, which is what keeps it VISIBLE in the
+ *      briefing's overdue section — nothing there reads `expired`. Omitted, it
+ *      defaults to `now` (the pre-#221 behaviour) so the signature stays
+ *      compatible for existing callers. Each fires an 'archive' audit event against its
  *      memory's event stream so the lifecycle stays auditable, exactly as
  *      {@link transitionCommitment} does for a single row.
  *
@@ -643,6 +648,7 @@ export async function sweepCommitments(
   tx: TenantTx,
   userId: string,
   now: Date,
+  expireBefore: Date = now,
 ): Promise<SurfacingSweepResult> {
   const overdue = await tx
     .update(commitments)
@@ -652,7 +658,7 @@ export async function sweepCommitments(
         eq(commitments.userId, userId),
         inArray(commitments.status, [...LIVE_COMMITMENT_STATES]),
         isNotNull(commitments.dueAt),
-        lt(commitments.dueAt, now),
+        lt(commitments.dueAt, expireBefore),
       ),
     )
     .returning({ id: commitments.id, memoryId: commitments.memoryId })

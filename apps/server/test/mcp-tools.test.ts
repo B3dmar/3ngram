@@ -110,6 +110,12 @@ class AccessDeniedError extends Error {
     this.name = 'AccessDeniedError'
   }
 }
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account deleted')
+    this.name = 'AccountDeletedError'
+  }
+}
 class ResourceLimitExceededError extends Error {
   constructor(readonly resource: 'live_memories' | 'active_mcp_clients') {
     super('resource limit reached')
@@ -276,6 +282,7 @@ vi.mock('@3ngram/core', () => ({
   getMemoriesByIds,
   BudgetExceededError,
   AccessDeniedError,
+  AccountDeletedError,
   ResourceLimitExceededError,
   DuplicateMemoryError,
   InvalidEmbeddingError,
@@ -1408,6 +1415,11 @@ describe('revise tool', () => {
     const successorId = crypto.randomUUID()
     revise.mockResolvedValue({
       id: successorId,
+      memoryType: 'decision',
+      topic: 'sdk pin',
+      scope: 'work',
+      project: 'inherited',
+      tags: [],
       embed: { settled: new Promise<boolean>(() => undefined) },
     })
     const result = await Promise.race([
@@ -1421,18 +1433,64 @@ describe('revise tool', () => {
       (result as { structuredContent: unknown }).structuredContent,
     )
     expect(parsed.memory.id).toBe(successorId)
-    expect(parsed.memory.scope).toBe('personal') // default applied at the boundary
+    // Omitted scope/project are NOT defaulted at the boundary any more: the echo
+    // is what the write resolved, i.e. the predecessor's filing (#222).
+    expect(parsed.memory.scope).toBe('work')
+    expect(parsed.memory.project).toBe('inherited')
+    const coreInput = revise.mock.calls[0]?.[1] as { scope?: string; tags?: string[] }
+    expect(coreInput.scope).toBeUndefined()
+    expect(coreInput.tags).toBeUndefined()
     expect(parsed.embedded).toBe('pending')
   })
 
   it('reports `off` when no gateway is configured', async () => {
     revise.mockResolvedValue({
       id: crypto.randomUUID(),
+      memoryType: 'decision',
+      topic: 'sdk pin',
+      scope: 'personal',
+      project: null,
+      tags: [],
       embed: { settled: Promise.resolve(false) },
     })
     const result = await call('revise', validReviseArgs(), ctx({ gateway: undefined }))
     const parsed = reviseToolOutputSchema.parse(result.structuredContent)
     expect(parsed.embedded).toBe('off')
+  })
+
+  it('move disposition: refiles in place, echoes the moved row, reports nothing to embed (#233)', async () => {
+    revise.mockResolvedValue({
+      id: MEMO_ID,
+      memoryType: 'note',
+      topic: 'moved topic',
+      scope: 'work',
+      project: 'rdg-npd',
+      tags: ['a'],
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'revise',
+      { kind: 'move', predecessorId: MEMO_ID, project: 'rdg-npd' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = revise.mock.calls[0]?.[1] as { kind?: string; project?: string }
+    expect(coreInput).toMatchObject({ kind: 'move', project: 'rdg-npd' })
+    const parsed = reviseToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.memory).toEqual({
+      id: MEMO_ID,
+      memoryType: 'note',
+      topic: 'moved topic',
+      scope: 'work',
+      project: 'rdg-npd',
+    })
+    expect(parsed.embedded).toBe('off')
+  })
+
+  it('rejects a move with nothing to change without calling core (#233)', async () => {
+    const result = await call('revise', { kind: 'move', predecessorId: MEMO_ID }, ctx())
+    expect(result.isError).toBe(true)
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it('rejects a missing predecessorId without calling core', async () => {
@@ -1445,7 +1503,15 @@ describe('revise tool', () => {
   it('round-trips an explicit scope + project to core AND echoes them (#284)', async () => {
     // FULL `.strict()` registration: a supplied scope:'work'/project:'3ngram'
     // survives to the handler and is echoed, not stripped to personal/null.
-    revise.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    revise.mockResolvedValue({
+      id: MEMO_ID,
+      memoryType: 'decision',
+      topic: 'sdk pin',
+      scope: 'work',
+      project: '3ngram',
+      tags: [],
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'revise',
       { ...validReviseArgs(), scope: 'work', project: '3ngram' },
@@ -2507,12 +2573,29 @@ describe('get_memories tool (batched full-content follow-up read)', () => {
     project: null,
     status: 'active',
     commitmentStatus: null,
+    supersededBy: null,
     tags: ['ops'],
     validFrom: new Date('2026-01-01T00:00:00.000Z'),
     validTo: null,
     recordedAt: new Date('2026-01-01T00:00:00.000Z'),
     createdAt: new Date('2026-01-02T00:00:00.000Z'),
     ...over,
+  })
+
+  it('echoes supersededBy for a superseded row (#223)', async () => {
+    const successor = crypto.randomUUID()
+    getMemoriesByIds.mockResolvedValue({
+      memories: [
+        coreRow({
+          validTo: new Date('2026-02-01T00:00:00.000Z'),
+          supersededBy: { id: successor, edgeType: 'supersedes' },
+        }),
+      ],
+      notFound: [],
+    })
+    const result = await call('get_memories', { ids: [rowId] }, ctx())
+    const parsed = getMemoriesOutputSchema.parse(result.structuredContent)
+    expect(parsed.memories[0]?.supersededBy).toEqual({ id: successor, edgeType: 'supersedes' })
   })
 
   it('passes validated ids + maxContentChars to core and shapes schema-valid output', async () => {

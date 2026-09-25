@@ -438,6 +438,50 @@ export const triageOutcomeStatusSchema = z.enum(['completed', 'expired', 'overfl
 export type TriageOutcomeStatus = z.infer<typeof triageOutcomeStatusSchema>
 
 /**
+ * Per-row bound on `triage_attempt_log`. Appends past it drop the OLDEST entry;
+ * `triage_attempt_count` keeps the true total, so a reader can tell a trimmed
+ * log from a complete one. Fifty is far past any non-pathological run: every
+ * re-arm needs a provenance event outside the watermark, and the per-run event
+ * ceiling ({@link MAX_SESSION_EVENT_IDS}) terminates a run long before its
+ * attempts could matter at this scale.
+ */
+export const MAX_TRIAGE_ATTEMPT_LOG = 50
+
+/**
+ * One INTERACTIVE nudge attempt, as `triage_attempt_log` records it
+ * (issue #203). Appended when `begin` arms; the `complete` that finishes the
+ * attempt stamps `finalizedAt` AND `outcome` together. An OPEN entry (neither
+ * field) is an attempt nothing ever finalized: still in flight while the row
+ * is `pending`, abandoned otherwise (the session died mid-handshake, or the
+ * closer took the row over — the closer's own claims are deliberately not
+ * logged here, because the log measures the Stop nudge, not the background
+ * worker).
+ *
+ * A UNION, not two independent optionals: the write path only ever produces
+ * the two variants below, and a half-finalized entry (an outcome with no
+ * instant, or the reverse) is unclassifiable to a validation reader — so the
+ * boundary refuses to represent it rather than trusting every consumer to.
+ *
+ * Timestamps are ISO strings because the entries live in a jsonb column; ids
+ * and instants only — no memory content rides here.
+ */
+const triageAttemptArmedShape = {
+  attemptId: z.uuid(),
+  armedAt: z.iso.datetime(),
+}
+export const triageAttemptLogEntrySchema = z.union([
+  z
+    .object({
+      ...triageAttemptArmedShape,
+      finalizedAt: z.iso.datetime(),
+      outcome: triageOutcomeStatusSchema,
+    })
+    .strict(),
+  z.object(triageAttemptArmedShape).strict(),
+])
+export type TriageAttemptLogEntry = z.infer<typeof triageAttemptLogEntrySchema>
+
+/**
  * The absorb receipt. COUNTS ONLY — the event ids themselves are audit-log
  * identifiers for memories this run wrote, and the hook has no use for them
  * (hard rule 6 keeps the response to ids and counts; here it is only counts).
@@ -576,6 +620,72 @@ export const sessionEventsResponseSchema = z
   })
   .strict()
 export type SessionEventsResponse = z.infer<typeof sessionEventsResponseSchema>
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/agent-sessions/:sessionRunId — the bookkeeping-row read
+// GET /api/v1/agent-sessions/:sessionRunId/triage-attempts — the nudge history
+// (issue #203: the #166 validation phase needs `briefed_memories` to score
+// closer commitment recall, and attempt outcomes to score nudge ignore-rate;
+// neither was readable from the REST surface).
+// ---------------------------------------------------------------------------
+
+/**
+ * The bookkeeping row for one run, addressed by `sessionRunId` — read-only and
+ * tenant-scoped like the events read beside it. Everything here is bookkeeping
+ * the tenant's own hook wrote at open time plus the row's lifecycle state;
+ * `last_message_excerpt` and the watermark ids are deliberately NOT projected —
+ * the excerpt is user/assistant content with exactly one consumer (the closer),
+ * and the audit driver reads the run's events through the events endpoint.
+ *
+ * `briefedMemories` is the CURRENT activation's delivery, not a per-activation
+ * history: a reopening `startup` restamps it (and `briefingDeliveredAt`) while
+ * the events endpoint keeps every event of every activation under the one
+ * `sessionRunId`. A reader computing per-briefing metrics (closer commitment
+ * recall) over a reopened run must therefore scope the run's events to
+ * `createdAt >= briefingDeliveredAt` — the stamp dates exactly the snapshot
+ * this response carries, and the closer's epoch fences keep a prior
+ * activation's resolves from landing after the restamp. The row stores one
+ * snapshot by shipped contract (the concept page's layer 1); this endpoint
+ * mirrors it rather than growing a second history store.
+ */
+export const agentSessionRunResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    agent: agentNameSchema,
+    sessionId: harnessSessionIdSchema,
+    source: agentSessionSourceSchema,
+    project: projectSchema.nullable(),
+    scope: scopeSchema.nullable(),
+    selector: briefingSelectorV2Schema,
+    activationEpoch: z.number().int().positive(),
+    triageStatus: agentSessionTriageStatusSchema,
+    openedAt: z.iso.datetime(),
+    closedAt: z.iso.datetime().nullable(),
+    lastSeenAt: z.iso.datetime(),
+    briefingDeliveredAt: z.iso.datetime().nullable(),
+    briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
+  })
+  .strict()
+export type AgentSessionRunResponse = z.infer<typeof agentSessionRunResponseSchema>
+
+/**
+ * One run's interactive nudge attempts, oldest first. `count` is the true
+ * attempt total the row knows of; `truncated` is `count > items.length`, and
+ * it announces EVERY incomplete history rather than only a cap trim: the log
+ * keeps the newest {@link MAX_TRIAGE_ATTEMPT_LOG} entries, and migration 0037
+ * seeds `count` without an entry for a legacy pending attempt whose arm time
+ * predates `triage_armed_at` — either way the reader learns the list is not
+ * the whole denominator instead of silently under-counting an ignore rate.
+ */
+export const sessionTriageAttemptsResponseSchema = z
+  .object({
+    sessionRunId: sessionRunIdSchema,
+    items: z.array(triageAttemptLogEntrySchema).max(MAX_TRIAGE_ATTEMPT_LOG),
+    count: z.number().int().min(0),
+    truncated: z.boolean(),
+  })
+  .strict()
+export type SessionTriageAttemptsResponse = z.infer<typeof sessionTriageAttemptsResponseSchema>
 
 // ---------------------------------------------------------------------------
 // Closer v1 — the model's verdict (docs/concepts/session-continuity.mdx layer 5)

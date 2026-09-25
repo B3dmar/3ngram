@@ -41,8 +41,8 @@ import {
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
-  reviseToolInputSchema,
   reviseToolOutputSchema,
+  reviseToolRequestSchema,
 } from '@3ngram/schema'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server'
 import type { ZodType } from 'zod'
@@ -348,7 +348,7 @@ const getFactsTool: ToolDefinition = {
  * "correct or update what I know"). Wraps core revise(): closes the
  * predecessor's validity and appends a typed-edge-linked successor in one
  * transaction. The edge intent is constrained to the supersession family
- * ('supersedes' | 'updates') by reviseToolInputSchema — NOT widened to the
+ * ('supersedes' | 'updates') by reviseToolRequestSchema — NOT widened to the
  * additive 'extends'/'derives' edges. Embedding is non-blocking, same
  * ack-before-embed as remember (pending with a gateway, off without).
  *
@@ -370,15 +370,17 @@ const reviseTool: ToolDefinition = {
     // FULL `.strict()` object (not `.shape`): the SDK parses strictly at the
     // boundary so a supplied `scope`/`project` reaches the handler and an unknown
     // key is rejected, never silently stripped.
-    inputSchema: reviseToolInputSchema,
+    inputSchema: reviseToolRequestSchema,
     outputSchema: reviseToolOutputSchema,
     // destructiveHint: false is the claim worth making visible. AGENTS.md hard
     // rule 1: no write path destroys memory data. revise closes the
     // predecessor's validity and APPENDS a successor row — the predecessor's
     // content is never rewritten (packages/db/src/memory-revise.ts), and archive
-    // moves `status`, not content. Not idempotent: each call appends a new
-    // successor, and a repeat against an already-superseded predecessor is a
-    // typed rejection rather than a no-op.
+    // moves `status`, not content. The move disposition (issue #233) rewrites
+    // filing metadata only (scope/project/tags) and keeps the previous filing in
+    // its audit event. Not idempotent: each successor call appends a new row,
+    // and a repeat against an already-superseded predecessor is a typed
+    // rejection rather than a no-op (a repeated move is a harmless no-op).
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -388,24 +390,27 @@ const reviseTool: ToolDefinition = {
   },
   async handler(args, ctx) {
     // core revise() is THE validation boundary; pass args straight through. It
-    // returns the successor id only, so the output echoes the NORMALIZED revise
-    // input (scope default + null project applied here) for the rest. Embedding
-    // is best-effort and never blocks (same ack-before-embed as remember).
-    const input = reviseToolInputSchema.parse(args)
+    // returns the successor id plus the filing it ended up with — an omitted
+    // scope/project/tags is inherited from the predecessor (issue #222), so the
+    // echo comes from the write, not from the input. Embedding is best-effort
+    // and never blocks (same ack-before-embed as remember).
+    const input = reviseToolRequestSchema.parse(args)
     const gatewayOpts =
       ctx.gateway === undefined
         ? { access: ctx.access, limits: ctx.limits }
         : { gateway: ctx.gateway, budget: ctx.budget, access: ctx.access, limits: ctx.limits }
     const written = await revise(ctx.userId, input, 'user_mcp', gatewayOpts)
     void written.embed.settled.catch(() => false)
-    const embedded = ctx.gateway === undefined ? 'off' : 'pending'
+    // A move appends no row, so there is nothing to embed: `off`, not `pending`.
+    const isMove = 'kind' in input && input.kind === 'move'
+    const embedded = isMove || ctx.gateway === undefined ? 'off' : 'pending'
     const output = parseOutput('revise', reviseToolOutputSchema, {
       memory: {
         id: written.id,
-        memoryType: input.memoryType,
-        topic: input.topic,
-        scope: input.scope,
-        project: input.project ?? null,
+        memoryType: written.memoryType,
+        topic: written.topic,
+        scope: written.scope,
+        project: written.project,
       },
       embedded,
     })

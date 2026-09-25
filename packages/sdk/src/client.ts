@@ -21,8 +21,8 @@ import type {
   RememberToolOutputV2,
   ResolveToolOutput,
   RestErrorResponse,
-  ReviseToolArgs,
   ReviseToolOutput,
+  ReviseToolRequestArgs,
   SearchQueryArgs,
   SearchRestResponseV2,
 } from '@3ngram/schema'
@@ -49,7 +49,8 @@ export type SearchOptions = Omit<SearchQueryArgs, 'query'>
  * any body `predecessorId` with the path id anyway ("the URL wins"), so requiring
  * it in the body would be redundant.
  */
-export type ReviseBody = Omit<ReviseToolArgs, 'predecessorId'>
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+export type ReviseBody = DistributiveOmit<ReviseToolRequestArgs, 'predecessorId'>
 
 /** The `fetch` surface the client depends on — injectable for tests (no network). */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>

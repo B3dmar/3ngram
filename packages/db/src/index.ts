@@ -239,6 +239,7 @@ export {
   listMemories,
   listMemoryFacets,
   type MemoriesListQuery,
+  type MemoryBatchRow,
   type MemoryDetailRow,
   type MemoryFacets,
   type MemoryListRow,
@@ -248,8 +249,12 @@ export {
   archiveBlockerMemory,
   archiveMemory,
   BlockerNotFoundError,
+  type MovedMemory,
+  type MoveWrite,
+  moveMemory,
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
+  type RevisedMemory,
   type ReviseWrite,
   reviseMemory,
 } from './memory-revise.js'
@@ -364,6 +369,7 @@ export {
   AgentSessionNotFoundError,
   AgentSessionParamsConflictError,
   type AgentSessionRecord,
+  type AgentSessionRunRead,
   type CloseSessionResult,
   closeSession,
   type HeartbeatSessionResult,
@@ -371,6 +377,7 @@ export {
   type OpenSessionResult,
   openSession,
   readAgentSession,
+  readAgentSessionRun,
 } from './session-lifecycle.js'
 export { assertSessionRunOwned, UnknownSessionRunError } from './session-provenance.js'
 // --- Stop-nudge handshake: arm an attempt, then absorb the continuation ---

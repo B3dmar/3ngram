@@ -90,6 +90,8 @@ const getMemoriesTool: ToolDefinition = {
         scope: memory.scope,
         project: memory.project,
         status: memory.status,
+        // Direct successor of a superseded row, null when current (issue #223).
+        supersededBy: memory.supersededBy,
         // Optional in the output schema: present only for a commitment-type
         // memory (REST detail parity); a null LEFT-JOIN miss is omitted.
         ...(memory.commitmentStatus != null ? { commitmentStatus: memory.commitmentStatus } : {}),

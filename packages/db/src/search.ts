@@ -426,6 +426,22 @@ export const KNN_EF_SEARCH = 200
  * propose an edge against an already-superseded predecessor. Pinning
  * `valid_to IS NULL` for BOTH aliases restricts candidates to currently-live rows.
  *
+ * SETTLED PAIRS ARE NOT CANDIDATES (issue #220). A pair that already carries ANY
+ * consolidation proposal (proposed, applied OR rejected) or ANY materialized edge,
+ * in either orientation, is excluded alongside the similarity gate. Without this
+ * the only dedup was `proposals_open_idx` (partial on status = 'proposed'), so a
+ * rejected pair came back on the next hourly run and an applied `extends`/
+ * `derives` pair — both endpoints stay live — was re-proposed forever. The two
+ * anti-joins compare canonical (LEAST, GREATEST) id pairs, the same key DISTINCT
+ * ON groups by, so a pair is dropped or kept whole, the planner can use a set-
+ * based (hash or merge) anti join, and orientation does not matter. They sit in
+ * the OUTER predicate, not inside the LATERAL: a settled neighbor still occupies
+ * one of a row's `candidateK` slots, which only starts costing recall once a row
+ * has more than `candidateK` settled neighbors above the threshold, and keeping
+ * the kNN subquery a pure index scan matters more than that slot. A rejection is
+ * therefore final for that pair; only a NEW memory id (a `revise` successor or a
+ * fresh `remember`) reopens it.
+ *
  * EDGE DIRECTION IS LOAD-BEARING (memory-edges.ts, search.ts supersession
  * penalty, memory-revise.ts): a CLOSES_PREDECESSOR edge (supersedes/updates)
  * runs successor(from_id) -> predecessor(to_id), and applying it closes the
@@ -508,6 +524,18 @@ export async function findSimilarPairs(
       WHERE a.user_id = ${userId}::uuid
         AND a.status = 'active' AND a.valid_to IS NULL AND a.embedding IS NOT NULL
         AND (1 - (a.embedding <=> b.embedding)) >= ${minSimilarity}
+        AND NOT EXISTS (
+          SELECT 1 FROM consolidation_proposals p
+          WHERE p.user_id = ${userId}::uuid
+            AND LEAST(p.from_id, p.to_id) = LEAST(a.id, b.id)
+            AND GREATEST(p.from_id, p.to_id) = GREATEST(a.id, b.id)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM memory_edges e
+          WHERE e.user_id = ${userId}::uuid
+            AND LEAST(e.from_id, e.to_id) = LEAST(a.id, b.id)
+            AND GREATEST(e.from_id, e.to_id) = GREATEST(a.id, b.id)
+        )
       ORDER BY LEAST(a.id, b.id), GREATEST(a.id, b.id), (a.embedding <=> b.embedding)
     )
     SELECT from_id, to_id, from_type, to_type, similarity

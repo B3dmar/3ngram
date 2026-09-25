@@ -11,10 +11,11 @@
 import {
   getMemoriesByIds as getMemoriesByIdsDb,
   getMemoryById as getMemoryByIdDb,
+  type MemoryBatchRow,
   type MemoryDetailRow,
   withTenant,
 } from '@3ngram/db'
-import { DEFAULT_GET_CONTENT_CHARS } from '@3ngram/schema'
+import { DEFAULT_GET_CONTENT_CHARS, type SupersededBy } from '@3ngram/schema'
 import { excerptContent } from './excerpt.js'
 
 export type { MemoryDetailRow } from '@3ngram/db'
@@ -61,10 +62,36 @@ export interface GetMemoriesOptions {
  * stored length, `truncated` = the cut flag). Read-side shaping only — the
  * stored row is never touched (docs/concepts/memory-model.mdx).
  */
-export interface MemoryBatchItem extends Omit<MemoryDetailRow, 'content'> {
+export interface MemoryBatchItem
+  extends Omit<MemoryBatchRow, 'content' | 'successorId' | 'successorEdgeType'> {
   content: string
   contentLength: number
   truncated: boolean
+  /**
+   * The direct successor when this row is SUPERSEDED (issue #223): not
+   * archived, closed validity AND a `supersedes`/`updates` edge pointing at
+   * it — REST history's `lifecycleState` precedence. For active rows this is
+   * also what search.ts `supersededExists` answers; search does not look at
+   * status, so an explicitly searched archived row can read `superseded: true`
+   * there while it reads `null` here, exactly as history classifies it.
+   */
+  supersededBy: SupersededBy | null
+}
+
+/**
+ * Apply the shared superseded definition to a batch row's newest revision
+ * edge. The edge type arrives already typed by the db projection (the query
+ * filters on the two revision kinds); nothing is re-validated here (rule 2).
+ */
+function supersededBy(row: MemoryBatchRow): SupersededBy | null {
+  // Status first, as REST history's lifecycleState does: an archived row is
+  // archived even when it also carries closed validity and an incoming
+  // revision edge (the blocker archive path sets both).
+  if (row.status === 'archived') return null
+  if (row.validTo === null || row.successorId === null || row.successorEdgeType === null) {
+    return null
+  }
+  return { id: row.successorId, edgeType: row.successorEdgeType }
 }
 
 /** A batch read result: the found rows plus the ids that resolved to nothing. */
@@ -100,7 +127,11 @@ export async function getMemoriesByIds(
   const found = new Set(rows.map((row) => row.id))
   const notFound = requestedIds.filter((id) => !found.has(id))
   return {
-    memories: rows.map((row) => ({ ...row, ...excerptContent(row.content, maxContentChars) })),
+    memories: rows.map(({ successorId, successorEdgeType, ...row }) => ({
+      ...row,
+      ...excerptContent(row.content, maxContentChars),
+      supersededBy: supersededBy({ ...row, successorId, successorEdgeType }),
+    })),
     notFound,
   }
 }

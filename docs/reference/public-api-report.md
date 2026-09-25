@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.4.0
+## `@3ngram/config` 0.5.0
 
 ### `.`
 
@@ -46,6 +46,7 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `Surface` | type | `ec490e7783d6` |
+| `SurfacingConfig` | interface | `c27fd84b0133` |
 | `bindContext` | function | `d9a0d26e17cf` |
 | `budgetGateLookupFailure` | const | `92bdf3a14892` |
 | `consolidationAccepted` | const | `62fa4b1ddb9b` |
@@ -55,7 +56,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `2bc85a3b3191` |
+| `envSchema` | const | `0e9be93c5f8d` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -68,6 +69,7 @@ its row here even when its name and kind are unchanged.
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
+| `loadSurfacingConfig` | function | `cbd828f4ef34` |
 | `log` | function | `4ac742b7b963` |
 | `logger` | const | `dac2f188ebee` |
 | `mcpHeaderRequests` | const | `f3d558321eec` |
@@ -109,7 +111,8 @@ its row here even when its name and kind are unchanged.
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
-| `envSchema` | const | `2bc85a3b3191` |
+| `SurfacingConfig` | interface | `c27fd84b0133` |
+| `envSchema` | const | `0e9be93c5f8d` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
@@ -119,6 +122,7 @@ its row here even when its name and kind are unchanged.
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
+| `loadSurfacingConfig` | function | `cbd828f4ef34` |
 | `parseEnv` | function | `6fb096f7581e` |
 | `resetEnvCache` | function | `a1660e0fd58c` |
 
@@ -172,7 +176,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.11.2
+## `@3ngram/core` 0.13.0
 
 ### `.`
 
@@ -186,6 +190,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionNotFoundError` | class | `8ea3b43ae438` |
 | `AgentSessionParamsConflictError` | class | `5af2884d892c` |
 | `AgentSessionRecord` | interface | `1994b0eb0a13` |
+| `AgentSessionRunRead` | interface | `6cffde6868b1` |
 | `AgentSessionTriageConflictError` | class | `f1a638972944` |
 | `AllProposals` | interface | `b7eb6b725249` |
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
@@ -250,7 +255,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `bcac571b32ce` |
+| `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -285,6 +290,7 @@ its row here even when its name and kind are unchanged.
 | `ImportWriteOptions` | interface | `70555ec58158` |
 | `InvalidCommitmentTransitionError` | class | `35bdd3c53d32` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `LEGACY_SURFACING_POLICY` | const | `ec760cc39997` |
 | `Limits` | interface | `8dfe7e48d9c8` |
 | `LimitsResolver` | type | `e9184939e253` |
 | `ListOptions` | interface | `99ab60efc9f2` |
@@ -297,7 +303,7 @@ its row here even when its name and kind are unchanged.
 | `MemoriesBatchRead` | interface | `8da3c2c0eb2f` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
 | `MemoriesPage` | interface | `7ab4f1f2be69` |
-| `MemoryBatchItem` | interface | `85fdee9d7d41` |
+| `MemoryBatchItem` | interface | `0b8a8abf044f` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
 | `MemoryHistoryRead` | interface | `863fd20534bd` |
@@ -320,6 +326,7 @@ its row here even when its name and kind are unchanged.
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
 | `RetryFailedEmbedsResult` | interface | `5ce9653631d7` |
+| `ReviseResult` | interface | `b7c38ab71907` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `SELFHOST_LIMITS` | const | `8a65a36d9637` |
 | `STALE_CANDIDATE_TYPES` | const | `b1e57e2979fd` |
@@ -337,8 +344,10 @@ its row here even when its name and kind are unchanged.
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
 | `SessionSweepRepo` | interface | `ccf9ddfd0fe6` |
 | `SessionSweepResult` | interface | `e114e7717b5e` |
+| `SessionTriageAttempts` | interface | `967ff9c7e974` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
-| `SurfacingRepo` | interface | `9d64e4c86d6c` |
+| `SurfacingPolicy` | interface | `c9069f15c342` |
+| `SurfacingRepo` | interface | `4b2156e6726b` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
 | `TriageDebounceThresholds` | interface | `80eeac1034f2` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
@@ -360,7 +369,7 @@ its row here even when its name and kind are unchanged.
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
 | `closeSessionRun` | function | `7be3707051e7` |
-| `completeAgentSessionTriage` | function | `38adb8d26ab2` |
+| `completeAgentSessionTriage` | function | `34348b3754ec` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
 | `createScope` | function | `1e8f58a54fe9` |
@@ -374,16 +383,19 @@ its row here even when its name and kind are unchanged.
 | `deleteScope` | function | `8e460c0839b0` |
 | `describeEnvironment` | function | `4ba1439f061f` |
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
+| `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
 | `getAgentSession` | function | `340a1f97bda6` |
+| `getAgentSessionRun` | function | `8c021ae41931` |
 | `getBudgetStatus` | function | `12b4019ba940` |
 | `getCurrentUser` | function | `91b1696ca909` |
 | `getFacts` | function | `e4962000fb84` |
 | `getMemoriesByIds` | function | `a9fa490782cc` |
 | `getMemoryById` | function | `b5680c6aeae8` |
 | `getMemoryHistory` | function | `5bec4c08ade8` |
+| `getSessionTriageAttempts` | function | `4dfad0e2bc9c` |
 | `handoff` | function | `e5bc072664c7` |
 | `hashPassword` | function | `f2db7abeaf84` |
 | `heartbeatAgentSession` | function | `952816b8fcca` |
@@ -412,14 +424,14 @@ its row here even when its name and kind are unchanged.
 | `resolveResourceLimits` | function | `a4a0b13ca9fa` |
 | `resolveRetrievalPolicy` | function | `8d2d78bd62d8` |
 | `retryFailedEmbeds` | function | `814fcebeb911` |
-| `revise` | function | `3598bc7436c4` |
+| `revise` | function | `3f4cc72c85ff` |
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
 | `selectResolvable` | function | `6026659c6ba3` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
-| `surface` | function | `38e1713a17b6` |
+| `surface` | function | `3f6d72f3d59f` |
 | `sweepSessions` | function | `2a9d3ff6860e` |
 | `transition` | function | `5311082e3cc6` |
 | `verifyPassword` | function | `ff7837e2e5df` |
@@ -527,7 +539,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.10.2
+## `@3ngram/db` 0.12.0
 
 ### `.`
 
@@ -539,6 +551,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionNotFoundError` | class | `8ea3b43ae438` |
 | `AgentSessionParamsConflictError` | class | `5af2884d892c` |
 | `AgentSessionRecord` | interface | `1994b0eb0a13` |
+| `AgentSessionRunRead` | interface | `6cffde6868b1` |
 | `AgentSessionTriageConflictError` | class | `f1a638972944` |
 | `ApiKeyMetadata` | interface | `79f070aa6a83` |
 | `AppliedFactProposal` | interface | `9ad3015726f8` |
@@ -569,7 +582,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
 | `CommitmentTransition` | interface | `1697152a1177` |
-| `CompleteTriageOptions` | interface | `5a4f51b8b231` |
+| `CompleteTriageOptions` | interface | `8f2c4d86eeda` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
@@ -586,7 +599,7 @@ its row here even when its name and kind are unchanged.
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
-| `ExportAgentSessionRow` | interface | `bcac571b32ce` |
+| `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `b81b94928334` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
@@ -623,6 +636,7 @@ its row here even when its name and kind are unchanged.
 | `MEMORY_HISTORY_LINEAGE_EDGE_LIMIT` | const | `6c2393a1b249` |
 | `MEMORY_HISTORY_LINEAGE_NODE_LIMIT` | const | `29489b97b5dc` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
+| `MemoryBatchRow` | interface | `e2d3ee999549` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryEventWrite` | interface | `998f63354986` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
@@ -638,6 +652,8 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryWrite` | interface | `e8a209e29e38` |
+| `MoveWrite` | interface | `408d9ad30769` |
+| `MovedMemory` | interface | `3f7e9bd6301a` |
 | `NewEmailVerificationToken` | interface | `1b4b292f2832` |
 | `NewOAuthClient` | type | `f315a73482b4` |
 | `NewOauthCode` | interface | `2e6e2540b16a` |
@@ -657,7 +673,8 @@ its row here even when its name and kind are unchanged.
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
-| `ReviseWrite` | interface | `27da382ce3ca` |
+| `ReviseWrite` | interface | `e0b4d7ac9cc4` |
+| `RevisedMemory` | interface | `d8080d7c6e2a` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `RlsGuardOptions` | interface | `c1981ba2e2f7` |
 | `ScopeNameConflictError` | class | `40f6516361ee` |
@@ -686,7 +703,7 @@ its row here even when its name and kind are unchanged.
 | `WrittenMemory` | interface | `bec591e2c3d0` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
-| `agentSessions` | const | `203fee4a4d15` |
+| `agentSessions` | const | `a8e7698df3bc` |
 | `apiKeys` | const | `c5d36321993d` |
 | `appendImportedEvent` | function | `4654962471fe` |
 | `applyFactProposal` | function | `bb1b15f61cc0` |
@@ -732,7 +749,7 @@ its row here even when its name and kind are unchanged.
 | `getCommitmentByMemoryId` | function | `0629c8a41d7f` |
 | `getEnvironmentStats` | function | `e15c275ef074` |
 | `getFacts` | function | `fa54c70ac1dc` |
-| `getMemoriesByIds` | function | `959f257891eb` |
+| `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `f98653cf2421` |
 | `getRetrievalPolicy` | function | `80728d8897ec` |
@@ -777,6 +794,7 @@ its row here even when its name and kind are unchanged.
 | `memories` | const | `27508428e230` |
 | `memoryEdges` | const | `52088e26ee30` |
 | `memoryEvents` | const | `8b52656b3790` |
+| `moveMemory` | function | `4a4ea0fdfcc4` |
 | `oauthClients` | const | `afb1565e898e` |
 | `oauthCodes` | const | `bfa4d83807b7` |
 | `oauthTokens` | const | `5309b692908e` |
@@ -788,6 +806,7 @@ its row here even when its name and kind are unchanged.
 | `peekResetToken` | function | `2536f5228240` |
 | `planTiers` | const | `4a0f287afe02` |
 | `readAgentSession` | function | `6cbc302058a4` |
+| `readAgentSessionRun` | function | `be8d5c8a688e` |
 | `readCloserSession` | function | `1a19fa49b914` |
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
@@ -807,7 +826,7 @@ its row here even when its name and kind are unchanged.
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
 | `retryUnverifiedSignupWithEmailVerificationToken` | function | `b4a3ba8d69ed` |
-| `reviseMemory` | function | `87136c4b2522` |
+| `reviseMemory` | function | `de0e1f8d434c` |
 | `revokeApiKey` | function | `44d18e5177c8` |
 | `revokeClientForUser` | function | `0bfff611c5c1` |
 | `rotateOauthRefreshToken` | function | `4b536a12980b` |
@@ -823,7 +842,7 @@ its row here even when its name and kind are unchanged.
 | `setScopeAliases` | function | `7c6087427d8f` |
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
-| `sweepCommitments` | function | `67525f8877a1` |
+| `sweepCommitments` | function | `61fdca16f338` |
 | `sweepExpiredLeases` | function | `9814898ac80b` |
 | `sweepFloor` | function | `2212e4e03aa8` |
 | `touchApiKeyLastUsed` | function | `0f9df1ba3d81` |
@@ -902,7 +921,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `1b6488631dd9` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.9.1
+## `@3ngram/schema` 0.11.0
 
 ### `.`
 
@@ -920,6 +939,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionOpenInput` | type | `c2f97caee2f9` |
 | `AgentSessionOpenResponse` | type | `a97b73ebdc2a` |
 | `AgentSessionRow` | type | `d4d5b03da60f` |
+| `AgentSessionRunResponse` | type | `5e50c31645b1` |
 | `AgentSessionSource` | type | `8c3ffb08f101` |
 | `AgentSessionTriageBeginInput` | type | `58a04841f549` |
 | `AgentSessionTriageBeginResponse` | type | `a06f29175631` |
@@ -1059,6 +1079,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_TAGS` | const | `1e28dd3d6556` |
 | `MAX_TAG_LENGTH` | const | `27eb8fddc2d5` |
 | `MAX_TOPIC_LENGTH` | const | `6e710757d412` |
+| `MAX_TRIAGE_ATTEMPT_LOG` | const | `95eef31fb97a` |
 | `MAX_TRIAGE_TURN_COUNT` | const | `0b1a75701cc2` |
 | `MEMORY_TYPES` | const | `c45bf5870a7d` |
 | `MIN_GET_CONTENT_CHARS` | const | `3ca90d47ce79` |
@@ -1079,6 +1100,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryType` | type | `6d5684c2a472` |
 | `NativeRememberInput` | type | `88272fc24856` |
 | `NativeReviseInput` | type | `576a3ddcc8fa` |
+| `NativeReviseRequest` | type | `a97acecbb4c4` |
 | `OAuthClientIdParam` | type | `cdff48c25b49` |
 | `OAuthClientRegistrationMethod` | type | `27dcbcff235b` |
 | `PLAN_TIERS` | const | `6daec5a496ed` |
@@ -1116,9 +1138,14 @@ its row here even when its name and kind are unchanged.
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
 | `ReviseEdgeIntent` | type | `866315193454` |
 | `ReviseInput` | type | `bc5404423a89` |
+| `ReviseMoveEventPayload` | type | `4d4cbcd8ac0b` |
+| `ReviseMoveInput` | type | `c2a1f00fa746` |
+| `ReviseRequest` | type | `4b807d074a27` |
 | `ReviseToolArgs` | type | `b45806d452a9` |
 | `ReviseToolInput` | type | `e603fdbc008c` |
 | `ReviseToolOutput` | type | `616dbf434372` |
+| `ReviseToolRequest` | type | `25cabf691597` |
+| `ReviseToolRequestArgs` | type | `ff67cc775b88` |
 | `SESSION_EXCERPT_TTL_MS` | const | `e2a87bfdd69f` |
 | `SESSION_LEASE_MS` | const | `7b16006cd0d7` |
 | `SESSION_SWEEP_GRACE_MS` | const | `022b4e97f394` |
@@ -1152,12 +1179,15 @@ its row here even when its name and kind are unchanged.
 | `SessionEventsResponse` | type | `34a69709f5fc` |
 | `SessionProvenancePayload` | type | `9c58c89b1038` |
 | `SessionRunId` | type | `617e063c9e39` |
+| `SessionTriageAttemptsResponse` | type | `3b613fe3b7d7` |
 | `SetRetrievalDefaultInput` | type | `7bdf14e37d90` |
 | `SignupInput` | type | `27484a57f0f4` |
 | `StatsResponse` | type | `b434990c3408` |
+| `SupersededBy` | type | `e8c33297c146` |
 | `Tag` | type | `106995a067ae` |
 | `TokenEndpointAuthMethod` | type | `47fdb0fd634d` |
 | `TokenRequest` | type | `afa63ef00ea6` |
+| `TriageAttemptLogEntry` | type | `2d17ec67231c` |
 | `TriageDeclineReason` | type | `ec9756c575a4` |
 | `TriageOutcomeStatus` | type | `b7d493053d2b` |
 | `UserCredentials` | type | `9ff234f3bb88` |
@@ -1176,6 +1206,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionOpenBodySchema` | const | `aa40eb93736b` |
 | `agentSessionOpenResponseSchema` | const | `84ea2b031ba9` |
 | `agentSessionRowSchema` | const | `7981ed4687e3` |
+| `agentSessionRunResponseSchema` | const | `c3a90b4214b1` |
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageBeginBodySchema` | const | `7747702f51cb` |
 | `agentSessionTriageBeginResponseSchema` | const | `f65b36887b5a` |
@@ -1244,8 +1275,8 @@ its row here even when its name and kind are unchanged.
 | `factsToolOutputSchema` | const | `fe477256bd85` |
 | `forgotPasswordInputSchema` | const | `bd34c5196ff8` |
 | `getMemoriesInputSchema` | const | `9bdf15008f83` |
-| `getMemoriesItemSchema` | const | `49be8620b222` |
-| `getMemoriesOutputSchema` | const | `7ac3dfb74002` |
+| `getMemoriesItemSchema` | const | `9564ab67c44c` |
+| `getMemoriesOutputSchema` | const | `7395c7455015` |
 | `handoffCommitmentSchema` | const | `8d80b1deb054` |
 | `handoffCountsSchema` | const | `19a4f4765dbf` |
 | `handoffMemorySchema` | const | `8bece3348a56` |
@@ -1287,7 +1318,10 @@ its row here even when its name and kind are unchanged.
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `079ad390af60` |
-| `nativeReviseInputSchema` | const | `40ec69d28da6` |
+| `nativeReviseInputSchema` | const | `008be3067068` |
+| `nativeReviseMoveBodySchema` | const | `1d56bb00cf48` |
+| `nativeReviseMoveInputSchema` | const | `b1bf05d9c611` |
+| `nativeReviseRequestSchema` | const | `b46a58c2dd5c` |
 | `oauthClientIdParamSchema` | const | `13dbe689b959` |
 | `oauthClientRegistrationMethodSchema` | const | `9fbe195ac6eb` |
 | `planTierSchema` | const | `6eb47fe4ea0c` |
@@ -1326,9 +1360,13 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsRegisterOutputShapeV2` | const | `b1853a58a44b` |
 | `reviewProposalsRegisterShape` | const | `399283e722f1` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
-| `reviseInputSchema` | const | `a4962faae750` |
-| `reviseToolInputSchema` | const | `77b3cf4d9fb1` |
+| `reviseInputSchema` | const | `09ffd4a9974d` |
+| `reviseMoveEventPayloadSchema` | const | `40e10b62fdac` |
+| `reviseMoveInputSchema` | const | `f9e5f032d1a3` |
+| `reviseRequestSchema` | const | `72585de0b3c9` |
+| `reviseToolInputSchema` | const | `1d077958627a` |
 | `reviseToolOutputSchema` | const | `1217ef364cc8` |
+| `reviseToolRequestSchema` | const | `f279f08c5739` |
 | `scopeAliasesSchema` | const | `3b20b9ac8157` |
 | `scopeNameSchema` | const | `3d34f13b9953` |
 | `scopeProjectSelectorSchema` | const | `2fc41e46ba86` |
@@ -1358,12 +1396,15 @@ its row here even when its name and kind are unchanged.
 | `sessionEventsResponseSchema` | const | `23bc2a5a96c9` |
 | `sessionProvenancePayloadSchema` | const | `1f6f03db6b5d` |
 | `sessionRunIdSchema` | const | `f3fe775e7cde` |
+| `sessionTriageAttemptsResponseSchema` | const | `2f55a3f1d093` |
 | `setRetrievalDefaultInputSchema` | const | `ce278290c79f` |
 | `signupInputSchema` | const | `214207f9fd97` |
 | `statsResponseSchema` | const | `8bf52ea1e959` |
+| `supersededBySchema` | const | `1260eb422bd6` |
 | `tagSchema` | const | `d32d1e9837a9` |
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
+| `triageAttemptLogEntrySchema` | const | `6b2f1c1f81f2` |
 | `triageDeclineReasonSchema` | const | `0d7abf3381fe` |
 | `triageOutcomeStatusSchema` | const | `7044bf7dd8b4` |
 | `userCredentialsSchema` | const | `39a616eb6d60` |
@@ -1372,7 +1413,7 @@ its row here even when its name and kind are unchanged.
 | `versionResponseSchema` | const | `95603c3e8e8b` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.6.3
+## `@3ngram/server` 1.8.0
 
 ### `./app`
 

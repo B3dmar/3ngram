@@ -8,7 +8,8 @@
 //     unchanged across an insertProposals call
 //   - findSimilarPairs returns near-duplicate pairs over stored embeddings by the
 //     pgvector cosine operator, scoped to the tenant by RLS
-//   - sweepCommitments expires overdue (due_at past) open|waiting commitments —
+//   - sweepCommitments expires open|waiting commitments whose due_at is before the
+//     grace cutoff (expireBefore) —
 //     writing an 'archive' audit event — and clears fired next_surfacing_at, while
 //     leaving not-yet-due / not-yet-surfacing rows untouched, and NEVER touches the
 //     riding memory
@@ -252,6 +253,113 @@ describe('findSimilarPairs (F1)', () => {
   })
 })
 
+describe('findSimilarPairs excludes settled pairs (issue #220)', () => {
+  /** Insert a proposal row directly (owner) with the given status. */
+  async function seedProposal(
+    userId: string,
+    fromId: string,
+    toId: string,
+    status: 'proposed' | 'applied' | 'rejected',
+  ): Promise<void> {
+    await ownerPool.query(
+      `INSERT INTO consolidation_proposals
+         (user_id, from_id, to_id, edge_type, memory_type, similarity, status)
+       VALUES ($1, $2, $3, 'extends', 'fact', 0.99, $4)`,
+      [userId, fromId, toId, status],
+    )
+  }
+
+  it('does not re-propose a pair whose proposal was rejected', async () => {
+    const older = await seedMemory(userA, 'fact', 'rejected-older', 21)
+    const newer = await seedMemory(userA, 'fact', 'rejected-newer', 21)
+    // Sanity: the pair is a candidate before any proposal exists.
+    const before = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(before.length).toBe(1)
+
+    await seedProposal(userA, newer, older, 'rejected')
+    const after = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(after.length).toBe(0)
+  })
+
+  it('does not re-propose a pair whose proposal was applied, whatever its orientation', async () => {
+    const older = await seedMemory(userA, 'fact', 'applied-older', 23)
+    const newer = await seedMemory(userA, 'fact', 'applied-newer', 23)
+    // Stored the "wrong" way round on purpose: exclusion must be orientation-agnostic.
+    await seedProposal(userA, older, newer, 'applied')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not re-propose a pair with an OPEN proposal (any status counts as settled)', async () => {
+    const older = await seedMemory(userA, 'fact', 'open-older', 31)
+    const newer = await seedMemory(userA, 'fact', 'open-newer', 31)
+    // Before #220 an open proposal was only deduped at insert time by
+    // proposals_open_idx; now the pair never reaches the insert at all.
+    await seedProposal(userA, newer, older, 'proposed')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not propose a pair already joined by an additive edge', async () => {
+    const older = await seedMemory(userA, 'fact', 'edge-older', 25)
+    const newer = await seedMemory(userA, 'fact', 'edge-newer', 25)
+    // An `extends` edge leaves BOTH rows live (no valid_to), which is exactly the
+    // case the live-only filter cannot catch.
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'extends', 'worker')`,
+      [userA, newer, older],
+    )
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('does not propose a pair whose edge is stored in the reverse orientation', async () => {
+    const older = await seedMemory(userA, 'fact', 'rev-edge-older', 33)
+    const newer = await seedMemory(userA, 'fact', 'rev-edge-newer', 33)
+    await ownerPool.query(
+      `INSERT INTO memory_edges (user_id, from_id, to_id, edge_type, created_by)
+       VALUES ($1, $2, $3, 'derives', 'worker')`,
+      [userA, older, newer],
+    )
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(0)
+  })
+
+  it('still proposes a fresh successor against a memory whose old pair was settled', async () => {
+    const older = await seedMemory(userA, 'fact', 'settled-older', 27)
+    const rejectedTwin = await seedMemory(userA, 'fact', 'settled-twin', 27)
+    await seedProposal(userA, rejectedTwin, older, 'rejected')
+    // A NEW memory id on the same subject is a new question, not the settled one.
+    const fresh = await seedMemory(userA, 'fact', 'settled-fresh', 27)
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    const unordered = pairs.map((p) => [p.fromId, p.toId].sort().join('|'))
+    expect(unordered).toContain([fresh, older].sort().join('|'))
+    expect(unordered).toContain([fresh, rejectedTwin].sort().join('|'))
+    expect(unordered).not.toContain([rejectedTwin, older].sort().join('|'))
+  })
+
+  it("another tenant's settled pairs do not affect mine", async () => {
+    const olderA = await seedMemory(userA, 'fact', 'a-older', 29)
+    const newerA = await seedMemory(userA, 'fact', 'a-newer', 29)
+    // userB has its own settled pair; it must not affect userA's candidates. (The
+    // composite (user_id, id) FKs make a true cross-tenant match unrepresentable,
+    // so this is a sanity check on the anti-join, not an RLS proof.)
+    const olderB = await seedMemory(userB, 'fact', 'b-older', 29)
+    const newerB = await seedMemory(userB, 'fact', 'b-newer', 29)
+    await seedProposal(userB, newerB, olderB, 'rejected')
+
+    const pairs = await withTenant(userA, (tx) => findSimilarPairs(tx, userA, 0.9, 50))
+    expect(pairs.length).toBe(1)
+    expect([pairs[0]?.fromId, pairs[0]?.toId].sort()).toEqual([olderA, newerA].sort())
+  })
+})
+
 describe('sweepCommitments (F2)', () => {
   it('expires overdue commitments (with archive event) and surfaces due ones', async () => {
     const now = new Date('2026-06-09T12:00:00.000Z')
@@ -267,7 +375,7 @@ describe('sweepCommitments (F2)', () => {
       'SELECT id, content, content_hash, valid_to, status FROM memories ORDER BY id',
     )
 
-    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now))
+    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now, now))
     expect(result.expired).toBe(1)
     expect(result.surfaced).toBe(1)
 
@@ -294,5 +402,46 @@ describe('sweepCommitments (F2)', () => {
       'SELECT id, content, content_hash, valid_to, status FROM memories ORDER BY id',
     )
     expect(memoriesAfter.rows).toEqual(memoriesBefore.rows)
+  })
+
+  it('keeps a commitment inside the grace window open, expires one beyond it (issue #221)', async () => {
+    const now = new Date('2026-06-09T12:00:00.000Z')
+    const expireBefore = new Date('2026-05-26T12:00:00.000Z') // now - 14 days
+    const dueThreeDaysAgo = new Date('2026-06-06T12:00:00.000Z')
+    const dueTwentyDaysAgo = new Date('2026-05-20T12:00:00.000Z')
+
+    // Also due to surface: leg 2 must still clear the fired instant on a row that
+    // leg 1 now leaves open (before #221 leg 1 expired it first).
+    const insideWindow = await seedCommitment(userA, 'inside', {
+      dueAt: dueThreeDaysAgo,
+      nextSurfacingAt: dueThreeDaysAgo,
+    })
+    const beyondWindow = await seedCommitment(userA, 'beyond', {
+      dueAt: dueTwentyDaysAgo,
+      status: 'waiting',
+    })
+
+    const result = await withTenant(userA, (tx) => sweepCommitments(tx, userA, now, expireBefore))
+    expect(result.expired).toBe(1)
+    expect(result.surfaced).toBe(1)
+
+    const statuses = await ownerPool.query(
+      'SELECT id, status, next_surfacing_at FROM commitments WHERE user_id = $1',
+      [userA],
+    )
+    const byId = new Map(statuses.rows.map((r) => [r.id, r]))
+    // Past due but inside the window: still open, so briefing keeps it as overdue,
+    // and its fired surfacing instant is cleared by leg 2 as for any live row.
+    expect(byId.get(insideWindow.commitmentId)?.status).toBe('open')
+    expect(byId.get(insideWindow.commitmentId)?.next_surfacing_at).toBeNull()
+    // Past the window: expired, from `waiting` as well as from `open`.
+    expect(byId.get(beyondWindow.commitmentId)?.status).toBe('expired')
+
+    // Only the expired row got the archive audit event.
+    const events = await ownerPool.query(
+      `SELECT memory_id FROM memory_events WHERE user_id = $1 AND event_kind = 'archive'`,
+      [userA],
+    )
+    expect(events.rows.map((r) => r.memory_id)).toEqual([beyondWindow.memoryId])
   })
 })

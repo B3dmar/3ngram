@@ -16,7 +16,7 @@
 //
 // The end-to-end path with real RLS lives in
 // packages/db/test/integration/session-triage.int.test.ts.
-import { SESSION_LEASE_MS } from '@3ngram/schema'
+import { MAX_TRIAGE_ATTEMPT_LOG, SESSION_LEASE_MS } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /** Scripted pages for the listSessionEvents machinery both statements reuse. */
@@ -264,6 +264,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   triageStatus: 'idle',
   triageAttemptId: null,
   triageArmedAt: null,
+  triageAttemptLog: [],
   lastTriagedEventIds: [],
   ...over,
 })
@@ -346,7 +347,7 @@ const begin = (tx: Parameters<typeof beginSessionTriage>[0], turnCount = 99) =>
   })
 
 const complete = (tx: Parameters<typeof beginSessionTriage>[0], attemptId = ATTEMPT) =>
-  completeSessionTriage(tx, USER, KEY, { attemptId })
+  completeSessionTriage(tx, USER, KEY, { attemptId, now: NOW })
 
 /** One page of events, terminal. */
 const page = (ids: string[], truncated = false) => ({
@@ -389,14 +390,46 @@ describe('beginSessionTriage', () => {
       triageStatus: 'pending',
     })
     expect(updates).toHaveLength(1)
-    expect(updates[0]?.values).toEqual({
+    // `triageAttemptCount` is a SQL increment, not a literal — assert its text
+    // separately so the rest of the SET stays an exact match.
+    const { triageAttemptCount, ...values } = updates[0]?.values ?? {}
+    expect(sqlText(triageAttemptCount)).toContain('triage_attempt_count')
+    expect(values).toEqual({
       triageStatus: 'pending',
       triageAttemptId: ATTEMPT,
       // With no `armNow` injected the stamp falls back to `now`, so the arm time
       // stays deterministic for the rest of the matrix.
       triageArmedAt: NOW,
       lastTriagedEventIds: ['e1', 'e2'],
+      // The nudge history (issue #203): one entry per armed attempt, dated with
+      // the SAME instant as `triage_armed_at`.
+      triageAttemptLog: [{ attemptId: ATTEMPT, armedAt: NOW.toISOString() }],
     })
+  })
+
+  it('appends the log entry AFTER existing attempts, dated with the arm-time clock', async () => {
+    const armedAt = new Date(NOW.getTime() + 5_000)
+    const prior = { attemptId: OTHER_ATTEMPT, armedAt: '2026-08-23T11:00:00.000Z' }
+    eventPages = [page(['e1'])]
+    // Second read: the untriaged-event probe — an `expired` row re-enters only
+    // on real new signal.
+    const { tx, updates } = makeTx([
+      row({ triageStatus: 'expired', triageAttemptLog: [prior] }),
+      { id: RUN },
+    ])
+
+    await beginSessionTriage(tx, USER, KEY, {
+      attemptId: ATTEMPT,
+      turnCount: 99,
+      thresholds: THRESHOLDS,
+      now: NOW,
+      armNow: () => armedAt,
+    })
+
+    expect(updates[0]?.values.triageAttemptLog).toEqual([
+      prior,
+      { attemptId: ATTEMPT, armedAt: armedAt.toISOString() },
+    ])
   })
 
   it('stamps the arm time read AT THE ARM, not at the request boundary', async () => {
@@ -482,6 +515,25 @@ describe('beginSessionTriage', () => {
     })
   })
 
+  it('bounds the attempt log by dropping the OLDEST entry; the count column still increments', async () => {
+    // The cap protects the row, and `triage_attempt_count` (a SQL increment,
+    // asserted in the exact-match arm test above) is what keeps the trim
+    // detectable to the triage-attempts read.
+    const full = Array.from({ length: MAX_TRIAGE_ATTEMPT_LOG }, (_, i) => ({
+      attemptId: `old-${i}`,
+      armedAt: '2026-08-23T10:00:00.000Z',
+    }))
+    eventPages = [page(['e1'])]
+    const { tx, updates } = makeTx([row({ triageAttemptLog: full })])
+
+    await begin(tx)
+
+    const log = updates[0]?.values.triageAttemptLog as { attemptId: string }[]
+    expect(log).toHaveLength(MAX_TRIAGE_ATTEMPT_LOG)
+    expect(log[0]?.attemptId).toBe('old-1')
+    expect(log[log.length - 1]?.attemptId).toBe(ATTEMPT)
+  })
+
   it('stamps a run past the per-run ceiling as terminally overflowed', async () => {
     // Declining WITHOUT stamping would re-list the whole ceiling on every later
     // Stop — the signal is present, so the debounce cannot stop it. The terminal
@@ -531,11 +583,60 @@ describe('completeSessionTriage', () => {
     expect(updates[0]?.values).toEqual({
       triageStatus: 'completed',
       lastTriagedEventIds: ['e1', 'e2'],
+      // The row's log was empty, so the finalize maps over nothing — the write
+      // is still present and still an array, never dropped or invented.
+      triageAttemptLog: [],
       // The other durable terminal write-back resets the closer backoff too
       // (issue #184 audit F4) — same rule as `finishSessionTriage`.
       closerFailureCount: 0,
       closerNextAttemptAt: null,
     })
+  })
+
+  it("stamps finalizedAt and the outcome onto THIS attempt's log entry, leaving others alone", async () => {
+    // The nudge-history read (issue #203): expired vs completed is the
+    // ignore-rate split, so the outcome must land on the entry the arm wrote —
+    // and only on that one.
+    const mine = { attemptId: ATTEMPT, armedAt: '2026-08-23T11:59:00.000Z' }
+    const foreign = {
+      attemptId: OTHER_ATTEMPT,
+      armedAt: '2026-08-23T11:00:00.000Z',
+      finalizedAt: '2026-08-23T11:01:00.000Z',
+      outcome: 'expired',
+    }
+    eventPages = [page(['e1', 'e2'])]
+    const { tx, updates } = makeTx([
+      row({
+        triageStatus: 'pending',
+        triageAttemptId: ATTEMPT,
+        lastTriagedEventIds: ['e1'],
+        triageAttemptLog: [foreign, mine],
+      }),
+    ])
+
+    await expect(complete(tx)).resolves.toMatchObject({ triageStatus: 'completed' })
+    expect(updates[0]?.values.triageAttemptLog).toEqual([
+      foreign,
+      { ...mine, finalizedAt: NOW.toISOString(), outcome: 'completed' },
+    ])
+  })
+
+  it("stamps a zero-write continuation's entry as expired", async () => {
+    const mine = { attemptId: ATTEMPT, armedAt: '2026-08-23T11:59:00.000Z' }
+    eventPages = [page(['e1'])]
+    const { tx, updates } = makeTx([
+      row({
+        triageStatus: 'pending',
+        triageAttemptId: ATTEMPT,
+        lastTriagedEventIds: ['e1'],
+        triageAttemptLog: [mine],
+      }),
+    ])
+
+    await expect(complete(tx)).resolves.toMatchObject({ triageStatus: 'expired' })
+    expect(updates[0]?.values.triageAttemptLog).toEqual([
+      { ...mine, finalizedAt: NOW.toISOString(), outcome: 'expired' },
+    ])
   })
 
   it('EXPIRES a zero-write continuation, so the closer still runs', async () => {

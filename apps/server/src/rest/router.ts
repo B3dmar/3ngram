@@ -30,11 +30,13 @@ import {
   describeEnvironment,
   type ExportEnricher,
   exportUserData,
+  getAgentSessionRun,
   getBudgetStatus,
   getCurrentUser,
   getFacts,
   getMemoryById,
   getMemoryHistory,
+  getSessionTriageAttempts,
   type LimitsResolver,
   listMemories,
   listMemoryFacets,
@@ -58,7 +60,7 @@ import {
   proposalsListQuerySchema,
   rememberToolInputV2Schema,
   resolveToolInputSchema,
-  reviseToolInputSchema,
+  reviseToolRequestSchema,
   sessionEventsQuerySchema,
   sessionRunIdSchema,
 } from '@3ngram/schema'
@@ -354,6 +356,69 @@ export function restRouter(options: RestRouterOptions): Router {
     })
   })
 
+  // GET /api/v1/agent-sessions/:sessionRunId — the bookkeeping-row read
+  // (issue #203). The #166 validation phase scores closer commitment recall by
+  // comparing `briefedMemories` (what the run was shown) against what its
+  // events resolved; the agent-sessions surface was POST-only, so that metric
+  // was not computable over REST. Read-only: being measured must never refresh
+  // a lease or resurrect a closed row. Same id boundary and error shape as the
+  // events route — an unknown/foreign id raises UnknownSessionRunError -> 400
+  // invalid_input, and the path id parses through sessionRunIdSchema so an
+  // uppercase spelling is canonicalized rather than matching nothing.
+  // `last_message_excerpt` and the watermark ids are deliberately not
+  // projected (the excerpt is content with exactly one consumer, the closer;
+  // the run's events are the events endpoint's job). `briefedMemories` is the
+  // CURRENT activation's snapshot — a reopening startup restamps it — so a
+  // recall reader over a reopened run scopes events by `briefingDeliveredAt`
+  // (agentSessionRunResponseSchema documents the contract).
+  router.get('/api/v1/agent-sessions/:sessionRunId', (req, res) => {
+    void guard('agent-sessions.get', res, async () => {
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      // ACCESS GUARD: the row carries tenant data (briefed topics, facets), so
+      // read access is asserted BEFORE the read (self-host allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      const run = await getAgentSessionRun(tenant(req), sessionRunId)
+      res.status(200).json({
+        sessionRunId: run.id,
+        agent: run.agent,
+        sessionId: run.sessionId,
+        source: run.source,
+        project: run.project,
+        scope: run.scope,
+        selector: run.selector,
+        activationEpoch: run.activationEpoch,
+        triageStatus: run.triageStatus,
+        openedAt: run.openedAt.toISOString(),
+        closedAt: run.closedAt?.toISOString() ?? null,
+        lastSeenAt: run.lastSeenAt.toISOString(),
+        briefingDeliveredAt: run.briefingDeliveredAt?.toISOString() ?? null,
+        briefedMemories: run.briefedMemories,
+      })
+    })
+  })
+
+  // GET /api/v1/agent-sessions/:sessionRunId/triage-attempts — the run's
+  // interactive nudge history (issue #203), oldest first. The other half of
+  // the validation bar: nudge ignore-rate needs attempt outcomes (`expired` =
+  // armed with zero writes vs `completed`), which the row's terminal status
+  // alone loses once a run re-arms. The log is bounded (newest
+  // MAX_TRIAGE_ATTEMPT_LOG entries); `count` is the true total ever armed and
+  // `truncated` says when the two disagree. An entry with no `outcome` was
+  // never finalized — in flight while the row is `pending`, abandoned
+  // otherwise. Same id boundary and error shape as the routes above.
+  router.get('/api/v1/agent-sessions/:sessionRunId/triage-attempts', (req, res) => {
+    void guard('agent-sessions.triage-attempts', res, async () => {
+      const sessionRunId = sessionRunIdSchema.parse(req.params.sessionRunId)
+      // ACCESS GUARD: attempt bookkeeping is per-tenant audit data, so read
+      // access is asserted BEFORE the read (self-host allows all).
+      if (options.access) await options.access.assertRead(tenant(req))
+      // Core owns the `truncated` derivation (hard rule 5) — this route is
+      // serialization only, and the payload is already JSON-shaped.
+      const attempts = await getSessionTriageAttempts(tenant(req), sessionRunId)
+      res.status(200).json(attempts)
+    })
+  })
+
   // GET /api/v1/scopes — list the tenant's registered scopes.
   router.get('/api/v1/scopes', (req, res) => {
     void guard('scopes.list', res, async () => {
@@ -588,13 +653,14 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // POST /api/v1/memories/:id/revise — revise (mirrors the MCP revise tool). The
-  // body is the full successor write; core revise() is THE validation boundary.
+  // body is the full successor write, or a `kind: "move"` refile (issue #233);
+  // core revise() is THE validation boundary.
   // :id is the predecessor — merged into the body as predecessorId BEFORE the
   // single parse, so the URL and body cannot disagree (the URL wins).
   router.post('/api/v1/memories/:id/revise', (req, res) => {
     void guard('revise', res, async () => {
       const merged = { ...(req.body as Record<string, unknown>), predecessorId: req.params.id }
-      const input = reviseToolInputSchema.parse(merged)
+      const input = reviseToolRequestSchema.parse(merged)
       const gatewayOpts =
         options.gateway === undefined
           ? { access: options.access, limits: options.limits }
@@ -606,14 +672,18 @@ export function restRouter(options: RestRouterOptions): Router {
             }
       const written = await revise(tenant(req), input, 'user_api', gatewayOpts)
       void written.embed.settled.catch(() => false)
-      const embedded = options.gateway === undefined ? 'off' : 'pending'
+      // A move appends no row, so there is nothing to embed: `off`, not `pending`.
+      const isMove = 'kind' in input && input.kind === 'move'
+      const embedded = isMove || options.gateway === undefined ? 'off' : 'pending'
       res.status(200).json({
         memory: {
           id: written.id,
-          memoryType: input.memoryType,
-          topic: input.topic,
-          scope: input.scope,
-          project: input.project ?? null,
+          memoryType: written.memoryType,
+          topic: written.topic,
+          // Inherited from the predecessor when omitted (issue #222); the
+          // moved row's own filing for a move (issue #233).
+          scope: written.scope,
+          project: written.project,
         },
         embedded,
       })
@@ -959,6 +1029,8 @@ export function restRouter(options: RestRouterOptions): Router {
           triageStatus: session.triageStatus,
           triageAttemptId: session.triageAttemptId ?? null,
           triageArmedAt: session.triageArmedAt?.toISOString() ?? null,
+          triageAttemptLog: session.triageAttemptLog,
+          triageAttemptCount: session.triageAttemptCount,
           lastTriagedEventIds: session.lastTriagedEventIds,
           briefingDeliveredAt: session.briefingDeliveredAt?.toISOString() ?? null,
           briefedMemories: session.briefedMemories,

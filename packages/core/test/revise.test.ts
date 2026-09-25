@@ -40,8 +40,10 @@ class DuplicateMemoryError extends Error {
   }
 }
 
+const moveMemory = vi.fn()
 vi.mock('@3ngram/db', () => ({
   reviseMemory: (...args: unknown[]) => reviseMemory(...args),
+  moveMemory: (...args: unknown[]) => moveMemory(...args),
   DuplicateMemoryError,
   EdgeConflictError,
   PredecessorNotFoundError,
@@ -115,6 +117,77 @@ describe('revise (validation boundary)', () => {
     await revise(USER, validInput(), ACTOR)
 
     expect(mockRevise.mock.calls[0]?.[0].edgeType).toBe('supersedes')
+  })
+
+  it('passes omitted scope/project/tags through as undefined and echoes what the db resolved (#222)', async () => {
+    mockRevise.mockResolvedValue({ id: 'successor-3', scope: 'work', project: 'x', tags: ['a'] })
+    const { project: _p, tags: _t, ...bare } = { ...validInput(), project: 'p' }
+
+    const result = await revise(USER, bare, ACTOR)
+
+    const call = mockRevise.mock.calls[0]?.[0]
+    expect(call.scope).toBeUndefined()
+    expect(call.project).toBeUndefined()
+    expect(call.tags).toBeUndefined()
+    expect([result.scope, result.project, result.tags]).toEqual(['work', 'x', ['a']])
+  })
+})
+
+describe('revise move disposition (#233)', () => {
+  const mockMove = moveMemory as unknown as Mock
+  afterEach(() => mockMove.mockReset())
+
+  it('dispatches a move to the db helper, never to reviseMemory, and skips the budget', async () => {
+    mockMove.mockResolvedValue({
+      id: PREDECESSOR,
+      memoryType: 'note',
+      topic: 't',
+      scope: 'work',
+      project: 'rdg-npd',
+      tags: ['a'],
+      changed: true,
+    })
+    const budget = { resolveLimits: vi.fn(async () => ({ capUsd: 0, usedUsd: 0 })) }
+
+    const result = await revise(
+      USER,
+      { kind: 'move', predecessorId: PREDECESSOR, project: 'rdg-npd' },
+      ACTOR,
+      { budget: budget as never },
+    )
+
+    expect(mockRevise).not.toHaveBeenCalled()
+    expect(mockMove).toHaveBeenCalledTimes(1)
+    expect(mockMove.mock.calls[0]?.[0]).toMatchObject({
+      userId: USER,
+      memoryId: PREDECESSOR,
+      project: 'rdg-npd',
+      actorKind: ACTOR,
+    })
+    expect(budget.resolveLimits).not.toHaveBeenCalled()
+    expect(result.id).toBe(PREDECESSOR)
+    expect([result.scope, result.project, result.tags]).toEqual(['work', 'rdg-npd', ['a']])
+    expect('changed' in result).toBe(false)
+    await expect(result.embed.settled).resolves.toBe(false)
+  })
+
+  it('runs the access guard before a move', async () => {
+    const access = {
+      assertWrite: vi.fn(async () => {
+        throw new Error('denied')
+      }),
+    }
+    await expect(
+      revise(USER, { kind: 'move', predecessorId: PREDECESSOR, scope: 'work' }, ACTOR, {
+        access: access as never,
+      }),
+    ).rejects.toThrow('denied')
+    expect(mockMove).not.toHaveBeenCalled()
+  })
+
+  it('rejects a move with nothing to change at the boundary', async () => {
+    await expectZodRejection(revise(USER, { kind: 'move', predecessorId: PREDECESSOR }, ACTOR))
+    expect(mockMove).not.toHaveBeenCalled()
   })
 })
 
