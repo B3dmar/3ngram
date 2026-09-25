@@ -1,5 +1,11 @@
 # @3ngram/worker
 
+## 1.8.2
+
+### Patch Changes
+
+- Re-cut of v1.8.1, whose tag was pushed against the wrong commit before its promotion had merged; the immutable tag ruleset makes that number unusable. No code change.
+
 ## 1.8.1
 
 ### Patch Changes
