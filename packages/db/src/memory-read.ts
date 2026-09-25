@@ -36,7 +36,7 @@ import {
   sql,
 } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
-import { commitments, memories } from './schema/memory.js'
+import { commitments, memories, memoryEdges } from './schema/memory.js'
 
 /** One memory in a list result — identity + orientation columns only (no content). */
 export interface MemoryListRow {
@@ -295,18 +295,30 @@ export interface MemoryBatchRow extends MemoryDetailRow {
 }
 
 /**
- * One column of the newest revision edge whose predecessor is the memory row
- * being selected (issue #223). Correlated on BOTH user_id and id (two-layer
- * tenant isolation, as every edge subquery in search.ts); the batch is at most
- * MAX_GET_MEMORIES_IDS rows, so a per-row subselect over the tenant's edges is
- * bounded. Whether the edge MEANS the row is superseded (closed validity as
- * well) is decided in core, matching search.ts `supersededExists`.
+ * The newest revision edge whose predecessor is the memory row being selected
+ * (issues #223, #240), as ONE lateral lookup per row served by
+ * `memory_edges_target_idx (user_id, to_id, edge_type)`. Correlated on BOTH
+ * user_id and id (two-layer tenant isolation, as every edge subquery in
+ * search.ts). Whether the edge MEANS the row is superseded (status and closed
+ * validity as well) is decided in core, matching REST history's precedence.
  */
-function successorEdgeColumn<T extends string>(column: 'from_id' | 'edge_type'): SQL<T | null> {
-  return sql<T | null>`(SELECT e.${sql.raw(column)} FROM memory_edges e
-    WHERE e.user_id = ${memories.userId} AND e.to_id = ${memories.id}
-      AND e.edge_type IN ('supersedes', 'updates')
-    ORDER BY e.created_at DESC, e.id DESC LIMIT 1)`
+function newestRevisionEdge(tx: TenantTx) {
+  return tx
+    .select({
+      successorId: memoryEdges.fromId,
+      successorEdgeType: sql<ReviseEdgeIntent>`${memoryEdges.edgeType}`.as('successor_edge_type'),
+    })
+    .from(memoryEdges)
+    .where(
+      and(
+        eq(memoryEdges.userId, memories.userId),
+        eq(memoryEdges.toId, memories.id),
+        inArray(memoryEdges.edgeType, ['supersedes', 'updates']),
+      ),
+    )
+    .orderBy(desc(memoryEdges.createdAt), desc(memoryEdges.id))
+    .limit(1)
+    .as('successor')
 }
 
 /**
@@ -325,6 +337,12 @@ export async function getMemoriesByIds(
   memoryIds: string[],
 ): Promise<MemoryBatchRow[]> {
   if (memoryIds.length === 0) return []
+  return getMemoriesByIdsQuery(tx, userId, memoryIds)
+}
+
+/** The batch read as a query builder, so a unit test can pin its SQL shape. */
+export function getMemoriesByIdsQuery(tx: TenantTx, userId: string, memoryIds: string[]) {
+  const successor = newestRevisionEdge(tx)
   return tx
     .select({
       id: memories.id,
@@ -335,8 +353,8 @@ export async function getMemoriesByIds(
       project: memories.project,
       status: memories.status,
       commitmentStatus: commitments.status,
-      successorId: successorEdgeColumn<string>('from_id'),
-      successorEdgeType: successorEdgeColumn<ReviseEdgeIntent>('edge_type'),
+      successorId: successor.successorId,
+      successorEdgeType: successor.successorEdgeType,
       tags: memories.tags,
       validFrom: memories.validFrom,
       validTo: memories.validTo,
@@ -348,6 +366,7 @@ export async function getMemoriesByIds(
       commitments,
       and(eq(commitments.userId, memories.userId), eq(commitments.memoryId, memories.id)),
     )
+    .leftJoinLateral(successor, sql`true`)
     .where(and(eq(memories.userId, userId), inArray(memories.id, memoryIds)))
     .orderBy(desc(memories.recordedAt), desc(memories.id))
 }
