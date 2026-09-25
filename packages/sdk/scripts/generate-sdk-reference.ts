@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import {
   factsQueryInputSchema,
   factsToolOutputSchema,
+  nativeReviseMoveBodySchema,
   rememberToolInputV2Schema,
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
@@ -29,7 +30,10 @@ const SCHEMAS = {
   search: { input: searchQuerySchema, output: searchRestResponseV2Schema },
   facts: { input: factsQueryInputSchema, output: factsToolOutputSchema },
   revise: {
-    input: reviseToolInputSchema.omit({ predecessorId: true }),
+    input: z.union([
+      nativeReviseMoveBodySchema,
+      reviseToolInputSchema.omit({ predecessorId: true }),
+    ]),
     output: reviseToolOutputSchema,
   },
   resolve: {

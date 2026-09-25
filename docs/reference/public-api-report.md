@@ -326,7 +326,7 @@ its row here even when its name and kind are unchanged.
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
 | `RetryFailedEmbedsResult` | interface | `5ce9653631d7` |
-| `ReviseResult` | interface | `0ba33e4e40f7` |
+| `ReviseResult` | interface | `b7c38ab71907` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `SELFHOST_LIMITS` | const | `8a65a36d9637` |
 | `STALE_CANDIDATE_TYPES` | const | `b1e57e2979fd` |
@@ -652,6 +652,8 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryWrite` | interface | `e8a209e29e38` |
+| `MoveWrite` | interface | `408d9ad30769` |
+| `MovedMemory` | interface | `3f7e9bd6301a` |
 | `NewEmailVerificationToken` | interface | `1b4b292f2832` |
 | `NewOAuthClient` | type | `f315a73482b4` |
 | `NewOauthCode` | interface | `2e6e2540b16a` |
@@ -672,7 +674,7 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
 | `ReviseWrite` | interface | `e0b4d7ac9cc4` |
-| `RevisedMemory` | interface | `4c778cfd1c5b` |
+| `RevisedMemory` | interface | `d8080d7c6e2a` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `RlsGuardOptions` | interface | `c1981ba2e2f7` |
 | `ScopeNameConflictError` | class | `40f6516361ee` |
@@ -792,6 +794,7 @@ its row here even when its name and kind are unchanged.
 | `memories` | const | `27508428e230` |
 | `memoryEdges` | const | `52088e26ee30` |
 | `memoryEvents` | const | `8b52656b3790` |
+| `moveMemory` | function | `4a4ea0fdfcc4` |
 | `oauthClients` | const | `afb1565e898e` |
 | `oauthCodes` | const | `bfa4d83807b7` |
 | `oauthTokens` | const | `5309b692908e` |
@@ -1097,6 +1100,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryType` | type | `6d5684c2a472` |
 | `NativeRememberInput` | type | `88272fc24856` |
 | `NativeReviseInput` | type | `576a3ddcc8fa` |
+| `NativeReviseRequest` | type | `a97acecbb4c4` |
 | `OAuthClientIdParam` | type | `cdff48c25b49` |
 | `OAuthClientRegistrationMethod` | type | `27dcbcff235b` |
 | `PLAN_TIERS` | const | `6daec5a496ed` |
@@ -1134,9 +1138,14 @@ its row here even when its name and kind are unchanged.
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
 | `ReviseEdgeIntent` | type | `866315193454` |
 | `ReviseInput` | type | `bc5404423a89` |
+| `ReviseMoveEventPayload` | type | `4d4cbcd8ac0b` |
+| `ReviseMoveInput` | type | `c2a1f00fa746` |
+| `ReviseRequest` | type | `4b807d074a27` |
 | `ReviseToolArgs` | type | `b45806d452a9` |
 | `ReviseToolInput` | type | `e603fdbc008c` |
 | `ReviseToolOutput` | type | `616dbf434372` |
+| `ReviseToolRequest` | type | `25cabf691597` |
+| `ReviseToolRequestArgs` | type | `ff67cc775b88` |
 | `SESSION_EXCERPT_TTL_MS` | const | `e2a87bfdd69f` |
 | `SESSION_LEASE_MS` | const | `7b16006cd0d7` |
 | `SESSION_SWEEP_GRACE_MS` | const | `022b4e97f394` |
@@ -1310,6 +1319,9 @@ its row here even when its name and kind are unchanged.
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `079ad390af60` |
 | `nativeReviseInputSchema` | const | `008be3067068` |
+| `nativeReviseMoveBodySchema` | const | `1d56bb00cf48` |
+| `nativeReviseMoveInputSchema` | const | `b1bf05d9c611` |
+| `nativeReviseRequestSchema` | const | `b46a58c2dd5c` |
 | `oauthClientIdParamSchema` | const | `13dbe689b959` |
 | `oauthClientRegistrationMethodSchema` | const | `9fbe195ac6eb` |
 | `planTierSchema` | const | `6eb47fe4ea0c` |
@@ -1349,8 +1361,12 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsRegisterShape` | const | `399283e722f1` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
 | `reviseInputSchema` | const | `09ffd4a9974d` |
+| `reviseMoveEventPayloadSchema` | const | `40e10b62fdac` |
+| `reviseMoveInputSchema` | const | `f9e5f032d1a3` |
+| `reviseRequestSchema` | const | `72585de0b3c9` |
 | `reviseToolInputSchema` | const | `1d077958627a` |
 | `reviseToolOutputSchema` | const | `1217ef364cc8` |
+| `reviseToolRequestSchema` | const | `f279f08c5739` |
 | `scopeAliasesSchema` | const | `3b20b9ac8157` |
 | `scopeNameSchema` | const | `3d34f13b9953` |
 | `scopeProjectSelectorSchema` | const | `2fc41e46ba86` |

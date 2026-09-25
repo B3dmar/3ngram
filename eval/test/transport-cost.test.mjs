@@ -152,9 +152,16 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // has no get_memories command. The tool description is unchanged (no
       // embeddings regen). MEASURED on this PR's actual base (staging
       // post-#222), not summed.
-      mcp: [27327, 220432, 55104],
+      // MCP +450/+3600/+877, REST +449/+449/+449 (issue #233, revise move
+      // disposition): the revise input schema becomes a two-branch anyOf union
+      // (move | successor), and the move branch's field descriptions ride with
+      // it; MCP pays it on tools/list per turn, REST on the request surface once.
+      // CLI has no revise command. The tool description is unchanged (no
+      // embeddings regen). MEASURED on this PR's actual base (staging
+      // post-#223), not summed.
+      mcp: [27777, 224032, 55981],
       cli: [333, 1236, 1236],
-      rest: [3367, 4384, 4384],
+      rest: [3816, 4833, 4833],
     },
   )
 })

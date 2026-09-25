@@ -8,6 +8,7 @@
 import { log, mcpToolErrors } from '@3ngram/config'
 import {
   AccessDeniedError,
+  AccountDeletedError,
   BudgetExceededError,
   CommitmentExistsError,
   CommitmentNotFoundError,
@@ -155,6 +156,14 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
   // The referenced entity does not exist for the tenant (RLS hides cross-tenant
   // rows, so not-found and not-owned are one mapping). Names the missing id
   // only — a uuid, never content.
+  // The account was erased while this call was in flight: the credential was
+  // valid when it started and the rows it addresses no longer exist. Class
+  // name only, never account detail (mirrors the REST 410 mapping).
+  if (err instanceof AccountDeletedError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'account_deleted' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: account erased mid-request')
+    return fail('account_deleted')
+  }
   if (err instanceof PredecessorNotFoundError) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'not_found' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: predecessor not found')

@@ -37,8 +37,13 @@ vi.mock('../src/memory-edges.js', () => ({
   EdgeConflictError: class EdgeConflictError extends Error {},
 }))
 vi.mock('../src/pg-errors.js', () => ({ isUniqueViolation: () => false }))
+vi.mock('../src/credential-guard.js', () => ({
+  guardSessionMutation: async () => undefined,
+}))
+
 vi.mock('../src/session-provenance.js', () => ({
   resolveSessionProvenance: async () => undefined,
+  assertSessionRunOwnedIn: async () => undefined,
   sessionPayload: () => undefined,
   UnknownSessionRunError: class UnknownSessionRunError extends Error {
     sessionRunId: string
@@ -50,7 +55,7 @@ vi.mock('../src/session-provenance.js', () => ({
   },
 }))
 
-const { reviseMemory } = await import('../src/memory-revise.js')
+const { moveMemory, reviseMemory } = await import('../src/memory-revise.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
 const PREDECESSOR_ID = '00000000-0000-7000-8000-0000000000aa'
@@ -161,6 +166,104 @@ afterEach(() => {
   withTenant.mockClear()
   insertMemoryWithEvent.mockClear()
   insertEdge.mockClear()
+})
+
+describe('moveMemory (issue #233)', () => {
+  const CURRENT = {
+    memoryType: 'decision',
+    topic: 'where it lives',
+    scope: 'work',
+    project: 'rdg',
+    tags: ['a'],
+  }
+  function moveTx(current: Record<string, unknown> | undefined) {
+    const rec: Recorder = { inserts: [], updates: [] }
+    // Two SELECTs: the unlocked peek (awaited after limit) and the locked
+    // re-read (awaited after `.for('update')`).
+    const rows = async () => (current ? [current] : [])
+    const tx = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Object.assign(rows(), { for: rows }),
+          }),
+        }),
+      }),
+      update: (table: unknown) => ({
+        set: (values: unknown) => ({
+          where: async () => {
+            rec.updates.push({ table, values })
+          },
+        }),
+      }),
+      insert: (table: unknown) => ({
+        values: async (values: unknown) => {
+          rec.inserts.push({ table, values })
+        },
+      }),
+    } as unknown as typeof fakeTx
+    return { tx, rec }
+  }
+  const base = { userId: USER, memoryId: PREDECESSOR_ID, actorKind: 'user_mcp' as const }
+
+  it('updates only the requested filing columns and audits the change', async () => {
+    const { tx, rec } = moveTx(CURRENT)
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+
+    const out = await moveMemory({ ...base, project: 'rdg-npd' })
+
+    expect(out).toEqual({
+      id: PREDECESSOR_ID,
+      memoryType: 'decision',
+      topic: 'where it lives',
+      scope: 'work',
+      project: 'rdg-npd',
+      tags: ['a'],
+      changed: true,
+    })
+    expect(rec.updates).toHaveLength(1)
+    const values = (rec.updates[0] as { values: Record<string, unknown> }).values
+    expect(values).toMatchObject({ scope: 'work', project: 'rdg-npd', tags: ['a'] })
+    expect(values).not.toHaveProperty('content')
+    expect(values).not.toHaveProperty('validFrom')
+    expect(values).not.toHaveProperty('recordedAt')
+    expect(values).not.toHaveProperty('status')
+    const events = rec.inserts.filter((i) => (i as { table: unknown }).table === memoryEvents)
+    expect(events).toHaveLength(1)
+    expect((events[0] as { values: { eventKind: string; payload: unknown } }).values).toMatchObject(
+      {
+        eventKind: 'revise',
+        payload: {
+          disposition: 'move',
+          from: { scope: 'work', project: 'rdg', tagCount: 1 },
+          to: { scope: 'work', project: 'rdg-npd', tagCount: 1 },
+        },
+      },
+    )
+    // Never a successor row.
+    expect(insertMemoryWithEvent).not.toHaveBeenCalled()
+    expect(insertEdge).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when every requested value already matches: no UPDATE, no event', async () => {
+    const { tx, rec } = moveTx(CURRENT)
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+
+    const out = await moveMemory({ ...base, project: 'rdg', tags: ['a'] })
+
+    expect(out.changed).toBe(false)
+    expect(rec.updates).toHaveLength(0)
+    expect(rec.inserts).toHaveLength(0)
+  })
+
+  it('throws the typed not-found for an unknown or foreign id', async () => {
+    const { tx } = moveTx(undefined)
+    withTenant.mockImplementationOnce(async (_u: string, fn) => fn(tx))
+
+    await expect(moveMemory({ ...base, scope: 'personal' })).rejects.toMatchObject({
+      name: 'PredecessorNotFoundError',
+    })
+  })
 })
 
 describe('reviseMemory filing inheritance (issue #222)', () => {

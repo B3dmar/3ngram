@@ -60,7 +60,7 @@ import {
   proposalsListQuerySchema,
   rememberToolInputV2Schema,
   resolveToolInputSchema,
-  reviseToolInputSchema,
+  reviseToolRequestSchema,
   sessionEventsQuerySchema,
   sessionRunIdSchema,
 } from '@3ngram/schema'
@@ -653,13 +653,14 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // POST /api/v1/memories/:id/revise — revise (mirrors the MCP revise tool). The
-  // body is the full successor write; core revise() is THE validation boundary.
+  // body is the full successor write, or a `kind: "move"` refile (issue #233);
+  // core revise() is THE validation boundary.
   // :id is the predecessor — merged into the body as predecessorId BEFORE the
   // single parse, so the URL and body cannot disagree (the URL wins).
   router.post('/api/v1/memories/:id/revise', (req, res) => {
     void guard('revise', res, async () => {
       const merged = { ...(req.body as Record<string, unknown>), predecessorId: req.params.id }
-      const input = reviseToolInputSchema.parse(merged)
+      const input = reviseToolRequestSchema.parse(merged)
       const gatewayOpts =
         options.gateway === undefined
           ? { access: options.access, limits: options.limits }
@@ -671,13 +672,16 @@ export function restRouter(options: RestRouterOptions): Router {
             }
       const written = await revise(tenant(req), input, 'user_api', gatewayOpts)
       void written.embed.settled.catch(() => false)
-      const embedded = options.gateway === undefined ? 'off' : 'pending'
+      // A move appends no row, so there is nothing to embed: `off`, not `pending`.
+      const isMove = 'kind' in input && input.kind === 'move'
+      const embedded = isMove || options.gateway === undefined ? 'off' : 'pending'
       res.status(200).json({
         memory: {
           id: written.id,
-          memoryType: input.memoryType,
-          topic: input.topic,
-          // Inherited from the predecessor when omitted (issue #222).
+          memoryType: written.memoryType,
+          topic: written.topic,
+          // Inherited from the predecessor when omitted (issue #222); the
+          // moved row's own filing for a move (issue #233).
           scope: written.scope,
           project: written.project,
         },

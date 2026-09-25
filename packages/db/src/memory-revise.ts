@@ -54,9 +54,10 @@
 // inserted so neither the MOVE (a) nor the auto-create (d) can collide. The FK is
 // composite tenant-qualified; both target the just-inserted successor, still live
 // inside this tx.
-import type { ActorKind, EdgeType } from '@3ngram/schema'
+import type { ActorKind, EdgeType, ReviseMoveEventPayload } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { EdgeConflictError, insertEdge } from './memory-edges.js'
 import {
   DuplicateMemoryError,
@@ -67,6 +68,7 @@ import {
 import { isUniqueViolation } from './pg-errors.js'
 import { commitments, memories, memoryEvents } from './schema/memory.js'
 import {
+  assertSessionRunOwnedIn,
   resolveSessionProvenance,
   sessionPayload,
   UnknownSessionRunError,
@@ -117,9 +119,136 @@ export interface ReviseWrite extends Omit<MemoryWrite, 'scope' | 'tags'> {
 
 /** The written successor plus the filing metadata it ended up with. */
 export interface RevisedMemory extends WrittenMemory {
+  memoryType: string
+  topic: string
   scope: string
   project: string | null
   tags: string[]
+}
+
+/** Inputs for a MOVE: filing metadata changes on an existing row (issue #233). */
+export interface MoveWrite {
+  userId: string
+  memoryId: string
+  scope?: string | undefined
+  project?: string | undefined
+  tags?: string[] | undefined
+  actorKind: ActorKind
+  sessionRunId?: string | undefined
+  now?: Date | undefined
+}
+
+/** The moved row's identity and the filing it carries after the move. */
+export interface MovedMemory {
+  id: string
+  memoryType: string
+  topic: string
+  scope: string
+  project: string | null
+  tags: string[]
+  /** False when every requested value already matched: no UPDATE, no event. */
+  changed: boolean
+}
+
+const sameTags = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((tag, index) => tag === b[index])
+
+/**
+ * Change a memory's scope, project and/or tags IN PLACE (issue #233). Never
+ * touches content, topic, status or the bi-temporal columns, so hard rule 1
+ * holds the way it does for the archive status flip: filing metadata moves,
+ * memory data is neither merged nor deleted, and the previous filing survives
+ * in the `revise` audit event's payload. Works on any row the tenant owns —
+ * live, superseded or archived — because refiling closed history is the
+ * driving case. A no-op move (every value already equal) writes nothing.
+ *
+ * @throws {@link PredecessorNotFoundError} no memory by this id for the tenant.
+ */
+export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
+  return withTenant(input.userId, async (tx) => {
+    const filing = {
+      memoryType: memories.memoryType,
+      topic: memories.topic,
+      scope: memories.scope,
+      project: memories.project,
+      tags: memories.tags,
+    }
+    // FIRST statement (lock order: account-lifecycle before every other advisory
+    // and row lock): a move writes user content (tags) back onto a row, so it
+    // must not interleave with account erasure, which holds this lock
+    // exclusively and must stay the final content write for the account.
+    await guardSessionMutation(tx, input.userId)
+
+    const target = and(eq(memories.userId, input.userId), eq(memories.id, input.memoryId))
+    const resolve = (row: { scope: string; project: string | null; tags: string[] }) => {
+      const next = {
+        scope: input.scope ?? row.scope,
+        project: input.project ?? row.project,
+        tags: input.tags ?? row.tags,
+      }
+      const changed =
+        next.scope !== row.scope || next.project !== row.project || !sameTags(next.tags, row.tags)
+      return { next, changed }
+    }
+
+    // Unlocked peek. A no-op move returns HERE, before provenance: attaching a
+    // session (heartbeat, lease, triage re-arm) is a side effect a move that
+    // writes nothing must not have.
+    const [peek] = await tx.select(filing).from(memories).where(target).limit(1)
+    if (!peek) throw new PredecessorNotFoundError(input.memoryId)
+    const base = { id: input.memoryId, memoryType: peek.memoryType, topic: peek.topic }
+    const planned = resolve(peek)
+    if (!planned.changed) {
+      // The contract says an unowned run id fails every write, no-op included;
+      // the ownership-only check has none of provenance's attach side effects,
+      // and runs on THIS tx (a nested withTenant would hold a second pool
+      // connection per in-flight move).
+      if (input.sessionRunId !== undefined) {
+        await assertSessionRunOwnedIn(tx, input.userId, input.sessionRunId)
+      }
+      return { ...base, ...planned.next, changed: false }
+    }
+
+    // LOCK ORDER (canonical, see reviseMemory): provenance — which may take the
+    // tenant/project attach advisory lock — BEFORE the row lock below. The
+    // project handed to it is the one the row will carry; when the caller left
+    // `project` out, that is the peeked value, and a concurrent move that
+    // changes the project between this peek and the row lock is attributed to
+    // the session of the project seen here (the lock order forbids re-running
+    // provenance under the row lock; the window is one statement wide).
+    const runId = await resolveSessionProvenance(tx, input.userId, {
+      sessionRunId: input.sessionRunId,
+      project: planned.next.project ?? undefined,
+      now: input.now ?? new Date(),
+    })
+
+    // Row lock, then decide from the LOCKED filing: two concurrent moves that
+    // each set one field must both land, and each event's `from` must be true.
+    const [current] = await tx.select(filing).from(memories).where(target).limit(1).for('update')
+    if (!current) throw new PredecessorNotFoundError(input.memoryId)
+    const { next, changed } = resolve(current)
+    if (!changed) return { ...base, ...next, changed: false }
+
+    await tx
+      .update(memories)
+      .set({ scope: next.scope, project: next.project, tags: next.tags, updatedAt: sql`now()` })
+      .where(target)
+    await tx.insert(memoryEvents).values({
+      userId: input.userId,
+      memoryId: input.memoryId,
+      eventKind: 'revise',
+      actorKind: input.actorKind,
+      // Built under the schema's inferred type, not parsed: validation happens
+      // once, at the boundary (hard rule 2).
+      payload: {
+        ...(sessionPayload(runId) ?? {}),
+        disposition: 'move',
+        from: { scope: current.scope, project: current.project, tagCount: current.tags.length },
+        to: { scope: next.scope, project: next.project, tagCount: next.tags.length },
+      } satisfies ReviseMoveEventPayload,
+    })
+    return { ...base, ...next, changed: true }
+  })
 }
 
 /**
@@ -327,6 +456,8 @@ export async function reviseMemory(input: ReviseWrite): Promise<RevisedMemory> {
 
       return {
         ...successor,
+        memoryType: input.memoryType,
+        topic: input.topic,
         scope: successorWrite.scope,
         project: successorWrite.project ?? null,
         tags: successorWrite.tags,

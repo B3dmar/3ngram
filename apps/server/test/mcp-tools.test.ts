@@ -110,6 +110,12 @@ class AccessDeniedError extends Error {
     this.name = 'AccessDeniedError'
   }
 }
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account deleted')
+    this.name = 'AccountDeletedError'
+  }
+}
 class ResourceLimitExceededError extends Error {
   constructor(readonly resource: 'live_memories' | 'active_mcp_clients') {
     super('resource limit reached')
@@ -276,6 +282,7 @@ vi.mock('@3ngram/core', () => ({
   getMemoriesByIds,
   BudgetExceededError,
   AccessDeniedError,
+  AccountDeletedError,
   ResourceLimitExceededError,
   DuplicateMemoryError,
   InvalidEmbeddingError,
@@ -1408,6 +1415,8 @@ describe('revise tool', () => {
     const successorId = crypto.randomUUID()
     revise.mockResolvedValue({
       id: successorId,
+      memoryType: 'decision',
+      topic: 'sdk pin',
       scope: 'work',
       project: 'inherited',
       tags: [],
@@ -1437,6 +1446,8 @@ describe('revise tool', () => {
   it('reports `off` when no gateway is configured', async () => {
     revise.mockResolvedValue({
       id: crypto.randomUUID(),
+      memoryType: 'decision',
+      topic: 'sdk pin',
       scope: 'personal',
       project: null,
       tags: [],
@@ -1445,6 +1456,41 @@ describe('revise tool', () => {
     const result = await call('revise', validReviseArgs(), ctx({ gateway: undefined }))
     const parsed = reviseToolOutputSchema.parse(result.structuredContent)
     expect(parsed.embedded).toBe('off')
+  })
+
+  it('move disposition: refiles in place, echoes the moved row, reports nothing to embed (#233)', async () => {
+    revise.mockResolvedValue({
+      id: MEMO_ID,
+      memoryType: 'note',
+      topic: 'moved topic',
+      scope: 'work',
+      project: 'rdg-npd',
+      tags: ['a'],
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'revise',
+      { kind: 'move', predecessorId: MEMO_ID, project: 'rdg-npd' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = revise.mock.calls[0]?.[1] as { kind?: string; project?: string }
+    expect(coreInput).toMatchObject({ kind: 'move', project: 'rdg-npd' })
+    const parsed = reviseToolOutputSchema.parse(result.structuredContent)
+    expect(parsed.memory).toEqual({
+      id: MEMO_ID,
+      memoryType: 'note',
+      topic: 'moved topic',
+      scope: 'work',
+      project: 'rdg-npd',
+    })
+    expect(parsed.embedded).toBe('off')
+  })
+
+  it('rejects a move with nothing to change without calling core (#233)', async () => {
+    const result = await call('revise', { kind: 'move', predecessorId: MEMO_ID }, ctx())
+    expect(result.isError).toBe(true)
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it('rejects a missing predecessorId without calling core', async () => {
@@ -1459,6 +1505,8 @@ describe('revise tool', () => {
     // survives to the handler and is echoed, not stripped to personal/null.
     revise.mockResolvedValue({
       id: MEMO_ID,
+      memoryType: 'decision',
+      topic: 'sdk pin',
       scope: 'work',
       project: '3ngram',
       tags: [],

@@ -16,8 +16,8 @@
 // Observability (hard rule 6): never log memory content — ids/hashes/lengths
 // only. This module logs nothing; callers that do must honour the same rule.
 import { createHash } from 'node:crypto'
-import { reviseMemory } from '@3ngram/db'
-import { type ActorKind, nativeReviseInputSchema } from '@3ngram/schema'
+import { moveMemory, reviseMemory } from '@3ngram/db'
+import { type ActorKind, nativeReviseRequestSchema } from '@3ngram/schema'
 import { assertWithinBudget } from '../budget/index.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 import type { WriteResult } from './remember.js'
@@ -45,7 +45,7 @@ function contentHash(content: string): string {
  * Supersede `predecessorId` with a new memory for `userId`.
  *
  * Single validation boundary: callers pass the RAW payload and `revise`
- * validates it exactly once via nativeReviseInputSchema. Transports must NOT
+ * validates it exactly once via nativeReviseRequestSchema. Transports must NOT
  * pre-validate — they hand the unparsed request body straight through.
  *
  * @param userId  Tenant whose RLS context the revision runs under.
@@ -74,8 +74,15 @@ function contentHash(content: string): string {
  * superseded predecessor. The carry matrix lives in packages/db reviseMemory /
  * carryCommitment.
  */
-/** {@link WriteResult} plus the filing the successor ended up with (issue #222). */
+/**
+ * {@link WriteResult} plus the identity and filing the memory ended up with:
+ * the successor's for a successor write (issue #222), the moved row's for a
+ * move (issue #233, where `embed.settled` resolves false: nothing was written
+ * that could be embedded).
+ */
 export interface ReviseResult extends WriteResult {
+  memoryType: string
+  topic: string
   scope: string
   project: string | null
   tags: string[]
@@ -87,7 +94,7 @@ export async function revise(
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
 ): Promise<ReviseResult> {
-  const parsed = nativeReviseInputSchema.parse(input)
+  const parsed = nativeReviseRequestSchema.parse(input)
   // PRE-PERSIST GUARDS (before reviseMemory so a denied revise never lands a
   // successor row): (1) ACCESS — the injected access gate denies a write when the
   // platform policy forbids it (self-host allowAllAccess allows all), throwing
@@ -96,6 +103,21 @@ export async function revise(
   // (2) BUDGET CAP — throws BudgetExceededError, only when a budget is wired.
   // Access is checked first.
   if (embedOptions.access) await embedOptions.access.assertWrite(userId)
+  // Only the move kind carries `kind`; the `in` check narrows the union.
+  if ('kind' in parsed) {
+    // MOVE: an in-place filing change. No row is appended and nothing is
+    // embedded, so the budget reservation below does not apply.
+    const { changed: _changed, ...moved } = await moveMemory({
+      userId,
+      memoryId: parsed.predecessorId,
+      scope: parsed.scope,
+      project: parsed.project,
+      tags: parsed.tags,
+      actorKind,
+      sessionRunId: parsed.sessionRunId,
+    })
+    return { ...moved, embed: { settled: Promise.resolve(false) } }
+  }
   if (embedOptions.budget) {
     await assertWithinBudget(embedOptions.budget, userId, embedOptions.operation ?? EMBED_OPERATION)
   }

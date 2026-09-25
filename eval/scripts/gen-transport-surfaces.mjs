@@ -295,7 +295,7 @@ const CLI_SURFACE = {
 //                  REST surface keeps serializing it independently so the contract
 //                  stays faithful to what the route parses)
 //   - get_facts-> factsQueryInputSchema      (== MCP get_facts tool)
-//   - revise   -> reviseToolInputSchema       (== MCP revise tool)
+//   - revise   -> reviseToolRequestSchema     (== MCP revise tool; successor | move union)
 //   - resolve  -> resolveToolInputSchema      (== MCP resolve tool)
 // Every route's REST parse schema is the SAME @3ngram/schema shape its MCP tool
 // registers; search is serialized from searchQuerySchema directly (see above).

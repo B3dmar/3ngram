@@ -107,6 +107,108 @@ describe('revise filing inheritance (issue #222)', () => {
   })
 })
 
+describe('revise move disposition (issue #233, runtime role)', () => {
+  it('refiles in place: filing changes, dates/content/status untouched, audited', async () => {
+    const { id } = await remember(
+      userA,
+      { ...baseMemory(), scope: 'work', project: 'rdg', tags: ['ops'] },
+      ACTOR,
+    )
+    const before = await ownerPool.query(
+      'SELECT content, valid_from, valid_to, recorded_at, status FROM memories WHERE id = $1',
+      [id],
+    )
+
+    const moved = await revise(
+      userA,
+      { kind: 'move', predecessorId: id, project: 'rdg-npd', tags: ['ops', 'npd'] },
+      ACTOR,
+    )
+
+    expect(moved.id).toBe(id)
+    expect([moved.scope, moved.project, moved.tags]).toEqual(['work', 'rdg-npd', ['ops', 'npd']])
+    await expect(moved.embed.settled).resolves.toBe(false)
+    const after = await ownerPool.query(
+      'SELECT scope, project, tags, content, valid_from, valid_to, recorded_at, status FROM memories WHERE id = $1',
+      [id],
+    )
+    expect(after.rows[0]).toMatchObject({ scope: 'work', project: 'rdg-npd', tags: ['ops', 'npd'] })
+    for (const column of ['content', 'valid_from', 'valid_to', 'recorded_at', 'status']) {
+      expect(after.rows[0][column]).toEqual(before.rows[0][column])
+    }
+    const edges = await ownerPool.query(
+      'SELECT count(*) AS n FROM memory_edges WHERE user_id = $1',
+      [userA],
+    )
+    expect(Number(edges.rows[0].n)).toBe(0)
+    const events = await ownerPool.query(
+      "SELECT payload FROM memory_events WHERE user_id = $1 AND memory_id = $2 AND event_kind = 'revise'",
+      [userA, id],
+    )
+    expect(events.rowCount).toBe(1)
+    expect(events.rows[0].payload).toMatchObject({
+      disposition: 'move',
+      from: { scope: 'work', project: 'rdg', tagCount: 1 },
+      to: { scope: 'work', project: 'rdg-npd', tagCount: 2 },
+    })
+    // Tags are erasable user text and never land in the INSERT-only event table.
+    expect(JSON.stringify(events.rows[0].payload)).not.toContain('"tags"')
+  })
+
+  it('moves a superseded row (closed history is the driving case) and leaves a commitment alone', async () => {
+    const { id: oldId } = await remember(userA, { ...baseMemory(), project: 'rdg' }, ACTOR)
+    await revise(userA, successor(oldId), ACTOR)
+    const moved = await revise(
+      userA,
+      { kind: 'move', predecessorId: oldId, project: 'rdg-npd' },
+      ACTOR,
+    )
+    expect(moved.project).toBe('rdg-npd')
+    const row = await ownerPool.query('SELECT project, valid_to FROM memories WHERE id = $1', [
+      oldId,
+    ])
+    expect(row.rows[0].project).toBe('rdg-npd')
+    expect(row.rows[0].valid_to).not.toBeNull()
+
+    const { id: commitmentMemory } = await remember(
+      userA,
+      { memoryType: 'commitment', topic: 'ship', content: 'ship the thing', project: 'rdg' },
+      ACTOR,
+    )
+    await resolveByMemoryId(userA, commitmentMemory, 'resolved', ACTOR)
+    await revise(
+      userA,
+      { kind: 'move', predecessorId: commitmentMemory, project: 'rdg-npd' },
+      ACTOR,
+    )
+    const commitment = await ownerPool.query(
+      'SELECT status FROM commitments WHERE memory_id = $1',
+      [commitmentMemory],
+    )
+    expect(commitment.rows[0].status).toBe('resolved')
+  })
+
+  it('moves an archived row and leaves it archived', async () => {
+    const { id } = await remember(userA, { ...baseMemory(), project: 'rdg' }, ACTOR)
+    await ownerPool.query("UPDATE memories SET status = 'archived' WHERE id = $1", [id])
+    const moved = await revise(
+      userA,
+      { kind: 'move', predecessorId: id, project: 'rdg-npd' },
+      ACTOR,
+    )
+    expect(moved.project).toBe('rdg-npd')
+    const row = await ownerPool.query('SELECT status, project FROM memories WHERE id = $1', [id])
+    expect(row.rows[0]).toEqual({ status: 'archived', project: 'rdg-npd' })
+  })
+
+  it('is invisible across tenants: a foreign id is not found', async () => {
+    const { id } = await remember(userB, baseMemory(), ACTOR)
+    await expect(
+      revise(userA, { kind: 'move', predecessorId: id, project: 'stolen' }, ACTOR),
+    ).rejects.toMatchObject({ name: 'PredecessorNotFoundError' })
+  })
+})
+
 describe('revise (runtime role, real withTenant)', () => {
   it('closes the predecessor, appends the successor, writes the edge + events atomically', async () => {
     const { id: predId } = await remember(userA, baseMemory(), ACTOR)
