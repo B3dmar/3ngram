@@ -131,6 +131,11 @@ export const memoryEdges = pgTable(
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
     uniqueIndex('memory_edges_unique_idx').on(t.userId, t.fromId, t.toId, t.edgeType),
+    // Target-side lookups (issue #240): "which edges point AT this memory" —
+    // search's supersededExists, get_memories' supersededBy and REST history's
+    // direct relationships all filter by (user_id, to_id[, edge_type]), which the
+    // unique index above (from_id-leading) cannot serve beyond the user_id prefix.
+    index('memory_edges_target_idx').on(t.userId, t.toId, t.edgeType),
     check('memory_edges_no_self_check', sql`${t.fromId} <> ${t.toId}`),
     check('memory_edges_type_check', enumCheckSql(t.edgeType, edgeTypeSchema.options)),
     check('memory_edges_actor_check', enumCheckSql(t.createdBy, actorKindSchema.options)),
