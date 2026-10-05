@@ -1237,7 +1237,7 @@ its row here even when its name and kind are unchanged.
 | `capabilityDocumentSchema` | const | `0e3b76f5e371` |
 | `capabilityKindSchema` | const | `179f17e35f36` |
 | `changePasswordInputSchema` | const | `2d6c31c6971a` |
-| `clientIdMetadataDocumentSchema` | const | `ea7d69dd6b87` |
+| `clientIdMetadataDocumentSchema` | const | `f0799df3b49b` |
 | `clientIdMetadataUrlSchema` | const | `79e646e23b7f` |
 | `clientRegistrationInputSchema` | const | `ad6b01b9e266` |
 | `closerVerdictSchema` | const | `8bbdc50e3a74` |
