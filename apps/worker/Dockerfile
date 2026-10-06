@@ -18,7 +18,7 @@
 # ---- base: pin Node + pnpm once, reuse in every stage --------------------------
 # Pin the multi-platform OCI index (linux/amd64 + linux/arm64) so builds cannot
 # silently pick up a newly-published base image. Renovate updates this digest.
-ARG NODE_IMAGE=node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
 FROM ${NODE_IMAGE} AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -54,6 +54,14 @@ ENV NODE_ENV=production
 # npm's own transitive tooling cannot expand the production attack surface.
 RUN rm -rf /usr/local/lib/node_modules/npm \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx
+# perl-base 5.36.0-7+deb12u3 in the pinned base carries CVE-2026-13221
+# (critical); Debian security ships the fix as deb12u4 but the upstream node
+# image has not been rebuilt with it yet. Upgrade just that package, pinned to
+# the fixed version so the build fails loudly if the candidate moves. Drop this
+# step once the NODE_IMAGE digest ships deb12u4 or newer.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 LABEL org.opencontainers.image.title="3ngram worker" \
   org.opencontainers.image.description="Background jobs for 3ngram: consolidation proposals, surfacing, and the session closer" \
