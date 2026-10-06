@@ -1,5 +1,13 @@
 # @3ngram/worker
 
+## 1.8.3
+
+### Patch Changes
+
+- Updated dependencies [063e312]
+  - @3ngram/schema@0.11.1
+  - @3ngram/core@0.13.1
+
 ## 1.8.2
 
 ### Patch Changes
