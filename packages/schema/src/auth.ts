@@ -268,12 +268,25 @@ export type SupportedCimdGrantType = (typeof SUPPORTED_CIMD_GRANT_TYPES)[number]
  *
  * Unknown registered metadata members are ignored. Secret-bearing members are
  * rejected explicitly instead of being stripped.
+ *
+ * The parsed output is always a public client (`token_endpoint_auth_method:
+ * 'none'`); see {@link acceptsPublicClientAuth} for which declarations resolve
+ * to it. `token_endpoint_auth_methods_supported` is consumed here and never
+ * reaches the output.
  */
-export const clientIdMetadataDocumentSchema = z.object({
+const cimdDocumentObjectSchema = z.object({
   client_id: clientIdMetadataUrlSchema,
   client_name: z.string().min(1).max(255),
   redirect_uris: z.array(redirectUriSchema).min(1).max(16),
-  token_endpoint_auth_method: z.literal('none').default('none'),
+  // The client's PREFERRED method, parsed raw: a preference for a method this AS
+  // does not implement is not a malformed document when the client also accepts
+  // `none` (below). ChatGPT declares `private_key_jwt` here while listing `none`
+  // as supported; rejecting the literal locked it out with a bare invalid_client.
+  token_endpoint_auth_method: z.string().min(1).optional(),
+  // Not an RFC 7591 member — it is AS metadata vocabulary (RFC 8414) — but it is
+  // how ChatGPT's document declares the methods it can fall back to. Same
+  // bounding as grant_types: cap the raw array, no per-element length cap.
+  token_endpoint_auth_methods_supported: z.array(z.string()).min(1).max(16).optional(),
   // grant_types/response_types advertise what the client MAY use (RFC 7591 §2).
   // A grant this AS does not implement is not a malformed document — it is a
   // grant we simply never issue. MCP's CIMD requirements for an authorization
@@ -340,7 +353,39 @@ export const clientIdMetadataDocumentSchema = z.object({
   client_secret: z.never().optional(),
   client_secret_expires_at: z.never().optional(),
 })
+export const clientIdMetadataDocumentSchema = cimdDocumentObjectSchema
+  // Asymmetric with grant_types ON PURPOSE, like response_types: a client that
+  // cannot authenticate as `none` would pass /authorize and consent, then fail
+  // at /token, which admits CIMD clients only as public. Reject it here.
+  .refine(acceptsPublicClientAuth, {
+    message: 'client must accept the none token endpoint auth method',
+    path: ['token_endpoint_auth_method'],
+  })
+  .transform(({ token_endpoint_auth_methods_supported: _supported, ...document }) => ({
+    ...document,
+    token_endpoint_auth_method: 'none' as const,
+  }))
 export type ClientIdMetadataDocument = z.infer<typeof clientIdMetadataDocumentSchema>
+
+/**
+ * Whether a CIMD document lets this AS treat the client as public.
+ *
+ * When the document lists the methods it supports, that list is authoritative:
+ * it must include `none`, whatever the preferred method says. This AS advertises
+ * no `private_key_jwt`, so per RFC 8414 a client offering both selects `none`.
+ * Without a list, the declared method must be `none` or absent (RFC 7591 §2
+ * defaults DCR to client_secret_basic, but a self-hosted document cannot hold a
+ * secret, so absence has always meant `none` here).
+ */
+function acceptsPublicClientAuth(document: {
+  token_endpoint_auth_method?: string | undefined
+  token_endpoint_auth_methods_supported?: string[] | undefined
+}): boolean {
+  const supported = document.token_endpoint_auth_methods_supported
+  if (supported !== undefined) return supported.includes('none')
+  const declared = document.token_endpoint_auth_method
+  return declared === undefined || declared === 'none'
+}
 
 /** How an OAuth client entered the AS registry/materialized FK table. */
 export const oauthClientRegistrationMethodSchema = z.enum([
