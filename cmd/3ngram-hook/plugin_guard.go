@@ -267,17 +267,91 @@ func deferToSettings(sub string, input []byte, env guardEnv) bool {
 	if !hooksOnly {
 		files = append(env.userFiles(hookCwd), docs...)
 	}
-	family := subcommandFamily(sub)
+	// files run from the lowest precedence to the highest: user, project,
+	// local, then managed. A file that exists but cannot be read may set
+	// disableAllHooks, so it claims nothing for any file.
+	var settings []settingsHooks
 	for _, file := range files {
-		if fileOwns(file, target, family, instance) {
+		s, state := readSettings(file)
+		switch state {
+		case settingsUnreadable:
+			return false
+		case settingsRead:
+			settings = append(settings, s)
+		}
+	}
+	if effectivelyDisabled(settings) || (!hooksOnly && env.uncertainProjectDisables(hookCwd)) {
+		return false
+	}
+	family := subcommandFamily(sub)
+	for _, s := range settings {
+		if settingsOwn(s, target, family, instance) {
 			return true
 		}
 	}
 	return false
 }
 
+// effectivelyDisabled resolves disableAllHooks the way settings precedence
+// does: the highest-precedence file that sets it decides, so a project or
+// local false re-enables hooks a user true turned off. When it is true, no
+// settings hook can be counted on to run.
+func effectivelyDisabled(settings []settingsHooks) bool {
+	for i := len(settings) - 1; i >= 0; i-- {
+		if v := settings[i].DisableAllHooks; v != nil {
+			return *v
+		}
+	}
+	return false
+}
+
+type settingsState int
+
+const (
+	settingsMissing settingsState = iota
+	settingsRead
+	settingsUnreadable
+)
+
+func readSettings(file string) (settingsHooks, settingsState) {
+	data, err := os.ReadFile(file)
+	if errors.Is(err, fs.ErrNotExist) {
+		return settingsHooks{}, settingsMissing
+	}
+	var s settingsHooks
+	if err != nil || json.Unmarshal(data, &s) != nil {
+		return settingsHooks{}, settingsUnreadable
+	}
+	return s, settingsRead
+}
+
+// uncertainProjectDisables covers the project files that do not count because
+// the hook's directory leaves the active project open: their registrations
+// are ignored, but one of them that sets disableAllHooks, or cannot be read,
+// could still turn off the user hooks the guard would defer to. The starting
+// project and the hook's directory are the candidates checked.
+func (g guardEnv) uncertainProjectDisables(hookCwd string) bool {
+	if g.projectDir != "" && hookCwd != "" && sameDir(hookCwd, g.projectDir) {
+		return false
+	}
+	for _, dir := range []string{g.projectDir, hookCwd} {
+		if dir == "" {
+			continue
+		}
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			s, state := readSettings(filepath.Join(dir, ".claude", name))
+			if state == settingsUnreadable || (state == settingsRead && s.DisableAllHooks != nil && *s.DisableAllHooks) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type settingsHooks struct {
-	DisableAllHooks bool                   `json:"disableAllHooks"`
+	// DisableAllHooks is a pointer: unset is not false. The effective value
+	// is the one the highest-precedence file sets (see effectivelyDisabled).
+	DisableAllHooks *bool                  `json:"disableAllHooks"`
 	Hooks           map[string][]hookGroup `json:"hooks"`
 }
 
@@ -323,19 +397,16 @@ func plainHandler(raw map[string]json.RawMessage) (hookHandler, bool) {
 		}
 		h.execForm = true
 	}
+	// timeout is a number; a null one is schema-invalid, and Claude Code
+	// skips an invalid entry, so it is not an omitted timeout.
+	if timeout, ok := raw["timeout"]; ok && bytes.Equal(bytes.TrimSpace(timeout), []byte("null")) {
+		return hookHandler{}, false
+	}
 	return h, true
 }
 
-func fileOwns(file string, target hookTarget, family, instance string) bool {
+func settingsOwn(s settingsHooks, target hookTarget, family, instance string) bool {
 	need := requiredTimeout(target, family)
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return false
-	}
-	var s settingsHooks
-	if json.Unmarshal(data, &s) != nil || s.DisableAllHooks {
-		return false
-	}
 	for _, group := range s.Hooks[target.event] {
 		if !matcherCovers(group.Matcher, target, instance) {
 			continue

@@ -203,6 +203,7 @@ func TestGuardHandlerFieldsThatChangeWhenItRuns(t *testing.T) {
 		"permission rule (if)":                        {`{"type":"command","command":"3ngram-hook precheck","if":"Edit(*.ts)"}`, false},
 		"async":                                       {`{"type":"command","command":"3ngram-hook precheck","async":true}`, false},
 		"once (ignored in settings files)":            {`{"type":"command","command":"3ngram-hook precheck","once":true}`, true},
+		"null timeout":                                {`{"type":"command","command":"3ngram-hook precheck","timeout":null}`, false},
 		"once false":                                  {`{"type":"command","command":"3ngram-hook precheck","once":false}`, true},
 		"shell":                                       {`{"type":"command","command":"3ngram-hook precheck","shell":"powershell"}`, false},
 		"no type":                                     {`{"command":"3ngram-hook precheck"}`, false},
@@ -474,6 +475,85 @@ func TestGuardProjectSettingsFollowTheHookDirectory(t *testing.T) {
 		}
 		if !deferToSettings("stop", input(link), f.env) {
 			t.Fatal("a symlink to the starting project is the starting project")
+		}
+	})
+}
+
+// disableAllHooks resolves by precedence: the highest-precedence file that
+// sets it decides, so a local false re-enables a user file's hooks, and a
+// local true turns them off.
+func TestGuardResolvesDisableAllHooksByPrecedence(t *testing.T) {
+	stop := hooksJSON("Stop", "-", "3ngram-hook stop")
+	withDisable := func(body string, v bool) string {
+		flag := "false"
+		if v {
+			flag = "true"
+		}
+		return `{"disableAllHooks":` + flag + `,` + body[1:]
+	}
+	cases := []struct {
+		name        string
+		user, local string
+		want        bool
+	}{
+		{"user true, nothing above it", withDisable(stop, true), "", false},
+		{"user true, local false", withDisable(stop, true), `{"disableAllHooks":false}`, true},
+		{"user false, local true", withDisable(stop, false), `{"disableAllHooks":true}`, false},
+		{"user unset, local true with the hook", stop, withDisable(stop, true), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGuardFixture(t)
+			f.user(t, tc.user)
+			if tc.local != "" {
+				f.local(t, tc.local)
+			}
+			input := []byte(`{"cwd":` + quote(f.env.projectDir) + `}`)
+			if got := deferToSettings("stop", input, f.env); got != tc.want {
+				t.Fatalf("deferToSettings = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A settings file that exists but cannot be read may turn hooks off, so it
+// claims nothing for any file; a project file that does not count, because
+// the hook ran elsewhere, can still turn the user's hooks off.
+func TestGuardUnreadableOrUncountedFilesCannotHideADisable(t *testing.T) {
+	stop := hooksJSON("Stop", "-", "3ngram-hook stop")
+	t.Run("an unreadable local file", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		f.local(t, `{"disableAllHooks":`)
+		if deferToSettings("stop", []byte(`{"cwd":`+quote(f.env.projectDir)+`}`), f.env) {
+			t.Fatal("an unreadable settings file must claim nothing")
+		}
+	})
+	t.Run("the starting project disables hooks while the hook runs elsewhere", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		f.local(t, `{"disableAllHooks":true}`)
+		if deferToSettings("stop", []byte(`{"cwd":`+quote(t.TempDir())+`}`), f.env) {
+			t.Fatal("a project that may still disable hooks must claim nothing")
+		}
+	})
+	t.Run("the hook's directory disables hooks", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		elsewhere := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(elsewhere, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.write(t, filepath.Join(elsewhere, ".claude", "settings.json"), `{"disableAllHooks":true}`)
+		if deferToSettings("stop", []byte(`{"cwd":`+quote(elsewhere)+`}`), f.env) {
+			t.Fatal("the directory the hook runs in may disable hooks")
+		}
+	})
+	t.Run("user hooks still count elsewhere when nothing disables them", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		if !deferToSettings("stop", []byte(`{"cwd":`+quote(t.TempDir())+`}`), f.env) {
+			t.Fatal("user settings apply wherever the session is")
 		}
 	})
 }
