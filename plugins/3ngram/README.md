@@ -1,6 +1,6 @@
 # 3ngram for Claude Code
 
-A read-only commitment panel inside Claude Code. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
+A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
 
 Tested with Claude Code 2.1.291 and 2.1.292. The plugin API it uses (mods) is early access and can change between releases.
 
@@ -27,6 +27,10 @@ Run `/commitments` to open the panel. Change the options with `/plugin configure
 | `refresh_minutes` | 5 | Background refresh interval, at least 1 |
 | `github_evidence` | on | Look up the GitHub issues and pull requests commitments mention, read-only |
 | `auto_open` | off | Open the panel at session start, on a terminal wide enough to dock it |
+
+## The bundled hooks
+
+The plugin also registers the four 3ngram session hooks (SessionStart briefing, PreToolUse precheck, Stop heartbeat, SessionEnd close) through `scripts/run-hook`. If you already registered them in `settings.json`, keep them: the plugin's copies stand down for every event instance your settings already cover, so nothing runs twice; see [the hook README](../../cmd/3ngram-hook/README.md#claude-code-plugin). A machine without `3ngram-hook`, or with a build older than the guard, gets no hooks from the plugin and no error.
 
 ## What it shows, and what it does not
 

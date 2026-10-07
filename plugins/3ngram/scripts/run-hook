@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs one 3ngram hook for the plugin, as `3ngram-hook <subcommand> --via plugin`.
+#
+# The plugin's hooks are optional, so a machine without 3ngram-hook, or with a
+# build older than the deferral guard, gets no hook and no error. A build with
+# the guard stands its copy down whenever settings.json already runs the same
+# subcommand for the same event instance, so existing registrations keep
+# working and nothing runs twice. Stdin passes through untouched.
+command -v 3ngram-hook >/dev/null 2>&1 || exit 0
+3ngram-hook capabilities </dev/null 2>/dev/null | grep -qx 'via-plugin' || exit 0
+exec 3ngram-hook "$@" --via plugin

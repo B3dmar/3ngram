@@ -789,6 +789,14 @@ Main-agent Stop only. Not SubagentStop. Not secondary worktrees. Not `THREENGRAM
 The shipped hook enforces all three through the same `hookSuppressed` filter the
 briefing auto-pull uses, checked before anything else runs.
 
+The hooks can be registered twice over: in `settings.json`, and by the `3ngram`
+Claude Code plugin, which bundles the same four. Claude Code never de-duplicates
+a plugin hook against a settings hook, so the plugin's copies run as
+`3ngram-hook <subcommand> --via plugin` and stand down, per invocation, when a
+settings file already runs that subcommand for that event instance (same event,
+a matcher that matches it, the same subcommand family). Each lifecycle call
+therefore still happens once per event.
+
 Default-off until the validation bar in the plan says otherwise. **Claude Code is
 the one registered harness** for the validation phase: `cmd/3ngram-hook/README.md`
 documents enabling the flag there, and the Codex section ships the envelope but

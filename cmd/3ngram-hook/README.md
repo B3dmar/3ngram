@@ -32,6 +32,7 @@ The nudge does not change that: it asks the *model* to call `remember` /
 | `3ngram-hook sync [--push\|--pull\|--both]` | (none) | **Deferred** — a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet. SessionEnd now runs `close` instead |
 | `3ngram-hook verify` | (manual) | Print resolved API base + key status, probe `GET /api/v1/briefing` |
 | `3ngram-hook version` | (manual) | Print the binary version (also `--version`) |
+| `3ngram-hook capabilities` | (plugin) | Print what this build supports, one token per line (`via-plugin`, the commitments contract) |
 | `3ngram-hook commitments list [--scope S] [--include-unscoped] [--github] [--cwd DIR]` | (plugin) | **Not a hook.** Read-only data path of the Claude Code commitment panel ([#255](https://github.com/B3dmar/3ngram/issues/255)). Prints one JSON envelope; see [Commitments read path](#commitments-read-path) |
 | `3ngram-hook commitments show <memoryId> [--expect-fingerprint F] [--scope S] [--include-unscoped] [--github] [--cwd DIR]` | (plugin) | **Not a hook.** One commitment for the panel's detail view: the stored memory, its redacted history and related evidence |
 | `3ngram-hook commitments context [--scope S] [--include-unscoped] [--cwd DIR]` | (plugin) | **Not a hook.** Same envelope context as `list` (backend host, credential fingerprint, selector) with **no network call** |
@@ -273,6 +274,14 @@ print a one-shot banner to stderr at most once per hour.
 The X-API-Key chain (`apps/server/src/middleware/api-key.ts`) returns `200` for
 a valid key, a uniform `401` for missing/unknown/revoked keys, and `503` if the
 resolver/DB is unavailable.
+
+## Claude Code plugin
+
+The `3ngram` Claude Code plugin ([`plugins/3ngram`](../../plugins/3ngram/README.md)) bundles these four hooks next to the commitment panel, so installing it is an alternative to the `settings.json` block below. Keep or remove your settings registrations as you like: both can be present and nothing runs twice.
+
+- **How.** The plugin runs each hook through `scripts/run-hook`, as `3ngram-hook <subcommand> --via plugin`. With `--via plugin` the binary reads the hook's stdin first and stands its copy down when a settings file (`$CLAUDE_CONFIG_DIR` or `~/.claude`, the project's `.claude/settings.json` and `settings.local.json`, the managed settings file) already registers the same subcommand for this event instance: the same event, a matcher that matches this instance by Claude Code's rules (an exact `|`/`,` list, otherwise an unanchored regex), and the same subcommand family (`stop` and `heartbeat` are one). Otherwise it runs exactly as a settings hook would, on the same stdin.
+- **What claims nothing.** A shell-wrapped or composite command, an env assignment, a regex RE2 cannot compile, a matcher with no value to compare (an input without `source`), an unreadable settings file, `disableAllHooks`. In each case the plugin copy runs: a duplicate run is the failure mode the hooks already tolerate, a missed one is not. The guard cannot see a `--settings` flag.
+- **Older binaries.** The shim asks `3ngram-hook capabilities` for `via-plugin` first and does nothing without it, so a build from before the guard never runs a second copy. Without `3ngram-hook` on PATH the plugin's hooks are silent.
 
 ## Claude Code hooks
 

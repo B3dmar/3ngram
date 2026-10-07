@@ -41,3 +41,6 @@ CLAUDE.local.md
 # Claude Code writes a mod's API declarations beside it at every load
 # (plugins/<name>/.claude-plugin/types/); they belong to the installed build.
 plugins/**/.claude-plugin/types/
+# ...and a tsconfig.json extending them, for a mod without one of its own (the
+# plugin's own config is tsconfig.spec.json).
+plugins/*/tsconfig.json
