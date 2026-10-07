@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // commitmentRow is one open or waiting commitment as the panel lists it. It
@@ -197,8 +198,9 @@ func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelop
 		return failEnvelope(env, mismatch)
 	}
 	commitments, overdue, complete := wide.sections()
-	// generatedAt is the read's freshness; a list without it is incomplete.
-	if !complete || wide.GeneratedAt == "" {
+	// generatedAt is the read's freshness: a list without a valid timestamp
+	// is incomplete.
+	if !complete || !validTimestamp(wide.GeneratedAt) {
 		incomplete := &readError{Kind: kindBadResponse, Route: "briefing", Hint: "commitment sections missing or inconsistent"}
 		logReadFailure(stderr, incomplete)
 		return failEnvelope(env, incomplete)
@@ -437,6 +439,13 @@ func fileRows(ctx context.Context, cfg readConfig, rows []commitmentRow, request
 	return out
 }
 
+// validTimestamp reports whether s is the ISO datetime the briefing contract
+// requires.
+func validTimestamp(s string) bool {
+	_, err := time.Parse(time.RFC3339Nano, s)
+	return err == nil
+}
+
 // filingVerdict is one lookup's outcome. done is false for a lookup the
 // deadline kept from starting.
 type filingVerdict struct {
@@ -455,10 +464,10 @@ func verifyFiling(ctx context.Context, cfg readConfig, memoryID string, requeste
 	}
 	var m memoryFiling
 	if err := apiGet(ctx, cfg, "memory", path, &m); err != nil {
-		// Gone between the two reads: it left the selector, like a move.
-		if err.Kind == kindNotFound {
-			return filingVerdict{done: true, drop: true}
-		}
+		// A 404 does not prove the row left the selector: memory rows are never
+		// deleted, so a move or a supersession still answers. It may be a
+		// skewed route or a bad id, so the row stays, unknown, like any
+		// other failed lookup.
 		return filingVerdict{done: true, err: err}
 	}
 	// An answer for another memory, or one that omits a required field
