@@ -491,6 +491,65 @@ func TestCommitmentsShowNilTagsAreAnEmptyList(t *testing.T) {
 	}
 }
 
+// The history answer must be for the requested memory, or it says nothing
+// about this commitment.
+func TestCommitmentsShowRejectsHistoryForAnotherMemory(t *testing.T) {
+	other := strings.Replace(richHistory(), `"memory":{"createdAt":"2026-10-02T00:00:00.000Z","id":"`+commitmentID, `"memory":{"createdAt":"2026-10-02T00:00:00.000Z","id":"`+partnerID, 1)
+	if other == richHistory() {
+		t.Fatal("fixture edit did not apply")
+	}
+	showServer(t, other, []any{})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if !r.env.OK || r.env.History != nil || !hasPartial(r.env, "history", kindBadResponse) {
+		t.Fatalf("env = %s", r.stdout)
+	}
+	if strings.Contains(r.stdout, visibleTopicNewer) {
+		t.Fatal("evidence from another memory's history must not be shown")
+	}
+}
+
+// A degraded history (lineage unavailable) comes back as 200 with empty lists;
+// that is not an inspected window, so it is not reported as one.
+func TestCommitmentsShowUnavailableLineageIsNotAnInspectedWindow(t *testing.T) {
+	degraded := strings.Replace(richHistory(), `"lineage":"ok"`, `"lineage":"unavailable"`, 1)
+	showServer(t, degraded, []any{})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.env.Evidence.Inspected.History != nil || !hasPartial(r.env, "lineage", kindUnavailable) {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+func TestCommitmentsShowRejectsAProposalsAnswerWithoutTheList(t *testing.T) {
+	s := showServer(t, richHistory(), []any{})
+	s.json("/api/v1/proposals", 200, `{"error":"proxied"}`)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.env.Evidence.Inspected.Proposals != nil || !hasPartial(r.env, "proposals", kindBadResponse) {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// An answer that omits a memory's project is not an unscoped memory: with
+// unscoped records included, it is still outside the selector.
+func TestCommitmentsShowOmittedProjectIsOutside(t *testing.T) {
+	s := showServer(t, richHistory(), []any{})
+	var body map[string]any
+	_ = json.Unmarshal([]byte(commitmentMemory("work", nil)), &body)
+	delete(body, "project")
+	s.json("/api/v1/memories/"+commitmentID, 200, mustJSON(body))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work", "--include-unscoped")
+
+	if r.code != 2 || r.env.Error.Kind != kindOutsideSelector || strings.Contains(r.stdout, "Full commitment text") {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
 func TestCommitmentsShowNotFound(t *testing.T) {
 	s := newReadServer(t)
 	s.json("/api/v1/memories/"+commitmentID, http.StatusNotFound, `{"error":"not_found"}`)

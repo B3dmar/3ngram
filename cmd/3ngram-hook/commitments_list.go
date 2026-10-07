@@ -72,10 +72,11 @@ type meResponse struct {
 // memoryFiling is the subset of GET /api/v1/memories/:id the filing check
 // reads. Content is in that body too, and is discarded here.
 type memoryFiling struct {
-	Scope   string  `json:"scope"`
-	Project *string `json:"project"`
-	Status  string  `json:"status"`
-	ValidTo *string `json:"validTo"`
+	Scope            string       `json:"scope"`
+	Project          jsonNullable `json:"project"`
+	Status           string       `json:"status"`
+	ValidTo          jsonNullable `json:"validTo"`
+	CommitmentStatus string       `json:"commitmentStatus"`
 }
 
 // listBriefing is the briefing body as the list reads it. The two sections
@@ -412,16 +413,28 @@ func verifyFiling(ctx context.Context, cfg readConfig, memoryID string, requeste
 		}
 		return filingVerdict{done: true, err: err}
 	}
-	if m.Status != "active" || m.ValidTo != nil || m.Scope != requested.Scope {
+	// project and validTo are required but nullable: an answer that omits
+	// either says nothing about the filing, and is never read as null.
+	if !m.Project.Present || !m.ValidTo.Present || m.Scope == "" || m.Status == "" {
+		return filingVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
+	}
+	// No longer live (superseded, archived, or the commitment resolved or
+	// expired since the widened read listed it): it left the list.
+	if m.Status != "active" || m.ValidTo.Value != nil || m.Scope != requested.Scope || !openCommitment(m.CommitmentStatus) {
 		return filingVerdict{done: true, drop: true}
 	}
-	if m.Project == nil {
+	if m.Project.Value == nil {
 		return filingVerdict{done: true, filing: filingUnscoped}
 	}
-	if *m.Project == requested.Project {
+	if *m.Project.Value == requested.Project {
 		return filingVerdict{done: true, filing: filingProject}
 	}
 	return filingVerdict{done: true, drop: true}
+}
+
+// openCommitment is the briefing's own notion of a listed commitment.
+func openCommitment(status string) bool {
+	return status == "open" || status == "waiting"
 }
 
 // forEachBounded runs fn for 0..n-1 with at most limit in flight. It stops
