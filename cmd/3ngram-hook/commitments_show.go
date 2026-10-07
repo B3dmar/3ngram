@@ -24,33 +24,33 @@ const (
 
 // memoryDetail is GET /api/v1/memories/:id.
 type memoryDetail struct {
-	ID               string   `json:"id"`
-	MemoryType       string   `json:"memoryType"`
-	Topic            string   `json:"topic"`
-	Content          string   `json:"content"`
-	Scope            string   `json:"scope"`
-	Project          *string  `json:"project"`
-	Status           string   `json:"status"`
-	CommitmentStatus string   `json:"commitmentStatus"`
-	Tags             []string `json:"tags"`
-	ValidFrom        string   `json:"validFrom"`
-	ValidTo          *string  `json:"validTo"`
-	RecordedAt       string   `json:"recordedAt"`
+	ID               string       `json:"id"`
+	MemoryType       string       `json:"memoryType"`
+	Topic            string       `json:"topic"`
+	Content          string       `json:"content"`
+	Scope            string       `json:"scope"`
+	Project          jsonNullable `json:"project"`
+	Status           string       `json:"status"`
+	CommitmentStatus string       `json:"commitmentStatus"`
+	Tags             []string     `json:"tags"`
+	ValidFrom        string       `json:"validFrom"`
+	ValidTo          jsonNullable `json:"validTo"`
+	RecordedAt       string       `json:"recordedAt"`
 }
 
 // historyMemory is the identity-only memory shape the history route returns
 // for the memory itself, lineage nodes and relationship partners.
 type historyMemory struct {
-	ID             string  `json:"id"`
-	MemoryType     string  `json:"memoryType"`
-	Topic          string  `json:"topic"`
-	Project        *string `json:"project"`
-	Scope          string  `json:"scope"`
-	Status         string  `json:"status"`
-	ValidTo        *string `json:"validTo"`
-	RecordedAt     string  `json:"recordedAt"`
-	IsCurrent      bool    `json:"isCurrent"`
-	LifecycleState string  `json:"lifecycleState"`
+	ID             string       `json:"id"`
+	MemoryType     string       `json:"memoryType"`
+	Topic          string       `json:"topic"`
+	Project        jsonNullable `json:"project"`
+	Scope          string       `json:"scope"`
+	Status         string       `json:"status"`
+	ValidTo        jsonNullable `json:"validTo"`
+	RecordedAt     string       `json:"recordedAt"`
+	IsCurrent      bool         `json:"isCurrent"`
+	LifecycleState string       `json:"lifecycleState"`
 }
 
 type historyEdge struct {
@@ -76,6 +76,7 @@ type auditEvent struct {
 // historyResponse is GET /api/v1/memories/:id/history. Event payloads are
 // redacted by the server and not read here.
 type historyResponse struct {
+	Memory  historyMemory `json:"memory"`
 	Lineage struct {
 		Nodes     []historyMemory `json:"nodes"`
 		Edges     []historyEdge   `json:"edges"`
@@ -124,6 +125,9 @@ type commitmentSource struct {
 }
 
 type commitmentHistory struct {
+	// lineageOK is false when the server could not read the lineage and
+	// relationships; they are then empty and say nothing.
+	lineageOK       bool
 	Events          []auditEvent          `json:"events"`
 	EventsTruncated bool                  `json:"eventsTruncated"`
 	Lineage         []historyMemory       `json:"lineage"`
@@ -156,20 +160,26 @@ const (
 // kind=project matches the project in any scope; scope_project matches the
 // scope and project, plus a null project only when unscoped records were asked
 // for.
-func memoryInSelector(scope string, project *string, sel briefingSelector) (bool, string) {
+//
+// project must have been in the answer: an omitted project is not a null one,
+// and a memory whose filing the answer does not state is outside.
+func memoryInSelector(scope string, project jsonNullable, sel briefingSelector) (bool, string) {
+	if !project.Present {
+		return false, ""
+	}
 	switch sel.Kind {
 	case "project":
-		if project != nil && *project == sel.Project {
+		if project.Value != nil && *project.Value == sel.Project {
 			return true, filingProject
 		}
 	case "scope_project":
 		if scope != sel.Scope {
 			return false, ""
 		}
-		if project != nil && *project == sel.Project {
+		if project.Value != nil && *project.Value == sel.Project {
 			return true, filingProject
 		}
-		if project == nil && sel.IncludeUnscoped != nil && *sel.IncludeUnscoped {
+		if project.Value == nil && sel.IncludeUnscoped != nil && *sel.IncludeUnscoped {
 			return true, filingUnscoped
 		}
 	}
@@ -206,6 +216,9 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 	if !strings.EqualFold(memory.ID, memoryID) {
 		return failEnvelope(env, &readError{Kind: kindBadResponse, Route: "memory", Hint: "the server answered for another id"})
 	}
+	if !memory.ValidTo.Present {
+		return failEnvelope(env, &readError{Kind: kindBadResponse, Route: "memory", Hint: "validTo missing"})
+	}
 	memoryID = memory.ID
 	historyURL, _ := memoryPath(memoryID, "/history")
 	inside, filing := memoryInSelector(memory.Scope, memory.Project, sel)
@@ -227,15 +240,23 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 		proposalsErr = apiGet(ctx, cfg, "proposals", proposalsQuery(), &proposals)
 	}()
 	wg.Wait()
+	// A history answer for another memory, or a proposals answer without its
+	// list, describes nothing about this commitment.
+	if historyErr == nil && !strings.EqualFold(history.Memory.ID, memoryID) {
+		historyErr = &readError{Kind: kindBadResponse, Route: "history"}
+	}
+	if proposalsErr == nil && proposals.Proposals == nil {
+		proposalsErr = &readError{Kind: kindBadResponse, Route: "proposals"}
+	}
 
 	if memory.Tags == nil {
 		memory.Tags = []string{}
 	}
 	env.Commitment = &commitmentDetail{
 		MemoryID: memory.ID, MemoryType: memory.MemoryType, Topic: memory.Topic, Content: memory.Content,
-		Scope: memory.Scope, Project: memory.Project, Filing: filing, Status: memory.Status,
-		CommitmentStatus: memory.CommitmentStatus, Current: memory.ValidTo == nil && memory.Status == "active",
-		Tags: memory.Tags, ValidFrom: memory.ValidFrom, ValidTo: memory.ValidTo, RecordedAt: memory.RecordedAt,
+		Scope: memory.Scope, Project: memory.Project.Value, Filing: filing, Status: memory.Status,
+		CommitmentStatus: memory.CommitmentStatus, Current: memory.ValidTo.Value == nil && memory.Status == "active",
+		Tags: memory.Tags, ValidFrom: memory.ValidFrom, ValidTo: memory.ValidTo.Value, RecordedAt: memory.RecordedAt,
 	}
 	env.Source = &commitmentSource{SessionReason: "not_exposed"}
 
@@ -273,6 +294,7 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 // proposals are then checked against.
 func redactHistory(memoryID string, h historyResponse, sel briefingSelector) (*commitmentHistory, map[string]bool) {
 	out := &commitmentHistory{
+		lineageOK:              h.Sections.Lineage != "unavailable",
 		Events:                 h.AuditEvents,
 		EventsTruncated:        h.EventsTruncated,
 		Lineage:                []historyMemory{},
