@@ -40,7 +40,7 @@ The plugin also registers the four 3ngram session hooks (SessionStart briefing, 
 - **No background reads where nothing draws.** A `claude -p` run or an Agent SDK session reads nothing in the background, so it makes no REST reads and runs no `gh`. The background reads start if a client attaches to that session later.
 - **Unscoped means verified.** A row is labelled unscoped only after its memory is read back with no project; otherwise it is "filing unknown".
 - **Owners and sources.** Native writes never record an owner, and the read API does not expose the session a memory was written in, so the panel says "owner unclear (not recorded)" and "source session: not exposed" instead of guessing.
-- **Evidence is for review.** A newer memory that updates or supersedes a commitment, a pending proposal touching it, or a merged pull request it mentions is shown as related evidence. "No evidence found in the inspected window" says how far the search looked.
+- **Evidence is for review.** A newer memory that updates or supersedes a commitment, a pending proposal touching it, or a merged pull request it mentions is shown as related evidence. "No evidence found in the inspected window" says how far the search looked, and when no source could be read at all the panel says that nothing was searched.
 - **Partial results are labelled.** A truncated list, an unavailable account, an unfinished check or a GitHub lookup that stopped is named in a note under the list.
 
 ## Read-only, by construction

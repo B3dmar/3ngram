@@ -208,12 +208,34 @@ func decodeHistory(raw json.RawMessage, memoryID string) (historyResponse, *read
 			return historyResponse{}, bad
 		}
 	}
-	for _, rel := range append(append([]historyRelationship{}, h.DirectRelationships.Predecessors...), h.DirectRelationships.Successors...) {
-		if rel.Memory.ID == "" || !statesFiling(rel.Memory.Scope, rel.Memory.Project) {
+	for _, edge := range h.Lineage.Edges {
+		if !edgeComplete(edge) {
+			return historyResponse{}, bad
+		}
+	}
+	// A direct relationship's edge must be whole and join the inspected memory
+	// to that relationship's memory, in the direction its group says: a
+	// predecessor's edge starts at the inspected memory, a successor's ends
+	// there. An edge that does not would be skipped as evidence in silence.
+	for _, rel := range h.DirectRelationships.Predecessors {
+		if !relationshipComplete(rel) || !strings.EqualFold(rel.Edge.FromID, memoryID) || !strings.EqualFold(rel.Edge.ToID, rel.Memory.ID) {
+			return historyResponse{}, bad
+		}
+	}
+	for _, rel := range h.DirectRelationships.Successors {
+		if !relationshipComplete(rel) || !strings.EqualFold(rel.Edge.ToID, memoryID) || !strings.EqualFold(rel.Edge.FromID, rel.Memory.ID) {
 			return historyResponse{}, bad
 		}
 	}
 	return h, nil
+}
+
+func edgeComplete(e historyEdge) bool {
+	return e.ID != "" && e.FromID != "" && e.ToID != "" && e.EdgeType != ""
+}
+
+func relationshipComplete(rel historyRelationship) bool {
+	return rel.Memory.ID != "" && statesFiling(rel.Memory.Scope, rel.Memory.Project) && edgeComplete(rel.Edge)
 }
 
 func knownSectionStatus(status *string) bool {
@@ -315,7 +337,7 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 	wg.Wait()
 	// A proposals answer without its list describes nothing about this
 	// commitment (decodeHistory holds the history answer to the same rule).
-	if proposalsErr == nil && proposals.Proposals == nil {
+	if proposalsErr == nil && (proposals.Proposals == nil || !proposalsComplete(*proposals.Proposals)) {
 		proposalsErr = &readError{Kind: kindBadResponse, Route: "proposals"}
 	}
 

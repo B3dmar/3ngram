@@ -628,6 +628,24 @@ func TestCommitmentsShowRejectsIncompleteHistory(t *testing.T) {
 		"node without project": func(h map[string]any) {
 			delete(group(h, "lineage")["nodes"].([]any)[2].(map[string]any), "project")
 		},
+		"relationship without edge": func(h map[string]any) {
+			delete(group(h, "directRelationships")["successors"].([]any)[0].(map[string]any), "edge")
+		},
+		"successor edge without toId": func(h map[string]any) {
+			succ := group(h, "directRelationships")["successors"].([]any)[0].(map[string]any)
+			delete(succ["edge"].(map[string]any), "toId")
+		},
+		"successor edge pointing elsewhere": func(h map[string]any) {
+			succ := group(h, "directRelationships")["successors"].([]any)[0].(map[string]any)
+			succ["edge"].(map[string]any)["toId"] = otherProjectID
+		},
+		"predecessor edge reversed": func(h map[string]any) {
+			edge := group(h, "directRelationships")["predecessors"].([]any)[0].(map[string]any)["edge"].(map[string]any)
+			edge["fromId"], edge["toId"] = edge["toId"], edge["fromId"]
+		},
+		"lineage edge without type": func(h map[string]any) {
+			delete(group(h, "lineage")["edges"].([]any)[0].(map[string]any), "edgeType")
+		},
 		"partner without scope": func(h map[string]any) {
 			succ := group(h, "directRelationships")["successors"].([]any)[1].(map[string]any)
 			delete(succ["memory"].(map[string]any), "scope")
@@ -676,5 +694,44 @@ func TestCommitmentsShowReportsTheGeneratedHistoryWindow(t *testing.T) {
 	w := r.env.Evidence.Inspected.History
 	if w == nil || w.LineageNodeCap != historyLineageNodeCap || w.RelationshipCap != historyRelationshipCap || w.EventCap != historyEventCap {
 		t.Fatalf("window = %+v", w)
+	}
+}
+
+// A proposals answer with a row missing a field the evidence reads is not an
+// inspected window: the row would otherwise be skipped in silence.
+func TestCommitmentsShowRejectsIncompleteProposals(t *testing.T) {
+	for _, field := range []string{"id", "fromId", "toId", "edgeType", "status"} {
+		t.Run(field, func(t *testing.T) {
+			row := proposalJSON("p1", newerID, commitmentID, "rationale")
+			delete(row, field)
+			showServer(t, richHistory(), []any{row})
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+			if r.env.Evidence.Inspected.Proposals != nil || !hasPartial(r.env, "proposals", kindBadResponse) {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// With neither the history nor the proposals read, nothing was searched, and
+// the verdict says so instead of "none found".
+func TestCommitmentsShowNothingInspectedIsNotNoneFound(t *testing.T) {
+	s := showServer(t, richHistory(), []any{})
+	s.json("/api/v1/memories/"+commitmentID+"/history", 503, `{"error":"unavailable"}`)
+	s.json("/api/v1/proposals", 503, `{"error":"unavailable"}`)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	ev := r.env.Evidence
+	if !r.env.OK || ev.Verdict != verdictNotInspected || ev.Inspected.History != nil || ev.Inspected.Proposals != nil {
+		t.Fatalf("env = %s", r.stdout)
+	}
+	// One source read is enough for an honest "none found" over its window.
+	s.json("/api/v1/proposals", 200, mustJSON(map[string]any{"proposals": []any{}}))
+	r = runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+	if r.env.Evidence.Verdict != verdictNoneFound {
+		t.Fatalf("env = %s", r.stdout)
 	}
 }
