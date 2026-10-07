@@ -125,6 +125,7 @@ func TestExtractGitHubRefs(t *testing.T) {
 		{"comment anchor is no reference", "issues/12#issuecomment-9", repo, nil, 0},
 		{"ten digits is no reference", "#1234567890", repo, nil, 0},
 		{"dot segment repo is refused", "o/..#3", nil, nil, 0},
+		{"text order across forms", "#1 then https://github.com/B3dmar/x/pull/2 then B3dmar/y#3", repo, []string{"B3dmar/3ngram#1", "B3dmar/x#2", "B3dmar/y#3"}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,14 +143,19 @@ func TestExtractGitHubRefs(t *testing.T) {
 
 func TestGitHubRemote(t *testing.T) {
 	for remote, want := range map[string]string{
-		"git@github.com:B3dmar/3ngram.git":        "B3dmar/3ngram",
-		"https://github.com/B3dmar/3ngram":        "B3dmar/3ngram",
-		"ssh://git@github.com/B3dmar/3ngram.git":  "B3dmar/3ngram",
-		"https://gitlab.com/B3dmar/3ngram.git":    "",
-		"https://github.com/B3dmar/3ngram/tree/x": "",
-		"https://github.com/B3dmar/3ngram/":       "B3dmar/3ngram",
-		"git@github.com:B3dmar/..":                "",
-		"":                                        "",
+		"git@github.com:B3dmar/3ngram.git":           "B3dmar/3ngram",
+		"https://github.com/B3dmar/3ngram":           "B3dmar/3ngram",
+		"ssh://git@github.com/B3dmar/3ngram.git":     "B3dmar/3ngram",
+		"https://gitlab.com/B3dmar/3ngram.git":       "",
+		"https://github.com/B3dmar/3ngram/tree/x":    "",
+		"https://github.com/B3dmar/3ngram/":          "B3dmar/3ngram",
+		"git@github.com:B3dmar/..":                   "",
+		"ssh://git@github.com:22/B3dmar/3ngram.git":  "B3dmar/3ngram",
+		"https://GitHub.com/B3dmar/3ngram.git":       "B3dmar/3ngram",
+		"https://user@github.com/B3dmar/3ngram":      "B3dmar/3ngram",
+		"ssh://git@github.com.evil.example/B3dmar/x": "",
+		"git@gitlab.com:B3dmar/3ngram.git":           "",
+		"":                                           "",
 	} {
 		got := ""
 		if r := githubRemote(remote); r != nil {
@@ -363,13 +369,59 @@ func TestCommitmentsGitHubDeadlineKillsTheProcessGroup(t *testing.T) {
 	for _, field := range strings.Fields(string(data)) {
 		pid, _ := strconv.Atoi(field)
 		deadline := time.Now().Add(2 * time.Second)
-		for syscall.Kill(pid, 0) == nil {
+		for processRuns(pid) {
 			if time.Now().After(deadline) {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 				t.Fatalf("gh's child %d outlived the operation", pid)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+}
+
+// processRuns reports whether pid is a live process. A killed child that an
+// init without reaping (some containers) leaves as a zombie can no longer
+// run, so it counts as gone even though the pid still exists.
+func processRuns(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	state := strings.TrimSpace(string(out))
+	return err == nil && state != "" && !strings.HasPrefix(state, "Z")
+}
+
+// A pull request closed without being merged was abandoned or rejected: it
+// is related context, never resolution evidence.
+func TestClosedUnmergedPullRequestIsContextOnly(t *testing.T) {
+	cases := map[string]struct {
+		ev   githubEvidence
+		want bool
+	}{
+		"merged PR":        {githubEvidence{Type: "pull_request", State: "merged"}, true},
+		"closed issue":     {githubEvidence{Type: "issue", State: "closed"}, true},
+		"closed, unmerged": {githubEvidence{Type: "pull_request", State: "closed"}, false},
+		"open issue":       {githubEvidence{Type: "issue", State: "open"}, false},
+		"not found":        {githubEvidence{Type: "unknown", State: githubStateNotFound}, false},
+	}
+	for name, tc := range cases {
+		if got := tc.ev.signalsResolution(); got != tc.want {
+			t.Errorf("%s: signalsResolution = %v", name, got)
+		}
+	}
+}
+
+// One reference named by two rows in different forms is looked up once, and
+// each row reports the form it used.
+func TestCommitmentsListKeepsEachRowsReferenceForm(t *testing.T) {
+	installFakeGH(t)
+	githubListServer(t, item(1, "see https://github.com/B3dmar/3ngram/pull/251"), item(2, "PR #251"))
+
+	r := runCommitmentsForTest(t, githubProjectDir(t), "list", "--github")
+
+	rows := rowsOf(r.env)
+	if len(rows[0].GitHub) != 1 || rows[0].GitHub[0].ReferenceForm != refFormURL || len(rows[1].GitHub) != 1 || rows[1].GitHub[0].ReferenceForm != refFormBare {
+		t.Fatalf("rows = %s", r.stdout)
+	}
+	if r.env.GitHubSearch.Found != 1 {
+		t.Fatalf("the reference is looked up once: %+v", r.env.GitHubSearch)
 	}
 }
 

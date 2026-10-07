@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,9 +73,11 @@ type githubEvidence struct {
 }
 
 // signalsResolution reports whether a reference could explain a resolution:
-// merged, or closed. An open reference is still listed as related context.
+// a merged pull request, or a closed issue. An open reference, and a pull
+// request closed without being merged (abandoned or rejected), are still
+// listed as related context and change nothing.
 func (g githubEvidence) signalsResolution() bool {
-	return g.State == "merged" || g.State == "closed"
+	return g.State == "merged" || (g.Type == "issue" && g.State == "closed")
 }
 
 var (
@@ -107,19 +111,16 @@ type refScan struct {
 // token that looks like another repository's name ("3ngram-platform #718"),
 // which would otherwise be read as this repository's issue 718.
 func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
-	var scan refScan
-	seen := map[string]bool{}
-	add := func(ref githubRef) {
-		if ref.Number <= 0 || !validRepo(ref.Repo) || seen[ref.key()] {
-			return
-		}
-		seen[ref.key()] = true
-		scan.refs = append(scan.refs, ref)
+	type found struct {
+		at  int
+		ref githubRef
 	}
+	var scan refScan
+	var hits []found
 	consumed := make([]bool, len(text))
 	for _, m := range githubURLRef.FindAllStringSubmatchIndex(text, -1) {
 		n, _ := strconv.Atoi(text[m[6]:m[7]])
-		add(githubRef{Repo: githubRepo{Owner: text[m[2]:m[3]], Name: text[m[4]:m[5]]}, Number: n, Form: refFormURL})
+		hits = append(hits, found{m[0], githubRef{Repo: githubRepo{Owner: text[m[2]:m[3]], Name: text[m[4]:m[5]]}, Number: n, Form: refFormURL}})
 		markConsumed(consumed, m[0], m[1])
 	}
 	for _, m := range githubQualifiedRef.FindAllStringSubmatchIndex(text, -1) {
@@ -127,7 +128,7 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 			continue
 		}
 		n, _ := strconv.Atoi(text[m[6]:m[7]])
-		add(githubRef{Repo: githubRepo{Owner: text[m[2]:m[3]], Name: text[m[4]:m[5]]}, Number: n, Form: refFormQualified})
+		hits = append(hits, found{m[2], githubRef{Repo: githubRepo{Owner: text[m[2]:m[3]], Name: text[m[4]:m[5]]}, Number: n, Form: refFormQualified}})
 		markConsumed(consumed, m[2], m[1])
 	}
 	for _, m := range githubBareRef.FindAllStringSubmatchIndex(text, -1) {
@@ -140,7 +141,18 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 			continue
 		}
 		n, _ := strconv.Atoi(text[m[2]:m[3]])
-		add(githubRef{Repo: *bareRepo, Number: n, Form: refFormBare})
+		hits = append(hits, found{hash, githubRef{Repo: *bareRepo, Number: n, Form: refFormBare}})
+	}
+	// In the order the text names them, whatever their form, so the cap keeps
+	// the first references a reader sees.
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].at < hits[j].at })
+	seen := map[string]bool{}
+	for _, h := range hits {
+		if h.ref.Number <= 0 || !validRepo(h.ref.Repo) || seen[h.ref.key()] {
+			continue
+		}
+		seen[h.ref.key()] = true
+		scan.refs = append(scan.refs, h.ref)
 	}
 	return scan
 }
@@ -181,18 +193,32 @@ func isAlnum(b byte) bool {
 // githubRemote parses an origin remote URL into its GitHub repository, or
 // returns nil for any remote that is not github.com.
 func githubRemote(remote string) *githubRepo {
-	remote = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(remote), "/"), ".git")
-	for _, prefix := range []string{"git@github.com:", "ssh://git@github.com/", "https://github.com/", "http://github.com/"} {
-		if rest, ok := strings.CutPrefix(remote, prefix); ok {
-			parts := strings.Split(rest, "/")
-			if len(parts) == 2 {
-				if repo := (githubRepo{Owner: parts[0], Name: parts[1]}); validRepo(repo) {
-					return &repo
-				}
-			}
-		}
+	remote = strings.TrimSpace(remote)
+	var host, path string
+	if u, err := url.Parse(remote); err == nil && u.Scheme != "" && u.Host != "" {
+		// https://[user@]github.com[:port]/owner/repo, ssh://git@github.com[:port]/owner/repo
+		host, path = u.Hostname(), u.Path
+	} else if at := strings.Index(remote, "@"); at >= 0 && strings.Contains(remote[at:], ":") && !strings.Contains(remote, "://") {
+		// The SCP-like form git uses for ssh: [user@]github.com:owner/repo
+		rest := remote[at+1:]
+		colon := strings.Index(rest, ":")
+		host, path = rest[:colon], rest[colon+1:]
+	} else {
+		return nil
 	}
-	return nil
+	if !strings.EqualFold(host, "github.com") {
+		return nil
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		return nil
+	}
+	repo := githubRepo{Owner: parts[0], Name: parts[1]}
+	if !validRepo(repo) {
+		return nil
+	}
+	return &repo
 }
 
 // githubOptions is whether an operation looks up GitHub references, and the
@@ -430,10 +456,13 @@ func githubParts(window githubWindow, failure *readError) []partialPart {
 }
 
 // sortedEvidence returns the evidence for refs in the order they were found.
+// A reference looked up once may be named by several rows in different forms;
+// each row's evidence carries the form that row used.
 func sortedEvidence(refs []githubRef, found map[string]githubEvidence) []githubEvidence {
 	out := []githubEvidence{}
 	for _, ref := range refs {
 		if ev, ok := found[ref.key()]; ok {
+			ev.ReferenceForm = ref.Form
 			out = append(out, ev)
 		}
 	}
