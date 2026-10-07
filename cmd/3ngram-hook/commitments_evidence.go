@@ -303,9 +303,10 @@ func lookupPartner(ctx context.Context, cfg readConfig, memoryID string, sel bri
 	if err := apiGet(ctx, cfg, "memory", path, &m); err != nil {
 		return partnerVerdict{done: true, err: err}
 	}
-	// A body for another id says nothing about this partner: it stays
-	// unverified rather than borrowing that row's filing.
-	if !strings.EqualFold(m.ID, memoryID) {
+	// A body for another id says nothing about this partner, and a body that
+	// does not state the partner's filing cannot place it outside the
+	// selector either: both leave it unverified rather than hidden.
+	if !strings.EqualFold(m.ID, memoryID) || !statesFiling(m.Scope, m.Project) {
 		return partnerVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
 	}
 	in, _ := memoryInSelector(m.Scope, m.Project, sel)
