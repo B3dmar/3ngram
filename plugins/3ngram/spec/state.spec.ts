@@ -394,6 +394,44 @@ describe('detail', () => {
     assert.equal(run([...loaded, ...refresh(restatus('open'))], showingA).detail?.status, 'ready')
   })
 
+  // A referenced PR can merge with nothing else about the row changing; the
+  // detail read before that must not keep showing the old state.
+  test('a refresh that changes the row GitHub evidence drops the open detail', () => {
+    const merged: Envelope = {
+      ...listA,
+      commitments: (listA.commitments ?? []).map((row) =>
+        row.memoryId === memoryId
+          ? {
+              ...row,
+              github: [
+                {
+                  kind: 'github_reference',
+                  source: 'github',
+                  ref: 'B3dmar/3ngram#251',
+                  referenceForm: 'bare',
+                  type: 'pull_request',
+                  state: 'merged',
+                  stateReason: null,
+                  closedAt: '2026-10-07T12:00:00Z',
+                  mergedAt: '2026-10-07T12:00:00Z',
+                },
+              ],
+            }
+          : row,
+      ),
+    }
+    const refresh = (envelope: Envelope): PanelEvent[] => [
+      { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+      { type: 'list_envelope', gen: 2, envelope, at: 2000 },
+    ]
+    const loaded: PanelEvent[] = [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ]
+    assert.equal(run([...loaded, ...refresh(merged)], showingA).detail, null)
+    assert.equal(run([...loaded, ...refresh(listA)], showingA).detail?.status, 'ready')
+  })
+
   test('a detail lands when it matches; a stale sequence is ignored', () => {
     const s = run(
       [
