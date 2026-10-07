@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,6 +121,20 @@ func TestExtractGitHubRefs(t *testing.T) {
 		{"sentence punctuation is not a separator", "Done. #251 (see #255)", repo, []string{"B3dmar/3ngram#251", "B3dmar/3ngram#255"}, 0},
 		{"hyphenated word fails safe", "follow-up #12", repo, nil, 1},
 		{"tab before bare", "repo-x\t#5", repo, nil, 1},
+		{"repo-like token, aside opens between", "3ngram-platform (#718)", repo, nil, 1},
+		{"repo-like token, label colon between", "3ngram-platform:#718", repo, nil, 1},
+		{"repo-like token, quoted", `"3ngram-platform" #718`, repo, nil, 1},
+		{"plain word, label colon between", "Done: #251", repo, []string{"B3dmar/3ngram#251"}, 0},
+		{"plain word, aside opens between", "fixes (#12)", repo, []string{"B3dmar/3ngram#12"}, 0},
+		{"attached to the word resolves", "PR-#12", repo, []string{"B3dmar/3ngram#12"}, 0},
+		{"repo-like token, code mark between", "3ngram-platform `#718`", repo, nil, 1},
+		{"repo-like token, emphasis between", "3ngram-platform **#718**", repo, nil, 1},
+		{"repo-like token in emphasis", "**3ngram-platform** #718", repo, nil, 1},
+		{"underscore inside the token", "my_repo #2", repo, nil, 1},
+		{"plain word, emphasis between", "Done **#12**", repo, []string{"B3dmar/3ngram#12"}, 0},
+		{"plain word, code mark between", "see `#12`", repo, []string{"B3dmar/3ngram#12"}, 0},
+		{"hyphenated word before a link fails safe", "follow-up [#5](https://example.test)", repo, nil, 1},
+		{"no-break space before the token", "x\u00a0repo-a #3", repo, nil, 1},
 		{"dotted abbreviation fails safe", "e.g. #12", repo, nil, 1},
 		{"markdown link", "[#5](https://example.test)", repo, []string{"B3dmar/3ngram#5"}, 0},
 		{"comment anchor is no reference", "issues/12#issuecomment-9", repo, nil, 0},
@@ -457,6 +472,37 @@ func TestCommitmentsShowGitHubVerdict(t *testing.T) {
 			r := runCommitmentsForTest(t, githubProjectDir(t), "show", commitmentID, "--github")
 
 			if !r.env.OK || r.env.Evidence.Verdict != tc.verdict || len(r.env.Evidence.GitHub) == 0 || r.env.Evidence.Inspected.GitHub == nil {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// The topic and content are separate fields: a topic ending in a
+// repository-like word must not make the content's first reference ambiguous.
+func TestCommitmentsShowScansTopicAndContentApart(t *testing.T) {
+	cases := map[string]struct {
+		topic, content string
+		ambiguous      int
+	}{
+		"topic word does not reach the content":   {"Follow-up", "#251 tracks the work", 0},
+		"ambiguity in the topic is still counted": {"3ngram-platform #718", "#251 tracks the work", 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			installFakeGH(t)
+			s := showServer(t, emptyHistory(), []any{})
+			var memory map[string]any
+			if err := json.Unmarshal([]byte(commitmentMemory("work", strPtr("3ngram"))), &memory); err != nil {
+				t.Fatal(err)
+			}
+			memory["topic"], memory["content"] = tc.topic, tc.content
+			s.json("/api/v1/memories/"+commitmentID, 200, mustJSON(memory))
+
+			r := runCommitmentsForTest(t, githubProjectDir(t), "show", commitmentID, "--github")
+
+			w := r.env.Evidence.Inspected.GitHub
+			if !r.env.OK || w == nil || w.Ambiguous != tc.ambiguous || len(r.env.Evidence.GitHub) != 1 || r.env.Evidence.GitHub[0].Ref != "B3dmar/3ngram#251" {
 				t.Fatalf("env = %s", r.stdout)
 			}
 		})

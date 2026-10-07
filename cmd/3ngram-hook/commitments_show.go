@@ -343,8 +343,10 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 
 	env.Evidence = collectEvidence(ctx, cfg, memoryID, sel, env.History, visible, proposals, proposalsErr, stderr)
 	if gh.enabled {
-		scan := extractGitHubRefs(memory.Topic+"\n"+memory.Content, bareRepoFor(gh.remote, filing, sel))
-		refs, window := capRefs([]refScan{scan})
+		// Topic and content are scanned apart, so the end of one field never
+		// changes how the start of the other reads.
+		bare := bareRepoFor(gh.remote, filing, sel)
+		refs, window := capRefs([]refScan{extractGitHubRefs(memory.Topic, bare), extractGitHubRefs(memory.Content, bare)})
 		found, failure, checked := githubBatch(ctx, refs)
 		window.Checked = checked
 		env.Evidence.GitHub = sortedEvidence(refs, found)
