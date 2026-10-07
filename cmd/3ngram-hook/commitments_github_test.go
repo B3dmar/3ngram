@@ -138,6 +138,7 @@ func TestExtractGitHubRefs(t *testing.T) {
 		{"dotted abbreviation fails safe", "e.g. #12", repo, nil, 1},
 		{"markdown link", "[#5](https://example.test)", repo, []string{"B3dmar/3ngram#5"}, 0},
 		{"label linked to another repo's issue", "[#718](https://github.com/org/other/issues/718)", repo, []string{"org/other#718"}, 0},
+		{"label linked in angle brackets", "[#718](<https://github.com/org/other/issues/718>)", repo, []string{"org/other#718"}, 0},
 		{"label linked to this repo's pull request", "[#251](https://github.com/B3dmar/3ngram/pull/251)", repo, []string{"B3dmar/3ngram#251"}, 0},
 		{"label linked elsewhere still resolves", "[#12](https://github.com/B3dmar/3ngram/wiki)", repo, []string{"B3dmar/3ngram#12"}, 0},
 		{"comment anchor is no reference", "issues/12#issuecomment-9", repo, nil, 0},
