@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"sync"
@@ -148,13 +149,82 @@ type hiddenCounts struct {
 	Relationships int `json:"relationships"`
 }
 
-// The history route's own caps (packages/db/src/memory-history-queries.ts),
-// reported in the evidence window so "nothing found" says how far it looked.
-const (
-	historyLineageNodeCap  = 25
-	historyRelationshipCap = 50
-	historyEventCap        = 50
-)
+// historyShape is the presence view of a history answer. Each group the route
+// always sends is a pointer, so an omitted or null group is told apart from an
+// empty one. sections is optional by contract: older servers omit it, and that
+// means every section loaded. Omitted is not null, though, so it is kept raw.
+type historyShape struct {
+	Memory  *json.RawMessage `json:"memory"`
+	Lineage *struct {
+		Nodes     *[]json.RawMessage `json:"nodes"`
+		Edges     *[]json.RawMessage `json:"edges"`
+		Truncated *bool              `json:"truncated"`
+	} `json:"lineage"`
+	DirectRelationships *struct {
+		Predecessors *[]json.RawMessage `json:"predecessors"`
+		Successors   *[]json.RawMessage `json:"successors"`
+		Truncated    *bool              `json:"truncated"`
+	} `json:"directRelationships"`
+	AuditEvents     *[]json.RawMessage `json:"auditEvents"`
+	EventsTruncated *bool              `json:"eventsTruncated"`
+	Sections        json.RawMessage    `json:"sections"`
+}
+
+type historySectionsShape struct {
+	Lineage *string `json:"lineage"`
+	Events  *string `json:"events"`
+}
+
+// decodeHistory accepts a history answer only when it is about memoryID and
+// complete. A group that is missing would otherwise decode as an empty one,
+// and an empty lineage reads as a searched window with nothing in it.
+func decodeHistory(raw json.RawMessage, memoryID string) (historyResponse, *readError) {
+	bad := &readError{Kind: kindBadResponse, Route: "history"}
+	var shape historyShape
+	var h historyResponse
+	if json.Unmarshal(raw, &shape) != nil || json.Unmarshal(raw, &h) != nil {
+		return historyResponse{}, bad
+	}
+	l, d := shape.Lineage, shape.DirectRelationships
+	if shape.Memory == nil || l == nil || l.Nodes == nil || l.Edges == nil || l.Truncated == nil ||
+		d == nil || d.Predecessors == nil || d.Successors == nil || d.Truncated == nil ||
+		shape.AuditEvents == nil || shape.EventsTruncated == nil {
+		return historyResponse{}, bad
+	}
+	if shape.Sections != nil {
+		var sec *historySectionsShape
+		if json.Unmarshal(shape.Sections, &sec) != nil || sec == nil ||
+			!knownSectionStatus(sec.Lineage) || !knownSectionStatus(sec.Events) {
+			return historyResponse{}, bad
+		}
+	}
+	if !strings.EqualFold(h.Memory.ID, memoryID) {
+		return historyResponse{}, bad
+	}
+	// Every memory the history names must state its filing. Without it the
+	// memory can neither be shown nor honestly counted as outside the selector.
+	for _, node := range h.Lineage.Nodes {
+		if node.ID == "" || !statesFiling(node.Scope, node.Project) {
+			return historyResponse{}, bad
+		}
+	}
+	for _, rel := range append(append([]historyRelationship{}, h.DirectRelationships.Predecessors...), h.DirectRelationships.Successors...) {
+		if rel.Memory.ID == "" || !statesFiling(rel.Memory.Scope, rel.Memory.Project) {
+			return historyResponse{}, bad
+		}
+	}
+	return h, nil
+}
+
+func knownSectionStatus(status *string) bool {
+	return status != nil && (*status == "ok" || *status == "unavailable")
+}
+
+// statesFiling reports whether an answer said where a memory is filed: a
+// scope (never empty in a real row) and a project field, null or not.
+func statesFiling(scope string, project jsonNullable) bool {
+	return scope != "" && project.Present
+}
 
 // memoryInSelector decides membership exactly as the briefing filter does:
 // kind=project matches the project in any scope; scope_project matches the
@@ -227,24 +297,24 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 	}
 
 	var history historyResponse
+	var historyRaw json.RawMessage
 	var proposals proposalsResponse
 	var historyErr, proposalsErr *readError
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		historyErr = apiGet(ctx, cfg, "history", historyURL, &history)
+		if historyErr = apiGet(ctx, cfg, "history", historyURL, &historyRaw); historyErr == nil {
+			history, historyErr = decodeHistory(historyRaw, memoryID)
+		}
 	}()
 	go func() {
 		defer wg.Done()
 		proposalsErr = apiGet(ctx, cfg, "proposals", proposalsQuery(), &proposals)
 	}()
 	wg.Wait()
-	// A history answer for another memory, or a proposals answer without its
-	// list, describes nothing about this commitment.
-	if historyErr == nil && !strings.EqualFold(history.Memory.ID, memoryID) {
-		historyErr = &readError{Kind: kindBadResponse, Route: "history"}
-	}
+	// A proposals answer without its list describes nothing about this
+	// commitment (decodeHistory holds the history answer to the same rule).
 	if proposalsErr == nil && proposals.Proposals == nil {
 		proposalsErr = &readError{Kind: kindBadResponse, Route: "proposals"}
 	}
@@ -273,8 +343,10 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 
 	env.Evidence = collectEvidence(ctx, cfg, memoryID, sel, env.History, visible, proposals, proposalsErr, stderr)
 	if gh.enabled {
-		scan := extractGitHubRefs(memory.Topic+"\n"+memory.Content, bareRepoFor(gh.remote, filing, sel))
-		refs, window := capRefs([]refScan{scan})
+		// Topic and content are scanned apart, so the end of one field never
+		// changes how the start of the other reads.
+		bare := bareRepoFor(gh.remote, filing, sel)
+		refs, window := capRefs([]refScan{extractGitHubRefs(memory.Topic, bare), extractGitHubRefs(memory.Content, bare)})
 		found, failure, checked := githubBatch(ctx, refs)
 		window.Checked = checked
 		env.Evidence.GitHub = sortedEvidence(refs, found)

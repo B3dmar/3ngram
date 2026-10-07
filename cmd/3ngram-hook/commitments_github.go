@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // GitHub references in a commitment are RELATED evidence, never proof: a
@@ -163,21 +164,31 @@ func markConsumed(consumed []bool, from, to int) {
 	}
 }
 
-// followsRepoLikeToken reports whether the word right before position hash,
-// separated from it by whitespace, carries a separator INSIDE it the way a
-// repository name does: "3ngram-platform #718", "repo.js #3", "my_repo #2".
-// Sentence punctuation around the word does not count ("Done. #251",
-// "(see #4)"). The rule fails safe: a hyphenated English word such as
-// "follow-up #12" is skipped too and counted as ambiguous, since resolving
-// it against the wrong repository would be worse than not resolving it;
-// owner/repo#N is always unambiguous.
+// followsRepoLikeToken reports whether the word right before position hash
+// carries a separator INSIDE it the way a repository name does:
+// "3ngram-platform #718", "repo.js #3", "my_repo #2". The gap between that
+// word and the reference may hold whitespace, a colon, opening punctuation
+// and markdown emphasis or code marks, so "3ngram-platform (#718)",
+// "3ngram-platform:#718" and "3ngram-platform `#718`" count too. Sentence punctuation around the word does not ("Done. #251",
+// "(see #4)"), and a reference attached directly to the word ("PR-#12") is
+// read as this repository's. The rule fails safe: a hyphenated English word
+// such as "follow-up #12" is skipped too and counted as ambiguous, since
+// resolving it against the wrong repository would be worse than not
+// resolving it; owner/repo#N is always unambiguous.
 func followsRepoLikeToken(text string, hash int) bool {
-	before := strings.TrimRightFunc(text[:hash], unicode.IsSpace)
+	before := strings.TrimRightFunc(text[:hash], func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(refGapPunct, r)
+	})
 	if len(before) == hash || before == "" {
 		return false
 	}
-	start := strings.LastIndexFunc(before, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("([{\"'", r) }) + 1
-	word := strings.TrimRight(before[start:], ".,;:!?)]}\"'")
+	start := 0
+	if i := strings.LastIndexFunc(before, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(refWordOpen, r) }); i >= 0 {
+		// Past the delimiter, whatever its width (a no-break space is two bytes).
+		_, width := utf8.DecodeRuneInString(before[i:])
+		start = i + width
+	}
+	word := strings.TrimRight(before[start:], ".,;:!?)]}>\"'`*_~")
 	for i := 1; i < len(word)-1; i++ {
 		if strings.ContainsRune("-._/", rune(word[i])) && isAlnum(word[i-1]) && isAlnum(word[i+1]) {
 			return true
@@ -185,6 +196,15 @@ func followsRepoLikeToken(text string, hash int) bool {
 	}
 	return false
 }
+
+// refGapPunct is the punctuation that may sit between a repository-like word
+// and the reference it qualifies: a label colon, what opens an aside or a
+// quote, and markdown's emphasis and code marks.
+const refGapPunct = ":([{<\"'`*_~"
+
+// refWordOpen is what may open the word itself. It leaves out the underscore
+// and the colon, which can sit inside a repository-like word ("my_repo").
+const refWordOpen = "([{<\"'`*~"
 
 func isAlnum(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')

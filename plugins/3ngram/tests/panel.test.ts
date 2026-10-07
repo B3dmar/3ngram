@@ -136,6 +136,7 @@ function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: b
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 7, 12) })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('session.end', async () => ({ sessionId: 'test' }) as never)
+  on('session.attach', async (_$, e) => ({ clientId: e.clientId }))
   on('session.cwd', async () => {
     if (opts.cwdThrows) throw new Error('cwd unavailable')
     return { value: '/repo' }
@@ -506,6 +507,58 @@ describe('cancellation and lifecycle', () => {
     await w.clock.advance(1)
     expect(w.spawned.length).toBe(before + 1)
     expect(await textOf(await mountPane($))).toContain(TOPIC)
+  })
+
+  test('a refresh that clears an open detail stops its read', async ($, on) => {
+    let fingerprint = FP_A
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(fingerprint) }
+      if (argv[2] === 'show') return { hang: true }
+      return { stdout: listEnvelope(fingerprint) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'open-0-0' }))
+    await w.clock.advance(1)
+    expect(w.spawned.some((argv) => argv[2] === 'show')).toBe(true)
+    // The key changed: the refresh's context check answers another
+    // fingerprint and clears the rows and the detail. Asked from the command,
+    // well inside the read ceiling, so only the clear can end the child.
+    fingerprint = FP_B
+    await $.command.run({ command: 'commitments', args: '' } as never)
+    await w.clock.advance(1)
+    for (const release of w.holds.splice(0)) release()
+    await w.clock.advance(1)
+    expect(w.returned.some((argv) => argv[2] === 'show')).toBe(true)
+    expect(await textOf(ui)).not.toContain('Full commitment text')
+  })
+
+  test('a session that draws nowhere reads nothing until a client attaches', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    await w.clock.advance(15 * 60_000)
+    expect(w.spawned.length).toBe(0)
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    await w.clock.advance(1)
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+  })
+
+  test('a reload after a client attached keeps the background reads, without doubling them', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    // The reload: the attached client is the surface it starts with.
+    await $.session.start({ cwd: '/repo', surface: 'mobile', isInteractive: false })
+    await w.clock.advance(15 * 60_000)
+    const lists = w.spawned.filter((argv) => argv[2] === 'list').length
+    // One read at attach, one after the reload, then one per five minutes.
+    expect(lists).toBe(5)
   })
 
   test('one session start keeps one refresh timer', async ($, on) => {

@@ -114,8 +114,9 @@ func countedPart(part, reason string, returned, total int) partialPart {
 func runCommitments(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	cwd, _ := os.Getwd()
-	return commitmentsMain(ctx, args, cwd, os.Stdout, stderrWriter)
+	// The working directory is resolved inside commitmentsMain, under the
+	// operation deadline, and only when --cwd does not name one.
+	return commitmentsMain(ctx, args, "", os.Stdout, stderrWriter)
 }
 
 // commitmentsMain is runCommitments with every dependency injected. The one
@@ -128,6 +129,14 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 	opts, ok := parseCommitmentsFlags(args)
 	if opts.cwd == "" {
 		opts.cwd = cwd
+	}
+	if opts.cwd == "" {
+		resolved, err := getwdCtx(opCtx)
+		if err != nil {
+			env, _ := newCommitmentsEnvelope(opCtx, resolveReadConfig(), opts)
+			return writeEnvelope(stdout, failEnvelope(env, classifyReadFailure(opCtx, "cwd", 0, err)))
+		}
+		opts.cwd = resolved
 	}
 	if abs, err := filepath.Abs(opts.cwd); err == nil {
 		opts.cwd = abs
@@ -191,6 +200,9 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 	fs.BoolVar(&opts.github, "github", false, "look up GitHub issues and pull requests the commitments reference (gh api, GET only)")
 	// --json is accepted for readability at call sites; output is always JSON.
 	fs.Bool("json", true, "emit JSON (always on)")
+	// Every subcommand accepts --agent (the harness name for the session
+	// key); these reads have no session, so it is accepted and ignored.
+	fs.String("agent", "", "accepted for uniformity with the hook subcommands; ignored")
 	if opts.operation == "show" {
 		fs.StringVar(&opts.expect, "expect-fingerprint", "", "refuse unless the current context has this fingerprint")
 	}
@@ -209,6 +221,26 @@ func selectorFlagError(opts commitmentsOptions) *readError {
 		return &readError{Kind: kindInvalidSelector, Route: "selector", Hint: "--include-unscoped requires --scope"}
 	}
 	return nil
+}
+
+// getwdCtx is os.Getwd under ctx: on a stalled filesystem it gives up when the
+// operation's deadline does, so the envelope is still written in time.
+func getwdCtx(ctx context.Context) (string, error) {
+	type result struct {
+		dir string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		dir, err := os.Getwd()
+		done <- result{dir, err}
+	}()
+	select {
+	case r := <-done:
+		return r.dir, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // requestedSelector derives the selector a read asks for. The project comes

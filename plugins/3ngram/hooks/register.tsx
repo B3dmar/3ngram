@@ -88,6 +88,14 @@ function selectionOf(options: PluginOptions, cwd: string): Selection {
   }
 }
 
+// armRefresh starts the background reads: the startup read now, then one per
+// interval. It runs once a session can draw the pane, never twice.
+function armRefresh($: EngineInterface, options: PluginOptions): void {
+  if (tick !== null) return
+  kick = $.clock.after(0, () => fire($, startup($, options)))
+  tick = $.clock.every(refreshMs(options), () => fire($, refresh($, options)))
+}
+
 function refreshMs(options: PluginOptions): number {
   const minutes = typeof options.refresh_minutes === 'number' ? options.refresh_minutes : 5
   return Math.max(MIN_REFRESH_MS, minutes * 60_000)
@@ -99,6 +107,15 @@ async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelSta
     next = reduce((s as unknown as PanelState | undefined) ?? initialState, event)
     return next
   })
+  // A detail the panel no longer holds (a refresh found another context, its
+  // row moved or left the list) has no use for its read. Its child is stopped
+  // now rather than reading on under the old context, and a read still on its
+  // way to starting one sees it is no longer wanted.
+  if (next.detail?.seq !== wantedDetail) wantedDetail = 0
+  if (detailRead && detailRead.seq !== next.detail?.seq) {
+    detailRead.stop()
+    detailRead = null
+  }
   $.ui.status(statusLine(next))
   return next
 }
@@ -364,6 +381,8 @@ export const register: Register = (on, options) => {
     // cancelled and its context is checked again.
     tick?.cancel()
     kick?.cancel()
+    tick = null
+    kick = null
     stopReads()
     const s = await readPanel($)
     if (s.status === 'loading' || s.status === 'checking' || s.status === 'refreshing') {
@@ -373,12 +392,22 @@ export const register: Register = (on, options) => {
     if (s.detail?.status === 'loading')
       await dispatch($, { type: 'detail_closed', seq: s.detail.seq })
     // Background work starts from timers, never inside this dispatch, so the
-    // first prompt is never held by a read.
-    kick = $.clock.after(0, () => fire($, startup($, options)))
-    tick = $.clock.every(refreshMs(options), () => fire($, refresh($, options)))
+    // first prompt is never held by a read. A -p run or the SDK draws
+    // nowhere (no surface), so it reads nothing in the background (no REST
+    // reads, no gh) unless a client attaches later. The surface, not
+    // isInteractive, decides: a reload after a client attached to such a
+    // session starts with that client's surface and keeps the reads.
+    if (e.surface !== null) armRefresh($, options)
     if (options.auto_open === true && e.isInteractive) {
       fire($, $.ui.open({ id: PANE, title: TITLE }))
     }
+    return next(e)
+  })
+
+  // A client joining a session that started where nothing draws: the pane
+  // can now be shown, so the background reads start.
+  on('session.attach', async ($, e, next) => {
+    armRefresh($, options)
     return next(e)
   })
 
@@ -388,7 +417,7 @@ export const register: Register = (on, options) => {
     if (e.reason === 'clear' || e.reason === 'resume') {
       stopReads()
       await dispatch($, { type: 'session_transition' })
-      $.clock.after(0, () => fire($, refresh($, options)))
+      if (tick !== null) $.clock.after(0, () => fire($, refresh($, options)))
     }
     return next(e)
   })

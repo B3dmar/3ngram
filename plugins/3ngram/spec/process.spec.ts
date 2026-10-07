@@ -12,6 +12,16 @@ test('the engine wording for a binary not on PATH reads as missing_binary', () =
   assert.equal(classifySpawnError('hooks stream chain failed'), 'crash')
 })
 
+test('a binary that is present but cannot run is a crash, not a missing binary', () => {
+  for (const message of [
+    '3ngram: $.process.spawn(3ngram-hook) failed to start: EACCES: permission denied',
+    '3ngram: $.process.spawn(3ngram-hook) failed to start: ENOEXEC: exec format error',
+    '3ngram: $.process.spawn(3ngram-hook) failed to start',
+  ]) {
+    assert.equal(classifySpawnError(message), 'crash', message)
+  }
+})
+
 test('a binary from before the commitments command is told apart', () => {
   assert.equal(classifyEmptyOutput('unknown command: commitments\n'), 'too_old')
   assert.equal(classifyEmptyOutput('panic: runtime error'), 'crash')

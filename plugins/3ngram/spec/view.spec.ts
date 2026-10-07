@@ -193,7 +193,11 @@ test('the detail view frames evidence for review and states the window', () => {
       l.startsWith('Proposals: the newest 2 pending (limit 100, tenant-wide)'),
     ),
   )
-  assert.ok(view.history.some((l) => /outside this selection and hidden/.test(l)))
+  // Two hidden lineage nodes, one hidden direct link that repeats one of
+  // them: reported apart, never summed into "3 memories".
+  assert.ok(
+    view.history.includes('Outside this selection and hidden: 2 lineage memories, 1 direct link.'),
+  )
   assert.ok(!goldenText('show-review.json').includes('HIDDEN'))
 })
 
@@ -244,4 +248,24 @@ test('a failed history read does not claim the creation is outside the window', 
     error: null,
   })
   assert.equal(view.source[0], 'Creation is unknown: the history could not be read.')
+})
+
+test('an unavailable events section leaves creation unknown, not outside the window', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  assert.ok(show.source && show.history)
+  const degraded = {
+    ...show,
+    source: { ...show.source, createdBy: null, createdAt: null },
+    history: { ...show.history, events: [] },
+    partial: [{ part: 'events', reason: 'unavailable' }],
+  }
+  const view = detailView({
+    seq: 1,
+    memoryId: 'm',
+    fingerprint: FP_A,
+    status: 'ready',
+    envelope: degraded,
+    error: null,
+  })
+  assert.equal(view.source[0], 'Creation is unknown: the audit events could not be read.')
 })

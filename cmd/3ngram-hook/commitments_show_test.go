@@ -569,3 +569,112 @@ func memoryBodyWithTopic(id, scope string, project *string, topic string) string
 		"recordedAt": "2026-10-01T00:00:00.000Z", "createdAt": "2026-10-01T00:00:00.000Z",
 	})
 }
+
+// A partner answer that does not state the partner's filing cannot place it
+// outside the selector: the proposal is unverified, never quietly hidden.
+func TestCommitmentsShowPartnerWithoutFilingIsUnverified(t *testing.T) {
+	s := showServer(t, richHistory(), []any{proposalJSON("p1", partnerID, commitmentID, hiddenRationale)})
+	var body map[string]any
+	if err := json.Unmarshal([]byte(memoryBodyWithTopic(partnerID, "work", strPtr("demo"), "partner")), &body); err != nil {
+		t.Fatal(err)
+	}
+	delete(body, "project")
+	s.json("/api/v1/memories/"+partnerID, 200, mustJSON(body))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	ev := r.env.Evidence
+	if ev.Hidden != 0 || ev.Unverified != 1 || strings.Contains(r.stdout, hiddenRationale) {
+		t.Fatalf("evidence = %+v", ev)
+	}
+	if !hasPartial(r.env, "proposal_partners", kindBadResponse) {
+		t.Fatalf("partial = %+v", r.env.Partial)
+	}
+}
+
+// mutatedHistory decodes richHistory, applies change, and encodes it again.
+func mutatedHistory(t *testing.T, change func(h map[string]any)) string {
+	t.Helper()
+	var h map[string]any
+	if err := json.Unmarshal([]byte(richHistory()), &h); err != nil {
+		t.Fatal(err)
+	}
+	change(h)
+	return mustJSON(h)
+}
+
+// A 200 history answer missing a group it always carries decodes as empty
+// lists. That is not an inspected window, so the history is a bad_response
+// partial and no history window is reported.
+func TestCommitmentsShowRejectsIncompleteHistory(t *testing.T) {
+	group := func(h map[string]any, name string) map[string]any { return h[name].(map[string]any) }
+	cases := map[string]func(h map[string]any){
+		"null memory":            func(h map[string]any) { h["memory"] = nil },
+		"null lineage node":      func(h map[string]any) { group(h, "lineage")["nodes"] = []any{nil} },
+		"string truncated flag":  func(h map[string]any) { h["eventsTruncated"] = "false" },
+		"null sections":          func(h map[string]any) { h["sections"] = nil },
+		"no lineage":             func(h map[string]any) { delete(h, "lineage") },
+		"null lineage":           func(h map[string]any) { h["lineage"] = nil },
+		"no lineage nodes":       func(h map[string]any) { delete(group(h, "lineage"), "nodes") },
+		"null lineage edges":     func(h map[string]any) { group(h, "lineage")["edges"] = nil },
+		"no lineage truncated":   func(h map[string]any) { delete(group(h, "lineage"), "truncated") },
+		"no relationships":       func(h map[string]any) { delete(h, "directRelationships") },
+		"no successors":          func(h map[string]any) { delete(group(h, "directRelationships"), "successors") },
+		"no relationships flag":  func(h map[string]any) { delete(group(h, "directRelationships"), "truncated") },
+		"no audit events":        func(h map[string]any) { delete(h, "auditEvents") },
+		"no events truncated":    func(h map[string]any) { delete(h, "eventsTruncated") },
+		"unknown section status": func(h map[string]any) { group(h, "sections")["lineage"] = "degraded" },
+		"section without events": func(h map[string]any) { delete(group(h, "sections"), "events") },
+		"node without project": func(h map[string]any) {
+			delete(group(h, "lineage")["nodes"].([]any)[2].(map[string]any), "project")
+		},
+		"partner without scope": func(h map[string]any) {
+			succ := group(h, "directRelationships")["successors"].([]any)[1].(map[string]any)
+			delete(succ["memory"].(map[string]any), "scope")
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			showServer(t, mutatedHistory(t, change), []any{})
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+			if !r.env.OK || r.env.History != nil || !hasPartial(r.env, "history", kindBadResponse) {
+				t.Fatalf("env = %s", r.stdout)
+			}
+			if r.env.Evidence.Inspected.History != nil {
+				t.Fatalf("an incomplete history is not an inspected window: %s", r.stdout)
+			}
+			for _, leak := range []string{visibleTopicNewer, hiddenTopicProject, hiddenTopicScope} {
+				if strings.Contains(r.stdout, leak) {
+					t.Fatalf("a rejected history leaked %q: %s", leak, r.stdout)
+				}
+			}
+		})
+	}
+}
+
+// sections is optional by contract: an older server omits it and means every
+// section loaded, so the history is accepted as complete.
+func TestCommitmentsShowAcceptsHistoryWithoutSections(t *testing.T) {
+	showServer(t, mutatedHistory(t, func(h map[string]any) { delete(h, "sections") }), []any{})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.env.History == nil || hasPartial(r.env, "history", kindBadResponse) || r.env.Evidence.Inspected.History == nil {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// The reported history window is the server's, generated from packages/db,
+// not a second hand-kept copy.
+func TestCommitmentsShowReportsTheGeneratedHistoryWindow(t *testing.T) {
+	showServer(t, richHistory(), []any{})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	w := r.env.Evidence.Inspected.History
+	if w == nil || w.LineageNodeCap != historyLineageNodeCap || w.RelationshipCap != historyRelationshipCap || w.EventCap != historyEventCap {
+		t.Fatalf("window = %+v", w)
+	}
+}

@@ -11,8 +11,11 @@ import type { FailureKind } from './state.ts'
 // wording for a binary that is not on PATH is, for example,
 //   3ngram: $.process.spawn(3ngram-hook) failed to start: ENOENT:
 //   Executable not found in $PATH: "3ngram-hook"
+// "failed to start" alone is not enough: a binary that is on PATH but cannot
+// run (EACCES, a wrong-architecture ENOEXEC) fails to start too, and telling
+// that person to install the binary would be wrong.
 export function classifySpawnError(message: string): FailureKind {
-  return /ENOENT|not found in \$PATH|failed to start/i.test(message) ? 'missing_binary' : 'crash'
+  return /ENOENT|not found in \$PATH/i.test(message) ? 'missing_binary' : 'crash'
 }
 
 // classifyEmptyOutput reads stderr when the binary exited without printing an
