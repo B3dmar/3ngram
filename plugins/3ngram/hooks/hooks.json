@@ -3,12 +3,11 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-hook",
-            "args": ["briefing"],
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/run-hook briefing",
             "timeout": 10
           }
         ]
@@ -20,8 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-hook",
-            "args": ["precheck"],
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/run-hook precheck",
             "timeout": 2
           }
         ]
@@ -32,8 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-hook",
-            "args": ["stop"],
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/run-hook stop",
             "timeout": 10
           }
         ]
@@ -44,8 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-hook",
-            "args": ["close"],
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/run-hook close",
             "timeout": 5
           }
         ]

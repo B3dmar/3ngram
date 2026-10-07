@@ -27,11 +27,12 @@ func newGuardFixture(t *testing.T) *guardFixture {
 	t.Helper()
 	root := t.TempDir()
 	f := &guardFixture{env: guardEnv{
-		configDir:  filepath.Join(root, "config"),
-		projectDir: filepath.Join(root, "project"),
-		managed:    []string{filepath.Join(root, "managed", "managed-settings.json")},
+		configDir:   filepath.Join(root, "config"),
+		projectDir:  filepath.Join(root, "project"),
+		managedDir:  filepath.Join(root, "managed"),
+		opaqueAdmin: []string{filepath.Join(root, "mdm", "com.anthropic.claudecode.plist")},
 	}}
-	for _, dir := range []string{f.env.configDir, filepath.Join(f.env.projectDir, ".claude"), filepath.Dir(f.env.managed[0]), filepath.Join(root, "bin")} {
+	for _, dir := range []string{f.env.configDir, filepath.Join(f.env.projectDir, ".claude"), f.env.managedDir, filepath.Join(f.env.managedDir, "managed-settings.d"), filepath.Join(root, "mdm"), filepath.Join(root, "bin")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -50,7 +51,12 @@ func (f *guardFixture) user(t *testing.T, body string) {
 func (f *guardFixture) local(t *testing.T, body string) {
 	f.write(t, filepath.Join(f.env.projectDir, ".claude", "settings.local.json"), body)
 }
-func (f *guardFixture) managed(t *testing.T, body string) { f.write(t, f.env.managed[0], body) }
+func (f *guardFixture) managed(t *testing.T, body string) {
+	f.write(t, filepath.Join(f.env.managedDir, "managed-settings.json"), body)
+}
+func (f *guardFixture) dropIn(t *testing.T, name, body string) {
+	f.write(t, filepath.Join(f.env.managedDir, "managed-settings.d", name), body)
+}
 
 func (f *guardFixture) write(t *testing.T, path, body string) {
 	t.Helper()
@@ -99,7 +105,12 @@ func TestGuardDefersOnlyWhenSettingsCoverThisInstance(t *testing.T) {
 		{"exact list", hooksJSON("SessionStart", "startup|resume|clear", "3ngram-hook briefing"), "briefing", `{"source":"clear"}`, true},
 		{"exact list misses fork", hooksJSON("SessionStart", "startup|resume|clear|compact", "3ngram-hook briefing"), "briefing", `{"source":"fork"}`, false},
 		{"comma list", hooksJSON("SessionStart", "startup,resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, true},
-		{"spaces in a list claim nothing (trimming is unconfirmed)", hooksJSON("SessionStart", "startup, resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, false},
+		{"spaces around comma alternatives are trimmed", hooksJSON("SessionStart", "startup, resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, true},
+		{"spaces around pipe alternatives are trimmed", hooksJSON("PreToolUse", " Edit | Write ", "3ngram-hook precheck"), "precheck", `{"tool_name":"Write"}`, true},
+		{"a space inside an alternative is not trimmed away", hooksJSON("PreToolUse", "Edit Write", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
+		{"a matcher of spaces only claims nothing", hooksJSON("PreToolUse", "  ", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
+		{"an empty trailing alternative adds nothing", hooksJSON("PreToolUse", "Write|", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
+		{"fork listed", hooksJSON("SessionStart", "startup|resume|clear|compact|fork", "3ngram-hook briefing"), "briefing", `{"source":"fork"}`, true},
 		{"inline regex flag claims nothing", hooksJSON("PreToolUse", "(?i)edit", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
 		{"Go-only anchor claims nothing", hooksJSON("PreToolUse", `\AEdit`, "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
 		{"escape class claims nothing", hooksJSON("PreToolUse", `Edit\w*`, "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
@@ -178,16 +189,19 @@ func TestGuardHandlerFieldsThatChangeWhenItRuns(t *testing.T) {
 		handler string
 		want    bool
 	}{
-		"plain":                {`{"type":"command","command":"3ngram-hook precheck"}`, true},
-		"status message":       {`{"type":"command","command":"3ngram-hook precheck","statusMessage":"3ngram"}`, true},
-		"enough time":          {`{"type":"command","command":"3ngram-hook precheck","timeout":2}`, true},
-		"less time":            {`{"type":"command","command":"3ngram-hook precheck","timeout":1}`, false},
-		"permission rule (if)": {`{"type":"command","command":"3ngram-hook precheck","if":"Edit(*.ts)"}`, false},
-		"async":                {`{"type":"command","command":"3ngram-hook precheck","async":true}`, false},
-		"once":                 {`{"type":"command","command":"3ngram-hook precheck","once":true}`, false},
-		"shell":                {`{"type":"command","command":"3ngram-hook precheck","shell":"powershell"}`, false},
-		"no type":              {`{"command":"3ngram-hook precheck"}`, false},
-		"another type":         {`{"type":"http","command":"3ngram-hook precheck"}`, false},
+		"plain":          {`{"type":"command","command":"3ngram-hook precheck"}`, true},
+		"status message": {`{"type":"command","command":"3ngram-hook precheck","statusMessage":"3ngram"}`, true},
+		"enough time":    {`{"type":"command","command":"3ngram-hook precheck","timeout":2}`, true},
+		"exec form, empty args, command with a space": {`{"type":"command","command":"3ngram-hook precheck","args":[]}`, false},
+		"exec form, null args":                        {`{"type":"command","command":"3ngram-hook","args":null}`, false},
+		"exec form, args name the subcommand":         {`{"type":"command","command":"3ngram-hook","args":["precheck"]}`, true},
+		"less time":                                   {`{"type":"command","command":"3ngram-hook precheck","timeout":1}`, false},
+		"permission rule (if)":                        {`{"type":"command","command":"3ngram-hook precheck","if":"Edit(*.ts)"}`, false},
+		"async":                                       {`{"type":"command","command":"3ngram-hook precheck","async":true}`, false},
+		"once":                                        {`{"type":"command","command":"3ngram-hook precheck","once":true}`, false},
+		"shell":                                       {`{"type":"command","command":"3ngram-hook precheck","shell":"powershell"}`, false},
+		"no type":                                     {`{"command":"3ngram-hook precheck"}`, false},
+		"another type":                                {`{"type":"http","command":"3ngram-hook precheck"}`, false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -290,5 +304,115 @@ func TestGuardEndToEnd(t *testing.T) {
 	run(stdin, "close", "--via", "plugin")
 	if count() != 2 {
 		t.Fatalf("an uncovered instance runs the plugin copy: %d closes", count())
+	}
+}
+
+// The time a settings copy needs is what the subcommand takes, not the plugin
+// copy's own timeout: the documented 5 s Stop registration covers the 2 s
+// heartbeat, and only an armed nudge needs the documented 10 s.
+func TestGuardTimeoutIsWhatTheSubcommandNeeds(t *testing.T) {
+	stop := func(timeout string) string {
+		return `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"3ngram-hook stop","timeout":` + timeout + `}]}]}}`
+	}
+	cases := []struct {
+		name, settings, sub, input, nudge string
+		want                              bool
+	}{
+		{"documented Stop, 5 s", stop("5"), "stop", `{}`, "", true},
+		{"Stop below the heartbeat", stop("2"), "stop", `{}`, "", false},
+		{"armed nudge, 5 s is too little", stop("5"), "stop", `{}`, "1", false},
+		{"armed nudge, documented 10 s", stop("10"), "stop", `{}`, "1", true},
+		{"documented close, 5 s", `{"hooks":{"SessionEnd":[{"hooks":[{"type":"command","command":"3ngram-hook close","timeout":5}]}]}}`, "close", `{"reason":"clear"}`, "", true},
+		{"close at 2 s", `{"hooks":{"SessionEnd":[{"hooks":[{"type":"command","command":"3ngram-hook close","timeout":2}]}]}}`, "close", `{"reason":"clear"}`, "", true},
+		{"briefing below 10 s", `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"3ngram-hook briefing","timeout":5}]}]}}`, "briefing", `{"source":"startup"}`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(stopNudgeEnvVar, tc.nudge)
+			f := newGuardFixture(t)
+			f.user(t, tc.settings)
+			if got := deferToSettings(tc.sub, []byte(tc.input), f.env); got != tc.want {
+				t.Fatalf("deferToSettings = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// allowManagedHooksOnly blocks user, project and local hooks but exempts a
+// plugin policy force-enables, so only a managed hook covers an event then.
+// An admin source the guard cannot read may set that or outrank the files,
+// so it makes every settings hook claim nothing.
+func TestGuardHonoursManagedPolicy(t *testing.T) {
+	covered := hooksJSON("Stop", "-", "3ngram-hook stop")
+	hooksOnly := `{"allowManagedHooksOnly":true}`
+	cases := []struct {
+		name  string
+		setup func(*guardFixture, *testing.T)
+		want  bool
+	}{
+		{"user hook, no policy", func(f *guardFixture, t *testing.T) { f.user(t, covered) }, true},
+		{"user hook blocked by the managed file", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.managed(t, hooksOnly)
+		}, false},
+		{"user hook blocked by a drop-in", func(f *guardFixture, t *testing.T) {
+			f.local(t, covered)
+			f.dropIn(t, "20-hooks.json", hooksOnly)
+		}, false},
+		{"a hidden drop-in is ignored", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.dropIn(t, ".20-hooks.json", hooksOnly)
+		}, true},
+		{"a managed hook still covers under the lock", func(f *guardFixture, t *testing.T) {
+			f.managed(t, `{"allowManagedHooksOnly":true,`+covered[1:])
+		}, true},
+		{"a drop-in hook covers", func(f *guardFixture, t *testing.T) { f.dropIn(t, "10-hooks.json", covered) }, true},
+		{"an unreadable managed file claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.managed(t, `{"allowManagedHooksOnly":`)
+		}, false},
+		{"a managed preferences profile claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.write(t, f.env.opaqueAdmin[0], "bplist00")
+		}, false},
+		{"a server-managed policy claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.write(t, filepath.Join(f.env.configDir, "remote-settings.json"), `{"permissions":{"deny":[]}}`)
+		}, false},
+		{"a lock that is not a boolean claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.managed(t, `{"allowManagedHooksOnly":"yes"}`)
+		}, false},
+		{"a managed file that is a directory claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			if err := os.Mkdir(filepath.Join(f.env.managedDir, "managed-settings.json"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"an unreadable drop-in directory claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			dropIns := filepath.Join(f.env.managedDir, "managed-settings.d")
+			if err := os.Remove(dropIns); err != nil {
+				t.Fatal(err)
+			}
+			f.write(t, dropIns, "not a directory")
+		}, false},
+		{"a malformed server-managed cache claims nothing", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.write(t, filepath.Join(f.env.configDir, "remote-settings.json"), `{"permissions":`)
+		}, false},
+		{"an empty server-managed cache is no policy", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.write(t, filepath.Join(f.env.configDir, "remote-settings.json"), `{}`)
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGuardFixture(t)
+			tc.setup(f, t)
+			if got := deferToSettings("stop", []byte(`{}`), f.env); got != tc.want {
+				t.Fatalf("deferToSettings = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -2,8 +2,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,18 +39,35 @@ const maxHookInput = 4 << 20
 type hookTarget struct {
 	event        string
 	matcherField string
-	// timeout is the plugin copy's own timeout in seconds (hooks.json). A
-	// settings copy given less time may be killed before it finishes, so it
-	// does not count as covering the event.
-	timeout float64
+	// need is how long, in seconds, the subcommand can take to finish: its
+	// own request deadlines plus a margin. A settings copy given less time may
+	// be killed first, so it does not count as covering the event.
+	need float64
 }
 
 var guardedSubcommands = map[string]hookTarget{
-	"briefing":  {event: "SessionStart", matcherField: "source", timeout: 10},
-	"stop":      {event: "Stop", timeout: 10},
-	"heartbeat": {event: "Stop", timeout: 10},
-	"close":     {event: "SessionEnd", matcherField: "reason", timeout: 5},
-	"precheck":  {event: "PreToolUse", matcherField: "tool_name", timeout: 2},
+	// The 5 s briefing read, then up to 5 s to probe and open the session
+	// (after /clear with no row: a 2 s probe, then a 3 s open). 10 s is that
+	// worst case exactly, and what the documented registration gives.
+	"briefing": {event: "SessionStart", matcherField: "source", need: 10},
+	// The 2 s heartbeat; requiredTimeout raises it when the nudge is armed.
+	"stop":      {event: "Stop", need: 3},
+	"heartbeat": {event: "Stop", need: 3},
+	// The 1 s close.
+	"close": {event: "SessionEnd", matcherField: "reason", need: 2},
+	// The 500 ms search.
+	"precheck": {event: "PreToolUse", matcherField: "tool_name", need: 2},
+}
+
+// requiredTimeout is the least per-hook timeout that lets a settings copy of
+// family finish its work. With THREENGRAM_STOP_NUDGE=1 the Stop path makes
+// three more 2 s calls after the heartbeat, which is why the documented nudge
+// registration gives Stop 10 s; without it the documented 5 s covers Stop.
+func requiredTimeout(target hookTarget, family string) float64 {
+	if family == "stop" && stopNudgeEnabled() {
+		return 10
+	}
+	return target.need
 }
 
 // subcommandFamily folds the documented alias: stop and heartbeat are one
@@ -63,7 +83,12 @@ func subcommandFamily(sub string) string {
 type guardEnv struct {
 	configDir  string // $CLAUDE_CONFIG_DIR, or ~/.claude
 	projectDir string // $CLAUDE_PROJECT_DIR, or the cwd's git root, or the cwd
-	managed    []string
+	// managedDir is the system directory holding managed-settings.json and
+	// the managed-settings.d/ drop-ins.
+	managedDir string
+	// opaqueAdmin are admin sources the guard cannot read (a macOS managed
+	// preferences profile): one that exists may set any policy.
+	opaqueAdmin []string
 }
 
 func currentGuardEnv() guardEnv {
@@ -84,14 +109,20 @@ func currentGuardEnv() guardEnv {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		env.managed = []string{"/Library/Application Support/ClaudeCode/managed-settings.json"}
+		env.managedDir = "/Library/Application Support/ClaudeCode"
+		const profile = "com.anthropic.claudecode.plist"
+		env.opaqueAdmin = []string{filepath.Join("/Library/Managed Preferences", profile)}
+		if name := os.Getenv("USER"); name != "" && !strings.ContainsRune(name, '/') {
+			env.opaqueAdmin = append(env.opaqueAdmin, filepath.Join("/Library/Managed Preferences", name, profile))
+		}
 	case "linux":
-		env.managed = []string{"/etc/claude-code/managed-settings.json"}
+		env.managedDir = "/etc/claude-code"
 	}
 	return env
 }
 
-func (g guardEnv) settingsFiles() []string {
+// userFiles are the user, project and local settings files.
+func (g guardEnv) userFiles() []string {
 	var files []string
 	if g.configDir != "" {
 		files = append(files, filepath.Join(g.configDir, "settings.json"))
@@ -101,7 +132,78 @@ func (g guardEnv) settingsFiles() []string {
 			filepath.Join(g.projectDir, ".claude", "settings.json"),
 			filepath.Join(g.projectDir, ".claude", "settings.local.json"))
 	}
-	return append(files, g.managed...)
+	return files
+}
+
+// managedPolicy reads the admin sources the guard can see. docs are the
+// managed settings files, in the order Claude Code merges them. hooksOnly is
+// whether one of them sets allowManagedHooksOnly, which blocks user, project
+// and local hooks but exempts a plugin that policy force-enables (which is how
+// this copy can be running at all), so only managed hooks can cover an event.
+//
+// ok is false when an admin source is present that the guard cannot evaluate:
+// a managed preferences profile, a server-managed settings cache that holds a
+// policy, or a managed file it cannot read. Any of them may block the settings
+// hooks or outrank the files, so nothing counts as coverage then.
+func (g guardEnv) managedPolicy() (docs []string, hooksOnly, ok bool) {
+	for _, profile := range g.opaqueAdmin {
+		if _, err := os.Stat(profile); !errors.Is(err, fs.ErrNotExist) {
+			return nil, false, false
+		}
+	}
+	if g.configDir != "" && remotePolicyPresent(filepath.Join(g.configDir, "remote-settings.json")) {
+		return nil, false, false
+	}
+	if g.managedDir == "" {
+		return nil, false, true
+	}
+	candidates := []string{filepath.Join(g.managedDir, "managed-settings.json")}
+	dropIns := filepath.Join(g.managedDir, "managed-settings.d")
+	entries, err := os.ReadDir(dropIns)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, false, false
+	}
+	// ReadDir sorts by name, the order Claude Code merges drop-ins in; it
+	// ignores hidden files.
+	for _, e := range entries {
+		if name := e.Name(); !e.IsDir() && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".json") {
+			candidates = append(candidates, filepath.Join(dropIns, name))
+		}
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		var policy struct {
+			AllowManagedHooksOnly *bool `json:"allowManagedHooksOnly"`
+		}
+		if err != nil || json.Unmarshal(data, &policy) != nil {
+			return nil, false, false
+		}
+		// Any file setting it counts, whatever a later drop-in says: reading
+		// the lock where there is none costs a duplicate run, missing one
+		// costs the hook.
+		if policy.AllowManagedHooksOnly != nil && *policy.AllowManagedHooksOnly {
+			hooksOnly = true
+		}
+		docs = append(docs, path)
+	}
+	return docs, hooksOnly, true
+}
+
+// remotePolicyPresent reports whether the server-managed settings cache holds
+// a policy. An empty cache is none; one the guard cannot read counts as one.
+func remotePolicyPresent(path string) bool {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	var doc map[string]json.RawMessage
+	if err != nil || json.Unmarshal(data, &doc) != nil {
+		return true
+	}
+	return len(doc) > 0
 }
 
 // viaPlugin reports whether args carry the plugin's `--via plugin` marker,
@@ -132,8 +234,17 @@ func deferToSettings(sub string, input []byte, env guardEnv) bool {
 			}
 		}
 	}
-	for _, file := range env.settingsFiles() {
-		if fileOwns(file, target, subcommandFamily(sub), instance) {
+	docs, hooksOnly, ok := env.managedPolicy()
+	if !ok {
+		return false
+	}
+	files := docs
+	if !hooksOnly {
+		files = append(env.userFiles(), docs...)
+	}
+	family := subcommandFamily(sub)
+	for _, file := range files {
+		if fileOwns(file, target, family, instance) {
 			return true
 		}
 	}
@@ -155,6 +266,9 @@ type hookHandler struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 	Timeout *float64 `json:"timeout"`
+	// execForm is whether the handler has an args field at all: Claude Code
+	// selects exec form by its presence, an empty list included.
+	execForm bool
 }
 
 // plainHandlerKeys are the only handler fields a covering settings hook may
@@ -174,10 +288,18 @@ func plainHandler(raw map[string]json.RawMessage) (hookHandler, bool) {
 	if json.Unmarshal(b, &h) != nil || h.Type != "command" {
 		return hookHandler{}, false
 	}
+	if args, ok := raw["args"]; ok {
+		// A null leaves open which form Claude Code picks, so it claims nothing.
+		if bytes.Equal(bytes.TrimSpace(args), []byte("null")) {
+			return hookHandler{}, false
+		}
+		h.execForm = true
+	}
 	return h, true
 }
 
 func fileOwns(file string, target hookTarget, family, instance string) bool {
+	need := requiredTimeout(target, family)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return false
@@ -192,7 +314,7 @@ func fileOwns(file string, target hookTarget, family, instance string) bool {
 		}
 		for _, raw := range group.Hooks {
 			h, ok := plainHandler(raw)
-			if !ok || (h.Timeout != nil && *h.Timeout < target.timeout) {
+			if !ok || (h.Timeout != nil && *h.Timeout < need) {
 				continue
 			}
 			if sub, ok := hookSubcommand(h); ok && subcommandFamily(sub) == family {
@@ -217,7 +339,8 @@ var portableRegex = regexp.MustCompile(`^[A-Za-z0-9_\-.^$|()*+?\[\]]+$`)
 
 // matcherCovers reports whether a group's matcher selects this instance, by
 // Claude Code's semantics: absent, empty or `*` matches all; a plain-text
-// matcher is a `|` or `,` list compared exactly; anything else is an unanchored
+// matcher is a `|` or `,` list compared exactly, each alternative trimmed of
+// surrounding whitespace ("Edit | Write"); anything else is an unanchored
 // regex. An event without matcher support ignores the matcher.
 func matcherCovers(matcher *string, target hookTarget, instance string) bool {
 	if target.matcherField == "" || matcher == nil {
@@ -227,14 +350,12 @@ func matcherCovers(matcher *string, target hookTarget, instance string) bool {
 	if m == "" || m == "*" {
 		return true
 	}
-	// A space anywhere leaves open whether Claude Code trims alternatives
-	// ("Edit | Write"), so such a matcher claims nothing.
-	if instance == "" || strings.Contains(m, " ") {
+	if instance == "" {
 		return false
 	}
 	if exactMatcher.MatchString(m) {
 		for _, alt := range strings.FieldsFunc(m, func(r rune) bool { return r == '|' || r == ',' }) {
-			if alt == instance {
+			if strings.TrimSpace(alt) == instance {
 				return true
 			}
 		}
@@ -261,7 +382,10 @@ const shellMeta = ";&|`$()<>\"'\\*?[]{}=~!#\n"
 // anything else.
 func hookSubcommand(h hookHandler) (string, bool) {
 	var words []string
-	if len(h.Args) > 0 {
+	if h.execForm {
+		// No shell: command is the program itself and is never split, so
+		// `"command": "3ngram-hook briefing", "args": []` names a program
+		// that does not exist.
 		words = append([]string{h.Command}, h.Args...)
 	} else {
 		if strings.ContainsAny(h.Command, shellMeta) {
