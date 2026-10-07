@@ -21,6 +21,7 @@ Turborepo + pnpm workspaces. The license boundary follows the package boundary.
 │   └── config/            # Shared tsconfig, Biome, env parsing (zod-validated)
 ├── eval/                  # Golden set + LongMemEval/MemoryAgentBench harnesses
 ├── cmd/3ngram-hook/       # Static Go binary: Claude Code briefing/precheck hook (read-side context feed)
+├── plugins/3ngram/        # Claude Code plugin: the read-only commitment panel (reads via 3ngram-hook)
 ├── docker-compose.yml     # Local dev / self-host: postgres+pgvector, redis
 ├── scripts/
 │   └── provision-roles.sql  # The ONLY place GRANTs/roles live

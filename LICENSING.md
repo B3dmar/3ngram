@@ -15,7 +15,7 @@ Every package/app directory is Apache-2.0; this table is the map.
 | `packages/schema`, `packages/db`, `packages/core`, `packages/llm`, `packages/config` | **Apache-2.0** | The memory core — everything needed to run 3ngram yourself |
 | `apps/server`, `apps/worker`, `apps/cli` | **Apache-2.0** | The self-hostable backend and its command-line surfaces |
 | `packages/sdk` (`@3ngram/sdk`) | **Apache-2.0** | Client adoption surface; never encumbered |
-| `hooks/`, `eval/`, `docs/` | **Apache-2.0** | Tooling and docs |
+| `cmd/3ngram-hook/`, `plugins/`, `eval/`, `docs/` | **Apache-2.0** | Hooks, the Claude Code plugin, tooling and docs |
 
 The hosted dashboard UI and billing/cloud composition (Stripe Checkout/portal/webhook, the
 subscription gate implementation, lifecycle, dunning, and grandfathering) are **proprietary and

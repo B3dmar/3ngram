@@ -1,0 +1,46 @@
+{
+  "name": "3ngram",
+  "displayName": "3ngram",
+  "version": "0.1.0",
+  "description": "3ngram for Claude Code: a read-only commitment panel over your 3ngram memory.",
+  "author": { "name": "B3dmar", "url": "https://github.com/B3dmar" },
+  "homepage": "https://github.com/B3dmar/3ngram/tree/main/plugins/3ngram",
+  "repository": "https://github.com/B3dmar/3ngram",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "commitments", "3ngram"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "scope": {
+      "type": "string",
+      "title": "Scope",
+      "description": "Read commitments within this 3ngram scope (for example work). Empty reads the project in any scope.",
+      "default": ""
+    },
+    "include_unscoped": {
+      "type": "boolean",
+      "title": "Include unscoped records",
+      "description": "Also show this scope's commitments written without a project. Needs a scope. Each one is verified before it is labelled unscoped.",
+      "default": false
+    },
+    "refresh_minutes": {
+      "type": "number",
+      "title": "Refresh interval (minutes)",
+      "description": "How often the panel re-reads in the background. At least 1.",
+      "default": 5,
+      "min": 1,
+      "max": 60
+    },
+    "github_evidence": {
+      "type": "boolean",
+      "title": "GitHub evidence",
+      "description": "Look up the GitHub issues and pull requests commitments mention, read-only, with the gh CLI.",
+      "default": true
+    },
+    "auto_open": {
+      "type": "boolean",
+      "title": "Open on start",
+      "description": "Open the panel when a session starts, on a terminal wide enough to dock it.",
+      "default": false
+    }
+  }
+}
