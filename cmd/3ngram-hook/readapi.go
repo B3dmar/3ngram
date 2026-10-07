@@ -75,6 +75,49 @@ func resolveReadConfig() readConfig {
 	return readConfig{base: apiBaseURL(), key: apiKey()}
 }
 
+// resolveReadConfigCtx is resolveReadConfig under the operation's deadline:
+// reading the key file can block on a stalled filesystem, and the envelope
+// must still be written in time. ok is false when ctx ended first.
+func resolveReadConfigCtx(ctx context.Context) (readConfig, bool) {
+	done := make(chan readConfig, 1)
+	go func() { done <- resolveReadConfig() }()
+	select {
+	case cfg := <-done:
+		return cfg, true
+	case <-ctx.Done():
+		return readConfig{base: apiBaseURL()}, false
+	}
+}
+
+// jsonNullable is a JSON field that must be present but may be null. It
+// records whether the key was there at all, so an omitted field is never
+// mistaken for an explicit null (a null project means "unscoped").
+type jsonNullable struct {
+	Present bool
+	Value   *string
+}
+
+func (n *jsonNullable) UnmarshalJSON(b []byte) error {
+	n.Present = true
+	if string(b) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	n.Value = &s
+	return nil
+}
+
+func (n jsonNullable) MarshalJSON() ([]byte, error) {
+	if n.Value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(*n.Value)
+}
+
 // apiGet performs one GET against the 3ngram REST API under ctx, which carries
 // the operation's single deadline, and decodes a 2xx JSON body into out. The
 // method is not a parameter: this function cannot send anything but GET.
