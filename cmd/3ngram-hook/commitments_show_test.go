@@ -113,9 +113,9 @@ func TestCommitmentsShowRedactsTheWholeResponse(t *testing.T) {
 		proposalJSON("p3", lookupID, commitmentID, hiddenRationale),
 		proposalJSON("p4", uuidFor("m", 90), uuidFor("m", 91), hiddenRationale),
 	})
-	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic("work", strPtr("demo"), "Proposed successor in demo"))
-	s.json("/api/v1/memories/"+otherProjectID, 200, memoryBodyWithTopic("work", strPtr("other"), hiddenTopicProject))
-	s.json("/api/v1/memories/"+lookupID, 200, memoryBodyWithTopic("personal", nil, hiddenTopicScope))
+	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic(partnerID, "work", strPtr("demo"), "Proposed successor in demo"))
+	s.json("/api/v1/memories/"+otherProjectID, 200, memoryBodyWithTopic(otherProjectID, "work", strPtr("other"), hiddenTopicProject))
+	s.json("/api/v1/memories/"+lookupID, 200, memoryBodyWithTopic(lookupID, "personal", nil, hiddenTopicScope))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 
@@ -281,7 +281,7 @@ func TestCommitmentsShowDegradesPartByPart(t *testing.T) {
 	t.Run("history unavailable", func(t *testing.T) {
 		s := showServer(t, "", []any{proposalJSON("p1", newerID, commitmentID, "r")})
 		s.json("/api/v1/memories/"+commitmentID+"/history", 503, `{"error":"unavailable"}`)
-		s.json("/api/v1/memories/"+newerID, 200, memoryBodyWithTopic("work", strPtr("demo"), visibleTopicNewer))
+		s.json("/api/v1/memories/"+newerID, 200, memoryBodyWithTopic(newerID, "work", strPtr("demo"), visibleTopicNewer))
 
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 
@@ -319,7 +319,7 @@ func TestCommitmentsShowDegradesPartByPart(t *testing.T) {
 		}
 		s := showServer(t, richHistory(), proposals)
 		for i := 0; i < 5; i++ {
-			s.json("/api/v1/memories/"+uuidFor("m", 200+i), 200, memoryBodyWithTopic("work", strPtr("demo"), "partner"))
+			s.json("/api/v1/memories/"+uuidFor("m", 200+i), 200, memoryBodyWithTopic(uuidFor("m", 200+i), "work", strPtr("demo"), "partner"))
 		}
 
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
@@ -343,7 +343,7 @@ func TestCommitmentsShowDegradesPartByPart(t *testing.T) {
 // false none_found.
 func TestCommitmentsShowNormalisesTheIDCase(t *testing.T) {
 	s := showServer(t, richHistory(), []any{proposalJSON("p1", partnerID, commitmentID, visibleRationaleText)})
-	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic("work", strPtr("demo"), "partner"))
+	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic(partnerID, "work", strPtr("demo"), "partner"))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", strings.ToUpper(commitmentID), "--scope", "work")
 
@@ -430,6 +430,56 @@ func TestCommitmentsShowNoneFoundWithoutHistoryIsLabelled(t *testing.T) {
 	}
 }
 
+// A partner read answered for another id must not lend that row's filing to
+// the partner: the proposal stays unverified and shows nothing.
+func TestCommitmentsShowPartnerAnsweredForAnotherID(t *testing.T) {
+	s := showServer(t, richHistory(), []any{proposalJSON("p1", partnerID, commitmentID, hiddenRationale)})
+	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic(insideNodeID, "work", strPtr("demo"), "borrowed"))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.env.Evidence.Unverified != 1 || strings.Contains(r.stdout, hiddenRationale) || strings.Contains(r.stdout, "borrowed") {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// derives says one memory was derived from another; it is not evidence that a
+// commitment is done, from the history or from a proposal.
+func TestCommitmentsShowIgnoresDerivesEdges(t *testing.T) {
+	history := strings.Replace(richHistory(), `"edgeType":"updates","fromId":"`+newerID, `"edgeType":"derives","fromId":"`+newerID, 1)
+	if history == richHistory() {
+		t.Fatal("fixture edit did not apply")
+	}
+	derived := proposalJSON("p1", partnerID, commitmentID, "derived")
+	derived["edgeType"] = "derives"
+	s := showServer(t, history, []any{derived})
+	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic(partnerID, "work", strPtr("demo"), "partner"))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.env.Evidence.Verdict != verdictNoneFound || len(r.env.Evidence.Items) != 0 {
+		t.Fatalf("derives edges must not be evidence: %+v", r.env.Evidence)
+	}
+}
+
+func TestCommitmentsShowReportsRelationshipTruncationApart(t *testing.T) {
+	history := strings.Replace(richHistory(), `"truncated":false},"eventsTruncated"`, `"truncated":true},"eventsTruncated"`, 1)
+	if history == richHistory() {
+		t.Fatal("fixture edit did not apply")
+	}
+	showServer(t, history, []any{})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	w := r.env.Evidence.Inspected.History
+	if w == nil || !w.RelationshipsTruncated || w.LineageTruncated || w.RelationshipCap != 50 {
+		t.Fatalf("window = %+v", w)
+	}
+	if !hasPartial(r.env, "relationships", "truncated") || hasPartial(r.env, "lineage", "truncated") {
+		t.Fatalf("partial = %+v", r.env.Partial)
+	}
+}
+
 func TestCommitmentsShowNilTagsAreAnEmptyList(t *testing.T) {
 	s := showServer(t, richHistory(), []any{})
 	s.json("/api/v1/memories/"+commitmentID, 200, strings.Replace(commitmentMemory("work", strPtr("demo")), `"tags":["panel"]`, `"tags":null`, 1))
@@ -452,9 +502,9 @@ func TestCommitmentsShowNotFound(t *testing.T) {
 	}
 }
 
-func memoryBodyWithTopic(scope string, project *string, topic string) string {
+func memoryBodyWithTopic(id, scope string, project *string, topic string) string {
 	return mustJSON(map[string]any{
-		"id": "ignored", "memoryType": "decision", "topic": topic, "content": "partner content",
+		"id": id, "memoryType": "decision", "topic": topic, "content": "partner content",
 		"scope": scope, "project": project, "status": "active", "tags": []string{},
 		"validFrom": "2026-10-01T00:00:00.000Z", "validTo": nil,
 		"recordedAt": "2026-10-01T00:00:00.000Z", "createdAt": "2026-10-01T00:00:00.000Z",

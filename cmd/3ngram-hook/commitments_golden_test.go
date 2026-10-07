@@ -52,8 +52,8 @@ func TestCommitmentsGoldenEnvelopes(t *testing.T) {
 			proposalJSON("00000000-0000-4000-8000-b00000000001", partnerID, commitmentID, visibleRationaleText),
 			proposalJSON("00000000-0000-4000-8000-b00000000002", otherProjectID, commitmentID, hiddenRationale),
 		})
-		s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic("work", strPtr("demo"), "Proposed successor in demo"))
-		s.json("/api/v1/memories/"+otherProjectID, 200, memoryBodyWithTopic("work", strPtr("other"), hiddenTopicProject))
+		s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic(partnerID, "work", strPtr("demo"), "Proposed successor in demo"))
+		s.json("/api/v1/memories/"+otherProjectID, 200, memoryBodyWithTopic(otherProjectID, "work", strPtr("other"), hiddenTopicProject))
 
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 		assertGolden(t, "show-review.json", r.env)
