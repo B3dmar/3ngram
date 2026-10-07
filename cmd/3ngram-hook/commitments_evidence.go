@@ -76,7 +76,33 @@ type commitmentEvidence struct {
 	Inspected  evidenceWindow `json:"inspected"`
 	Hidden     int            `json:"hiddenOutsideSelector"`
 	Unverified int            `json:"unverifiedPartners"`
-	partial    []partialPart
+	// GitHub is set with --github: the references the commitment names.
+	GitHub  []githubEvidence `json:"github,omitempty"`
+	partial []partialPart
+}
+
+// decideVerdict is `review` when there is evidence that could explain a
+// resolution: a 3ngram item, or a referenced issue or pull request that is
+// closed or merged. Open references are listed as context and change nothing.
+// With no such evidence it is `none_found` over the windows that were
+// inspected, or `not_inspected` when none was: no history, no proposals, and
+// no GitHub reference checked.
+func (ev *commitmentEvidence) decideVerdict() {
+	ev.Verdict = verdictNoneFound
+	if len(ev.Items) > 0 {
+		ev.Verdict = verdictReview
+		return
+	}
+	for _, g := range ev.GitHub {
+		if g.signalsResolution() {
+			ev.Verdict = verdictReview
+			return
+		}
+	}
+	githubChecked := ev.Inspected.GitHub != nil && ev.Inspected.GitHub.Checked > 0
+	if ev.Inspected.History == nil && ev.Inspected.Proposals == nil && !githubChecked {
+		ev.Verdict = verdictNotInspected
+	}
 }
 
 // evidenceWindow is how far the evidence search looked. A nil part was not
@@ -84,6 +110,7 @@ type commitmentEvidence struct {
 type evidenceWindow struct {
 	Proposals *proposalWindow `json:"proposals"`
 	History   *historyWindow  `json:"history"`
+	GitHub    *githubWindow   `json:"github,omitempty"`
 }
 
 type proposalWindow struct {
@@ -137,12 +164,7 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 		ev.Inspected.Proposals = &window
 		ev.partial = append(ev.partial, partial...)
 	}
-	ev.Verdict = verdictNoneFound
-	if len(ev.Items) > 0 {
-		ev.Verdict = verdictReview
-	} else if ev.Inspected.History == nil && ev.Inspected.Proposals == nil {
-		ev.Verdict = verdictNotInspected
-	}
+	ev.decideVerdict()
 	return ev
 }
 

@@ -58,6 +58,24 @@ func deriveProjectWithSourceCtx(ctx context.Context, cwd string) (string, string
 	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory, nil
 }
 
+// originRemoteURL is the origin remote's URL, bounded by ctx, or "" when
+// there is none or git could not answer in time. The git lookup is bounded
+// too, as in deriveProjectWithSourceCtx.
+func originRemoteURL(ctx context.Context, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	gitPath, err := lookPathCtx(ctx, "git")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, gitPath, "-C", cwd, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // projectFromRemote is the repository name in an origin remote, lowercased:
 // its last path segment without `.git`. User info, a query and a fragment
 // (where a token can ride along) are dropped first, since the name is sent to

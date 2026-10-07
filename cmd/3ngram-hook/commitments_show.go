@@ -344,7 +344,7 @@ func memoryInSelector(scope string, project jsonNullable, sel briefingSelector) 
 }
 
 // showCommitment runs the detail read under the operation's deadline in ctx.
-func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope, memoryID, expect string, stderr io.Writer) commitmentsEnvelope {
+func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope, memoryID, expect string, gh githubOptions, stderr io.Writer) commitmentsEnvelope {
 	if cfg.key == "" {
 		return failEnvelope(env, &readError{Kind: kindNoKey, Route: "config"})
 	}
@@ -435,6 +435,18 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 	}
 
 	env.Evidence = collectEvidence(ctx, cfg, memoryID, sel, env.History, visible, proposals, proposalsErr, stderr)
+	if gh.enabled {
+		// Topic and content are scanned apart, so the end of one field never
+		// changes how the start of the other reads.
+		bare := bareRepoFor(gh.remote, filing, sel)
+		refs, window := capRefs([]refScan{extractGitHubRefs(memory.Topic, bare), extractGitHubRefs(memory.Content, bare)})
+		found, failure, checked := githubBatch(ctx, refs)
+		window.Checked = checked
+		env.Evidence.GitHub = sortedEvidence(refs, found)
+		env.Evidence.Inspected.GitHub = &window
+		env.Evidence.partial = append(env.Evidence.partial, githubParts(window, failure)...)
+		env.Evidence.decideVerdict()
+	}
 	env.Partial = append(env.Partial, env.Evidence.partial...)
 	env.Missing = []string{"owner", "sourceSession", "resolveReason"}
 	env.OK = true
