@@ -61,6 +61,9 @@ const (
 	evidenceProposal      = "consolidation_proposal"
 	verdictReview         = "review"
 	verdictNoneFound      = "none_found"
+	// verdictNotInspected: no evidence source could be read at all, so
+	// "none found" would claim a search that never ran.
+	verdictNotInspected = "not_inspected"
 )
 
 // commitmentEvidence counts what it could not show in two ways: Hidden is
@@ -81,6 +84,9 @@ type commitmentEvidence struct {
 // decideVerdict is `review` when there is evidence that could explain a
 // resolution: a 3ngram item, or a referenced issue or pull request that is
 // closed or merged. Open references are listed as context and change nothing.
+// With no such evidence it is `none_found` over the windows that were
+// inspected, or `not_inspected` when none was: no history, no proposals, and
+// no GitHub reference checked.
 func (ev *commitmentEvidence) decideVerdict() {
 	ev.Verdict = verdictNoneFound
 	if len(ev.Items) > 0 {
@@ -92,6 +98,10 @@ func (ev *commitmentEvidence) decideVerdict() {
 			ev.Verdict = verdictReview
 			return
 		}
+	}
+	githubChecked := ev.Inspected.GitHub != nil && ev.Inspected.GitHub.Checked > 0
+	if ev.Inspected.History == nil && ev.Inspected.Proposals == nil && !githubChecked {
+		ev.Verdict = verdictNotInspected
 	}
 }
 
@@ -280,6 +290,18 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 		partial = append(partial, countedPart("proposal_partners", reason, len(unknownPartners)-unverified, len(unknownPartners)))
 	}
 	return items, hidden, unverifiedProposals, window, partial
+}
+
+// proposalsComplete holds every row to the fields the evidence reads. A row
+// without its id, endpoints, edge type or status would be skipped in silence
+// and leave a window that says it was inspected.
+func proposalsComplete(rows []proposalRow) bool {
+	for _, p := range rows {
+		if p.ID == "" || p.FromID == "" || p.ToID == "" || p.EdgeType == "" || p.Status == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func proposalPartner(p proposalRow, memoryID string) string {
