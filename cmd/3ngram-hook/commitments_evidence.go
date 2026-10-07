@@ -61,6 +61,9 @@ const (
 	evidenceProposal      = "consolidation_proposal"
 	verdictReview         = "review"
 	verdictNoneFound      = "none_found"
+	// verdictNotInspected: no evidence source could be read at all, so
+	// "none found" would claim a search that never ran.
+	verdictNotInspected = "not_inspected"
 )
 
 // commitmentEvidence counts what it could not show in two ways: Hidden is
@@ -136,6 +139,8 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 	ev.Verdict = verdictNoneFound
 	if len(ev.Items) > 0 {
 		ev.Verdict = verdictReview
+	} else if ev.Inspected.History == nil && ev.Inspected.Proposals == nil {
+		ev.Verdict = verdictNotInspected
 	}
 	return ev
 }
@@ -263,6 +268,18 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 		partial = append(partial, countedPart("proposal_partners", reason, len(unknownPartners)-unverified, len(unknownPartners)))
 	}
 	return items, hidden, unverifiedProposals, window, partial
+}
+
+// proposalsComplete holds every row to the fields the evidence reads. A row
+// without its id, endpoints, edge type or status would be skipped in silence
+// and leave a window that says it was inspected.
+func proposalsComplete(rows []proposalRow) bool {
+	for _, p := range rows {
+		if p.ID == "" || p.FromID == "" || p.ToID == "" || p.EdgeType == "" || p.Status == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func proposalPartner(p proposalRow, memoryID string) string {
