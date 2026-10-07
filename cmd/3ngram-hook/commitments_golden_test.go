@@ -32,8 +32,8 @@ func TestCommitmentsGoldenEnvelopes(t *testing.T) {
 		s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true),
 			section(4, kept, cut, unscoped, failed), section(1, kept)))
 		s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(2, kept), section(1, kept)))
-		s.json("/api/v1/memories/"+cut.memoryID, 200, memoryBody("work", strPtr("demo"), "active", nil))
-		s.json("/api/v1/memories/"+unscoped.memoryID, 200, memoryBody("work", nil, "active", nil))
+		s.json("/api/v1/memories/"+cut.memoryID, 200, memoryBodyFor(cut.memoryID, "work", strPtr("demo"), "active", nil))
+		s.json("/api/v1/memories/"+unscoped.memoryID, 200, memoryBodyFor(unscoped.memoryID, "work", nil, "active", nil))
 		s.json("/api/v1/memories/"+failed.memoryID, 503, `{"error":"unavailable"}`)
 
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
