@@ -160,14 +160,16 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 
 // labelsGitHubLink reports whether the text right after a bare #N makes it
 // the label of a markdown link to a GitHub issue or pull request
-// ("[#718](https://github.com/org/other/issues/718)"). The destination names
-// the reference, and the URL pass reads it; the label must not also be read
-// as this repository's #718.
+// ("[#718](https://github.com/org/other/issues/718)", the destination in
+// optional angle brackets too). The destination names the reference, and the
+// URL pass reads it; the label must not also be read as this repository's
+// #718.
 func labelsGitHubLink(after string) bool {
 	dest, ok := strings.CutPrefix(after, "](")
 	if !ok {
 		return false
 	}
+	dest = strings.TrimPrefix(dest, "<")
 	loc := githubURLRef.FindStringIndex(dest)
 	return loc != nil && loc[0] == 0
 }
