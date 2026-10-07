@@ -138,10 +138,20 @@ func (s *listSection) section() (commitmentSection, bool) {
 		}
 		items = append(items, c)
 	}
+	// The briefing contract's own invariants: the count covers the slice, and
+	// hasMore says exactly whether it is short of the count. A section that
+	// breaks either would report contradictory counts or a false truncation.
+	if *s.Count < len(items) {
+		return commitmentSection{}, false
+	}
 	out := commitmentSection{Count: *s.Count, Items: items}
 	// An older server without the hasMore signal still reports truncation
-	// through count > items, which truncationParts reads too.
+	// through count > items, which truncationParts reads too; one that sends
+	// it must send the value the count implies.
 	if s.HasMore != nil {
+		if *s.HasMore != (*s.Count > len(items)) {
+			return commitmentSection{}, false
+		}
 		out.HasMore = *s.HasMore
 	}
 	return out, true
@@ -186,7 +196,7 @@ func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelop
 	}
 	commitments, overdue, complete := wide.sections()
 	if !complete {
-		incomplete := &readError{Kind: kindBadResponse, Route: "briefing", Hint: "commitment sections missing"}
+		incomplete := &readError{Kind: kindBadResponse, Route: "briefing", Hint: "commitment sections missing or inconsistent"}
 		logReadFailure(stderr, incomplete)
 		return failEnvelope(env, incomplete)
 	}

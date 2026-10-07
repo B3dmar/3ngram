@@ -877,3 +877,82 @@ func TestCommitmentsRelativeCwdIsResolvedUnderTheDeadline(t *testing.T) {
 		t.Fatalf("env = %s", r.stdout)
 	}
 }
+
+// A section must keep the briefing contract's invariants: the count covers
+// the slice, and a hasMore that is sent equals count > len(items). Otherwise
+// the read is a bad_response, never contradictory counts or a false
+// truncation. A section without hasMore (an older server) is still read.
+func TestCommitmentsListRejectsInconsistentSections(t *testing.T) {
+	a, b := item(1, "first"), item(2, "second")
+	cases := map[string]struct {
+		section map[string]any
+		ok      bool
+	}{
+		"count below the slice":           {map[string]any{"count": 1, "items": section(2, a, b)["items"], "hasMore": false}, false},
+		"hasMore true without more":       {map[string]any{"count": 2, "items": section(2, a, b)["items"], "hasMore": true}, false},
+		"hasMore false with more":         {map[string]any{"count": 5, "items": section(2, a, b)["items"], "hasMore": false}, false},
+		"consistent truncation":           {section(5, a, b), true},
+		"no hasMore from an older server": {map[string]any{"count": 5, "items": section(2, a, b)["items"]}, true},
+		"negative count":                  {map[string]any{"count": -1, "items": section(0)["items"], "hasMore": false}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, meBody)
+			s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), tc.section, section(0)))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+			if tc.ok {
+				if !r.env.OK || !hasPartial(r.env, "commitments", "truncated") {
+					t.Fatalf("env = %s", r.stdout)
+				}
+				return
+			}
+			if r.env.OK || r.env.Error.Kind != kindBadResponse || r.env.Commitments != nil {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// The overdue section is held to the same invariants as the commitments one.
+func TestCommitmentsListRejectsAnInconsistentOverdueSection(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	bad := map[string]any{"count": 0, "items": section(1, item(1, "late"))["items"], "hasMore": false}
+	s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), section(0), bad))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if r.env.OK || r.env.Error.Kind != kindBadResponse {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// The envelope names the backend by host alone. A base with no host never
+// comes back raw: its path, query or user info could carry a secret.
+func TestCommitmentsEnvelopeNeverEchoesAnInvalidBase(t *testing.T) {
+	for _, base := range []string{"https://api.example/%zz?token=SECRET1", "https://user:SECRET2@", "not a url SECRET3"} {
+		t.Run(base, func(t *testing.T) {
+			t.Setenv("THREENGRAM_API_BASE", base)
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "context")
+
+			if strings.Contains(r.stdout, "SECRET") || r.env.Context.APIHost != invalidAPIHost {
+				t.Fatalf("stdout = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// User info in a base that has a host is dropped: the host alone is shown.
+func TestCommitmentsEnvelopeDropsUserInfoFromTheHost(t *testing.T) {
+	t.Setenv("THREENGRAM_API_BASE", "https://user:SECRET@api.example:8443/v1?token=SECRET")
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "context")
+
+	if strings.Contains(r.stdout, "SECRET") || r.env.Context.APIHost != "api.example:8443" {
+		t.Fatalf("stdout = %s", r.stdout)
+	}
+}

@@ -240,8 +240,13 @@ func apiHost(apiBase string) string {
 	if u, err := url.Parse(apiBase); err == nil && u.Host != "" {
 		return u.Host
 	}
-	return apiBase
+	// Never the raw value: a malformed base can carry a path, a query or user
+	// info, and every envelope prints this field.
+	return invalidAPIHost
 }
+
+// invalidAPIHost is what the envelope names when the API base has no host.
+const invalidAPIHost = "(invalid API base)"
 
 // readClient never follows a redirect. The default client would replay the
 // custom X-API-Key header to whatever host a 3xx names; a read that is answered
