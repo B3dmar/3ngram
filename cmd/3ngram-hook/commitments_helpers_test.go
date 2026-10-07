@@ -39,7 +39,9 @@ type readRequest struct {
 
 // allowedReadPath is every path a commitments subcommand may touch. Anything
 // else, and any method but GET, fails the test that triggered it.
-var allowedReadPath = regexp.MustCompile(`^/api/v1/(me|briefing|proposals|memories/[0-9a-f-]+(/history)?)$`)
+// A memory id is any one path segment: what an id looks like is the schema's
+// business, not the tests'.
+var allowedReadPath = regexp.MustCompile(`^/api/v1/(me|briefing|proposals|memories/[^/]+(/history)?)$`)
 
 func newReadServer(t *testing.T) *readServer {
 	t.Helper()
@@ -205,7 +207,7 @@ func briefingBody(selector map[string]any, commitments, overdue map[string]any) 
 func memoryBody(scope string, project *string, status string, validTo *string) string {
 	b, _ := json.Marshal(map[string]any{
 		"id": "ignored", "memoryType": "commitment", "topic": "ignored", "content": "SECRET CONTENT",
-		"scope": scope, "project": project, "status": status, "tags": []string{},
+		"scope": scope, "project": project, "status": status, "tags": []string{}, "commitmentStatus": "open",
 		"validFrom": "2026-10-01T00:00:00.000Z", "validTo": validTo,
 		"recordedAt": "2026-10-01T00:00:00.000Z", "createdAt": "2026-10-01T00:00:00.000Z",
 	})

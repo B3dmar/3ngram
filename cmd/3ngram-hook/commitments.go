@@ -121,8 +121,11 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 	if abs, err := filepath.Abs(opts.cwd); err == nil {
 		opts.cwd = abs
 	}
-	cfg := resolveReadConfig()
+	cfg, resolved := resolveReadConfigCtx(opCtx)
 	env, deriveErr := newCommitmentsEnvelope(opCtx, cfg, opts)
+	if !resolved {
+		return writeEnvelope(stdout, failEnvelope(env, classifyReadFailure(opCtx, "config", 0, nil)))
+	}
 	if deriveErr != nil {
 		return writeEnvelope(stdout, failEnvelope(env, classifyReadFailure(opCtx, "project", 0, deriveErr)))
 	}
