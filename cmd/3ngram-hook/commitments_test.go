@@ -2,12 +2,14 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -568,6 +570,84 @@ func TestCommitmentsDeadlineCoversProjectDerivation(t *testing.T) {
 	if r.env.OK || r.env.Error.Kind != kindTimeout || r.env.Context.Project.Name == "demo" {
 		t.Fatalf("a stalled git must time out, not fall back: %s", r.stdout)
 	}
+}
+
+// project and validTo are required but nullable. An answer that omits one says
+// nothing about the filing: it is never read as null (which would mean
+// unscoped, or live).
+func TestCommitmentsListOmittedFilingFieldsAreUnknown(t *testing.T) {
+	for _, field := range []string{"project", "validTo"} {
+		t.Run(field, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, meBody)
+			a := item(1, "answer without "+field)
+			s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
+			s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+			var body map[string]any
+			_ = json.Unmarshal([]byte(memoryBody("work", nil, "active", nil)), &body)
+			delete(body, field)
+			s.json("/api/v1/memories/"+a.memoryID, 200, mustMarshal(body))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+			if filings(r.env)[a.memoryID] != filingUnknown || !hasPartial(r.env, "filing", kindBadResponse) {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// A commitment resolved between the widened and the strict read is still an
+// active, current memory; its commitment status is what says it left the list.
+func TestCommitmentsListDropsACommitmentResolvedDuringTheRead(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	a := item(1, "resolved meanwhile")
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+	s.json("/api/v1/memories/"+a.memoryID, 200, strings.Replace(memoryBody("work", nil, "active", nil), `"commitmentStatus":"open"`, `"commitmentStatus":"resolved"`, 1))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if len(rowsOf(r.env)) != 0 || r.env.Counts.ChangedDuringRead != 1 {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// Reading the key file is bounded by the deadline too: a file that blocks
+// (here a FIFO nobody writes) ends the operation with a timeout envelope.
+func TestCommitmentsDeadlineCoversKeyResolution(t *testing.T) {
+	withDeadline(t, 200*time.Millisecond)
+	newReadServer(t)
+	t.Setenv("THREENGRAM_API_KEY", "")
+	keyFile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "3ngram", "api-key")
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(keyFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Unblock the stalled read when the test ends, so no goroutine is left.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(keyFile, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+
+	start := time.Now()
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("key resolution outlived the deadline")
+	}
+	if r.env.OK || r.env.Error.Kind != kindTimeout {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+func mustMarshal(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func briefingQuery(t *testing.T, s *readServer) url.Values {

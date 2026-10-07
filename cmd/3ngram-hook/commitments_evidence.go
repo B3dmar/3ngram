@@ -19,8 +19,10 @@ import (
 // a proposal's other end is inside the selector.
 const maxProposalPartnerLookups = 3
 
+// Proposals is a pointer so an answer without the list is told apart from an
+// empty one.
 type proposalsResponse struct {
-	Proposals []proposalRow `json:"proposals"`
+	Proposals *[]proposalRow `json:"proposals"`
 }
 
 type proposalRow struct {
@@ -111,7 +113,8 @@ func proposalsQuery() string {
 func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel briefingSelector, history *commitmentHistory,
 	visible map[string]bool, proposals proposalsResponse, proposalsErr *readError, stderr io.Writer) *commitmentEvidence {
 	ev := &commitmentEvidence{Items: []evidenceItem{}}
-	if history != nil {
+	// Only a lineage the server actually read is an inspected window.
+	if history != nil && history.lineageOK {
 		ev.Inspected.History = &historyWindow{
 			LineageNodeCap: historyLineageNodeCap, RelationshipCap: historyRelationshipCap, EventCap: historyEventCap,
 			LineageTruncated: history.LineageTruncated, RelationshipsTruncated: history.RelationshipsTruncated,
@@ -173,13 +176,13 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 	visible map[string]bool, resp proposalsResponse) ([]evidenceItem, int, int, proposalWindow, []partialPart) {
 	window := proposalWindow{
 		Status: "proposed", Order: "newest_first", Limit: maxRestProposalsLimit,
-		Returned: len(resp.Proposals), MayHaveMore: len(resp.Proposals) >= maxRestProposalsLimit,
+		Returned: len(*resp.Proposals), MayHaveMore: len(*resp.Proposals) >= maxRestProposalsLimit,
 	}
 	known := knownTopics(history)
 	var touching []proposalRow
 	var unknownPartners []string
 	seen := map[string]bool{}
-	for _, p := range resp.Proposals {
+	for _, p := range *resp.Proposals {
 		if (p.FromID != memoryID && p.ToID != memoryID) || !evidenceEdgeTypes[p.EdgeType] {
 			continue
 		}
