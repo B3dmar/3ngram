@@ -125,7 +125,8 @@
         }
       }
     ],
-    "truncated": false,
+    "lineageTruncated": false,
+    "relationshipsTruncated": false,
     "hiddenOutsideSelector": {
       "nodes": 2,
       "edges": 2,
@@ -169,8 +170,10 @@
       },
       "history": {
         "lineageNodeCap": 25,
+        "relationshipCap": 50,
         "eventCap": 50,
         "lineageTruncated": false,
+        "relationshipsTruncated": false,
         "eventsTruncated": false
       }
     },

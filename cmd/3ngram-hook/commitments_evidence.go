@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // Evidence is what the detail view offers for REVIEW, never a resolution: the
@@ -109,11 +110,16 @@ type proposalWindow struct {
 	PartnerLookups int    `json:"partnerLookups"`
 }
 
+// historyWindow is how far the history search looked. Evidence comes from the
+// direct relationships, which the server caps on their own, so their cap and
+// truncation are reported apart from the lineage's.
 type historyWindow struct {
-	LineageNodeCap   int  `json:"lineageNodeCap"`
-	EventCap         int  `json:"eventCap"`
-	LineageTruncated bool `json:"lineageTruncated"`
-	EventsTruncated  bool `json:"eventsTruncated"`
+	LineageNodeCap         int  `json:"lineageNodeCap"`
+	RelationshipCap        int  `json:"relationshipCap"`
+	EventCap               int  `json:"eventCap"`
+	LineageTruncated       bool `json:"lineageTruncated"`
+	RelationshipsTruncated bool `json:"relationshipsTruncated"`
+	EventsTruncated        bool `json:"eventsTruncated"`
 }
 
 func proposalsQuery() string {
@@ -127,8 +133,9 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 	ev := &commitmentEvidence{Items: []evidenceItem{}}
 	if history != nil {
 		ev.Inspected.History = &historyWindow{
-			LineageNodeCap: historyLineageNodeCap, EventCap: historyEventCap,
-			LineageTruncated: history.Truncated, EventsTruncated: history.EventsTruncated,
+			LineageNodeCap: historyLineageNodeCap, RelationshipCap: historyRelationshipCap, EventCap: historyEventCap,
+			LineageTruncated: history.LineageTruncated, RelationshipsTruncated: history.RelationshipsTruncated,
+			EventsTruncated: history.EventsTruncated,
 		}
 		ev.Items = append(ev.Items, evidenceFromHistory(memoryID, history)...)
 	}
@@ -147,15 +154,20 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 	return ev
 }
 
-// evidenceFromHistory turns each visible successor of the commitment into
-// evidence: a memory whose edge points at the commitment (successor ->
-// predecessor), so it was written later and builds on, updates or supersedes
-// it. Predecessors are what the commitment came from and say nothing about
-// completion.
+// evidenceEdgeTypes are the edges that can bear on whether a commitment is
+// done: a newer memory that updates, extends or supersedes it. `derives` only
+// says one memory was derived from another, and is not evidence.
+var evidenceEdgeTypes = map[string]bool{"updates": true, "extends": true, "supersedes": true}
+
+// evidenceFromHistory turns each visible successor of the commitment, linked
+// by an evidence edge type, into evidence: a memory whose edge points at the
+// commitment (successor -> predecessor), so it was written later and
+// updates, extends or supersedes it. Predecessors are what the commitment came
+// from and say nothing about completion.
 func evidenceFromHistory(memoryID string, history *commitmentHistory) []evidenceItem {
 	var items []evidenceItem
 	for _, rel := range history.Relationships {
-		if rel.Edge.ToID != memoryID {
+		if rel.Edge.ToID != memoryID || !evidenceEdgeTypes[rel.Edge.EdgeType] {
 			continue
 		}
 		current := rel.Memory.IsCurrent
@@ -185,7 +197,7 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 	var unknownPartners []string
 	seen := map[string]bool{}
 	for _, p := range resp.Proposals {
-		if p.FromID != memoryID && p.ToID != memoryID {
+		if (p.FromID != memoryID && p.ToID != memoryID) || !evidenceEdgeTypes[p.EdgeType] {
 			continue
 		}
 		other := proposalPartner(p, memoryID)
@@ -304,6 +316,11 @@ func lookupPartner(ctx context.Context, cfg readConfig, memoryID string, sel bri
 	var m memoryDetail
 	if err := apiGet(ctx, cfg, "memory", path, &m); err != nil {
 		return partnerVerdict{done: true, err: err}
+	}
+	// A body for another id says nothing about this partner: it stays
+	// unverified rather than borrowing that row's filing.
+	if !strings.EqualFold(m.ID, memoryID) {
+		return partnerVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
 	}
 	in, _ := memoryInSelector(m.Scope, m.Project, sel)
 	if !in {

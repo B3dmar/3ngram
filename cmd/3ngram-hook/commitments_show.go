@@ -129,8 +129,11 @@ type commitmentHistory struct {
 	Lineage         []historyMemory       `json:"lineage"`
 	Edges           []historyEdge         `json:"edges"`
 	Relationships   []historyRelationship `json:"relationships"`
-	Truncated       bool                  `json:"truncated"`
-	Hidden          hiddenCounts          `json:"hiddenOutsideSelector"`
+	// The two sections the server caps separately: lineage at 25 nodes and
+	// 50 edges, direct relationships at 50.
+	LineageTruncated       bool         `json:"lineageTruncated"`
+	RelationshipsTruncated bool         `json:"relationshipsTruncated"`
+	Hidden                 hiddenCounts `json:"hiddenOutsideSelector"`
 }
 
 // hiddenCounts is what redaction removed from the history: how many, never
@@ -144,8 +147,9 @@ type hiddenCounts struct {
 // The history route's own caps (packages/db/src/memory-history-queries.ts),
 // reported in the evidence window so "nothing found" says how far it looked.
 const (
-	historyLineageNodeCap = 25
-	historyEventCap       = 50
+	historyLineageNodeCap  = 25
+	historyRelationshipCap = 50
+	historyEventCap        = 50
 )
 
 // memoryInSelector decides membership exactly as the briefing filter does:
@@ -269,12 +273,13 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 // proposals are then checked against.
 func redactHistory(memoryID string, h historyResponse, sel briefingSelector) (*commitmentHistory, map[string]bool) {
 	out := &commitmentHistory{
-		Events:          h.AuditEvents,
-		EventsTruncated: h.EventsTruncated,
-		Lineage:         []historyMemory{},
-		Edges:           []historyEdge{},
-		Relationships:   []historyRelationship{},
-		Truncated:       h.Lineage.Truncated || h.DirectRelationships.Truncated,
+		Events:                 h.AuditEvents,
+		EventsTruncated:        h.EventsTruncated,
+		Lineage:                []historyMemory{},
+		Edges:                  []historyEdge{},
+		Relationships:          []historyRelationship{},
+		LineageTruncated:       h.Lineage.Truncated,
+		RelationshipsTruncated: h.DirectRelationships.Truncated,
 	}
 	if out.Events == nil {
 		out.Events = []auditEvent{}
@@ -337,8 +342,11 @@ func historySectionParts(h historyResponse) []partialPart {
 	if h.Sections.Events == "unavailable" {
 		parts = append(parts, partialPart{Part: "events", Reason: kindUnavailable})
 	}
-	if h.Lineage.Truncated || h.DirectRelationships.Truncated {
+	if h.Lineage.Truncated {
 		parts = append(parts, partialPart{Part: "lineage", Reason: "truncated"})
+	}
+	if h.DirectRelationships.Truncated {
+		parts = append(parts, partialPart{Part: "relationships", Reason: "truncated"})
 	}
 	if h.EventsTruncated {
 		parts = append(parts, partialPart{Part: "events", Reason: "truncated"})
