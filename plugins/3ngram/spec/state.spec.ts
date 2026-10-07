@@ -374,6 +374,26 @@ describe('detail', () => {
     assert.equal(run([...loaded, ...refresh(refiled('unknown'))], showingA).detail?.status, 'ready')
   })
 
+  // open -> waiting changes in place: same id, same filing. The detail read
+  // before the change must not survive the refresh that shows it.
+  test('a refresh that changes the row status drops the open detail', () => {
+    const restatus = (status: string): Envelope => ({
+      ...listA,
+      commitments: (listA.commitments ?? []).map((row) =>
+        row.memoryId === memoryId ? { ...row, status } : row,
+      ),
+    })
+    const refresh = (envelope: Envelope): PanelEvent[] => [
+      { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+      { type: 'list_envelope', gen: 2, envelope, at: 2000 },
+    ]
+    const opened: PanelEvent[] = [{ type: 'detail_requested', memoryId }]
+    const loaded: PanelEvent[] = [...opened, { type: 'detail_envelope', seq: 1, envelope: show }]
+    assert.equal(run([...opened, ...refresh(restatus('waiting'))], showingA).detail, null)
+    assert.equal(run([...loaded, ...refresh(restatus('waiting'))], showingA).detail, null)
+    assert.equal(run([...loaded, ...refresh(restatus('open'))], showingA).detail?.status, 'ready')
+  })
+
   test('a detail lands when it matches; a stale sequence is ignored', () => {
     const s = run(
       [

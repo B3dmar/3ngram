@@ -58,6 +58,10 @@ let stops = 0
 // wantedDetail is the sequence of the detail last asked for: a detail read
 // that is no longer it stops its child instead of registering it.
 let wantedDetail = 0
+// resetPending is set by a session.end that announces a /clear or a /resume,
+// so the classic.SessionStart that follows the state reset reads again, and
+// a resume at launch (no session.end before it) does not read twice.
+let resetPending = false
 
 // releaseDetailRead forgets the handle of a detail read that has ended, if it
 // is still the one held.
@@ -94,6 +98,15 @@ function armRefresh($: EngineInterface, options: PluginOptions): void {
   if (tick !== null) return
   kick = $.clock.after(0, () => fire($, startup($, options)))
   tick = $.clock.every(refreshMs(options), () => fire($, refresh($, options)))
+}
+
+// disarmRefresh stops the background reads and anything they started.
+function disarmRefresh(): void {
+  tick?.cancel()
+  kick?.cancel()
+  tick = null
+  kick = null
+  stopReads()
 }
 
 function refreshMs(options: PluginOptions): number {
@@ -411,10 +424,34 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('session.end', async ($, e, next) => {
-    // /clear, /resume and /branch keep the module but not the conversation:
-    // nothing read for the old one is kept, and the next read starts over.
+  // The last client that could draw the pane left: the background reads stop
+  // until another attaches. A session ending under its clients is
+  // session.end's to handle.
+  on('session.detach', async ($, e, next) => {
+    const result = await next(e)
+    if (e.reason === 'detach' && (await $.session.surfaces()).length === 0) disarmRefresh()
+    return result
+  })
+
+  on('session.end', async (_$, e, next) => {
+    // /clear, /resume and /branch keep the module but end the conversation:
+    // its reads stop now. Its $.state is reset to the defaults after this
+    // hook, so the fresh read starts from classic.SessionStart below.
     if (e.reason === 'clear' || e.reason === 'resume') {
+      stopReads()
+      resetPending = true
+    }
+    return next(e)
+  })
+
+  // Fires after /clear, /resume and /branch (source fork) have reset $.state,
+  // which session.start does not. Startup and compaction reset nothing, so
+  // the matcher leaves them out. The settings hooks beneath still run.
+  // /branch reports fork and has no session.end of its own, so a fork always
+  // reads again; a launch with --fork-session costs one extra read.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (resetPending || e.source === 'fork') {
+      resetPending = false
       stopReads()
       await dispatch($, { type: 'session_transition' })
       if (tick !== null) $.clock.after(0, () => fire($, refresh($, options)))

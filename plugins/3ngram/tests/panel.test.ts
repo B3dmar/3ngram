@@ -126,7 +126,11 @@ function showEnvelope(fingerprint: string): string {
 
 // world answers every `$` call the plugin makes, and records the commands it
 // runs and anything it must never touch.
-function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: boolean } = {}) {
+function world(
+  on: On,
+  answer: (argv: string[]) => Answer,
+  opts: { cwdThrows?: boolean; surfaces?: string[] } = {},
+) {
   const spawned: string[][] = []
   // Each spawn the plugin ended early (Cancel, the ceiling) by returning it.
   const returned: string[][] = []
@@ -137,6 +141,9 @@ function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: b
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('session.end', async () => ({ sessionId: 'test' }) as never)
   on('session.attach', async (_$, e) => ({ clientId: e.clientId }))
+  on('session.detach', async (_$, e) => ({ clientId: e.clientId }))
+  on('session.surfaces', async () => ({ value: [...(opts.surfaces ?? ['terminal'])] }) as never)
+  on('classic.SessionStart', async () => ({}) as never)
   on('session.cwd', async () => {
     if (opts.cwdThrows) throw new Error('cwd unavailable')
     return { value: '/repo' }
@@ -499,14 +506,69 @@ describe('cancellation and lifecycle', () => {
     expect(text).toContain('STALE since')
   })
 
-  test('/clear clears everything and reads again', async ($, on) => {
+  test('/clear reads again once the state is reset, not before', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
     await start($, w.clock)
     const before = w.spawned.length
+    // session.end comes before core resets $.state: a read started here
+    // would be erased by the reset, so none starts.
     await $.session.end({ reason: 'clear' } as never)
+    await w.clock.advance(1)
+    expect(w.spawned.length).toBe(before)
+    // classic.SessionStart fires after the reset; the fresh read starts there.
+    await $.classic.SessionStart({ source: 'clear' } as never)
     await w.clock.advance(1)
     expect(w.spawned.length).toBe(before + 1)
     expect(await textOf(await mountPane($))).toContain(TOPIC)
+  })
+
+  test('a resume at launch reads once, not twice', async ($, on) => {
+    const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
+    await start($, w.clock)
+    const before = w.spawned.length
+    // No session.end came before it: this is --resume at launch, whose state
+    // is fresh, and the startup read already covers it.
+    await $.classic.SessionStart({ source: 'resume' } as never)
+    await w.clock.advance(1)
+    expect(w.spawned.length).toBe(before)
+  })
+
+  test('/branch (source fork) reads again; startup and compaction do not', async ($, on) => {
+    const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
+    await start($, w.clock)
+    const before = w.spawned.length
+    await $.classic.SessionStart({ source: 'compact' } as never)
+    await $.classic.SessionStart({ source: 'startup' } as never)
+    await w.clock.advance(1)
+    expect(w.spawned.length).toBe(before)
+    await $.classic.SessionStart({ source: 'fork' } as never)
+    await w.clock.advance(1)
+    expect(w.spawned.length).toBe(before + 1)
+  })
+
+  test('the last client detaching stops the background reads', async ($, on) => {
+    const roster: string[] = []
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { surfaces: roster },
+    )
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    await w.clock.advance(1)
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    expect(lists()).toBe(1)
+    roster.length = 0
+    await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+    await w.clock.advance(15 * 60_000)
+    expect(lists()).toBe(1)
+    // A later client arms them again.
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    expect(lists()).toBe(2)
   })
 
   test('a refresh that clears an open detail stops its read', async ($, on) => {
