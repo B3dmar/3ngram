@@ -27,6 +27,8 @@ export type FailureKind =
   | 'unparseable'
   | 'contract'
   | 'cancelled'
+  | 'context_changed'
+  | 'context_moved'
 
 export type PanelStatus =
   | 'idle'

@@ -62,6 +62,10 @@ let wantedDetail = 0
 // so the classic.SessionStart that follows the state reset reads again, and
 // a resume at launch (no session.end before it) does not read twice.
 let resetPending = false
+// requeuedFor is the fingerprint a read was last re-run for after its context
+// changed mid-read, so a probe and a list that keep disagreeing about one
+// context re-run it once, not forever.
+let requeuedFor: string | null = null
 
 // releaseDetailRead forgets the handle of a detail read that has ended, if it
 // is still the one held.
@@ -255,6 +259,37 @@ async function refreshOnce(
   const at = await $.clock.now()
   if (outcome.kind === 'output') {
     const parsed = parseEnvelope(outcome.stdout)
+    // The key or backend can change while the list runs, and the envelope
+    // then speaks for the context it started under. One whose content would
+    // be shown (its rows, or the stale rows a same-context error keeps) is
+    // checked once more first: on a change nothing of it is, the rows go, and
+    // the read runs again. An error for another context clears them anyway.
+    const record = (await readPanel($)).record
+    const shown =
+      parsed.ok &&
+      (parsed.envelope.ok ||
+        (record !== null &&
+          record.envelope.context.fingerprint === parsed.envelope.context.fingerprint))
+    if (parsed.ok && shown) {
+      const now = await probe($, sel)
+      if (active !== token) return
+      if (now !== parsed.envelope.context.fingerprint) {
+        const rerun = now !== null && now !== requeuedFor
+        // The message says a read follows only when one does.
+        await dispatch($, {
+          type: 'list_failed',
+          gen,
+          failure: rerun ? 'context_changed' : 'context_moved',
+          at,
+        })
+        await dispatch($, { type: 'context_verified', gen, fingerprint: now, at })
+        if (rerun) {
+          requeuedFor = now
+          queued = true
+        }
+        return
+      }
+    }
     await dispatch(
       $,
       parsed.ok
@@ -264,6 +299,8 @@ async function refreshOnce(
   } else {
     await dispatch($, { type: 'list_failed', gen, failure: outcome.failure, at })
   }
+  // Any read that ended without its context moving re-arms the one re-run.
+  requeuedFor = null
   await verifyIfNeeded($, options)
 }
 
