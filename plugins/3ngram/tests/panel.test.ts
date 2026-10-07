@@ -307,6 +307,33 @@ describe('switching accounts cannot show the previous context', () => {
     expect(await textOf(ui)).toContain('Read under the new key')
   })
 
+  test('rows hide while the pre-refresh probe runs, and return when it confirms', async ($, on) => {
+    let release: () => void = () => undefined
+    let probes = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') {
+        probes++
+        return {
+          wait: new Promise<void>((r) => {
+            release = r
+          }),
+          stdout: contextEnvelope(FP_A),
+        }
+      }
+      return { stdout: listEnvelope(FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    await w.clock.advance(5 * 60_000)
+    // The probe is still running: nothing read under the old context shows.
+    expect(probes).toBe(1)
+    expect(await textOf(ui)).not.toContain(TOPIC)
+    release()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain(TOPIC)
+  })
+
   test('a key rotated during a read that fails without an answer: the probe disagrees, rows clear', async ($, on) => {
     let reads = 0
     let probes = 0

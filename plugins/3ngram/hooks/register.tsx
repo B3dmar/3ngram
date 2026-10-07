@@ -58,6 +58,8 @@ let stops = 0
 
 function stopReads(): void {
   stops++
+  // A stop is final: a refresh queued behind the stopped one is dropped too.
+  queued = false
   listRead?.stop()
   detailRead?.stop()
   listRead = null
@@ -198,6 +200,8 @@ async function refreshOnce(
   // With rows held, the context is checked before the read: rows read under
   // another key or backend are cleared now, not after the read returns.
   const held = (await readPanel($)).record !== null
+  if (held) await dispatch($, { type: 'check_started' })
+  if (active !== token) return
   const fingerprint = held ? await probe($, sel) : null
   if (active !== token) return
   const gen = (await readPanel($)).gen + 1
@@ -332,7 +336,9 @@ export const register: Register = (on, options) => {
     kick?.cancel()
     stopReads()
     const s = await readPanel($)
-    if (s.status === 'loading' || s.status === 'refreshing') await dispatch($, { type: 'reloaded' })
+    if (s.status === 'loading' || s.status === 'checking' || s.status === 'refreshing') {
+      await dispatch($, { type: 'reloaded' })
+    }
     // A detail read the reload killed would otherwise stay "Loading…" for good.
     if (s.detail?.status === 'loading')
       await dispatch($, { type: 'detail_closed', seq: s.detail.seq })
