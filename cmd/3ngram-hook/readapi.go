@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 )
 
 // The read-only client behind `3ngram-hook commitments`. It is deliberately a
@@ -62,17 +61,31 @@ const (
 	kindSelectorMismatch = "selector_mismatch"
 )
 
+// readConfig is the backend and credential one operation reads with. It is
+// resolved ONCE per operation and passed to every read, so a key file rotated
+// mid-operation can never make two reads of one envelope authenticate as
+// different accounts, and the fingerprint describes exactly the credential the
+// reads used.
+type readConfig struct {
+	base string
+	key  string
+}
+
+func resolveReadConfig() readConfig {
+	return readConfig{base: apiBaseURL(), key: apiKey()}
+}
+
 // apiGet performs one GET against the 3ngram REST API under ctx, which carries
 // the operation's single deadline, and decodes a 2xx JSON body into out. The
 // method is not a parameter: this function cannot send anything but GET.
-func apiGet(ctx context.Context, route, path string, out any) *readError {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL()+path, nil)
+func apiGet(ctx context.Context, cfg readConfig, route, path string, out any) *readError {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.base+path, nil)
 	if err != nil {
 		return &readError{Kind: kindBadRequest, Route: route}
 	}
 	req.Header.Set("Accept", "application/json")
-	if key := apiKey(); key != "" {
-		req.Header.Set("X-API-Key", key)
+	if cfg.key != "" {
+		req.Header.Set("X-API-Key", cfg.key)
 	}
 
 	resp, err := readClient.Do(req)
@@ -165,18 +178,17 @@ func contextFingerprint(apiBase, key string, sel briefingSelector) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// memoryIDPattern is the uuid form every memory id has. An id that does not
-// match is never put into a request path: the id comes from a server response,
-// and `..` or a stray separator would otherwise steer a keyed GET to another
-// route.
-var memoryIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
-// memoryPath is the only way a data-path file builds a /memories/:id path.
+// memoryPath is the only way a data-path file builds a /memories/:id path. It
+// is a PATH-SAFETY guard, not an id validator: what a memory id may look like
+// is packages/schema's to decide (AGENTS.md hard rule 2), and the server
+// answers an id it does not accept with 404. The guard only keeps an id from
+// changing which route a keyed GET reaches: the id is escaped as one path
+// segment, and the dot segments a client would resolve are refused outright.
 func memoryPath(memoryID, suffix string) (string, bool) {
-	if !memoryIDPattern.MatchString(memoryID) {
+	if memoryID == "" || memoryID == "." || memoryID == ".." {
 		return "", false
 	}
-	return "/api/v1/memories/" + memoryID + suffix, true
+	return "/api/v1/memories/" + url.PathEscape(memoryID) + suffix, true
 }
 
 // apiHost is the backend as the header shows it: the host alone, never a path

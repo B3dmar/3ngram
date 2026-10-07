@@ -4,7 +4,10 @@ package main
 import (
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -450,6 +453,120 @@ func TestCommitmentsListNeverPutsAMalformedIDInAPath(t *testing.T) {
 	}
 	if filings(r.env)[".."] != filingUnknown || !hasPartial(r.env, "filing", kindBadResponse) {
 		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// One operation authenticates with one credential: a key file rotated while
+// the operation runs must not make later reads use the new key.
+func TestCommitmentsListPinsOneCredential(t *testing.T) {
+	s := newReadServer(t)
+	t.Setenv("THREENGRAM_API_KEY", "")
+	keyFile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "3ngram", "api-key")
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, []byte("key-before-rotation"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := item(1, "a")
+	s.json("/api/v1/me", 200, meBody)
+	s.handle("/api/v1/briefing?includeUnscoped=true", func(w http.ResponseWriter, _ *http.Request) {
+		_ = os.WriteFile(keyFile, []byte("key-after-rotation"), 0o600)
+		_, _ = w.Write([]byte(briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0))))
+	})
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBody("work", nil, "active", nil))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if !r.env.OK || len(s.recorded()) != 4 {
+		t.Fatalf("env=%s requests=%d", r.stdout, len(s.recorded()))
+	}
+	for _, req := range s.recorded() {
+		if req.Key != "key-before-rotation" {
+			t.Fatalf("%s authenticated with %q after the rotation", req.Path, req.Key)
+		}
+	}
+}
+
+func TestCommitmentsListRejectsAnIncompleteBriefing(t *testing.T) {
+	for name, body := range map[string]string{
+		"no sections":   `{"selector":{"kind":"project","project":"demo"},"mode":"full","generatedAt":"x"}`,
+		"no items":      `{"selector":{"kind":"project","project":"demo"},"commitments":{"count":3},"overdue":{"count":0,"items":[]}}`,
+		"no count":      `{"selector":{"kind":"project","project":"demo"},"commitments":{"items":[]},"overdue":{"count":0,"items":[]}}`,
+		"null sections": `{"selector":{"kind":"project","project":"demo"},"commitments":null,"overdue":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, meBody)
+			s.json("/api/v1/briefing", 200, body)
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+			if r.code != 2 || r.env.OK || r.env.Error.Kind != kindBadResponse || r.env.Commitments != nil {
+				t.Fatalf("an incomplete 200 must not read as an empty list: code=%d %s", r.code, r.stdout)
+			}
+		})
+	}
+}
+
+// The strict read starts only after the widened read answered, so a row it
+// returns describes the filing at or after the widened read.
+func TestCommitmentsListReadsStrictAfterWidened(t *testing.T) {
+	s := newReadServer(t)
+	var widenedDone atomic.Bool
+	s.json("/api/v1/me", 200, meBody)
+	s.handle("/api/v1/briefing?includeUnscoped=true", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte(briefingBody(scopeProjectSel("work", "demo", true), section(0), section(0))))
+		widenedDone.Store(true)
+	})
+	s.handle("/api/v1/briefing?includeUnscoped=false", func(w http.ResponseWriter, _ *http.Request) {
+		if !widenedDone.Load() {
+			t.Error("the strict read started before the widened read answered")
+		}
+		_, _ = w.Write([]byte(briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0))))
+	})
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if !r.env.OK {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+func TestCommitmentsResolvesARelativeCwd(t *testing.T) {
+	newReadServer(t)
+	t.Chdir(projectDir(t, "relative-demo"))
+
+	r := runCommitmentsForTest(t, "/somewhere/else", "context", "--cwd", ".")
+
+	if r.env.Context.Project.Name != "relative-demo" {
+		t.Fatalf("project = %+v", r.env.Context.Project)
+	}
+}
+
+// The deadline covers project derivation: a git that stalls ends the
+// operation with a timeout envelope instead of outliving the plugin's ceiling
+// or silently falling back to the directory name.
+func TestCommitmentsDeadlineCoversProjectDerivation(t *testing.T) {
+	withDeadline(t, 200*time.Millisecond)
+	newReadServer(t)
+	bin := t.TempDir()
+	stall := "#!/bin/sh\nexec sleep 5\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(stall), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	start := time.Now()
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "context")
+
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("project derivation outlived the deadline: %s", elapsed)
+	}
+	if r.env.OK || r.env.Error.Kind != kindTimeout || r.env.Context.Project.Name == "demo" {
+		t.Fatalf("a stalled git must time out, not fall back: %s", r.stdout)
 	}
 }
 
