@@ -122,6 +122,9 @@ func TestGuardDefersOnlyWhenSettingsCoverThisInstance(t *testing.T) {
 		{"heartbeat in settings defers stop", hooksJSON("Stop", "-", "3ngram-hook heartbeat"), "stop", `{}`, true},
 		{"stop in settings defers heartbeat", hooksJSON("Stop", "-", "3ngram-hook stop"), "heartbeat", `{}`, true},
 		{"Stop ignores a matcher", hooksJSON("Stop", "anything", "3ngram-hook stop"), "stop", `{}`, true},
+		{"a null matcher claims nothing", `{"hooks":{"SessionStart":[{"matcher":null,"hooks":[{"type":"command","command":"3ngram-hook briefing"}]}]}}`, "briefing", `{"source":"startup"}`, false},
+		{"a null matcher claims nothing on Stop too", `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"3ngram-hook stop"}]}]}}`, "stop", `{}`, false},
+		{"a non-string matcher claims nothing", `{"hooks":{"PreToolUse":[{"matcher":["Edit"],"hooks":[{"type":"command","command":"3ngram-hook precheck"}]}]}}`, "precheck", `{"tool_name":"Edit"}`, false},
 		{"a path to a binary that is gone claims nothing", hooksJSON("SessionEnd", "-", "/nonexistent/bin/3ngram-hook close"), "close", `{"reason":"clear"}`, false},
 		{"SessionEnd reason matcher", hooksJSON("SessionEnd", "logout", "3ngram-hook close"), "close", `{"reason":"clear"}`, false},
 		{"a precheck in settings does not cover the briefing", hooksJSON("PreToolUse", "-", "3ngram-hook precheck"), "briefing", `{"source":"startup"}`, false},
@@ -156,7 +159,8 @@ func TestGuardReadsEverySettingsSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newGuardFixture(t)
 			write(f, t, hooksJSON("Stop", "-", "3ngram-hook stop"))
-			if !deferToSettings("stop", []byte(`{}`), f.env) {
+			// The hook runs in the project the session started in.
+			if !deferToSettings("stop", []byte(`{"cwd":`+quote(f.env.projectDir)+`}`), f.env) {
 				t.Fatalf("a %s settings registration must be seen", name)
 			}
 		})
@@ -198,7 +202,8 @@ func TestGuardHandlerFieldsThatChangeWhenItRuns(t *testing.T) {
 		"less time":                                   {`{"type":"command","command":"3ngram-hook precheck","timeout":1}`, false},
 		"permission rule (if)":                        {`{"type":"command","command":"3ngram-hook precheck","if":"Edit(*.ts)"}`, false},
 		"async":                                       {`{"type":"command","command":"3ngram-hook precheck","async":true}`, false},
-		"once":                                        {`{"type":"command","command":"3ngram-hook precheck","once":true}`, false},
+		"once (ignored in settings files)":            {`{"type":"command","command":"3ngram-hook precheck","once":true}`, true},
+		"once false":                                  {`{"type":"command","command":"3ngram-hook precheck","once":false}`, true},
 		"shell":                                       {`{"type":"command","command":"3ngram-hook precheck","shell":"powershell"}`, false},
 		"no type":                                     {`{"command":"3ngram-hook precheck"}`, false},
 		"another type":                                {`{"type":"http","command":"3ngram-hook precheck"}`, false},
@@ -401,6 +406,13 @@ func TestGuardHonoursManagedPolicy(t *testing.T) {
 			f.user(t, covered)
 			f.write(t, filepath.Join(f.env.configDir, "remote-settings.json"), `{"permissions":`)
 		}, false},
+		{"a managed policyHelper claims nothing", func(f *guardFixture, t *testing.T) {
+			f.managed(t, `{"policyHelper":{"path":"/usr/local/bin/policy"},`+covered[1:])
+		}, false},
+		{"a null policyHelper is none", func(f *guardFixture, t *testing.T) {
+			f.user(t, covered)
+			f.managed(t, `{"policyHelper":null}`)
+		}, true},
 		{"an empty server-managed cache is no policy", func(f *guardFixture, t *testing.T) {
 			f.user(t, covered)
 			f.write(t, filepath.Join(f.env.configDir, "remote-settings.json"), `{}`)
@@ -415,4 +427,53 @@ func TestGuardHonoursManagedPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Project settings count only while the hook runs in the project the session
+// started in: after a /cd, Claude Code reads project settings from the new
+// directory while CLAUDE_PROJECT_DIR stays put, so the starting project's
+// registrations may no longer be active. User settings always count.
+func TestGuardProjectSettingsFollowTheHookDirectory(t *testing.T) {
+	stop := hooksJSON("Stop", "-", "3ngram-hook stop")
+	input := func(cwd string) []byte { return []byte(`{"cwd":` + quote(cwd) + `}`) }
+	t.Run("hook in the starting project", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.local(t, stop)
+		if !deferToSettings("stop", input(f.env.projectDir), f.env) {
+			t.Fatal("the starting project's registration covers a hook run there")
+		}
+	})
+	t.Run("hook after a move to another directory", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.local(t, stop)
+		f.write(t, filepath.Join(f.env.projectDir, ".claude", "settings.json"), stop)
+		if deferToSettings("stop", input(t.TempDir()), f.env) {
+			t.Fatal("a registration in the starting project must not cover a hook run elsewhere")
+		}
+	})
+	t.Run("an input without cwd counts no project file", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.local(t, stop)
+		if deferToSettings("stop", []byte(`{}`), f.env) {
+			t.Fatal("without the hook's cwd the active project is unknown")
+		}
+	})
+	t.Run("user settings still count elsewhere", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		if !deferToSettings("stop", input(t.TempDir()), f.env) {
+			t.Fatal("user settings apply wherever the session is")
+		}
+	})
+	t.Run("the same directory through a symlink", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.local(t, stop)
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(f.env.projectDir, link); err != nil {
+			t.Fatal(err)
+		}
+		if !deferToSettings("stop", input(link), f.env) {
+			t.Fatal("a symlink to the starting project is the starting project")
+		}
+	})
 }

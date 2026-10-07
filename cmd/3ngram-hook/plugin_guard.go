@@ -121,18 +121,37 @@ func currentGuardEnv() guardEnv {
 	return env
 }
 
-// userFiles are the user, project and local settings files.
-func (g guardEnv) userFiles() []string {
+// userFiles are the user settings file and, when the project is certain,
+// the project's shared and local files.
+//
+// Claude Code keeps CLAUDE_PROJECT_DIR at the project the session started in,
+// while /cd moves where it reads project settings from, and the hook input's
+// cwd follows Claude. A hook cwd that is not the starting project therefore
+// leaves open which project's files are active (a /cd, a worktree, or just a
+// Bash cd), so neither project's files count then, nor when the input names
+// no cwd at all.
+func (g guardEnv) userFiles(hookCwd string) []string {
 	var files []string
 	if g.configDir != "" {
 		files = append(files, filepath.Join(g.configDir, "settings.json"))
 	}
-	if g.projectDir != "" {
+	if g.projectDir != "" && hookCwd != "" && sameDir(hookCwd, g.projectDir) {
 		files = append(files,
 			filepath.Join(g.projectDir, ".claude", "settings.json"),
 			filepath.Join(g.projectDir, ".claude", "settings.local.json"))
 	}
 	return files
+}
+
+func sameDir(a, b string) bool {
+	return canonicalDir(a) == canonicalDir(b)
+}
+
+func canonicalDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return filepath.Clean(dir)
 }
 
 // managedPolicy reads the admin sources the guard can see. docs are the
@@ -176,9 +195,15 @@ func (g guardEnv) managedPolicy() (docs []string, hooksOnly, ok bool) {
 			continue
 		}
 		var policy struct {
-			AllowManagedHooksOnly *bool `json:"allowManagedHooksOnly"`
+			AllowManagedHooksOnly *bool           `json:"allowManagedHooksOnly"`
+			PolicyHelper          json.RawMessage `json:"policyHelper"`
 		}
 		if err != nil || json.Unmarshal(data, &policy) != nil {
+			return nil, false, false
+		}
+		// A policyHelper's output replaces the managed settings for the
+		// session, and the guard cannot run it to see what that output says.
+		if len(policy.PolicyHelper) > 0 && !bytes.Equal(bytes.TrimSpace(policy.PolicyHelper), []byte("null")) {
 			return nil, false, false
 		}
 		// Any file setting it counts, whatever a later drop-in says: reading
@@ -225,22 +250,22 @@ func deferToSettings(sub string, input []byte, env guardEnv) bool {
 	if !ok {
 		return false
 	}
+	var fields map[string]any
+	_ = json.Unmarshal(input, &fields)
 	instance := ""
 	if target.matcherField != "" {
-		var fields map[string]any
-		if json.Unmarshal(input, &fields) == nil {
-			if v, ok := fields[target.matcherField].(string); ok {
-				instance = v
-			}
+		if v, ok := fields[target.matcherField].(string); ok {
+			instance = v
 		}
 	}
+	hookCwd, _ := fields["cwd"].(string)
 	docs, hooksOnly, ok := env.managedPolicy()
 	if !ok {
 		return false
 	}
 	files := docs
 	if !hooksOnly {
-		files = append(env.userFiles(), docs...)
+		files = append(env.userFiles(hookCwd), docs...)
 	}
 	family := subcommandFamily(sub)
 	for _, file := range files {
@@ -257,7 +282,9 @@ type settingsHooks struct {
 }
 
 type hookGroup struct {
-	Matcher *string                      `json:"matcher"`
+	// Matcher is kept raw: an omitted matcher matches everything, while a
+	// null or a non-string one is not a valid matcher at all.
+	Matcher json.RawMessage              `json:"matcher"`
 	Hooks   []map[string]json.RawMessage `json:"hooks"`
 }
 
@@ -272,10 +299,11 @@ type hookHandler struct {
 }
 
 // plainHandlerKeys are the only handler fields a covering settings hook may
-// carry. Every other field (`if`, `async`, `asyncRewake`, `once`, `shell`, and
+// carry. Every other field (`if`, `async`, `asyncRewake`, `shell`, and
 // whatever Claude Code adds next) can change when or whether the hook runs,
-// so a handler that sets one claims nothing.
-var plainHandlerKeys = map[string]bool{"type": true, "command": true, "args": true, "timeout": true, "statusMessage": true}
+// so a handler that sets one claims nothing. `once` is honored only in skill
+// frontmatter and ignored in settings files, so it changes nothing here.
+var plainHandlerKeys = map[string]bool{"type": true, "command": true, "args": true, "timeout": true, "statusMessage": true, "once": true}
 
 func plainHandler(raw map[string]json.RawMessage) (hookHandler, bool) {
 	for key := range raw {
@@ -342,11 +370,17 @@ var portableRegex = regexp.MustCompile(`^[A-Za-z0-9_\-.^$|()*+?\[\]]+$`)
 // matcher is a `|` or `,` list compared exactly, each alternative trimmed of
 // surrounding whitespace ("Edit | Write"); anything else is an unanchored
 // regex. An event without matcher support ignores the matcher.
-func matcherCovers(matcher *string, target hookTarget, instance string) bool {
-	if target.matcherField == "" || matcher == nil {
+func matcherCovers(raw json.RawMessage, target hookTarget, instance string) bool {
+	var m string
+	// null, a number, a list: not a matcher Claude Code accepts, so the group
+	// may not run at all, for any event. (Decoding null into a string is no
+	// error, hence the explicit check.)
+	if len(raw) > 0 && (bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &m) != nil) {
+		return false
+	}
+	if target.matcherField == "" || len(raw) == 0 {
 		return true
 	}
-	m := *matcher
 	if m == "" || m == "*" {
 		return true
 	}
