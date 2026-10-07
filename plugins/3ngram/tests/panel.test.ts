@@ -293,8 +293,10 @@ describe('switching accounts cannot show the previous context', () => {
   test('a key swap is caught by the probe before the read: old rows never show during it', async ($, on) => {
     let release: () => void = () => undefined
     let reads = 0
+    // The context the probe sees: the old key until it is swapped.
+    let current = FP_A
     const w = world(on, (argv) => {
-      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_B) }
+      if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
       reads++
       if (reads === 1) return { stdout: listEnvelope(FP_A) }
       return {
@@ -307,6 +309,7 @@ describe('switching accounts cannot show the previous context', () => {
     await start($, w.clock)
     const ui = await mountPane($)
     expect(await textOf(ui)).toContain(TOPIC)
+    current = FP_B
     await w.clock.advance(5 * 60_000)
     // The second read is still running, and the old rows are already gone.
     expect(await textOf(ui)).not.toContain(TOPIC)
@@ -320,7 +323,9 @@ describe('switching accounts cannot show the previous context', () => {
     let probes = 0
     const w = world(on, (argv) => {
       if (argv[2] === 'context') {
-        probes++
+        // The second probe is the one before the periodic read; the first
+        // follows the startup read and answers at once.
+        if (++probes !== 2) return { stdout: contextEnvelope(FP_A) }
         return {
           wait: new Promise<void>((r) => {
             release = r
@@ -335,7 +340,7 @@ describe('switching accounts cannot show the previous context', () => {
     expect(await textOf(ui)).toContain(TOPIC)
     await w.clock.advance(5 * 60_000)
     // The probe is still running: nothing read under the old context shows.
-    expect(probes).toBe(1)
+    expect(probes).toBe(2)
     expect(await textOf(ui)).not.toContain(TOPIC)
     release()
     await w.clock.advance(1)
@@ -346,7 +351,9 @@ describe('switching accounts cannot show the previous context', () => {
     let reads = 0
     let probes = 0
     const w = world(on, (argv) => {
-      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes === 1 ? FP_A : FP_B) }
+      // The probes after the startup read and before the next one see the old
+      // key; it is rotated while that read runs.
+      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes <= 2 ? FP_A : FP_B) }
       return ++reads === 1 ? { stdout: listEnvelope(FP_A) } : {}
     })
     await start($, w.clock)
@@ -371,6 +378,58 @@ describe('switching accounts cannot show the previous context', () => {
     expect(text).toContain('STALE since')
   })
 
+  test('a key rotated while a list read runs never shows that read', async ($, on) => {
+    let current = FP_A
+    let release: () => void = () => undefined
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
+      reads++
+      if (reads === 1) return { stdout: listEnvelope(FP_A) }
+      if (reads === 2)
+        return {
+          wait: new Promise<void>((r) => {
+            release = r
+          }),
+          stdout: listEnvelope(FP_A, 'Read under the old key'),
+        }
+      return { stdout: listEnvelope(FP_B, 'Read under the new key') }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'refresh' }))
+    await w.clock.advance(1)
+    // The probe before the read confirmed the old key; it is rotated now,
+    // while the read still runs under it.
+    current = FP_B
+    release()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const text = await textOf(ui)
+    expect(text).not.toContain('Read under the old key')
+    expect(text).toContain('Read under the new key')
+  })
+
+  test('a probe that cannot answer after a read does not loop', async ($, on) => {
+    let probes = 0
+    const w = world(on, (argv) =>
+      argv[2] === 'context'
+        ? ++probes === 1
+          ? { stdout: contextEnvelope(FP_A) }
+          : {}
+        : { stdout: listEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await w.clock.advance(5 * 60_000)
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    // The periodic read ran once; the unanswered probe after it re-ran
+    // nothing, and the rows did not survive it.
+    expect(lists()).toBe(2)
+    expect(await textOf(await mountPane($))).not.toContain(TOPIC)
+  })
+
   test('an error envelope from another fingerprint clears the rows with no extra probe', async ($, on) => {
     let reads = 0
     const w = world(on, (argv) =>
@@ -381,9 +440,9 @@ describe('switching accounts cannot show the previous context', () => {
     await start($, w.clock)
     await w.clock.advance(5 * 60_000)
     expect(await textOf(await mountPane($))).not.toContain(TOPIC)
-    // One probe before the second read; none after it, since the envelope
-    // named its own context.
-    expect(w.spawned.filter((argv) => argv[2] === 'context').length).toBe(1)
+    // One probe after the first read and one before the second; none after
+    // the second, since the envelope named its own context.
+    expect(w.spawned.filter((argv) => argv[2] === 'context').length).toBe(2)
   })
 })
 
@@ -393,7 +452,9 @@ describe('cancellation and lifecycle', () => {
     let reads = 0
     let probes = 0
     const w = world(on, (argv) => {
-      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes === 1 ? FP_A : FP_B) }
+      // Old key for the probes after the startup read and before the next
+      // read; rotated while that read runs.
+      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes <= 2 ? FP_A : FP_B) }
       reads++
       if (reads === 1) return { stdout: listEnvelope(FP_A) }
       return {
@@ -509,16 +570,17 @@ describe('cancellation and lifecycle', () => {
   test('/clear reads again once the state is reset, not before', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
     await start($, w.clock)
-    const before = w.spawned.length
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    const before = lists()
     // session.end comes before core resets $.state: a read started here
     // would be erased by the reset, so none starts.
     await $.session.end({ reason: 'clear' } as never)
     await w.clock.advance(1)
-    expect(w.spawned.length).toBe(before)
+    expect(lists()).toBe(before)
     // classic.SessionStart fires after the reset; the fresh read starts there.
     await $.classic.SessionStart({ source: 'clear' } as never)
     await w.clock.advance(1)
-    expect(w.spawned.length).toBe(before + 1)
+    expect(lists()).toBe(before + 1)
     expect(await textOf(await mountPane($))).toContain(TOPIC)
   })
 
@@ -536,14 +598,15 @@ describe('cancellation and lifecycle', () => {
   test('/branch (source fork) reads again; startup and compaction do not', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
     await start($, w.clock)
-    const before = w.spawned.length
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    const before = lists()
     await $.classic.SessionStart({ source: 'compact' } as never)
     await $.classic.SessionStart({ source: 'startup' } as never)
     await w.clock.advance(1)
-    expect(w.spawned.length).toBe(before)
+    expect(lists()).toBe(before)
     await $.classic.SessionStart({ source: 'fork' } as never)
     await w.clock.advance(1)
-    expect(w.spawned.length).toBe(before + 1)
+    expect(lists()).toBe(before + 1)
   })
 
   test('the last client detaching stops the background reads', async ($, on) => {

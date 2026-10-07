@@ -26,6 +26,8 @@ export type PanelView = {
 const FAILURE_TEXT: Record<string, string> = {
   timeout: 'The read timed out.',
   cancelled: 'The refresh was cancelled.',
+  context_moved:
+    'The account or backend changed during the read, so its rows are not shown. Refresh to read again.',
   missing_binary: '3ngram-hook is not on PATH. Install it to use the panel.',
   too_old: 'This 3ngram-hook has no commitments command. Rebuild it from the 3ngram repository.',
   crash: '3ngram-hook stopped without an answer.',

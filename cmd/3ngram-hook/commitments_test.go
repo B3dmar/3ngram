@@ -1106,3 +1106,27 @@ func TestCommitmentsTimeoutStatusesAreTimeouts(t *testing.T) {
 		}
 	}
 }
+
+// A --scope given blank (an unset "$SCOPE", or spaces) is refused before any
+// request; it never falls back to the wider project-only read.
+func TestCommitmentsRejectsABlankScope(t *testing.T) {
+	for _, scope := range []string{"", "   "} {
+		s := newReadServer(t)
+
+		r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", scope)
+
+		if r.code != 1 || r.env.Error == nil || r.env.Error.Kind != kindInvalidSelector {
+			t.Fatalf("scope %q: code=%d env=%s", scope, r.code, r.stdout)
+		}
+		if n := len(s.recorded()); n != 0 {
+			t.Fatalf("scope %q: a blank scope must make zero requests, made %d", scope, n)
+		}
+	}
+	// Omitting the flag is still the project-only read.
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), section(0), section(0)))
+	if r := runCommitmentsForTest(t, projectDir(t, "demo"), "list"); !r.env.OK {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
