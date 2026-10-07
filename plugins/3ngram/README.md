@@ -30,7 +30,7 @@ Run `/commitments` to open the panel. Change the options with `/plugin configure
 
 ## The bundled hooks
 
-The plugin also registers the four 3ngram session hooks (SessionStart briefing, PreToolUse precheck, Stop heartbeat, SessionEnd close) through `scripts/run-hook`. If you already registered them in `settings.json`, keep them: the plugin's copies stand down for every event instance your settings already cover, so nothing runs twice; see [the hook README](../../cmd/3ngram-hook/README.md#claude-code-plugin). A machine without `3ngram-hook`, or with a build older than the guard, gets no hooks from the plugin and no error. There is no Windows build of `3ngram-hook`; [the hook README](../../cmd/3ngram-hook/README.md#claude-code-plugin) says how the hooks behave there.
+The plugin also registers the four 3ngram session hooks (SessionStart briefing, PreToolUse precheck, Stop heartbeat, SessionEnd close) through `scripts/run-hook`. If you already registered them in `settings.json`, the plugin's copies stand down for each event instance the guard can confirm your settings cover. This is best effort, not exact: where it cannot tell, the plugin copy runs too, and a few setups it cannot see are listed in [the hook README](../../cmd/3ngram-hook/README.md#claude-code-plugin). Registering the hooks in one place, settings or the plugin, avoids both. A machine without `3ngram-hook`, or with a build older than the guard, gets no hooks from the plugin and no error. The plugin supports macOS and Linux; Windows is not supported in this version (there is no Windows build of `3ngram-hook`).
 
 ## What it shows, and what it does not
 

@@ -794,8 +794,10 @@ Claude Code plugin, which bundles the same four. Claude Code never de-duplicates
 a plugin hook against a settings hook, so the plugin's copies run as
 `3ngram-hook <subcommand> --via plugin` and stand down, per invocation, when a
 settings file already runs that subcommand for that event instance (same event,
-a matcher that matches it, the same subcommand family). Each lifecycle call
-therefore still happens once per event.
+a matcher that matches it, the same subcommand family). That is best effort:
+where the guard cannot tell, the plugin copy runs too, and a few setups it cannot
+see (listed in the hook README) can make it stand down wrongly. Registering the
+hooks in one place keeps each lifecycle call to one per event.
 
 Default-off until the validation bar in the plan says otherwise. **Claude Code is
 the one registered harness** for the validation phase: `cmd/3ngram-hook/README.md`

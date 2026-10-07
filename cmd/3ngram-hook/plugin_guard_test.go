@@ -41,7 +41,13 @@ func newGuardFixture(t *testing.T) *guardFixture {
 	if err := os.WriteFile(f.bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", filepath.Join(root, "bin"))
+	// The stand-in comes first; git follows, which the guard runs to find a
+	// repository's root (a git that cannot answer makes it claim nothing).
+	path := filepath.Join(root, "bin")
+	if git, err := exec.LookPath("git"); err == nil {
+		path += string(os.PathListSeparator) + filepath.Dir(git)
+	}
+	t.Setenv("PATH", path)
 	return f
 }
 
@@ -63,6 +69,16 @@ func (f *guardFixture) write(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// sessionEndJSON registers command for SessionEnd with the documented 5 s
+// timeout: without one, SessionEnd gives a hook only 1.5 s.
+func sessionEndJSON(matcher, command string) string {
+	m := ""
+	if matcher != "-" {
+		m = `"matcher":` + quote(matcher) + `,`
+	}
+	return `{"hooks":{"SessionEnd":[{` + m + `"hooks":[{"type":"command","command":` + quote(command) + `,"timeout":5}]}]}}`
 }
 
 func hooksJSON(event, matcher string, commands ...string) string {
@@ -180,7 +196,7 @@ func TestGuardExecFormHandler(t *testing.T) {
 
 func TestGuardFullPathCounts(t *testing.T) {
 	f := newGuardFixture(t)
-	f.user(t, hooksJSON("SessionEnd", "-", f.bin+" close --agent claude-code"))
+	f.user(t, sessionEndJSON("-", f.bin+" close --agent claude-code"))
 	if !deferToSettings("close", []byte(`{"reason":"clear"}`), f.env) {
 		t.Fatal("a full path to an executable 3ngram-hook counts")
 	}
@@ -289,7 +305,7 @@ func TestGuardEndToEnd(t *testing.T) {
 	stdin := `{"session_id":"s1","reason":"clear"}`
 
 	// Settings own SessionEnd: the plugin copy stands down.
-	if err := os.WriteFile(filepath.Join(config, "settings.json"), []byte(hooksJSON("SessionEnd", "-", "3ngram-hook close")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(config, "settings.json"), []byte(sessionEndJSON("-", "3ngram-hook close")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run(stdin, "close", "--via", "plugin")
@@ -304,7 +320,7 @@ func TestGuardEndToEnd(t *testing.T) {
 	}
 
 	// Settings cover only logout: the plugin copy runs, with the stdin it read.
-	if err := os.WriteFile(filepath.Join(config, "settings.json"), []byte(hooksJSON("SessionEnd", "logout", "3ngram-hook close")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(config, "settings.json"), []byte(sessionEndJSON("logout", "3ngram-hook close")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run(stdin, "close", "--via", "plugin")
@@ -554,6 +570,207 @@ func TestGuardUnreadableOrUncountedFilesCannotHideADisable(t *testing.T) {
 		f.user(t, stop)
 		if !deferToSettings("stop", []byte(`{"cwd":`+quote(t.TempDir())+`}`), f.env) {
 			t.Fatal("user settings apply wherever the session is")
+		}
+	})
+}
+
+// Each allowed handler field must have its documented JSON kind, and every
+// exec-form argument must be a string: Claude Code skips an entry that breaks
+// either, so it covers nothing.
+func TestGuardRejectsMalformedHandlerFields(t *testing.T) {
+	cases := map[string]string{
+		"numeric statusMessage": `{"type":"command","command":"3ngram-hook precheck","statusMessage":5}`,
+		"string once":           `{"type":"command","command":"3ngram-hook precheck","once":"yes"}`,
+		"string timeout":        `{"type":"command","command":"3ngram-hook precheck","timeout":"5"}`,
+		"numeric command":       `{"type":"command","command":5}`,
+		"object args":           `{"type":"command","command":"3ngram-hook","args":{"0":"precheck"}}`,
+		"null argument":         `{"type":"command","command":"3ngram-hook","args":["precheck",null]}`,
+		"numeric argument":      `{"type":"command","command":"3ngram-hook","args":["precheck",2]}`,
+	}
+	for name, handler := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newGuardFixture(t)
+			f.user(t, `{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[`+handler+`]}]}}`)
+			if deferToSettings("precheck", []byte(`{"tool_name":"Edit"}`), f.env) {
+				t.Fatal("a malformed handler must claim nothing")
+			}
+		})
+	}
+}
+
+// A SessionEnd hook without its own timeout gets Claude Code's 1.5 s end
+// budget (or what CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS sets), not the
+// usual default: too little for the close the guard requires.
+func TestGuardSessionEndImplicitBudget(t *testing.T) {
+	bare := hooksJSON("SessionEnd", "-", "3ngram-hook close")
+	input := []byte(`{"reason":"clear"}`)
+	t.Run("default budget", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, bare)
+		if deferToSettings("close", input, f.env) {
+			t.Fatal("1.5 s does not cover close")
+		}
+	})
+	t.Run("raised by the environment", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS", "5000")
+		f := newGuardFixture(t)
+		f.user(t, bare)
+		if !deferToSettings("close", input, f.env) {
+			t.Fatal("a 5 s budget covers close")
+		}
+	})
+	t.Run("an explicit timeout", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, sessionEndJSON("-", "3ngram-hook close"))
+		if !deferToSettings("close", input, f.env) {
+			t.Fatal("the documented 5 s registration covers close")
+		}
+	})
+}
+
+// Claude Code substitutes ${CLAUDE_PROJECT_DIR} in an exec-form command before
+// it resolves the program, so the guard does too.
+func TestGuardExpandsTheProjectDirPlaceholder(t *testing.T) {
+	f := newGuardFixture(t)
+	bin := filepath.Join(f.env.projectDir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, filepath.Join(bin, "3ngram-hook"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(bin, "3ngram-hook"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.user(t, `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"${CLAUDE_PROJECT_DIR}/bin/3ngram-hook","args":["stop"]}]}]}}`)
+	t.Setenv("CLAUDE_PROJECT_DIR", f.env.projectDir)
+	if !deferToSettings("stop", []byte(`{}`), f.env) {
+		t.Fatal("the placeholder names the project's binary")
+	}
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	if deferToSettings("stop", []byte(`{}`), f.env) {
+		t.Fatal("without the variable the program does not resolve")
+	}
+}
+
+// Started in a subdirectory of a repository, Claude Code also reads the local
+// settings file at the repository root. The guard counts it where it can tell
+// it is read, and a root file that disables hooks always blocks.
+func TestGuardReadsTheRepositoryRootLocalFile(t *testing.T) {
+	stop := hooksJSON("Stop", "-", "3ngram-hook stop")
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git is needed for this test: %v", err)
+	}
+	setup := func(t *testing.T) (*guardFixture, string) {
+		f := newGuardFixture(t)
+		// The fixture's PATH holds only the 3ngram-hook stand-in; the guard
+		// needs git to find the repository root.
+		t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+filepath.Dir(gitPath))
+		root := t.TempDir()
+		gitInit(t, root)
+		sub := filepath.Join(root, "sub")
+		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.env.projectDir = sub
+		return f, root
+	}
+	input := func(f *guardFixture) []byte { return []byte(`{"cwd":` + quote(f.env.projectDir) + `}`) }
+	t.Run("a registration at the root counts", func(t *testing.T) {
+		f, root := setup(t)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), stop)
+		if !deferToSettings("stop", input(f), f.env) {
+			t.Fatal("the root local file is read, so it covers the event")
+		}
+	})
+	t.Run("a root file that disables hooks blocks the user registration", func(t *testing.T) {
+		f, root := setup(t)
+		f.user(t, stop)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), `{"disableAllHooks":true}`)
+		if deferToSettings("stop", input(f), f.env) {
+			t.Fatal("hooks are disabled at the root")
+		}
+	})
+}
+
+// The repository root's local file, in the cases the guard has to tell
+// apart: a git that cannot answer, a linked worktree, precedence against the
+// starting directory's local file, and a root that is the home directory.
+func TestGuardRepositoryRootCases(t *testing.T) {
+	stop := hooksJSON("Stop", "-", "3ngram-hook stop")
+	repo := func(t *testing.T) string {
+		root := t.TempDir()
+		gitInit(t, root)
+		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+	in := func(f *guardFixture) []byte { return []byte(`{"cwd":` + quote(f.env.projectDir) + `}`) }
+	t.Run("a git that cannot answer claims nothing", func(t *testing.T) {
+		f := newGuardFixture(t)
+		f.user(t, stop)
+		bin := filepath.Dir(f.bin)
+		f.write(t, filepath.Join(bin, "git"), "#!/bin/sh\nexit 1\n")
+		if err := os.Chmod(filepath.Join(bin, "git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if deferToSettings("stop", in(f), f.env) {
+			t.Fatal("without the root's answer its local file may disable hooks")
+		}
+	})
+	t.Run("a linked worktree reads the main checkout's local file", func(t *testing.T) {
+		f := newGuardFixture(t)
+		root := repo(t)
+		wt := filepath.Join(t.TempDir(), "wt")
+		if out, err := exec.Command("git", "-C", root, "worktree", "add", "-q", wt).CombinedOutput(); err != nil {
+			t.Fatalf("worktree add: %v %s", err, out)
+		}
+		f.env.projectDir = wt
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), stop)
+		if !deferToSettings("stop", in(f), f.env) {
+			t.Fatal("the main checkout's local file covers a session in the worktree")
+		}
+	})
+	t.Run("the root's false outranks the starting directory's true", func(t *testing.T) {
+		f := newGuardFixture(t)
+		root := repo(t)
+		sub := filepath.Join(root, "sub")
+		if err := os.MkdirAll(filepath.Join(sub, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.env.projectDir = sub
+		f.user(t, stop)
+		f.write(t, filepath.Join(sub, ".claude", "settings.local.json"), `{"disableAllHooks":true}`)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), `{"disableAllHooks":false}`)
+		if !deferToSettings("stop", in(f), f.env) {
+			t.Fatal("the root file is the higher one and re-enables hooks")
+		}
+		f.write(t, filepath.Join(sub, ".claude", "settings.local.json"), `{"disableAllHooks":false}`)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), `{"disableAllHooks":true}`)
+		if deferToSettings("stop", in(f), f.env) {
+			t.Fatal("the root file disables hooks")
+		}
+	})
+	t.Run("a root that is the home directory is not read but still blocks", func(t *testing.T) {
+		f := newGuardFixture(t)
+		root := repo(t)
+		sub := filepath.Join(root, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		f.env.projectDir = sub
+		t.Setenv("HOME", root)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), stop)
+		if deferToSettings("stop", in(f), f.env) {
+			t.Fatal("Claude Code does not read a home-directory root's local file")
+		}
+		f.user(t, stop)
+		f.write(t, filepath.Join(root, ".claude", "settings.local.json"), `{"disableAllHooks":true}`)
+		if deferToSettings("stop", in(f), f.env) {
+			t.Fatal("an unread root file that disables hooks still blocks")
 		}
 	})
 }

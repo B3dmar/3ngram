@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,7 +13,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // The deferral guard for hooks the Claude Code plugin registers. Claude Code
@@ -130,8 +134,7 @@ func currentGuardEnv() guardEnv {
 // leaves open which project's files are active (a /cd, a worktree, or just a
 // Bash cd), so neither project's files count then, nor when the input names
 // no cwd at all.
-func (g guardEnv) userFiles(hookCwd string) []string {
-	var files []string
+func (g guardEnv) userFiles(ctx context.Context, hookCwd string) (files, watched []string, known bool) {
 	if g.configDir != "" {
 		files = append(files, filepath.Join(g.configDir, "settings.json"))
 	}
@@ -139,8 +142,76 @@ func (g guardEnv) userFiles(hookCwd string) []string {
 		files = append(files,
 			filepath.Join(g.projectDir, ".claude", "settings.json"),
 			filepath.Join(g.projectDir, ".claude", "settings.local.json"))
+		// Started in a subdirectory or a linked worktree, Claude Code reads
+		// the local file at the main checkout's root too, above the one in the
+		// starting directory, unless the root is the home directory or not
+		// the user's. Where the guard can tell it is read, it counts; where it
+		// cannot, it can still only block (see watched).
+		root, ok := mainCheckoutRoot(ctx, g.projectDir)
+		if !ok {
+			return nil, nil, false
+		}
+		if root != "" && !sameDir(root, g.projectDir) {
+			local := filepath.Join(root, ".claude", "settings.local.json")
+			if readsRootLocal(root) {
+				files = append(files, local)
+			} else {
+				watched = append(watched, local)
+			}
+		}
 	}
-	return files
+	return files, watched, true
+}
+
+// gitBudget bounds every git call one guard decision makes, together: the
+// precheck hook it may stand down has 2 s in all.
+const gitBudget = 300 * time.Millisecond
+
+// mainCheckoutRoot is the root of the main checkout that dir belongs to, or
+// "" when dir is in no repository. ok is false when git could not say (git
+// missing, refusing the directory, too slow, an unusual layout such as a
+// separate git dir or a submodule): the root may hold a local settings file
+// the guard cannot see, so nothing counts then.
+func mainCheckoutRoot(ctx context.Context, dir string) (root string, ok bool) {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 128 && bytes.Contains(exit.Stderr, []byte("not a git repository")) {
+			return "", true
+		}
+		return "", false
+	}
+	common := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+	if filepath.Base(common) != ".git" {
+		return "", false
+	}
+	return filepath.Dir(common), true
+}
+
+// readsRootLocal reports whether Claude Code reads the repository root's
+// local settings file: not when the root is the home directory, and not when
+// the root, its .git or its .claude entry belongs to another user.
+func readsRootLocal(root string) bool {
+	if home, err := os.UserHomeDir(); err != nil || sameDir(home, root) {
+		return false
+	}
+	for _, p := range []string{root, filepath.Join(root, ".git"), filepath.Join(root, ".claude")} {
+		info, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) && p != root {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || int(st.Uid) != os.Getuid() {
+			return false
+		}
+	}
+	return true
 }
 
 func sameDir(a, b string) bool {
@@ -263,9 +334,25 @@ func deferToSettings(sub string, input []byte, env guardEnv) bool {
 	if !ok {
 		return false
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitBudget)
+	defer cancel()
 	files := docs
+	var watched []string
 	if !hooksOnly {
-		files = append(env.userFiles(hookCwd), docs...)
+		user, w, known := env.userFiles(ctx, hookCwd)
+		if !known {
+			return false
+		}
+		watched = w
+		files = append(user, docs...)
+	}
+	// A settings file Claude Code may read but the guard cannot count can
+	// still turn hooks off, or hide whether it does.
+	for _, file := range watched {
+		s, state := readSettings(file)
+		if state == settingsUnreadable || (state == settingsRead && s.DisableAllHooks != nil && *s.DisableAllHooks) {
+			return false
+		}
 	}
 	// files run from the lowest precedence to the highest: user, project,
 	// local, then managed. A file that exists but cannot be read may set
@@ -280,7 +367,7 @@ func deferToSettings(sub string, input []byte, env guardEnv) bool {
 			settings = append(settings, s)
 		}
 	}
-	if effectivelyDisabled(settings) || (!hooksOnly && env.uncertainProjectDisables(hookCwd)) {
+	if effectivelyDisabled(settings) || (!hooksOnly && env.uncertainProjectDisables(ctx, hookCwd)) {
 		return false
 	}
 	family := subcommandFamily(sub)
@@ -330,7 +417,7 @@ func readSettings(file string) (settingsHooks, settingsState) {
 // are ignored, but one of them that sets disableAllHooks, or cannot be read,
 // could still turn off the user hooks the guard would defer to. The starting
 // project and the hook's directory are the candidates checked.
-func (g guardEnv) uncertainProjectDisables(hookCwd string) bool {
+func (g guardEnv) uncertainProjectDisables(ctx context.Context, hookCwd string) bool {
 	if g.projectDir != "" && hookCwd != "" && sameDir(hookCwd, g.projectDir) {
 		return false
 	}
@@ -338,8 +425,16 @@ func (g guardEnv) uncertainProjectDisables(hookCwd string) bool {
 		if dir == "" {
 			continue
 		}
-		for _, name := range []string{"settings.json", "settings.local.json"} {
-			s, state := readSettings(filepath.Join(dir, ".claude", name))
+		candidates := []string{filepath.Join(dir, ".claude", "settings.json"), filepath.Join(dir, ".claude", "settings.local.json")}
+		root, ok := mainCheckoutRoot(ctx, dir)
+		if !ok {
+			return true
+		}
+		if root != "" && !sameDir(root, dir) {
+			candidates = append(candidates, filepath.Join(root, ".claude", "settings.local.json"))
+		}
+		for _, file := range candidates {
+			s, state := readSettings(file)
 			if state == settingsUnreadable || (state == settingsRead && s.DisableAllHooks != nil && *s.DisableAllHooks) {
 				return true
 			}
@@ -372,17 +467,69 @@ type hookHandler struct {
 	execForm bool
 }
 
-// plainHandlerKeys are the only handler fields a covering settings hook may
-// carry. Every other field (`if`, `async`, `asyncRewake`, `shell`, and
-// whatever Claude Code adds next) can change when or whether the hook runs,
-// so a handler that sets one claims nothing. `once` is honored only in skill
-// frontmatter and ignored in settings files, so it changes nothing here.
-var plainHandlerKeys = map[string]bool{"type": true, "command": true, "args": true, "timeout": true, "statusMessage": true, "once": true}
+// plainHandlerFields are the only handler fields a covering settings hook
+// may carry, each with the JSON kind its value must have. Every other field
+// (`if`, `async`, `asyncRewake`, `shell`, and whatever Claude Code adds next)
+// can change when or whether the hook runs, so a handler that sets one claims
+// nothing. `once` is honored only in skill frontmatter and ignored in
+// settings files, so it changes nothing here. A value of another kind (a null
+// timeout, a numeric statusMessage, a string once) is schema-invalid, and
+// Claude Code skips the entry, so it claims nothing either.
+var plainHandlerFields = map[string]jsonKind{
+	"type": jsonString, "command": jsonString, "args": jsonArray,
+	"timeout": jsonNumber, "statusMessage": jsonString, "once": jsonBool,
+}
+
+type jsonKind int
+
+const (
+	jsonInvalid jsonKind = iota
+	jsonNull
+	jsonString
+	jsonNumber
+	jsonBool
+	jsonArray
+	jsonObject
+)
+
+func kindOf(raw json.RawMessage) jsonKind {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 {
+		return jsonInvalid
+	}
+	switch t[0] {
+	case 'n':
+		return jsonNull
+	case '"':
+		return jsonString
+	case 't', 'f':
+		return jsonBool
+	case '[':
+		return jsonArray
+	case '{':
+		return jsonObject
+	default:
+		return jsonNumber
+	}
+}
 
 func plainHandler(raw map[string]json.RawMessage) (hookHandler, bool) {
-	for key := range raw {
-		if !plainHandlerKeys[key] {
+	for key, value := range raw {
+		if want, ok := plainHandlerFields[key]; !ok || kindOf(value) != want {
 			return hookHandler{}, false
+		}
+	}
+	// Every exec-form argument is a string; a null or a number in the list is
+	// not one Claude Code passes, so the entry does not run.
+	if args, ok := raw["args"]; ok {
+		var elems []json.RawMessage
+		if json.Unmarshal(args, &elems) != nil {
+			return hookHandler{}, false
+		}
+		for _, e := range elems {
+			if kindOf(e) != jsonString {
+				return hookHandler{}, false
+			}
 		}
 	}
 	var h hookHandler
@@ -390,18 +537,7 @@ func plainHandler(raw map[string]json.RawMessage) (hookHandler, bool) {
 	if json.Unmarshal(b, &h) != nil || h.Type != "command" {
 		return hookHandler{}, false
 	}
-	if args, ok := raw["args"]; ok {
-		// A null leaves open which form Claude Code picks, so it claims nothing.
-		if bytes.Equal(bytes.TrimSpace(args), []byte("null")) {
-			return hookHandler{}, false
-		}
-		h.execForm = true
-	}
-	// timeout is a number; a null one is schema-invalid, and Claude Code
-	// skips an invalid entry, so it is not an omitted timeout.
-	if timeout, ok := raw["timeout"]; ok && bytes.Equal(bytes.TrimSpace(timeout), []byte("null")) {
-		return hookHandler{}, false
-	}
+	_, h.execForm = raw["args"]
 	return h, true
 }
 
@@ -413,7 +549,17 @@ func settingsOwn(s settingsHooks, target hookTarget, family, instance string) bo
 		}
 		for _, raw := range group.Hooks {
 			h, ok := plainHandler(raw)
-			if !ok || (h.Timeout != nil && *h.Timeout < need) {
+			if !ok {
+				continue
+			}
+			timeout := h.Timeout
+			if timeout == nil && target.event == "SessionEnd" {
+				// SessionEnd gives a hook without its own timeout the session's
+				// short end budget, not the usual default.
+				d := sessionEndDefaultTimeout()
+				timeout = &d
+			}
+			if timeout != nil && *timeout < need {
 				continue
 			}
 			if sub, ok := hookSubcommand(h); ok && subcommandFamily(sub) == family {
@@ -490,8 +636,11 @@ func hookSubcommand(h hookHandler) (string, bool) {
 	if h.execForm {
 		// No shell: command is the program itself and is never split, so
 		// `"command": "3ngram-hook briefing", "args": []` names a program
-		// that does not exist.
-		words = append([]string{h.Command}, h.Args...)
+		// that does not exist. Claude Code substitutes path placeholders
+		// first; a settings hook can name ${CLAUDE_PROJECT_DIR}.
+		for _, w := range append([]string{h.Command}, h.Args...) {
+			words = append(words, expandProjectDir(w))
+		}
 	} else {
 		if strings.ContainsAny(h.Command, shellMeta) {
 			return "", false
@@ -543,4 +692,25 @@ func replayStdin(prefix []byte, rest io.Reader) {
 		_ = w.Close()
 	}()
 	os.Stdin = r
+}
+
+// sessionEndDefaultTimeout is the timeout, in seconds, Claude Code gives a
+// SessionEnd hook that sets none: 1.5 s, or what
+// CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS sets.
+func sessionEndDefaultTimeout() float64 {
+	if ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS"))); err == nil && ms > 0 {
+		return float64(ms) / 1000
+	}
+	return 1.5
+}
+
+// expandProjectDir substitutes ${CLAUDE_PROJECT_DIR} the way Claude Code does
+// for a settings hook. Without the variable it is left as written, so the
+// program does not resolve and the handler claims nothing.
+func expandProjectDir(word string) string {
+	dir := os.Getenv("CLAUDE_PROJECT_DIR")
+	if dir == "" {
+		return word
+	}
+	return strings.ReplaceAll(word, "${CLAUDE_PROJECT_DIR}", dir)
 }
