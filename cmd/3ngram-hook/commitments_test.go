@@ -792,3 +792,88 @@ func hasPartial(env commitmentsEnvelope, part, reason string) bool {
 	}
 	return false
 }
+
+// stallGetwd makes os.Getwd block until the test ends.
+func stallGetwd(t *testing.T) {
+	t.Helper()
+	release := make(chan struct{})
+	orig := osGetwd
+	osGetwd = func() (string, error) {
+		<-release
+		return "", os.ErrDeadlineExceeded
+	}
+	t.Cleanup(func() {
+		osGetwd = orig
+		close(release)
+	})
+}
+
+// stallKeyFile makes the key file a FIFO nobody writes, so reading it blocks
+// until the test ends.
+func stallKeyFile(t *testing.T) {
+	t.Helper()
+	t.Setenv("THREENGRAM_API_KEY", "")
+	keyFile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "3ngram", "api-key")
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(keyFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(keyFile, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+}
+
+// runWithin runs the command and fails, instead of hanging the suite, if it
+// does not answer within limit.
+func runWithin(t *testing.T, limit time.Duration, cwd string, args ...string) runResult {
+	t.Helper()
+	done := make(chan runResult, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		code := commitmentsMain(context.Background(), args, cwd, &stdout, &stderr)
+		var env commitmentsEnvelope
+		_ = json.Unmarshal(stdout.Bytes(), &env)
+		done <- runResult{env: env, code: code, stdout: stdout.String(), stderr: stderr.String()}
+	}()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(limit):
+		t.Fatalf("%v did not answer within %v", args, limit)
+		return runResult{}
+	}
+}
+
+// A working directory that cannot be read in time ends the operation with a
+// timeout envelope, and the credential for its fingerprint is read under the
+// same deadline: a stalled key file must not hold the envelope back.
+func TestCommitmentsCwdFailureKeepsTheCredentialBounded(t *testing.T) {
+	withDeadline(t, 200*time.Millisecond)
+	newReadServer(t)
+	stallGetwd(t)
+	stallKeyFile(t)
+
+	r := runWithin(t, 3*time.Second, "", "list")
+
+	if r.env.OK || r.env.Error == nil || r.env.Error.Kind != kindTimeout || r.env.Error.Route != "cwd" {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A relative --cwd needs the working directory too, and reads it under the
+// deadline like an absent one.
+func TestCommitmentsRelativeCwdIsResolvedUnderTheDeadline(t *testing.T) {
+	withDeadline(t, 200*time.Millisecond)
+	newReadServer(t)
+	stallGetwd(t)
+
+	r := runWithin(t, 3*time.Second, "", "context", "--cwd", "sub/dir")
+
+	if r.env.OK || r.env.Error == nil || r.env.Error.Kind != kindTimeout || r.env.Error.Route != "cwd" {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
