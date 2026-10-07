@@ -26,14 +26,14 @@ type proposalsResponse struct {
 }
 
 type proposalRow struct {
-	ID         string  `json:"id"`
-	FromID     string  `json:"fromId"`
-	ToID       string  `json:"toId"`
-	EdgeType   string  `json:"edgeType"`
-	MemoryType string  `json:"memoryType"`
-	Similarity float64 `json:"similarity"`
-	Rationale  *string `json:"rationale"`
-	Status     string  `json:"status"`
+	ID         string   `json:"id"`
+	FromID     string   `json:"fromId"`
+	ToID       string   `json:"toId"`
+	EdgeType   string   `json:"edgeType"`
+	MemoryType string   `json:"memoryType"`
+	Similarity *float64 `json:"similarity"`
+	Rationale  *string  `json:"rationale"`
+	Status     string   `json:"status"`
 }
 
 // evidenceItem is one piece of related evidence. Fields about another memory
@@ -127,6 +127,7 @@ type proposalWindow struct {
 // truncation are reported apart from the lineage's.
 type historyWindow struct {
 	LineageNodeCap         int  `json:"lineageNodeCap"`
+	LineageEdgeCap         int  `json:"lineageEdgeCap"`
 	RelationshipCap        int  `json:"relationshipCap"`
 	EventCap               int  `json:"eventCap"`
 	LineageTruncated       bool `json:"lineageTruncated"`
@@ -146,7 +147,7 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 	// Only a lineage the server actually read is an inspected window.
 	if history != nil && history.lineageOK {
 		ev.Inspected.History = &historyWindow{
-			LineageNodeCap: historyLineageNodeCap, RelationshipCap: historyRelationshipCap, EventCap: historyEventCap,
+			LineageNodeCap: historyLineageNodeCap, LineageEdgeCap: historyLineageEdgeCap, RelationshipCap: historyRelationshipCap, EventCap: historyEventCap,
 			LineageTruncated: history.LineageTruncated, RelationshipsTruncated: history.RelationshipsTruncated,
 			EventsTruncated: history.EventsTruncated,
 		}
@@ -267,14 +268,13 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 			}
 			continue
 		}
-		similarity := p.Similarity
 		relation := "predecessor"
 		if p.ToID == memoryID {
 			relation = "successor"
 		}
 		items = append(items, evidenceItem{
 			Kind: evidenceProposal, Source: "3ngram", EdgeType: p.EdgeType, Relation: relation,
-			MemoryID: other, Topic: known[other], ProposalID: p.ID, Similarity: &similarity, Rationale: p.Rationale,
+			MemoryID: other, Topic: known[other], ProposalID: p.ID, Similarity: p.Similarity, Rationale: p.Rationale,
 		})
 	}
 
@@ -292,12 +292,14 @@ func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string,
 	return items, hidden, unverifiedProposals, window, partial
 }
 
-// proposalsComplete holds every row to the fields the evidence reads. A row
-// without its id, endpoints, edge type or status would be skipped in silence
-// and leave a window that says it was inspected.
+// proposalsComplete holds every row to the fields the evidence reads and to
+// the status the read asked for. A row without its id, endpoints, edge type
+// or similarity would be skipped or shown with a made-up zero, and a decided
+// proposal is not pending evidence; either leaves a window that says it was
+// inspected when it was not.
 func proposalsComplete(rows []proposalRow) bool {
 	for _, p := range rows {
-		if p.ID == "" || p.FromID == "" || p.ToID == "" || p.EdgeType == "" || p.Status == "" {
+		if p.ID == "" || p.FromID == "" || p.ToID == "" || p.EdgeType == "" || p.Similarity == nil || p.Status != "proposed" {
 			return false
 		}
 	}

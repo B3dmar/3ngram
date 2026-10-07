@@ -96,6 +96,12 @@ const CONSTANTS = [
     ],
   },
   {
+    go: 'historyLineageEdgeCap',
+    zod: 'MEMORY_HISTORY_LINEAGE_EDGE_LIMIT',
+    source: 'db',
+    why: ['Lineage edges the history read returns at most; it truncates on its own.'],
+  },
+  {
     go: 'historyRelationshipCap',
     zod: 'MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT',
     source: 'db',

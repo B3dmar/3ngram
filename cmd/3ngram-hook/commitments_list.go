@@ -66,8 +66,8 @@ const (
 )
 
 type meResponse struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID    string       `json:"id"`
+	Email jsonNullable `json:"email"`
 }
 
 // memoryFiling is the subset of GET /api/v1/memories/:id the filing check
@@ -144,7 +144,9 @@ func (s *listSection) section() (commitmentSection, bool) {
 	// The briefing contract's own invariants: the count covers the slice, and
 	// hasMore says exactly whether it is short of the count. A section that
 	// breaks either would report contradictory counts or a false truncation.
-	if *s.Count < len(items) {
+	// More rows than the request's sectionLimit allows is not this read's
+	// answer either, however consistent its own counts are.
+	if *s.Count < len(items) || len(items) > maxBriefingSectionCeiling {
 		return commitmentSection{}, false
 	}
 	out := commitmentSection{Count: *s.Count, Items: items}
@@ -198,7 +200,8 @@ func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelop
 		return failEnvelope(env, mismatch)
 	}
 	commitments, overdue, complete := wide.sections()
-	if !complete {
+	// generatedAt is the read's freshness; a list without it is incomplete.
+	if !complete || wide.GeneratedAt == "" {
 		incomplete := &readError{Kind: kindBadResponse, Route: "briefing", Hint: "commitment sections missing or inconsistent"}
 		logReadFailure(stderr, incomplete)
 		return failEnvelope(env, incomplete)
@@ -206,8 +209,17 @@ func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelop
 	effective := wide.Selector
 	env.Context.Effective = &effective
 
+	// A 200 without the account's id and email is not an identity: the
+	// header would show a blank account under real rows.
+	if meErr == nil && (me.ID == "" || !me.Email.Present) {
+		meErr = &readError{Kind: kindBadResponse, Route: "me"}
+	}
 	if meErr == nil {
-		env.Context.Account = &accountInfo{ID: me.ID, Email: me.Email}
+		email := ""
+		if me.Email.Value != nil {
+			email = *me.Email.Value
+		}
+		env.Context.Account = &accountInfo{ID: me.ID, Email: email}
 	} else {
 		logReadFailure(stderr, meErr)
 		env.Partial = append(env.Partial, partialPart{Part: "account", Reason: meErr.Kind})
@@ -507,6 +519,12 @@ launch:
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
+			break launch
+		}
+		// Both cases can be ready at once, and select picks at random: a
+		// cancelled batch must not launch another lookup.
+		if ctx.Err() != nil {
+			<-sem
 			break launch
 		}
 		wg.Add(1)
