@@ -64,6 +64,15 @@ const CONSTANTS = [
       'stops collecting rather than trading every row for the last one.',
     ],
   },
+  {
+    go: 'maxBriefingSectionCeiling',
+    zod: 'MAX_BRIEFING_SECTION_CEILING',
+    why: [
+      'Largest `sectionLimit` the briefing GET accepts. `commitments list` asks',
+      'for exactly this, so `hasMore` is the only reason a row can be missing;',
+      'one past it would 400 the whole read.',
+    ],
+  },
 ]
 
 function goValue(name) {

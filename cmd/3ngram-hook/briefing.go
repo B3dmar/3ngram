@@ -42,6 +42,8 @@ type briefingSelector struct {
 type commitmentSection struct {
 	Count int                  `json:"count"`
 	Items []briefingCommitment `json:"items"`
+	// HasMore is the server's explicit truncation signal (count > items).
+	HasMore bool `json:"hasMore"`
 }
 
 type memorySection struct {
@@ -301,15 +303,27 @@ func deriveBriefingSelector(project string) briefingSelector {
 // rows are what gets stamped.
 func buildBriefingQuery(s briefingSelector) string {
 	values := url.Values{}
+	encodeSelector(values, s)
+	values.Set("mode", "full")
+	return "?" + values.Encode()
+}
+
+// encodeSelector writes a selector as the flat query keys router.ts reshapes
+// into the nested selector. scope_project carries both keys and an explicit
+// includeUnscoped, so a request never relies on the server default to stay
+// strict.
+func encodeSelector(values url.Values, s briefingSelector) {
 	values.Set("kind", s.Kind)
 	switch s.Kind {
 	case "scope":
 		values.Set("scope", s.Scope)
 	case "project":
 		values.Set("project", s.Project)
+	case "scope_project":
+		values.Set("scope", s.Scope)
+		values.Set("project", s.Project)
+		values.Set("includeUnscoped", strconv.FormatBool(s.IncludeUnscoped != nil && *s.IncludeUnscoped))
 	}
-	values.Set("mode", "full")
-	return "?" + values.Encode()
 }
 
 // briefedRow pairs one briefed commitment with the byte offset just past the

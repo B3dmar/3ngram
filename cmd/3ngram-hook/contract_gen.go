@@ -26,4 +26,10 @@ const (
 	// the whole open 400s and the session loses its sessionRunId, so the hook
 	// stops collecting rather than trading every row for the last one.
 	maxBriefedMemories = 100
+
+	// MAX_BRIEFING_SECTION_CEILING.
+	// Largest `sectionLimit` the briefing GET accepts. `commitments list` asks
+	// for exactly this, so `hasMore` is the only reason a row can be missing;
+	// one past it would 400 the whole read.
+	maxBriefingSectionCeiling = 100
 )

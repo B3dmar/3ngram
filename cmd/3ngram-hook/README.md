@@ -32,11 +32,24 @@ The nudge does not change that: it asks the *model* to call `remember` /
 | `3ngram-hook sync [--push\|--pull\|--both]` | (none) | **Deferred** — a no-op (prints "not yet supported" and exits 0); the sync routes do not exist yet. SessionEnd now runs `close` instead |
 | `3ngram-hook verify` | (manual) | Print resolved API base + key status, probe `GET /api/v1/briefing` |
 | `3ngram-hook version` | (manual) | Print the binary version (also `--version`) |
+| `3ngram-hook commitments list [--scope S] [--include-unscoped] [--cwd DIR]` | (plugin) | **Not a hook.** Read-only data path of the Claude Code commitment panel ([#255](https://github.com/B3dmar/3ngram/issues/255)). Prints one JSON envelope; see [Commitments read path](#commitments-read-path) |
+| `3ngram-hook commitments context [--scope S] [--include-unscoped] [--cwd DIR]` | (plugin) | **Not a hook.** Same envelope context as `list` (backend host, credential fingerprint, selector) with **no network call** |
 
 Every subcommand accepts `--agent <name>` — the harness half of the session
 natural key `(agent, session_id)`. Claude Code is detected from its own
 environment; name the harness explicitly anywhere else (see
 [Session lifecycle](#session-lifecycle)).
+
+## Commitments read path
+
+`3ngram-hook commitments` is called by the Claude Code commitment panel, not by a hook event. It prints exactly one JSON envelope (`"contract": "3ngram-hook.commitments.v1"`) and exits `0` on success (partial results included), `1` on a local problem (`usage`, `no_key`, `invalid_selector`) and `2` on anything at or on the way to the backend. Golden envelopes live in [`testdata/commitments/`](testdata/commitments/).
+
+- **Read-only by construction.** Every request goes through `apiGet`, which can only send `GET`, to `/api/v1/me`, `/api/v1/briefing` and `/api/v1/memories/:id`. A parse-level allowlist in `readapi_test.go` holds every data-path file (`commitments*.go`, `readapi*.go`) to it: no reference to the write-capable `apiRequest`, no `http` convenience call or default client, no `os` member beyond reading the environment and working directory, no `exec` or `ioutil`, and requests only as exactly `http.MethodGet`. A memory id is put into a path only as one escaped segment, and the dot segments `.` and `..` are refused; what an id may look like stays `packages/schema`'s to decide. Redirects are never followed, so the key cannot be replayed to another host.
+- **Selector.** The project comes from the same git-remote rule as `briefing`. Without `--scope` the read is `kind=project`. With `--scope` it is `scope_project`, strict unless `--include-unscoped` is given; `--include-unscoped` without `--scope` is rejected before any request. A briefing echo wider than the request fails the read with `selector_mismatch`.
+- **Unscoped rows are verified, never inferred.** With `--include-unscoped`, a row the strict read also returned is `project`. Any other row is read back through `GET /api/v1/memories/:id` (at most 25, 4 at a time) and labelled `unscoped` only when its stored project is null in the requested scope; a row that moved, was superseded, archived or deleted is dropped and counted as `changedDuringRead`, and a row that could not be read is `unknown`. The strict read runs only after the widened one has answered, so a row it returns describes the filing at or after the widened read, and its own echo is checked too: if it answered under a wider selector, its rows are verified like the others.
+- **One deadline, one credential.** The 9 s deadline starts before anything that can block, the `git` call that derives the project included, and every request of the operation shares it; SIGTERM or SIGINT cancels it. Work the deadline cut is reported under `partial`, never silently dropped. The API base and key are resolved once per operation, so a key file rotated mid-operation cannot make two reads of one envelope authenticate as different accounts. A 200 briefing that omits either commitment section, or its count or items, fails as `bad_response` rather than reading as an empty list.
+- **Context fingerprint.** Every envelope, errors included, carries `context.fingerprint`, a hash of the API base, a hash of the key and the requested selector. `commitments context` computes it without a request, so the panel can check whether rows it holds still belong to the current context after a read failed without an envelope.
+- **Ownership and source.** The read routes expose neither `commitments.owner` nor a memory's source session, so every row reports ownership `unclear` (`owner_not_exposed`) and the envelope lists both under `missing`.
 
 ## Session lifecycle
 

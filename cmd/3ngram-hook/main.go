@@ -16,7 +16,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|stop|close|precheck|sync|verify|version> [--agent <name>]")
+		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|stop|close|precheck|commitments|sync|verify|version> [--agent <name>]")
 		os.Exit(1)
 	}
 
@@ -41,6 +41,10 @@ func main() {
 		os.Exit(runClose(args))
 	case "precheck":
 		os.Exit(runPrecheck())
+	// Not a hook: the read-only data path of the Claude Code commitment panel
+	// (#255). It prints one JSON envelope and exits non-zero on failure.
+	case "commitments":
+		os.Exit(runCommitments(args))
 	case "sync":
 		os.Exit(runSync())
 	case "verify":
