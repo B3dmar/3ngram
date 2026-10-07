@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // GitHub references in a commitment are RELATED evidence, never proof: a
@@ -76,10 +77,22 @@ func (g githubEvidence) signalsResolution() bool {
 }
 
 var (
-	githubURLRef       = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/(?:issues|pull)/(\d+)`)
-	githubQualifiedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#(\d+)\b`)
-	githubBareRef      = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/#&])#(\d+)\b`)
+	githubURLRef       = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/(?:issues|pull)/(\d{1,9})\b`)
+	githubQualifiedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#(\d{1,9})\b`)
+	githubBareRef      = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/#&])#(\d{1,9})\b`)
+	githubSegment      = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
+
+// validRepo keeps a repository whose owner and name are plain path segments:
+// never a dot segment, never a character that could change the API path.
+func validRepo(r githubRepo) bool {
+	for _, seg := range []string{r.Owner, r.Name} {
+		if seg == "." || seg == ".." || !githubSegment.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
 
 // refScan is what extraction found in one text: the references it can
 // resolve, and the bare ones it refused to guess.
@@ -97,7 +110,7 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 	var scan refScan
 	seen := map[string]bool{}
 	add := func(ref githubRef) {
-		if ref.Number <= 0 || seen[ref.key()] {
+		if ref.Number <= 0 || !validRepo(ref.Repo) || seen[ref.key()] {
 			return
 		}
 		seen[ref.key()] = true
@@ -138,27 +151,44 @@ func markConsumed(consumed []bool, from, to int) {
 	}
 }
 
-// followsRepoLikeToken reports whether the word right before position hash
-// (one space between) carries a character repository names have and English
-// words do not: "3ngram-platform #718", "repo.js #3", "my_repo #2".
+// followsRepoLikeToken reports whether the word right before position hash,
+// separated from it by whitespace, carries a separator INSIDE it the way a
+// repository name does: "3ngram-platform #718", "repo.js #3", "my_repo #2".
+// Sentence punctuation around the word does not count ("Done. #251",
+// "(see #4)"). The rule fails safe: a hyphenated English word such as
+// "follow-up #12" is skipped too and counted as ambiguous, since resolving
+// it against the wrong repository would be worse than not resolving it;
+// owner/repo#N is always unambiguous.
 func followsRepoLikeToken(text string, hash int) bool {
-	before := strings.TrimRight(text[:hash], " ")
-	if len(before) == len(text[:hash]) || before == "" {
+	before := strings.TrimRightFunc(text[:hash], unicode.IsSpace)
+	if len(before) == hash || before == "" {
 		return false
 	}
-	start := strings.LastIndexAny(before, " \t\n([{\"'") + 1
-	return strings.ContainsAny(before[start:], "-._/")
+	start := strings.LastIndexFunc(before, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("([{\"'", r) }) + 1
+	word := strings.TrimRight(before[start:], ".,;:!?)]}\"'")
+	for i := 1; i < len(word)-1; i++ {
+		if strings.ContainsRune("-._/", rune(word[i])) && isAlnum(word[i-1]) && isAlnum(word[i+1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAlnum(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // githubRemote parses an origin remote URL into its GitHub repository, or
 // returns nil for any remote that is not github.com.
 func githubRemote(remote string) *githubRepo {
-	remote = strings.TrimSuffix(strings.TrimSpace(remote), ".git")
+	remote = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(remote), "/"), ".git")
 	for _, prefix := range []string{"git@github.com:", "ssh://git@github.com/", "https://github.com/", "http://github.com/"} {
 		if rest, ok := strings.CutPrefix(remote, prefix); ok {
 			parts := strings.Split(rest, "/")
-			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-				return &githubRepo{Owner: parts[0], Name: parts[1]}
+			if len(parts) == 2 {
+				if repo := (githubRepo{Owner: parts[0], Name: parts[1]}); validRepo(repo) {
+					return &repo
+				}
 			}
 		}
 	}
@@ -202,13 +232,75 @@ type ghIssue struct {
 	} `json:"pull_request"`
 }
 
+// Kinds a gh failure can have. The batch-fatal ones fail every later lookup
+// too, so they stop the batch; the others concern one reference only.
+const (
+	kindGHMissing         = "gh_missing"
+	kindGHUnauthenticated = "gh_unauthenticated"
+	kindGHForbidden       = "forbidden"
+)
+
+func batchFatal(kind string) bool {
+	switch kind {
+	case kindGHMissing, kindGHUnauthenticated, kindRateLimited, kindTimeout:
+		return true
+	}
+	return false
+}
+
+// maxGitHubTitle bounds an issue or PR title. Titles are third-party text,
+// shown as such and never as instructions, and a long one says no more.
+const maxGitHubTitle = 200
+
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// ghEnvironment pins gh to github.com (an enterprise GH_HOST or default
+// host would otherwise send a github.com reference to another server), drops
+// a GH_REPO that could redirect it, and disables prompts, pagers and update
+// checks.
+func ghEnvironment(base []string) []string {
+	env := make([]string, 0, len(base)+5)
+	for _, kv := range base {
+		if strings.HasPrefix(kv, "GH_HOST=") || strings.HasPrefix(kv, "GH_REPO=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "GH_HOST=github.com", "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "GH_PAGER=", "NO_COLOR=1")
+}
+
+// classifyGHFailure maps a failed `gh api` to a kind from its stderr, which
+// is only ever matched here, never emitted. A reference GitHub does not know,
+// or no longer has, is evidence with state not_found rather than a failure.
+func classifyGHFailure(msg string, ev *githubEvidence) *readError {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(msg, "HTTP 404") || strings.Contains(msg, "HTTP 410"):
+		ev.State = githubStateNotFound
+		return nil
+	case strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "gh auth login"):
+		return &readError{Kind: kindGHUnauthenticated, Route: "github"}
+	case strings.Contains(msg, "HTTP 429") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "abuse"):
+		return &readError{Kind: kindRateLimited, Route: "github"}
+	case strings.Contains(msg, "HTTP 403"):
+		return &readError{Kind: kindGHForbidden, Route: "github"}
+	default:
+		return &readError{Kind: kindUnavailable, Route: "github"}
+	}
+}
+
 // githubLookup reads one reference. A failure that will fail every lookup
 // (gh missing, not signed in, rate limited) is returned as an error; a
 // reference GitHub does not know is evidence with state not_found.
 func githubLookup(ctx context.Context, ref githubRef) (githubEvidence, *readError) {
 	path := "repos/" + ref.Repo.Owner + "/" + ref.Repo.Name + "/issues/" + strconv.Itoa(ref.Number)
 	cmd := exec.CommandContext(ctx, "gh", "api", "--method", "GET", path)
-	cmd.Env = append(cmd.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "GH_PAGER=", "NO_COLOR=1")
+	cmd.Env = ghEnvironment(cmd.Environ())
 	// gh runs in its own process group, and cancelling (the deadline, or the
 	// plugin's SIGTERM) kills the whole group, so nothing it started outlives
 	// the operation. WaitDelay bounds the wait for pipes a killed child left
@@ -225,25 +317,15 @@ func githubLookup(ctx context.Context, ref githubRef) (githubEvidence, *readErro
 			return ev, classifyReadFailure(ctx, "github", 0, nil)
 		}
 		if errors.Is(err, exec.ErrNotFound) {
-			return ev, &readError{Kind: "gh_missing", Route: "github"}
+			return ev, &readError{Kind: kindGHMissing, Route: "github"}
 		}
-		switch msg := stderr.String(); {
-		case strings.Contains(msg, "HTTP 404"):
-			ev.State = githubStateNotFound
-			return ev, nil
-		case strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "gh auth login"):
-			return ev, &readError{Kind: "gh_unauthenticated", Route: "github"}
-		case strings.Contains(msg, "HTTP 403") || strings.Contains(msg, "HTTP 429") || strings.Contains(strings.ToLower(msg), "rate limit"):
-			return ev, &readError{Kind: kindRateLimited, Route: "github"}
-		default:
-			return ev, &readError{Kind: kindUnavailable, Route: "github"}
-		}
+		return ev, classifyGHFailure(stderr.String(), &ev)
 	}
 	var issue ghIssue
 	if json.Unmarshal(out, &issue) != nil || issue.Number != ref.Number {
 		return ev, &readError{Kind: kindBadResponse, Route: "github"}
 	}
-	ev.Title, ev.URL, ev.StateReason, ev.ClosedAt = issue.Title, issue.HTMLURL, issue.StateReason, issue.ClosedAt
+	ev.Title, ev.URL, ev.StateReason, ev.ClosedAt = truncateRunes(issue.Title, maxGitHubTitle), issue.HTMLURL, issue.StateReason, issue.ClosedAt
 	ev.Type, ev.State = "issue", issue.State
 	if issue.PullRequest != nil {
 		ev.Type = "pull_request"
@@ -269,7 +351,7 @@ func githubBatch(ctx context.Context, refs []githubRef) (map[string]githubEviden
 	var fatal *readError
 	forEachBounded(batchCtx, len(refs), readConcurrency, func(c context.Context, n int) {
 		results[n], errs[n] = githubLookup(c, refs[n])
-		if err := errs[n]; err != nil && err.Kind != kindBadResponse && err.Kind != kindCancelled {
+		if err := errs[n]; err != nil && batchFatal(err.Kind) {
 			mu.Lock()
 			if fatal == nil {
 				fatal = err
@@ -295,9 +377,14 @@ func githubBatch(ctx context.Context, refs []githubRef) (map[string]githubEviden
 		return found, fatal, len(found)
 	case ctx.Err() != nil:
 		return found, classifyReadFailure(ctx, "github", 0, nil), len(found)
-	default:
-		return found, &readError{Kind: kindBadResponse, Route: "github"}, len(found)
 	}
+	// Only per-reference failures: report the first, in reference order.
+	for _, err := range errs {
+		if err != nil {
+			return found, err, len(found)
+		}
+	}
+	return found, &readError{Kind: kindBadResponse, Route: "github"}, len(found)
 }
 
 // githubWindow is how far the GitHub search looked.

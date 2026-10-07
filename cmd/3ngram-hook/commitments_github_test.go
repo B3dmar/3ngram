@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -19,11 +21,16 @@ import (
 const fakeGHScript = `#!/bin/sh
 printf '%s\n' "$*" >> "$GH_FAKE_LOG"
 if [ "$GH_PROMPT_DISABLED" != 1 ]; then echo "prompts not disabled" >&2; exit 65; fi
+if [ "$GH_HOST" != github.com ] || [ -n "$GH_REPO" ]; then echo "host not pinned: $GH_HOST $GH_REPO" >&2; exit 66; fi
 if [ $# -ne 4 ] || [ "$1" != api ] || [ "$2" != --method ] || [ "$3" != GET ]; then echo "unexpected argv: $*" >&2; exit 64; fi
 case "$4" in repos/*/*/issues/*) ;; *) echo "unexpected path: $4" >&2; exit 64;; esac
-if [ -n "$GH_FAKE_SLEEP" ]; then sleep "$GH_FAKE_SLEEP"; fi
+if [ -n "$GH_FAKE_SLEEP" ]; then sleep "$GH_FAKE_SLEEP" & echo $! >> "$GH_FAKE_DIR/children"; wait $!; fi
+key="$(printf %s "$4" | tr / _)"
+if [ -f "$GH_FAKE_DIR/$key.403" ]; then echo "gh: Resource protected by organization SAML enforcement. (HTTP 403)" >&2; exit 1; fi
+if [ -f "$GH_FAKE_DIR/$key.410" ]; then echo "gh: This issue was deleted (HTTP 410)" >&2; exit 1; fi
+if [ -f "$GH_FAKE_DIR/ratelimited" ]; then echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2; exit 1; fi
 if [ -f "$GH_FAKE_DIR/unauthenticated" ]; then echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; fi
-f="$GH_FAKE_DIR/$(printf %s "$4" | tr / _).json"
+f="$GH_FAKE_DIR/$key.json"
 if [ -f "$f" ]; then cat "$f"; exit 0; fi
 echo "gh: Not Found (HTTP 404)" >&2
 exit 1
@@ -110,6 +117,14 @@ func TestExtractGitHubRefs(t *testing.T) {
 		{"html entity and heading", "&#123; # Heading", repo, nil, 0},
 		{"dedupe across forms", "B3dmar/3ngram#251, https://github.com/B3dmar/3ngram/pull/251 and PR #251", repo, []string{"B3dmar/3ngram#251"}, 0},
 		{"zero is no reference", "#0", repo, nil, 0},
+		{"sentence punctuation is not a separator", "Done. #251 (see #255)", repo, []string{"B3dmar/3ngram#251", "B3dmar/3ngram#255"}, 0},
+		{"hyphenated word fails safe", "follow-up #12", repo, nil, 1},
+		{"tab before bare", "repo-x\t#5", repo, nil, 1},
+		{"dotted abbreviation fails safe", "e.g. #12", repo, nil, 1},
+		{"markdown link", "[#5](https://example.test)", repo, []string{"B3dmar/3ngram#5"}, 0},
+		{"comment anchor is no reference", "issues/12#issuecomment-9", repo, nil, 0},
+		{"ten digits is no reference", "#1234567890", repo, nil, 0},
+		{"dot segment repo is refused", "o/..#3", nil, nil, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +147,9 @@ func TestGitHubRemote(t *testing.T) {
 		"ssh://git@github.com/B3dmar/3ngram.git":  "B3dmar/3ngram",
 		"https://gitlab.com/B3dmar/3ngram.git":    "",
 		"https://github.com/B3dmar/3ngram/tree/x": "",
-		"": "",
+		"https://github.com/B3dmar/3ngram/":       "B3dmar/3ngram",
+		"git@github.com:B3dmar/..":                "",
+		"":                                        "",
 	} {
 		got := ""
 		if r := githubRemote(remote); r != nil {
@@ -268,7 +285,7 @@ func TestCommitmentsListGitHubFailures(t *testing.T) {
 		gh := installFakeGH(t)
 		var items []fixtureItem
 		for i := 1; i <= 12; i++ {
-			items = append(items, item(i, "#"+strings.Repeat("1", i)))
+			items = append(items, item(i, "#"+strconv.Itoa(1000+i)))
 		}
 		githubListServer(t, items...)
 
@@ -278,6 +295,91 @@ func TestCommitmentsListGitHubFailures(t *testing.T) {
 			t.Fatalf("calls=%d env=%s", len(gh.calls()), r.stdout)
 		}
 	})
+}
+
+func TestCommitmentsListGitHubPinsTheHost(t *testing.T) {
+	gh := installFakeGH(t)
+	t.Setenv("GH_HOST", "github.enterprise.example")
+	t.Setenv("GH_REPO", "someone/else")
+	githubListServer(t, item(1, "PR #251"))
+
+	r := runCommitmentsForTest(t, githubProjectDir(t), "list", "--github")
+
+	if g := rowsOf(r.env)[0].GitHub; len(g) != 1 || g[0].State != "merged" || len(gh.calls()) != 1 {
+		t.Fatalf("an enterprise GH_HOST must not redirect a github.com lookup: %s", r.stdout)
+	}
+}
+
+// One reference GitHub refuses (SSO, gone) concerns that reference only; the
+// rest of the batch is still looked up.
+func TestCommitmentsListGitHubPerReferenceFailures(t *testing.T) {
+	gh := installFakeGH(t)
+	for _, marker := range []string{"repos_B3dmar_3ngram_issues_7.403", "repos_B3dmar_3ngram_issues_8.410"} {
+		if err := os.WriteFile(filepath.Join(gh.dir, marker), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	githubListServer(t, item(1, "#7"), item(2, "#8"), item(3, "#251"))
+
+	r := runCommitmentsForTest(t, githubProjectDir(t), "list", "--github")
+
+	rows := rowsOf(r.env)
+	if rows[0].GitHub != nil || len(rows[1].GitHub) != 1 || rows[1].GitHub[0].State != githubStateNotFound || len(rows[2].GitHub) != 1 {
+		t.Fatalf("rows = %s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, `"part":"github","reason":"forbidden","returned":2,"total":3`) || len(gh.calls()) != 3 {
+		t.Fatalf("calls=%d env=%s", len(gh.calls()), r.stdout)
+	}
+}
+
+func TestCommitmentsListGitHubRateLimitStopsTheBatch(t *testing.T) {
+	gh := installFakeGH(t)
+	if err := os.WriteFile(filepath.Join(gh.dir, "ratelimited"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	githubListServer(t, item(1, "#1"), item(2, "#2"), item(3, "#3"), item(4, "#4"), item(5, "#5"), item(6, "#6"))
+
+	r := runCommitmentsForTest(t, githubProjectDir(t), "list", "--github")
+
+	if !hasPartial(r.env, "github", kindRateLimited) || len(gh.calls()) > readConcurrency {
+		t.Fatalf("calls=%d env=%s", len(gh.calls()), r.stdout)
+	}
+}
+
+// Cancelling kills the whole process group gh runs in, so a child gh left
+// behind cannot outlive the operation.
+func TestCommitmentsGitHubDeadlineKillsTheProcessGroup(t *testing.T) {
+	withDeadline(t, 300*time.Millisecond)
+	gh := installFakeGH(t)
+	t.Setenv("GH_FAKE_SLEEP", "30")
+	githubListServer(t, item(1, "#251"))
+
+	runCommitmentsForTest(t, githubProjectDir(t), "list", "--github")
+
+	data, err := os.ReadFile(filepath.Join(gh.dir, "children"))
+	if err != nil {
+		t.Fatalf("the fake never started its child: %v", err)
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, _ := strconv.Atoi(field)
+		deadline := time.Now().Add(2 * time.Second)
+		for syscall.Kill(pid, 0) == nil {
+			if time.Now().After(deadline) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+				t.Fatalf("gh's child %d outlived the operation", pid)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes(strings.Repeat("é", 250), maxGitHubTitle); len([]rune(got)) != maxGitHubTitle+1 {
+		t.Fatalf("len = %d", len([]rune(got)))
+	}
+	if truncateRunes("short", maxGitHubTitle) != "short" {
+		t.Fatal("a short title is kept whole")
+	}
 }
 
 func TestCommitmentsShowGitHubVerdict(t *testing.T) {
