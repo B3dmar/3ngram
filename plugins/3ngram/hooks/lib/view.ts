@@ -134,7 +134,7 @@ export function partialNote(p: PartialPart): string {
       return `The account could not be read (${p.reason}).`
     case 'filing':
       if (p.reason.startsWith('strict_read_')) {
-        return `Unscoped check: the strict read failed (${p.reason.slice('strict_read_'.length)}), so every row was checked on its own.`
+        return `Unscoped check: the strict read failed (${p.reason.slice('strict_read_'.length)}), so rows were checked one by one, up to the lookup limit.`
       }
       return `Unscoped check: verified ${n(p.returned)} of ${n(p.total)} rows (${p.reason}); the rest are labelled "filing unknown".`
     case 'github':
@@ -183,6 +183,7 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
       return { label: 'Loading…', tone: 'busy' }
     case 'refreshing':
       return { label: 'Refreshing…', tone: 'busy' }
+    case 'checking':
     case 'verifying':
       return { label: 'Checking the account and selection…', tone: 'busy' }
     case 'ready':
@@ -268,10 +269,13 @@ export function detailView(d: DetailState): DetailView {
 function sourceLines(e: Envelope): string[] {
   const src = e.source
   if (!src) return []
+  const historyRead = !(e.partial ?? []).some((p) => p.part === 'history')
   const created =
     src.createdBy && src.createdAt
       ? `Created by ${src.createdBy} on ${day(src.createdAt)}.`
-      : 'Creation is outside the event window.'
+      : historyRead
+        ? 'Creation is outside the event window.'
+        : 'Creation is unknown: the history could not be read.'
   return [created, 'Source session: not exposed by the 3ngram read API.']
 }
 

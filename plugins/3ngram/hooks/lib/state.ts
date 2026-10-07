@@ -31,6 +31,7 @@ export type FailureKind =
 export type PanelStatus =
   | 'idle'
   | 'loading'
+  | 'checking'
   | 'refreshing'
   | 'verifying'
   | 'ready'
@@ -74,6 +75,9 @@ export const initialState: PanelState = {
 }
 
 export type PanelEvent =
+  // A refresh holding rows is about to probe the context: until the probe
+  // confirms it, nothing read under the old context shows.
+  | { type: 'check_started' }
   // fingerprint is what the local context probe reported just before this
   // refresh: null when it could not answer, or when no record was held.
   | { type: 'refresh_started'; gen: number; selectionKey: string; fingerprint: string | null }
@@ -93,7 +97,7 @@ export type PanelEvent =
 // with a matching fingerprint, the rows held are still the right rows.
 const TRANSIENT = new Set(['timeout', 'unavailable', 'rate_limited', 'cancelled'])
 
-const IN_FLIGHT = new Set<PanelStatus>(['loading', 'refreshing'])
+const IN_FLIGHT = new Set<PanelStatus>(['loading', 'checking', 'refreshing'])
 
 // The statuses in which rows, and an open detail, are shown.
 const SHOWING = new Set<PanelStatus>(['ready', 'refreshing', 'stale'])
@@ -104,6 +108,8 @@ function cleared(s: PanelState, status: PanelStatus, error: PanelError | null): 
 
 export function reduce(s: PanelState, e: PanelEvent): PanelState {
   switch (e.type) {
+    case 'check_started':
+      return s.record && SHOWING.has(s.status) ? { ...s, status: 'checking' } : s
     case 'refresh_started':
       return onRefreshStarted(s, e.gen, e.selectionKey, e.fingerprint)
     case 'list_envelope':
@@ -173,7 +179,8 @@ function onRefreshStarted(
   // Rows stay visible during a refresh only if they were visible before it:
   // a record whose context is still being verified, or one an error already
   // hid, must not reappear just because a new read started.
-  const shown = s.record !== null && SHOWING.has(s.status)
+  // checking hid the rows only until this confirmation.
+  const shown = s.record !== null && (SHOWING.has(s.status) || s.status === 'checking')
   return {
     ...s,
     gen,

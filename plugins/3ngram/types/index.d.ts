@@ -8,7 +8,7 @@
 // there is its only writer.
 export type ThreengramPanelState = {
   gen: number
-  status: 'idle' | 'loading' | 'refreshing' | 'verifying' | 'ready' | 'stale' | 'error'
+  status: 'idle' | 'loading' | 'checking' | 'refreshing' | 'verifying' | 'ready' | 'stale' | 'error'
   [field: string]: unknown
 }
 

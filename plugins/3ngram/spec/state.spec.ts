@@ -526,3 +526,53 @@ describe('a refresh and the open detail', () => {
     assert.equal(s.detail?.status, 'ready')
   })
 })
+
+describe('rows hide while the context is checked before a refresh', () => {
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  const open = run(
+    [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ],
+    showingA,
+  )
+
+  test('check_started hides rows and the detail until the probe answers', () => {
+    const s = reduce(open, { type: 'check_started' })
+    assert.equal(s.status, 'checking')
+    assert.equal(rowCount(s), null)
+    assert.equal(visibleDetail(s), null)
+  })
+
+  test('a confirming probe brings both back', () => {
+    const s = run(
+      [
+        { type: 'check_started' },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+      ],
+      open,
+    )
+    assert.equal(s.status, 'refreshing')
+    assert.equal(rowCount(s), 4)
+    assert.equal(visibleDetail(s)?.status, 'ready')
+  })
+
+  test('a disagreeing probe clears both, having never shown them meanwhile', () => {
+    const s = run(
+      [
+        { type: 'check_started' },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_B },
+      ],
+      open,
+    )
+    assert.equal(s.record, null)
+    assert.equal(s.detail, null)
+  })
+
+  test('a cancel while checking settles through verification', () => {
+    const s = run([{ type: 'check_started' }, { type: 'cancel' }], open)
+    assert.equal(s.status, 'verifying')
+    assert.equal(s.detail, null)
+  })
+})

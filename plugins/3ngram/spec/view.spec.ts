@@ -73,7 +73,7 @@ test('partial notes say how much was read', () => {
   )
   assert.equal(
     partialNote({ part: 'filing', reason: 'strict_read_selector_mismatch' }),
-    'Unscoped check: the strict read failed (selector_mismatch), so every row was checked on its own.',
+    'Unscoped check: the strict read failed (selector_mismatch), so rows were checked one by one, up to the lookup limit.',
   )
 })
 
@@ -225,4 +225,23 @@ test('a failed detail shows the reason', () => {
     error: { kind: 'outside_selector' },
   })
   assert.equal(view.status.label, 'ERROR: That commitment is outside the current selection.')
+})
+
+test('a failed history read does not claim the creation is outside the window', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  assert.ok(show.source)
+  const failed = {
+    ...show,
+    source: { ...show.source, createdBy: null, createdAt: null },
+    partial: [{ part: 'history', reason: 'unavailable' }],
+  }
+  const view = detailView({
+    seq: 1,
+    memoryId: 'm',
+    fingerprint: FP_A,
+    status: 'ready',
+    envelope: failed,
+    error: null,
+  })
+  assert.equal(view.source[0], 'Creation is unknown: the history could not be read.')
 })
