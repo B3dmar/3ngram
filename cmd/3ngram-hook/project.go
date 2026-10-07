@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -38,22 +39,72 @@ func deriveProjectWithSourceCtx(ctx context.Context, cwd string) (string, string
 		return "unknown", projectSourceNone, nil
 	}
 
-	out, err := exec.CommandContext(ctx, "git", "-C", cwd, "remote", "get-url", "origin").Output()
+	// The PATH lookup for a bare "git" happens before CommandContext can
+	// govern anything, so it runs under ctx too.
+	gitPath, err := lookPathCtx(ctx, "git")
+	var out []byte
+	if err == nil {
+		out, err = exec.CommandContext(ctx, gitPath, "-C", cwd, "remote", "get-url", "origin").Output()
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", projectSourceNone, ctxErr
 	}
 	if err == nil {
-		remote := strings.TrimSpace(string(out))
-		remote = strings.TrimSuffix(remote, ".git")
-		parts := strings.FieldsFunc(remote, func(r rune) bool {
-			return r == '/' || r == ':'
-		})
-		if len(parts) > 0 {
-			return strings.ToLower(parts[len(parts)-1]), projectSourceGitRemote, nil
+		if name := projectFromRemote(string(out)); name != "" {
+			return name, projectSourceGitRemote, nil
 		}
 	}
 
 	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory, nil
+}
+
+// projectFromRemote is the repository name in an origin remote, lowercased:
+// its last path segment without `.git`. User info, a query and a fragment
+// (where a token can ride along) are dropped first, since the name is sent to
+// the API and printed in envelopes; the name rule itself is the one the hooks
+// have always used, so ordinary remotes name the same project as before.
+func projectFromRemote(remote string) string {
+	remote = strings.TrimSpace(remote)
+	// Only a remote with "://" is a URL: url.Parse also accepts the SCP-like
+	// "github.com:org/repo" and reads its host as a scheme.
+	if u, err := url.Parse(remote); err == nil && strings.Contains(remote, "://") {
+		u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+		remote = u.String()
+	} else if i := strings.IndexAny(remote, "?#"); i >= 0 {
+		remote = remote[:i]
+	}
+	remote = strings.TrimSuffix(remote, ".git")
+	parts := strings.FieldsFunc(remote, func(r rune) bool { return r == '/' || r == ':' })
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.ToLower(parts[len(parts)-1])
+}
+
+// execLookPath is exec.LookPath, a variable so a test can stall it.
+var execLookPath = exec.LookPath
+
+// lookPathCtx is exec.LookPath under ctx: a PATH entry on a stalled or
+// automounted filesystem must not hold the lookup past the deadline.
+func lookPathCtx(ctx context.Context, name string) (string, error) {
+	type result struct {
+		path string
+		err  error
+	}
+	done := make(chan result, 1)
+	// Read here, not in the goroutine, so a test restoring the variable does
+	// not race with a lookup that outlived it.
+	lookPath := execLookPath
+	go func() {
+		path, err := lookPath(name)
+		done <- result{path, err}
+	}()
+	select {
+	case r := <-done:
+		return r.path, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // isSecondaryWorktree reports whether cwd lives in a LINKED (secondary) git
