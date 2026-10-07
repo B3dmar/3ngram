@@ -126,6 +126,42 @@ The hooks are a small static binary, `3ngram-hook`, that reads from the REST API
   </Step>
 </Steps>
 
+## Layer 3 — The commitment panel (optional)
+
+The `3ngram` Claude Code plugin adds a read-only pane that lists the current
+project's open, waiting and overdue commitments, with where each came from and
+any related evidence that it is done. It changes no records. It reads through
+the `3ngram-hook` binary from Layer 2, so it uses the same API key and the same
+project, and needs a build that has the `commitments` subcommand.
+
+<Steps>
+  <Step title="Load the plugin">
+    From a checkout of the repository, for one session:
+
+    ```bash
+    claude --plugin-dir plugins/3ngram
+    ```
+
+    Or install it from the repository's marketplace:
+
+    ```text
+    /plugin install 3ngram --marketplace B3dmar/3ngram
+    ```
+  </Step>
+  <Step title="Open the panel">
+    Run `/commitments`. The header names the backend, the account, the project
+    and whether unscoped records are included. Set a scope, opt in to unscoped
+    records, or turn GitHub evidence off with `/plugin configure 3ngram`.
+  </Step>
+</Steps>
+
+<Note>
+  Owners are not recorded by native writes and source sessions are not exposed
+  by the read API, so the panel says so instead of guessing. Evidence (a newer
+  linked memory, a pending proposal, a merged pull request) is for review: it
+  never resolves a commitment. See `plugins/3ngram/README.md` for the details.
+</Note>
+
 ## Confirm capture and recall across sessions
 
 <Steps>

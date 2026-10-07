@@ -15,12 +15,14 @@ set -euo pipefail
 KEEP_PUBLIC=(
   # -- directories --
   .changeset
+  .claude-plugin
   .github
   apps
   cmd
   docs
   eval
   packages
+  plugins
   scripts
   # -- dotfiles / config --
   .dockerignore

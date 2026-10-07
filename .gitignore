@@ -37,3 +37,7 @@ CLAUDE.local.md
 # Local pnpm content-addressable store (created by `pnpm install --store-dir`);
 # machine-local cache, never source.
 .pnpm-store/
+
+# Claude Code writes a mod's API declarations beside it at every load
+# (plugins/<name>/.claude-plugin/types/); they belong to the installed build.
+plugins/**/.claude-plugin/types/

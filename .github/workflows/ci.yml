@@ -58,6 +58,8 @@ jobs:
               - '!apps/worker/**'
               - '!packages/sdk/**'
               - '!cmd/3ngram-hook/**'
+              - '!plugins/**'
+              - '!.claude-plugin/**'
               - '!eval/**'
               - '!LICENSE'
       # Positive suite filters choose which Postgres service shards do
