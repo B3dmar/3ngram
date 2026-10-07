@@ -1,0 +1,102 @@
+{
+  "contract": "3ngram-hook.commitments.v1",
+  "operation": "list",
+  "ok": true,
+  "binary": "3ngram-hook test",
+  "context": {
+    "fingerprint": "f1f1f1f1f1f1f1f1",
+    "apiHost": "api.example.test",
+    "account": {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "email": "owner@example.test"
+    },
+    "project": {
+      "name": "demo",
+      "source": "directory-name"
+    },
+    "requested": {
+      "kind": "scope_project",
+      "scope": "work",
+      "project": "demo",
+      "includeUnscoped": true
+    },
+    "effective": {
+      "kind": "scope_project",
+      "scope": "work",
+      "project": "demo",
+      "includeUnscoped": true
+    }
+  },
+  "generatedAt": "2026-10-07T12:00:00.000Z",
+  "counts": {
+    "openOrWaiting": 4,
+    "overdue": 1,
+    "returned": 4
+  },
+  "commitments": [
+    {
+      "memoryId": "00000000-0000-4000-8000-a00000000001",
+      "commitmentId": "00000000-0000-4000-8000-c00000000001",
+      "topic": "Kept by the strict read",
+      "status": "open",
+      "dueAt": "2026-10-01T00:00:00.000Z",
+      "overdue": true,
+      "filing": "project",
+      "ownership": {
+        "value": "unclear",
+        "reason": "owner_not_exposed"
+      }
+    },
+    {
+      "memoryId": "00000000-0000-4000-8000-a00000000002",
+      "commitmentId": "00000000-0000-4000-8000-c00000000002",
+      "topic": "Cut from the strict slice",
+      "status": "open",
+      "dueAt": null,
+      "overdue": false,
+      "filing": "project",
+      "ownership": {
+        "value": "unclear",
+        "reason": "owner_not_exposed"
+      }
+    },
+    {
+      "memoryId": "00000000-0000-4000-8000-a00000000003",
+      "commitmentId": "00000000-0000-4000-8000-c00000000003",
+      "topic": "Written without a project",
+      "status": "waiting",
+      "dueAt": null,
+      "overdue": false,
+      "filing": "unscoped",
+      "ownership": {
+        "value": "unclear",
+        "reason": "owner_not_exposed"
+      }
+    },
+    {
+      "memoryId": "00000000-0000-4000-8000-a00000000004",
+      "commitmentId": "00000000-0000-4000-8000-c00000000004",
+      "topic": "Lookup failed",
+      "status": "open",
+      "dueAt": null,
+      "overdue": false,
+      "filing": "unknown",
+      "ownership": {
+        "value": "unclear",
+        "reason": "owner_not_exposed"
+      }
+    }
+  ],
+  "partial": [
+    {
+      "part": "filing",
+      "reason": "unavailable",
+      "returned": 2,
+      "total": 3
+    }
+  ],
+  "missing": [
+    "owner",
+    "sourceSession"
+  ]
+}

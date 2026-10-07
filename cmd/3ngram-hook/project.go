@@ -7,9 +7,26 @@ import (
 	"strings"
 )
 
+// Where a derived project name came from, reported in the commitments context so
+// the panel header can say whether it read the git remote or fell back to the
+// directory name.
+const (
+	projectSourceGitRemote = "git-remote"
+	projectSourceDirectory = "directory-name"
+	projectSourceNone      = "none"
+)
+
 func deriveProject(cwd string) string {
+	name, _ := deriveProjectWithSource(cwd)
+	return name
+}
+
+// deriveProjectWithSource is deriveProject plus the source of the name. The
+// name rule is unchanged: the last segment of the origin remote, lowercased,
+// else the directory's basename.
+func deriveProjectWithSource(cwd string) (string, string) {
 	if cwd == "" {
-		return "unknown"
+		return "unknown", projectSourceNone
 	}
 
 	out, err := exec.Command("git", "-C", cwd, "remote", "get-url", "origin").Output()
@@ -20,11 +37,11 @@ func deriveProject(cwd string) string {
 			return r == '/' || r == ':'
 		})
 		if len(parts) > 0 {
-			return strings.ToLower(parts[len(parts)-1])
+			return strings.ToLower(parts[len(parts)-1]), projectSourceGitRemote
 		}
 	}
 
-	return strings.ToLower(filepath.Base(cwd))
+	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory
 }
 
 // isSecondaryWorktree reports whether cwd lives in a LINKED (secondary) git
