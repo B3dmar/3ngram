@@ -170,6 +170,7 @@
       },
       "history": {
         "lineageNodeCap": 25,
+        "lineageEdgeCap": 50,
         "relationshipCap": 50,
         "eventCap": 50,
         "lineageTruncated": false,
