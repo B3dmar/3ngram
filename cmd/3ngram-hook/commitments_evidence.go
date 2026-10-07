@@ -34,12 +34,15 @@ type proposalRow struct {
 }
 
 // evidenceItem is one piece of related evidence. Fields about another memory
-// are only ever set when that memory is inside the selector.
+// are only ever set when that memory is inside the selector. Relation is the
+// OTHER memory's place in the (proposed) edge relative to the commitment:
+// `successor` is newer and updates, extends or supersedes it; `predecessor` is
+// what the commitment would update.
 type evidenceItem struct {
 	Kind       string   `json:"kind"`
 	Source     string   `json:"source"`
 	EdgeType   string   `json:"edgeType"`
-	Role       string   `json:"role"`
+	Relation   string   `json:"relation"`
 	MemoryID   string   `json:"memoryId"`
 	MemoryType string   `json:"memoryType,omitempty"`
 	Topic      string   `json:"topic,omitempty"`
@@ -57,12 +60,17 @@ const (
 	verdictNoneFound      = "none_found"
 )
 
+// commitmentEvidence counts what it could not show in two ways: Hidden is
+// proposals whose other end was verified OUTSIDE the selector, Unverified is
+// proposals whose other end could not be checked (lookup cap or failure).
+// Neither contributes anything but the count.
 type commitmentEvidence struct {
-	Verdict   string         `json:"verdict"`
-	Items     []evidenceItem `json:"items"`
-	Inspected evidenceWindow `json:"inspected"`
-	Hidden    int            `json:"hiddenOutsideSelector"`
-	partial   []partialPart
+	Verdict    string         `json:"verdict"`
+	Items      []evidenceItem `json:"items"`
+	Inspected  evidenceWindow `json:"inspected"`
+	Hidden     int            `json:"hiddenOutsideSelector"`
+	Unverified int            `json:"unverifiedPartners"`
+	partial    []partialPart
 }
 
 // evidenceWindow is how far the evidence search looked. A nil part was not
@@ -108,9 +116,10 @@ func collectEvidence(ctx context.Context, memoryID string, sel briefingSelector,
 		logReadFailure(stderr, proposalsErr)
 		ev.partial = append(ev.partial, partialPart{Part: "proposals", Reason: proposalsErr.Kind})
 	} else {
-		items, hidden, window, partial := evidenceFromProposals(ctx, memoryID, sel, history, visible, proposals)
+		items, hidden, unverified, window, partial := evidenceFromProposals(ctx, memoryID, sel, history, visible, proposals)
 		ev.Items = append(ev.Items, items...)
 		ev.Hidden += hidden
+		ev.Unverified += unverified
 		ev.Inspected.Proposals = &window
 		ev.partial = append(ev.partial, partial...)
 	}
@@ -121,10 +130,11 @@ func collectEvidence(ctx context.Context, memoryID string, sel briefingSelector,
 	return ev
 }
 
-// evidenceFromHistory turns each visible SUCCESSOR into evidence: a memory
-// whose edge points at this commitment (successor -> predecessor), so it was
-// written later and builds on, updates or supersedes it. Predecessors are what
-// the commitment came from and say nothing about completion.
+// evidenceFromHistory turns each visible successor of the commitment into
+// evidence: a memory whose edge points at the commitment (successor ->
+// predecessor), so it was written later and builds on, updates or supersedes
+// it. Predecessors are what the commitment came from and say nothing about
+// completion.
 func evidenceFromHistory(memoryID string, history *commitmentHistory) []evidenceItem {
 	var items []evidenceItem
 	for _, rel := range history.Relationships {
@@ -133,7 +143,7 @@ func evidenceFromHistory(memoryID string, history *commitmentHistory) []evidence
 		}
 		current := rel.Memory.IsCurrent
 		items = append(items, evidenceItem{
-			Kind: evidenceRelatedMemory, Source: "3ngram", EdgeType: rel.Edge.EdgeType, Role: "predecessor",
+			Kind: evidenceRelatedMemory, Source: "3ngram", EdgeType: rel.Edge.EdgeType, Relation: "successor",
 			MemoryID: rel.Memory.ID, MemoryType: rel.Memory.MemoryType, Topic: rel.Memory.Topic,
 			RecordedAt: rel.Memory.RecordedAt, Current: &current,
 		})
@@ -148,7 +158,7 @@ func evidenceFromHistory(memoryID string, history *commitmentHistory) []evidence
 // that could not be verified, is counted as hidden and contributes nothing: no
 // id, no topic, no rationale.
 func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSelector, history *commitmentHistory,
-	visible map[string]bool, resp proposalsResponse) ([]evidenceItem, int, proposalWindow, []partialPart) {
+	visible map[string]bool, resp proposalsResponse) ([]evidenceItem, int, int, proposalWindow, []partialPart) {
 	window := proposalWindow{
 		Status: "proposed", Order: "newest_first", Limit: maxRestProposalsLimit,
 		Returned: len(resp.Proposals), MayHaveMore: len(resp.Proposals) >= maxRestProposalsLimit,
@@ -161,8 +171,11 @@ func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSel
 		if p.FromID != memoryID && p.ToID != memoryID {
 			continue
 		}
-		touching = append(touching, p)
 		other := proposalPartner(p, memoryID)
+		if other == memoryID {
+			continue // a self-proposal says nothing
+		}
+		touching = append(touching, p)
 		if !visible[other] && !seen[other] {
 			seen[other] = true
 			unknownPartners = append(unknownPartners, other)
@@ -178,37 +191,47 @@ func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSel
 	forEachBounded(ctx, len(lookups), readConcurrency, func(ctx context.Context, n int) {
 		verdicts[n] = lookupPartner(ctx, lookups[n], sel)
 	})
-	inside := map[string]bool{}
+	inside, outside := map[string]bool{}, map[string]bool{}
 	unverified, failedKind := len(unknownPartners)-len(lookups), ""
 	for n, id := range lookups {
 		switch v := verdicts[n]; {
 		case !v.done:
 			unverified++
-			failedKind = classifyReadFailure(ctx, "memory", 0, nil).Kind
+			if failedKind == "" {
+				failedKind = classifyReadFailure(ctx, "memory", 0, nil).Kind
+			}
 		case v.err != nil:
 			unverified++
-			failedKind = v.err.Kind
+			if failedKind == "" {
+				failedKind = v.err.Kind
+			}
 		case v.inside:
 			inside[id] = true
 			known[id] = v.topic
+		default:
+			outside[id] = true
 		}
 	}
 
 	var items []evidenceItem
-	hidden := 0
+	hidden, unverifiedProposals := 0, 0
 	for _, p := range touching {
 		other := proposalPartner(p, memoryID)
 		if !visible[other] && !inside[other] {
-			hidden++
+			if outside[other] {
+				hidden++
+			} else {
+				unverifiedProposals++
+			}
 			continue
 		}
 		similarity := p.Similarity
-		role := "successor"
+		relation := "predecessor"
 		if p.ToID == memoryID {
-			role = "predecessor"
+			relation = "successor"
 		}
 		items = append(items, evidenceItem{
-			Kind: evidenceProposal, Source: "3ngram", EdgeType: p.EdgeType, Role: role,
+			Kind: evidenceProposal, Source: "3ngram", EdgeType: p.EdgeType, Relation: relation,
 			MemoryID: other, Topic: known[other], ProposalID: p.ID, Similarity: &similarity, Rationale: p.Rationale,
 		})
 	}
@@ -224,7 +247,7 @@ func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSel
 		}
 		partial = append(partial, countedPart("proposal_partners", reason, len(unknownPartners)-unverified, len(unknownPartners)))
 	}
-	return items, hidden, window, partial
+	return items, hidden, unverifiedProposals, window, partial
 }
 
 func proposalPartner(p proposalRow, memoryID string) string {

@@ -129,8 +129,7 @@
     "hiddenOutsideSelector": {
       "nodes": 2,
       "edges": 2,
-      "relationships": 1,
-      "proposals": 0
+      "relationships": 1
     }
   },
   "evidence": {
@@ -140,7 +139,7 @@
         "kind": "related_memory",
         "source": "3ngram",
         "edgeType": "updates",
-        "role": "predecessor",
+        "relation": "successor",
         "memoryId": "00000000-0000-4000-8000-a00000000054",
         "memoryType": "decision",
         "topic": "Newer decision in this project",
@@ -151,7 +150,7 @@
         "kind": "consolidation_proposal",
         "source": "3ngram",
         "edgeType": "updates",
-        "role": "predecessor",
+        "relation": "successor",
         "memoryId": "00000000-0000-4000-8000-a00000000055",
         "topic": "Proposed successor in demo",
         "proposalId": "00000000-0000-4000-8000-b00000000001",
@@ -175,6 +174,7 @@
         "eventsTruncated": false
       }
     },
-    "hiddenOutsideSelector": 1
+    "hiddenOutsideSelector": 1,
+    "unverifiedPartners": 0
   }
 }

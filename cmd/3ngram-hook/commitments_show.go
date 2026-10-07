@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -132,12 +133,12 @@ type commitmentHistory struct {
 	Hidden          hiddenCounts          `json:"hiddenOutsideSelector"`
 }
 
-// hiddenCounts is what redaction removed: how many, never which.
+// hiddenCounts is what redaction removed from the history: how many, never
+// which. Proposals are counted in the evidence block instead.
 type hiddenCounts struct {
 	Nodes         int `json:"nodes"`
 	Edges         int `json:"edges"`
 	Relationships int `json:"relationships"`
-	Proposals     int `json:"proposals"`
 }
 
 // The history route's own caps (packages/db/src/memory-history-queries.ts),
@@ -179,15 +180,19 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 	if selErr := validateCommitmentsSelector(env.Context); selErr != nil {
 		return failEnvelope(env, selErr)
 	}
+	// Ids are compared as the server writes them, lowercase. An uppercase id
+	// would still be found (uuid matching is case-insensitive) but would then
+	// match nothing in the history or the proposals.
+	memoryID = strings.ToLower(memoryID)
 	memoryURL, okID := memoryPath(memoryID, "")
 	historyURL, _ := memoryPath(memoryID, "/history")
-	if !okID {
-		return failEnvelope(env, &readError{Kind: kindUsage, Route: "args", Hint: "show needs a memory id"})
-	}
-	// Compared before any request: a detail asked for under a context that has
-	// since changed is refused without reading anything.
+	// Compared first, before any request: a detail asked for under a context
+	// that has since changed is refused without reading anything.
 	if expect != "" && expect != env.Context.Fingerprint {
 		return failEnvelope(env, &readError{Kind: kindContextChanged, Route: "context"})
+	}
+	if !okID {
+		return failEnvelope(env, &readError{Kind: kindUsage, Route: "args", Hint: "show needs a memory id"})
 	}
 	sel := env.Context.Requested
 
@@ -195,6 +200,9 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 	if err := apiGet(ctx, "memory", memoryURL, &memory); err != nil {
 		logReadFailure(stderr, err)
 		return failEnvelope(env, err)
+	}
+	if memory.ID != memoryID {
+		return failEnvelope(env, &readError{Kind: kindBadResponse, Route: "memory", Hint: "the server answered for another id"})
 	}
 	inside, filing := memoryInSelector(memory.Scope, memory.Project, sel)
 	if !inside || memory.MemoryType != "commitment" {
@@ -216,6 +224,9 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 	}()
 	wg.Wait()
 
+	if memory.Tags == nil {
+		memory.Tags = []string{}
+	}
 	env.Commitment = &commitmentDetail{
 		MemoryID: memory.ID, MemoryType: memory.MemoryType, Topic: memory.Topic, Content: memory.Content,
 		Scope: memory.Scope, Project: memory.Project, Filing: filing, Status: memory.Status,

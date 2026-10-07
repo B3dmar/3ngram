@@ -264,7 +264,7 @@ func exitCodeFor(env commitmentsEnvelope) int {
 	}
 	if env.Error != nil {
 		switch env.Error.Kind {
-		case kindUsage, kindNoKey, kindInvalidSelector:
+		case kindUsage, kindNoKey, kindInvalidSelector, kindContextChanged:
 			return 1
 		}
 	}

@@ -138,11 +138,11 @@ func TestCommitmentsShowRedactsTheWholeResponse(t *testing.T) {
 		t.Fatalf("an edge is shown only when both ends are: %+v", h.Edges)
 	}
 	ev := r.env.Evidence
-	if ev.Verdict != verdictReview || ev.Hidden != 2 || len(ev.Items) != 2 {
+	if ev.Verdict != verdictReview || ev.Hidden != 2 || ev.Unverified != 0 || len(ev.Items) != 2 {
 		t.Fatalf("evidence = %+v", ev)
 	}
 	related, proposal := ev.Items[0], ev.Items[1]
-	if related.Kind != evidenceRelatedMemory || related.MemoryID != newerID || related.Topic != visibleTopicNewer || related.Role != "predecessor" {
+	if related.Kind != evidenceRelatedMemory || related.MemoryID != newerID || related.Topic != visibleTopicNewer || related.Relation != "successor" {
 		t.Fatalf("related = %+v", related)
 	}
 	if proposal.Kind != evidenceProposal || proposal.MemoryID != partnerID || proposal.Rationale == nil || *proposal.Rationale != visibleRationaleText {
@@ -202,7 +202,7 @@ func TestCommitmentsShowRefusesAChangedContextWithoutARequest(t *testing.T) {
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--expect-fingerprint", "0000000000000000")
 
-	if r.code != 2 || r.env.Error.Kind != kindContextChanged || len(s.recorded()) != 0 {
+	if r.code != 1 || r.env.Error.Kind != kindContextChanged || len(s.recorded()) != 0 {
 		t.Fatalf("code=%d requests=%d env=%s", r.code, len(s.recorded()), r.stdout)
 	}
 }
@@ -328,13 +328,117 @@ func TestCommitmentsShowDegradesPartByPart(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			lookups += s.count("/api/v1/memories/" + uuidFor("m", 200+i))
 		}
-		if lookups != maxProposalPartnerLookups || len(r.env.Evidence.Items) != 1+maxProposalPartnerLookups || r.env.Evidence.Hidden != 2 {
+		if lookups != maxProposalPartnerLookups || len(r.env.Evidence.Items) != 1+maxProposalPartnerLookups || r.env.Evidence.Hidden != 0 || r.env.Evidence.Unverified != 2 {
 			t.Fatalf("lookups=%d evidence=%+v", lookups, r.env.Evidence)
 		}
 		if !strings.Contains(r.stdout, `"part":"proposal_partners","reason":"lookup_cap","returned":3,"total":5`) {
 			t.Fatalf("the cap must be labelled: %s", r.stdout)
 		}
 	})
+}
+
+// An uppercase id is found by the server (uuid matching ignores case), so it
+// must be normalised before it is compared with the lowercase ids the history
+// and proposals carry; otherwise every comparison misses and the verdict is a
+// false none_found.
+func TestCommitmentsShowNormalisesTheIDCase(t *testing.T) {
+	s := showServer(t, richHistory(), []any{proposalJSON("p1", partnerID, commitmentID, visibleRationaleText)})
+	s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic("work", strPtr("demo"), "partner"))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", strings.ToUpper(commitmentID), "--scope", "work")
+
+	if !r.env.OK || r.env.Evidence.Verdict != verdictReview || len(r.env.Evidence.Items) != 2 {
+		t.Fatalf("env = %s", r.stdout)
+	}
+	for _, node := range r.env.History.Lineage {
+		if node.ID == commitmentID {
+			t.Fatal("the commitment must not appear in its own lineage")
+		}
+	}
+}
+
+func TestCommitmentsShowRejectsAnAnswerForAnotherID(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/memories/"+commitmentID, 200, strings.Replace(commitmentMemory("work", strPtr("demo")), commitmentID, partnerID, 1))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if r.code != 2 || r.env.Error.Kind != kindBadResponse || len(s.recorded()) != 1 {
+		t.Fatalf("code=%d env=%s", r.code, r.stdout)
+	}
+}
+
+func TestCommitmentsShowProjectSelector(t *testing.T) {
+	decision := strings.Replace(commitmentMemory("work", strPtr("demo")), `"memoryType":"commitment"`, `"memoryType":"decision"`, 1)
+	for name, tc := range map[string]struct {
+		memory string
+		ok     bool
+	}{
+		"same project, any scope": {commitmentMemory("personal", strPtr("demo")), true},
+		"no project":              {commitmentMemory("work", nil), false},
+		"other project":           {commitmentMemory("work", strPtr("other")), false},
+		"not a commitment":        {decision, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := showServer(t, richHistory(), []any{})
+			s.json("/api/v1/memories/"+commitmentID, 200, tc.memory)
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID)
+
+			if r.env.OK != tc.ok {
+				t.Fatalf("ok=%v env=%s", r.env.OK, r.stdout)
+			}
+			if !tc.ok && (r.env.Error.Kind != kindOutsideSelector || len(s.recorded()) != 1) {
+				t.Fatalf("env=%s requests=%d", r.stdout, len(s.recorded()))
+			}
+		})
+	}
+}
+
+func TestCommitmentsShowCountsAFailedPartnerAsUnverified(t *testing.T) {
+	s := showServer(t, richHistory(), []any{
+		proposalJSON("p1", partnerID, commitmentID, hiddenRationale),
+		proposalJSON("p2", commitmentID, commitmentID, "self"),
+	})
+	s.json("/api/v1/memories/"+partnerID, 503, `{"error":"unavailable"}`)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	ev := r.env.Evidence
+	if ev.Hidden != 0 || ev.Unverified != 1 || strings.Contains(r.stdout, hiddenRationale) {
+		t.Fatalf("evidence = %+v", ev)
+	}
+	for _, it := range ev.Items {
+		if it.Kind == evidenceProposal {
+			t.Fatalf("neither an unverified nor a self proposal is evidence: %+v", it)
+		}
+	}
+	if !hasPartial(r.env, "proposal_partners", kindUnavailable) {
+		t.Fatalf("partial = %+v", r.env.Partial)
+	}
+}
+
+func TestCommitmentsShowNoneFoundWithoutHistoryIsLabelled(t *testing.T) {
+	s := showServer(t, "", []any{})
+	s.json("/api/v1/memories/"+commitmentID+"/history", 503, `{"error":"unavailable"}`)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	ev := r.env.Evidence
+	if ev.Verdict != verdictNoneFound || ev.Inspected.History != nil || ev.Inspected.Proposals == nil || !hasPartial(r.env, "history", kindUnavailable) {
+		t.Fatalf("a none_found without history must show history was not inspected: %s", r.stdout)
+	}
+}
+
+func TestCommitmentsShowNilTagsAreAnEmptyList(t *testing.T) {
+	s := showServer(t, richHistory(), []any{})
+	s.json("/api/v1/memories/"+commitmentID, 200, strings.Replace(commitmentMemory("work", strPtr("demo")), `"tags":["panel"]`, `"tags":null`, 1))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+	if !strings.Contains(r.stdout, `"tags":[]`) {
+		t.Fatalf("stdout = %s", r.stdout)
+	}
 }
 
 func TestCommitmentsShowNotFound(t *testing.T) {
