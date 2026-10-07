@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -93,10 +94,17 @@ func TestProjectFromRemote(t *testing.T) {
 		"git@host:org/repo.git?token=SECRET":           "repo",
 		"/srv/git/repo.git\n":                          "repo",
 		"https://host":                                 "host",
+		"https://user:SECRET@%zz":                      "%zz",
+		"ssh://git@github.com:org/repo.git":            "repo",
+		"https://u:SECRET@h/o/100%?t=SECRET":           "100%",
 		"https://host/org/repo.git/":                   "repo.git",
 		"https://h/o/my%20repo":                        "my%20repo",
 	} {
-		if got := projectFromRemote(remote); got != want {
+		got := projectFromRemote(remote)
+		if strings.Contains(strings.ToLower(got), "secret") {
+			t.Errorf("projectFromRemote(%q) = %q carries the credential", remote, got)
+		}
+		if got != want {
 			t.Errorf("projectFromRemote(%q) = %q, want %q", remote, got, want)
 		}
 	}

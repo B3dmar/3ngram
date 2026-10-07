@@ -206,17 +206,19 @@ func TestCommitmentsListFilingChangesDuringRead(t *testing.T) {
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
+	// A 404 proves nothing (memory rows are never deleted): the vanished row
+	// stays, unknown, like the lookup that failed.
 	got := filings(r.env)
-	if len(got) != 1 || got[failed.memoryID] != filingUnknown {
-		t.Fatalf("only the failed lookup may remain, as unknown: %v", got)
+	if len(got) != 2 || got[failed.memoryID] != filingUnknown || got[vanished.memoryID] != filingUnknown {
+		t.Fatalf("only the failed lookups may remain, as unknown: %v", got)
 	}
-	if r.env.Counts.ChangedDuringRead != 4 {
+	if r.env.Counts.ChangedDuringRead != 3 {
 		t.Fatalf("changedDuringRead = %d", r.env.Counts.ChangedDuringRead)
 	}
-	if !hasPartial(r.env, "filing", kindUnavailable) {
+	if !hasPartial(r.env, "filing", kindUnavailable) && !hasPartial(r.env, "filing", kindNotFound) {
 		t.Fatalf("partial = %+v", r.env.Partial)
 	}
-	for _, topic := range []string{"moved", "superseded", "rescoped", "vanished"} {
+	for _, topic := range []string{"moved", "superseded", "rescoped"} {
 		if strings.Contains(r.stdout, `"`+topic+`"`) {
 			t.Fatalf("row %q left the selector and must not be emitted", topic)
 		}
@@ -1068,6 +1070,39 @@ func TestForEachBoundedStopsLaunchingOnceCancelled(t *testing.T) {
 		forEachBounded(ctx, 50, 4, func(context.Context, int) { calls.Add(1) })
 		if n := calls.Load(); n != 0 {
 			t.Fatalf("trial %d: %d lookups launched in a cancelled batch", trial, n)
+		}
+	}
+}
+
+// generatedAt must be the ISO datetime the contract requires, not just
+// present: the envelope republishes it as the read's freshness.
+func TestCommitmentsListRejectsAnInvalidGeneratedAt(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	body := strings.Replace(briefingBody(projectSel("demo"), section(1, item(1, "a")), section(0)), `"generatedAt":"2026-10-07T12:00:00.000Z"`, `"generatedAt":"not-a-date"`, 1)
+	if !strings.Contains(body, "not-a-date") {
+		t.Fatal("fixture edit did not apply")
+	}
+	s.json("/api/v1/briefing", 200, body)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if r.env.OK || r.env.Error.Kind != kindBadResponse {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A 408 or 504 is a timeout, whoever sent it, not a caller error.
+func TestCommitmentsTimeoutStatusesAreTimeouts(t *testing.T) {
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusGatewayTimeout} {
+		s := newReadServer(t)
+		s.json("/api/v1/me", 200, meBody)
+		s.json("/api/v1/briefing", status, `{"error":"timeout"}`)
+
+		r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+		if r.env.OK || r.env.Error.Kind != kindTimeout {
+			t.Fatalf("status %d: env = %s", status, r.stdout)
 		}
 	}
 }

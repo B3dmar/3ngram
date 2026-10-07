@@ -179,6 +179,8 @@ func classifyReadFailure(ctx context.Context, route string, status int, err erro
 		return &readError{Kind: kindNotFound, Route: route, Status: status}
 	case status >= 300 && status <= 399:
 		return &readError{Kind: kindBadRequest, Route: route, Status: status, Hint: "redirect not followed"}
+	case status == http.StatusRequestTimeout || status == http.StatusGatewayTimeout:
+		return &readError{Kind: kindTimeout, Route: route, Status: status}
 	case status == http.StatusTooManyRequests:
 		return &readError{Kind: kindRateLimited, Route: route, Status: status}
 	case status >= 500:

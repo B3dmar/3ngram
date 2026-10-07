@@ -85,9 +85,27 @@ func projectFromRemote(remote string) string {
 	remote = strings.TrimSpace(remote)
 	// Only a remote with "://" is a URL: url.Parse also accepts the SCP-like
 	// "github.com:org/repo" and reads its host as a scheme.
-	if u, err := url.Parse(remote); err == nil && strings.Contains(remote, "://") {
-		u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
-		remote = u.String()
+	if strings.Contains(remote, "://") {
+		if u, err := url.Parse(remote); err == nil {
+			u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+			remote = u.String()
+		} else {
+			// A remote git takes but Go does not (an invalid port, a stray
+			// %): the user info is dropped by hand, up to the authority's
+			// last @, so the name never carries it.
+			scheme, rest, _ := strings.Cut(remote, "://")
+			authority, path, hasPath := strings.Cut(rest, "/")
+			if at := strings.LastIndex(authority, "@"); at >= 0 {
+				authority = authority[at+1:]
+			}
+			remote = scheme + "://" + authority
+			if hasPath {
+				remote += "/" + path
+			}
+			if i := strings.IndexAny(remote, "?#"); i >= 0 {
+				remote = remote[:i]
+			}
+		}
 	} else if i := strings.IndexAny(remote, "?#"); i >= 0 {
 		remote = remote[:i]
 	}
