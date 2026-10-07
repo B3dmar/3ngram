@@ -129,7 +129,11 @@ function showEnvelope(fingerprint: string): string {
 function world(
   on: On,
   answer: (argv: string[]) => Answer,
-  opts: { cwdThrows?: boolean; surfaces?: string[] } = {},
+  opts: {
+    cwdThrows?: boolean
+    surfaces?: string[]
+    cwdHold?: { armed: () => boolean; until: Promise<void> }
+  } = {},
 ) {
   const spawned: string[][] = []
   // Each spawn the plugin ended early (Cancel, the ceiling) by returning it.
@@ -144,8 +148,11 @@ function world(
   on('session.detach', async (_$, e) => ({ clientId: e.clientId }))
   on('session.surfaces', async () => ({ value: [...(opts.surfaces ?? ['terminal'])] }) as never)
   on('classic.SessionStart', async () => ({}) as never)
+  let cwdCalls = 0
   on('session.cwd', async () => {
     if (opts.cwdThrows) throw new Error('cwd unavailable')
+    // The first directory read after the test arms the hold waits on it.
+    if (opts.cwdHold?.armed() && ++cwdCalls === 1) await opts.cwdHold.until
     return { value: '/repo' }
   })
   on('command.register', async () => ({ value: undefined }) as never)
@@ -408,6 +415,65 @@ describe('switching accounts cannot show the previous context', () => {
     const text = await textOf(ui)
     expect(text).not.toContain('Read under the old key')
     expect(text).toContain('Read under the new key')
+  })
+
+  test('a key rotated while a detail read runs never shows that detail', async ($, on) => {
+    let current = FP_A
+    let release: () => void = () => undefined
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
+      if (argv[2] === 'show')
+        return {
+          wait: new Promise<void>((r) => {
+            release = r
+          }),
+          stdout: showEnvelope(FP_A),
+        }
+      return { stdout: listEnvelope(current) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'open-0-0' }))
+    await w.clock.advance(1)
+    current = FP_B
+    release()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const text = await textOf(ui)
+    expect(text).not.toContain('Full commitment text')
+    // The list was read again under the new context.
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(2)
+  })
+
+  test('a refresh stopped while it reads the directory writes nothing afterwards', async ($, on) => {
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    // The periodic refresh's directory read is held: the hold is armed after
+    // the startup reads.
+    let armed = false
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { cwdHold: { armed: () => armed, until } },
+    )
+    await start($, w.clock)
+    armed = true
+    await w.clock.advance(5 * 60_000)
+    // /clear while that refresh waits: it is stopped, and the fresh read after
+    // the reset fills the panel.
+    await $.session.end({ reason: 'clear' } as never)
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    // The stopped refresh resumes; it must not hide the fresh rows.
+    unblock()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain(TOPIC)
   })
 
   test('a probe that cannot answer after a read does not loop', async ($, on) => {

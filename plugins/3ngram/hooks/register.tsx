@@ -240,14 +240,19 @@ async function refreshOnce(
   token: number,
 ): Promise<void> {
   const sel = selectionOf(options, await $.session.cwd())
+  // Stopped while the directory was read (a /clear, a fork, a reload): the
+  // state may already be a later refresh's, so nothing is read or written.
+  if (active !== token) return
   // With rows held, the context is checked before the read: rows read under
   // another key or backend are cleared now, not after the read returns.
   const held = (await readPanel($)).record !== null
+  if (active !== token) return
   if (held) await dispatch($, { type: 'check_started' })
   if (active !== token) return
   const fingerprint = held ? await probe($, sel) : null
   if (active !== token) return
   const gen = (await readPanel($)).gen + 1
+  if (active !== token) return
   await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel), fingerprint })
   if (active !== token) return
   const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
@@ -378,6 +383,22 @@ async function openDetail(
     if (!parsed.ok) {
       await dispatch($, { type: 'detail_failed', seq, failure: parsed.reason })
       return
+    }
+    // As for a list read: the key or backend can change while show runs, and
+    // the answer then speaks for the context it started under. Checked once
+    // more before any of it is shown; on a change the detail fails and the
+    // list is read again, which clears the rows under the new context.
+    if (parsed.envelope.ok) {
+      const now = await probe($, sel)
+      if (stops !== epoch || wantedDetail !== seq) {
+        await dispatch($, { type: 'detail_closed', seq })
+        return
+      }
+      if (now !== parsed.envelope.context.fingerprint) {
+        await dispatch($, { type: 'detail_failed', seq, failure: 'context_changed' })
+        await refresh($, options)
+        return
+      }
     }
     const after = await dispatch($, { type: 'detail_envelope', seq, envelope: parsed.envelope })
     // The binary refused because the context moved on: read the list again.

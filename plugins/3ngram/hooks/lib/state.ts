@@ -239,9 +239,22 @@ function sameRow(s: PanelState, envelope: Envelope, memoryId: string): boolean {
   // waiting); its memory status (active) is not, so it is never compared.
   const heldStatus = commitment?.commitmentStatus ?? opened?.status
   if (heldStatus !== undefined && row.status !== heldStatus) return false
+  // Live GitHub evidence can change with nothing else (a referenced PR
+  // merges): the detail read before that would keep showing the old state.
+  if (opened && githubState(opened) !== githubState(row)) return false
   const held = commitment?.filing ?? opened?.filing
   if (held === undefined || held === 'unknown' || row.filing === 'unknown') return true
   return row.filing === held
+}
+
+// githubState is what a row's GitHub evidence says, as one comparable value.
+// Sorted by ref, so a reorder alone is not a change.
+function githubState(row: CommitmentRow): string {
+  return JSON.stringify(
+    (row.github ?? [])
+      .map((g) => [g.ref, g.type, g.state, g.stateReason, g.closedAt, g.mergedAt])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  )
 }
 
 function onDetailRequested(s: PanelState, memoryId: string): PanelState {
