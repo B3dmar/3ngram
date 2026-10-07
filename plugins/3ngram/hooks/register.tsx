@@ -55,6 +55,15 @@ let kick: { cancel: () => void } | null = null
 // stops counts stopReads calls, so a read that had not started its child
 // when it was stopped still sees that it was, and never starts one.
 let stops = 0
+// wantedDetail is the sequence of the detail last asked for: a detail read
+// that is no longer it stops its child instead of registering it.
+let wantedDetail = 0
+
+// releaseDetailRead forgets the handle of a detail read that has ended, if it
+// is still the one held.
+function releaseDetailRead(seq: number): void {
+  if (detailRead?.seq === seq) detailRead = null
+}
 
 function stopReads(): void {
   stops++
@@ -267,19 +276,27 @@ async function openDetail(
   if (!detail || detail.memoryId !== memoryId) return
   const seq = detail.seq
   const epoch = stops
+  wantedDetail = seq
   try {
+    // An earlier detail's child is stopped now; one that has not started yet
+    // sees it is no longer wanted and never starts.
     detailRead?.stop()
+    detailRead = null
     const sel = selectionOf(options, await $.session.cwd())
     const outcome = await runHook(
       $,
       showArgv(sel, memoryId, detail.fingerprint),
       PROCESS_CEILING_MS,
       (stop) => {
-        if (stops === epoch) detailRead = { seq, stop }
-        else stop()
+        if (stops === epoch && wantedDetail === seq) {
+          detailRead?.stop()
+          detailRead = { seq, stop }
+        } else {
+          stop()
+        }
       },
     )
-    if (detailRead?.seq === seq) detailRead = null
+    releaseDetailRead(seq)
     // Stopped (Back, Cancel, a transition): close this detail quietly rather
     // than showing the stop as an error.
     if (outcome.kind === 'failure' && outcome.failure === 'cancelled') {
@@ -312,7 +329,20 @@ async function closeDetail($: EngineInterface): Promise<void> {
   await dispatch($, { type: 'detail_closed' })
 }
 
+// startup is the first read after a session start or a reload. A reload
+// that changed the options (a scope, the unscoped opt-in, GitHub lookups)
+// leaves rows and a detail read under the old ones: they are cleared before
+// anything else, not when the next read lands.
 async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
+  try {
+    const key = selectionKey(selectionOf(options, await $.session.cwd()))
+    const held = await readPanel($)
+    if (held.selectionKey !== null && held.selectionKey !== key) {
+      await dispatch($, { type: 'session_transition' })
+    }
+  } catch {
+    await reportUnexpected($, options)
+  }
   await verifyIfNeeded($, options)
   await refresh($, options)
 }

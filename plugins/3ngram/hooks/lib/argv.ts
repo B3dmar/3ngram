@@ -48,9 +48,10 @@ export function showArgv(sel: Selection, memoryId: string, fingerprint: string):
 
 // selectionKey identifies what a refresh asks for. Two refreshes with the same
 // key may keep each other's rows while one is in flight; a different key
-// clears them before anything is read.
+// clears them before anything is read. GitHub lookups are part of it: rows and
+// a detail read with them on carry evidence a read with them off must not.
 export function selectionKey(sel: Selection): string {
-  return JSON.stringify([sel.cwd, sel.scope, sel.includeUnscoped])
+  return JSON.stringify([sel.cwd, sel.scope, sel.includeUnscoped, sel.github])
 }
 
 const OPERATIONS = new Set(['context', 'list', 'show'])

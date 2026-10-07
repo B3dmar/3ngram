@@ -578,6 +578,16 @@ describe('cancellation and lifecycle', () => {
     expect(text).toContain(TOPIC)
   })
 
+  test('GitHub lookups are on by default and reach the binary', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'context' ? { stdout: contextEnvelope(FP_A) } : { stdout: listEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    const before = w.spawned.filter((argv) => argv[2] === 'list')
+    expect(before.at(-1)).toContain('--github')
+    expect(before.length).toBe(1)
+  })
+
   test('a refresh that throws outside its own handling is shown, not swallowed', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }), { cwdThrows: true })
     await start($, w.clock)

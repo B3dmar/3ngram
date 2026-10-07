@@ -2,7 +2,7 @@
 
 A read-only commitment panel inside Claude Code. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
 
-Tested with Claude Code 2.1.291 and 2.1.292. The plugin API it uses (mods) is early access and can change between releases.
+Needs Claude Code 2.1.287 or later in the terminal (2.1.286 or later in the Desktop app's Code tab), where mods are on by default; no feature flag is needed, and the early-access `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is ignored from 2.1.287. Tested with 2.1.291 and 2.1.292. The plugin API (mods) is early access and can change between releases.
 
 ## Install
 
