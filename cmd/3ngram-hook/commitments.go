@@ -20,6 +20,7 @@ import (
 //
 //	3ngram-hook commitments context [--cwd DIR] [--scope S] [--include-unscoped]
 //	3ngram-hook commitments list    [--cwd DIR] [--scope S] [--include-unscoped]
+//	3ngram-hook commitments show <memoryId> [--expect-fingerprint F] [selector flags]
 //
 // `context` makes NO network call. It reports the backend, credential
 // fingerprint and selector a `list` would read under, which is how the plugin
@@ -41,6 +42,8 @@ type commitmentsOptions struct {
 	cwd             string
 	scope           string
 	includeUnscoped bool
+	memoryID        string
+	expect          string
 }
 
 // commitmentsEnvelope is the whole stdout contract. `context` is present on
@@ -60,6 +63,11 @@ type commitmentsEnvelope struct {
 	Partial     []partialPart    `json:"partial,omitempty"`
 	Missing     []string         `json:"missing,omitempty"`
 	Error       *readError       `json:"error,omitempty"`
+	// The `show` operation's parts.
+	Commitment *commitmentDetail   `json:"commitment,omitempty"`
+	Source     *commitmentSource   `json:"source,omitempty"`
+	History    *commitmentHistory  `json:"history,omitempty"`
+	Evidence   *commitmentEvidence `json:"evidence,omitempty"`
 }
 
 type commitmentsContext struct {
@@ -134,6 +142,10 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 		deadlineCtx, cancel := context.WithTimeout(ctx, commitmentsDeadline)
 		defer cancel()
 		return writeEnvelope(stdout, listCommitments(deadlineCtx, env, stderr))
+	case "show":
+		deadlineCtx, cancel := context.WithTimeout(ctx, commitmentsDeadline)
+		defer cancel()
+		return writeEnvelope(stdout, showCommitment(deadlineCtx, env, opts.memoryID, opts.expect, stderr))
 	default:
 		return writeEnvelope(stdout, failEnvelope(env, &readError{Kind: kindUsage, Route: "args"}))
 	}
@@ -147,6 +159,14 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 		return opts, false
 	}
 	opts.operation = args[0]
+	rest := args[1:]
+	// `show` takes the memory id first; flags follow it.
+	if opts.operation == "show" {
+		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+			return opts, false
+		}
+		opts.memoryID, rest = rest[0], rest[1:]
+	}
 
 	fs := flag.NewFlagSet("commitments", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -155,7 +175,10 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 	fs.BoolVar(&opts.includeUnscoped, "include-unscoped", false, "also read the scope's records with no project")
 	// --json is accepted for readability at call sites; output is always JSON.
 	fs.Bool("json", true, "emit JSON (always on)")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+	if opts.operation == "show" {
+		fs.StringVar(&opts.expect, "expect-fingerprint", "", "refuse unless the current context has this fingerprint")
+	}
+	if err := fs.Parse(rest); err != nil || fs.NArg() != 0 {
 		return opts, false
 	}
 	opts.scope = strings.TrimSpace(opts.scope)
@@ -218,6 +241,8 @@ func failEnvelope(env commitmentsEnvelope, e *readError) commitmentsEnvelope {
 	env.Error = e
 	env.Commitments = nil
 	env.Counts = nil
+	env.Commitment, env.Source, env.History, env.Evidence = nil, nil, nil, nil
+	env.Partial = nil
 	return env
 }
 

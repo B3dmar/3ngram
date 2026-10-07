@@ -47,6 +47,24 @@ func TestCommitmentsGoldenEnvelopes(t *testing.T) {
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
 		assertGolden(t, "list-auth.json", r.env)
 	})
+	t.Run("show-review", func(t *testing.T) {
+		s := showServer(t, richHistory(), []any{
+			proposalJSON("00000000-0000-4000-8000-b00000000001", partnerID, commitmentID, visibleRationaleText),
+			proposalJSON("00000000-0000-4000-8000-b00000000002", otherProjectID, commitmentID, hiddenRationale),
+		})
+		s.json("/api/v1/memories/"+partnerID, 200, memoryBodyWithTopic("work", strPtr("demo"), "Proposed successor in demo"))
+		s.json("/api/v1/memories/"+otherProjectID, 200, memoryBodyWithTopic("work", strPtr("other"), hiddenTopicProject))
+
+		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+		assertGolden(t, "show-review.json", r.env)
+	})
+	t.Run("show-outside", func(t *testing.T) {
+		s := newReadServer(t)
+		s.json("/api/v1/memories/"+commitmentID, 200, commitmentMemory("work", strPtr("other")))
+
+		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+		assertGolden(t, "show-outside.json", r.env)
+	})
 	t.Run("context", func(t *testing.T) {
 		newReadServer(t)
 

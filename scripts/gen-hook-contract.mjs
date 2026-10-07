@@ -73,6 +73,15 @@ const CONSTANTS = [
       'one past it would 400 the whole read.',
     ],
   },
+  {
+    go: 'maxRestProposalsLimit',
+    zod: 'MAX_REST_PROPOSALS_LIMIT',
+    why: [
+      'Largest `limit` GET /api/v1/proposals accepts. `commitments show` reads',
+      'this many pending proposals and reports the window it inspected, since a',
+      'bounded tenant-wide list cannot prove no evidence exists.',
+    ],
+  },
 ]
 
 function goValue(name) {

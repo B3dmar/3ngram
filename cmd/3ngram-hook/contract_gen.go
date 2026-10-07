@@ -32,4 +32,10 @@ const (
 	// for exactly this, so `hasMore` is the only reason a row can be missing;
 	// one past it would 400 the whole read.
 	maxBriefingSectionCeiling = 100
+
+	// MAX_REST_PROPOSALS_LIMIT.
+	// Largest `limit` GET /api/v1/proposals accepts. `commitments show` reads
+	// this many pending proposals and reports the window it inspected, since a
+	// bounded tenant-wide list cannot prove no evidence exists.
+	maxRestProposalsLimit = 100
 )
