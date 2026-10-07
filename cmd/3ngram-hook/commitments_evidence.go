@@ -102,7 +102,7 @@ func proposalsQuery() string {
 
 // collectEvidence gathers related evidence from the redacted history and from
 // pending proposals touching the commitment.
-func collectEvidence(ctx context.Context, memoryID string, sel briefingSelector, history *commitmentHistory,
+func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel briefingSelector, history *commitmentHistory,
 	visible map[string]bool, proposals proposalsResponse, proposalsErr *readError, stderr io.Writer) *commitmentEvidence {
 	ev := &commitmentEvidence{Items: []evidenceItem{}}
 	if history != nil {
@@ -116,7 +116,7 @@ func collectEvidence(ctx context.Context, memoryID string, sel briefingSelector,
 		logReadFailure(stderr, proposalsErr)
 		ev.partial = append(ev.partial, partialPart{Part: "proposals", Reason: proposalsErr.Kind})
 	} else {
-		items, hidden, unverified, window, partial := evidenceFromProposals(ctx, memoryID, sel, history, visible, proposals)
+		items, hidden, unverified, window, partial := evidenceFromProposals(ctx, cfg, memoryID, sel, history, visible, proposals)
 		ev.Items = append(ev.Items, items...)
 		ev.Hidden += hidden
 		ev.Unverified += unverified
@@ -157,7 +157,7 @@ func evidenceFromHistory(memoryID string, history *commitmentHistory) []evidence
 // maxProposalPartnerLookups of them. A partner outside the selector, or one
 // that could not be verified, is counted as hidden and contributes nothing: no
 // id, no topic, no rationale.
-func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSelector, history *commitmentHistory,
+func evidenceFromProposals(ctx context.Context, cfg readConfig, memoryID string, sel briefingSelector, history *commitmentHistory,
 	visible map[string]bool, resp proposalsResponse) ([]evidenceItem, int, int, proposalWindow, []partialPart) {
 	window := proposalWindow{
 		Status: "proposed", Order: "newest_first", Limit: maxRestProposalsLimit,
@@ -189,7 +189,7 @@ func evidenceFromProposals(ctx context.Context, memoryID string, sel briefingSel
 	window.PartnerLookups = len(lookups)
 	verdicts := make([]partnerVerdict, len(lookups))
 	forEachBounded(ctx, len(lookups), readConcurrency, func(ctx context.Context, n int) {
-		verdicts[n] = lookupPartner(ctx, lookups[n], sel)
+		verdicts[n] = lookupPartner(ctx, cfg, lookups[n], sel)
 	})
 	inside, outside := map[string]bool{}, map[string]bool{}
 	unverified, failedKind := len(unknownPartners)-len(lookups), ""
@@ -279,13 +279,13 @@ type partnerVerdict struct {
 	err    *readError
 }
 
-func lookupPartner(ctx context.Context, memoryID string, sel briefingSelector) partnerVerdict {
+func lookupPartner(ctx context.Context, cfg readConfig, memoryID string, sel briefingSelector) partnerVerdict {
 	path, ok := memoryPath(memoryID, "")
 	if !ok {
 		return partnerVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
 	}
 	var m memoryDetail
-	if err := apiGet(ctx, "memory", path, &m); err != nil {
+	if err := apiGet(ctx, cfg, "memory", path, &m); err != nil {
 		return partnerVerdict{done: true, err: err}
 	}
 	in, _ := memoryInSelector(m.Scope, m.Project, sel)

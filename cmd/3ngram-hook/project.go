@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -25,11 +26,22 @@ func deriveProject(cwd string) string {
 // name rule is unchanged: the last segment of the origin remote, lowercased,
 // else the directory's basename.
 func deriveProjectWithSource(cwd string) (string, string) {
+	name, source, _ := deriveProjectWithSourceCtx(context.Background(), cwd)
+	return name, source
+}
+
+// deriveProjectWithSourceCtx bounds the git call by ctx. When ctx ends while
+// git runs, it reports the context error instead of falling back to the
+// directory name: a stalled git must not silently pick a different project.
+func deriveProjectWithSourceCtx(ctx context.Context, cwd string) (string, string, error) {
 	if cwd == "" {
-		return "unknown", projectSourceNone
+		return "unknown", projectSourceNone, nil
 	}
 
-	out, err := exec.Command("git", "-C", cwd, "remote", "get-url", "origin").Output()
+	out, err := exec.CommandContext(ctx, "git", "-C", cwd, "remote", "get-url", "origin").Output()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", projectSourceNone, ctxErr
+	}
 	if err == nil {
 		remote := strings.TrimSpace(string(out))
 		remote = strings.TrimSuffix(remote, ".git")
@@ -37,11 +49,11 @@ func deriveProjectWithSource(cwd string) (string, string) {
 			return r == '/' || r == ':'
 		})
 		if len(parts) > 0 {
-			return strings.ToLower(parts[len(parts)-1]), projectSourceGitRemote
+			return strings.ToLower(parts[len(parts)-1]), projectSourceGitRemote, nil
 		}
 	}
 
-	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory
+	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory, nil
 }
 
 // isSecondaryWorktree reports whether cwd lives in a LINKED (secondary) git

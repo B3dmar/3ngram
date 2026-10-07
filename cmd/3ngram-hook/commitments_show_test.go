@@ -221,7 +221,7 @@ func TestCommitmentsShowAcceptsTheCurrentFingerprint(t *testing.T) {
 
 func TestCommitmentsShowRejectsAMalformedIDWithoutARequest(t *testing.T) {
 	s := newReadServer(t)
-	for _, args := range [][]string{{"show", ".."}, {"show", "not-a-uuid"}, {"show"}, {"show", "--scope", "work"}} {
+	for _, args := range [][]string{{"show", ".."}, {"show", "."}, {"show"}, {"show", "--scope", "work"}} {
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), args...)
 		if r.code != 1 || r.env.Error.Kind != kindUsage {
 			t.Fatalf("%v: code=%d env=%s", args, r.code, r.stdout)

@@ -97,13 +97,25 @@ func TestAPIGetDoesNotFollowRedirects(t *testing.T) {
 	t.Setenv("THREENGRAM_API_KEY", testAPIKey)
 
 	var out map[string]any
-	err := apiGet(context.Background(), "briefing", "/api/v1/briefing", &out)
+	err := apiGet(context.Background(), resolveReadConfig(), "briefing", "/api/v1/briefing", &out)
 
 	if err == nil || err.Kind != kindBadRequest || err.Status != http.StatusFound {
 		t.Fatalf("err = %+v", err)
 	}
 	if elsewhereHits.Load() != 0 {
 		t.Fatal("the redirect target was contacted")
+	}
+}
+
+func TestMemoryPathEscapesAndRefusesDotSegments(t *testing.T) {
+	for _, bad := range []string{"", ".", ".."} {
+		if _, ok := memoryPath(bad, ""); ok {
+			t.Errorf("memoryPath(%q) must refuse", bad)
+		}
+	}
+	got, ok := memoryPath("a/b?c#d", "/history")
+	if !ok || got != "/api/v1/memories/a%2Fb%3Fc%23d/history" {
+		t.Fatalf("memoryPath = %q, %v", got, ok)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -114,13 +115,25 @@ func runCommitments(args []string) int {
 	return commitmentsMain(ctx, args, cwd, os.Stdout, stderrWriter)
 }
 
-// commitmentsMain is runCommitments with every dependency injected.
+// commitmentsMain is runCommitments with every dependency injected. The one
+// deadline starts here, before anything that can block (the git call that
+// derives the project included), and the backend and credential are resolved
+// once for the whole operation.
 func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, stderr io.Writer) int {
+	opCtx, cancel := context.WithTimeout(ctx, commitmentsDeadline)
+	defer cancel()
 	opts, ok := parseCommitmentsFlags(args)
 	if opts.cwd == "" {
 		opts.cwd = cwd
 	}
-	env := newCommitmentsEnvelope(opts)
+	if abs, err := filepath.Abs(opts.cwd); err == nil {
+		opts.cwd = abs
+	}
+	cfg := resolveReadConfig()
+	env, deriveErr := newCommitmentsEnvelope(opCtx, cfg, opts)
+	if deriveErr != nil {
+		return writeEnvelope(stdout, failEnvelope(env, classifyReadFailure(opCtx, "project", 0, deriveErr)))
+	}
 	if !ok {
 		return writeEnvelope(stdout, failEnvelope(env, &readError{Kind: kindUsage, Route: "args"}))
 	}
@@ -130,7 +143,7 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 
 	switch opts.operation {
 	case "context":
-		if apiKey() == "" {
+		if cfg.key == "" {
 			return writeEnvelope(stdout, failEnvelope(env, &readError{Kind: kindNoKey, Route: "config"}))
 		}
 		if selErr := validateCommitmentsSelector(env.Context); selErr != nil {
@@ -139,13 +152,9 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 		env.OK = true
 		return writeEnvelope(stdout, env)
 	case "list":
-		deadlineCtx, cancel := context.WithTimeout(ctx, commitmentsDeadline)
-		defer cancel()
-		return writeEnvelope(stdout, listCommitments(deadlineCtx, env, stderr))
+		return writeEnvelope(stdout, listCommitments(opCtx, cfg, env, stderr))
 	case "show":
-		deadlineCtx, cancel := context.WithTimeout(ctx, commitmentsDeadline)
-		defer cancel()
-		return writeEnvelope(stdout, showCommitment(deadlineCtx, env, opts.memoryID, opts.expect, stderr))
+		return writeEnvelope(stdout, showCommitment(opCtx, cfg, env, opts.memoryID, opts.expect, stderr))
 	default:
 		return writeEnvelope(stdout, failEnvelope(env, &readError{Kind: kindUsage, Route: "args"}))
 	}
@@ -199,14 +208,14 @@ func selectorFlagError(opts commitmentsOptions) *readError {
 // from the same rule the SessionStart hook uses; a scope narrows it to the
 // scope_project intersection, the only variant that can include unscoped
 // records, and only when asked.
-func requestedSelector(opts commitmentsOptions) (briefingSelector, projectInfo) {
-	name, source := deriveProjectWithSource(opts.cwd)
+func requestedSelector(ctx context.Context, opts commitmentsOptions) (briefingSelector, projectInfo, error) {
+	name, source, err := deriveProjectWithSourceCtx(ctx, opts.cwd)
 	project := projectInfo{Name: name, Source: source}
 	if opts.scope == "" {
-		return briefingSelector{Kind: "project", Project: name}, project
+		return briefingSelector{Kind: "project", Project: name}, project, err
 	}
 	include := opts.includeUnscoped
-	return briefingSelector{Kind: "scope_project", Scope: opts.scope, Project: name, IncludeUnscoped: &include}, project
+	return briefingSelector{Kind: "scope_project", Scope: opts.scope, Project: name, IncludeUnscoped: &include}, project, err
 }
 
 // validateCommitmentsSelector rejects the combinations that would otherwise
@@ -218,22 +227,21 @@ func validateCommitmentsSelector(c commitmentsContext) *readError {
 	return nil
 }
 
-// newCommitmentsEnvelope stamps the context every envelope carries. It reads
-// configuration only, never the network.
-func newCommitmentsEnvelope(opts commitmentsOptions) commitmentsEnvelope {
-	base := apiBaseURL()
-	sel, project := requestedSelector(opts)
+// newCommitmentsEnvelope stamps the context every envelope carries, from the
+// pinned config. It reads configuration and runs git, never the network.
+func newCommitmentsEnvelope(ctx context.Context, cfg readConfig, opts commitmentsOptions) (commitmentsEnvelope, error) {
+	sel, project, err := requestedSelector(ctx, opts)
 	return commitmentsEnvelope{
 		Contract:  commitmentsContract,
 		Operation: opts.operation,
 		Binary:    "3ngram-hook " + version,
 		Context: commitmentsContext{
-			Fingerprint: contextFingerprint(base, apiKey(), sel),
-			APIHost:     apiHost(base),
+			Fingerprint: contextFingerprint(cfg.base, cfg.key, sel),
+			APIHost:     apiHost(cfg.base),
 			Project:     project,
 			Requested:   sel,
 		},
-	}
+	}, err
 }
 
 func failEnvelope(env commitmentsEnvelope, e *readError) commitmentsEnvelope {

@@ -75,10 +75,48 @@ type memoryFiling struct {
 	ValidTo *string `json:"validTo"`
 }
 
+// listBriefing is the briefing body as the list reads it. The two sections
+// are pointers, and so are their count and items, so a 200 that omits either
+// is told apart from an empty one and fails as bad_response instead of being
+// shown as "no commitments".
+type listBriefing struct {
+	Selector    briefingSelector `json:"selector"`
+	GeneratedAt string           `json:"generatedAt"`
+	Commitments *listSection     `json:"commitments"`
+	Overdue     *listSection     `json:"overdue"`
+}
+
+type listSection struct {
+	Count   *int                  `json:"count"`
+	Items   *[]briefingCommitment `json:"items"`
+	HasMore *bool                 `json:"hasMore"`
+}
+
+// sections returns both sections, or false when either is incomplete.
+func (b listBriefing) sections() (commitmentSection, commitmentSection, bool) {
+	c, okC := b.Commitments.section()
+	o, okO := b.Overdue.section()
+	return c, o, okC && okO
+}
+
+func (s *listSection) section() (commitmentSection, bool) {
+	if s == nil || s.Count == nil || s.Items == nil {
+		return commitmentSection{}, false
+	}
+	out := commitmentSection{Count: *s.Count, Items: *s.Items}
+	// An older server without the hasMore signal still reports truncation
+	// through count > items, which truncationParts reads too.
+	if s.HasMore != nil {
+		out.HasMore = *s.HasMore
+	}
+	return out, true
+}
+
 // listCommitments reads the selector's open and waiting commitments under the
-// operation's single deadline in ctx.
-func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Writer) commitmentsEnvelope {
-	if apiKey() == "" {
+// operation's single deadline in ctx, with the one credential cfg pinned for
+// the whole operation.
+func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelope, stderr io.Writer) commitmentsEnvelope {
+	if cfg.key == "" {
 		return failEnvelope(env, &readError{Kind: kindNoKey, Route: "config"})
 	}
 	if selErr := validateCommitmentsSelector(env.Context); selErr != nil {
@@ -88,22 +126,15 @@ func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Wri
 	widened := requested.IncludeUnscoped != nil && *requested.IncludeUnscoped
 
 	var me meResponse
-	var wide, strict briefingResponse
-	var meErr, wideErr, strictErr *readError
+	var wide listBriefing
+	var meErr, wideErr *readError
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); meErr = apiGet(ctx, "me", "/api/v1/me", &me) }()
+	go func() { defer wg.Done(); meErr = apiGet(ctx, cfg, "me", "/api/v1/me", &me) }()
 	go func() {
 		defer wg.Done()
-		wideErr = apiGet(ctx, "briefing", "/api/v1/briefing"+buildCommitmentsQuery(requested), &wide)
+		wideErr = apiGet(ctx, cfg, "briefing", "/api/v1/briefing"+buildCommitmentsQuery(requested), &wide)
 	}()
-	if widened {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			strictErr = apiGet(ctx, "briefing", "/api/v1/briefing"+buildCommitmentsQuery(strictSelector(requested)), &strict)
-		}()
-	}
 	wg.Wait()
 
 	if wideErr != nil {
@@ -118,6 +149,12 @@ func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Wri
 		logReadFailure(stderr, mismatch)
 		return failEnvelope(env, mismatch)
 	}
+	commitments, overdue, complete := wide.sections()
+	if !complete {
+		incomplete := &readError{Kind: kindBadResponse, Route: "briefing", Hint: "commitment sections missing"}
+		logReadFailure(stderr, incomplete)
+		return failEnvelope(env, incomplete)
+	}
 	effective := wide.Selector
 	env.Context.Effective = &effective
 
@@ -128,35 +165,63 @@ func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Wri
 		env.Partial = append(env.Partial, partialPart{Part: "account", Reason: meErr.Kind})
 	}
 
-	rows := mergeSections(wide.Commitments, wide.Overdue)
-	// The strict read decides filing for the rows it returns, so its echo is
-	// held to the same rule as the widened one: a strict read that answered
-	// under a wider selector proves nothing, and every row is verified instead.
-	if widened && strictErr == nil && !selectorWithin(strictSelector(requested), strict.Selector) {
-		strictErr = &readError{Kind: kindSelectorMismatch, Route: "briefing"}
+	rows := mergeSections(commitments, overdue)
+	var strictPtr *strictSnapshot
+	if widened {
+		snapshot, strictErr := readStrict(ctx, cfg, requested)
+		if strictErr != nil {
+			logReadFailure(stderr, strictErr)
+			env.Partial = append(env.Partial, partialPart{Part: "filing", Reason: "strict_read_" + strictErr.Kind})
+		} else {
+			strictPtr = &snapshot
+		}
 	}
-	var strictPtr *briefingResponse
-	if widened && strictErr == nil {
-		strictPtr = &strict
-	} else if widened {
-		logReadFailure(stderr, strictErr)
-		env.Partial = append(env.Partial, partialPart{Part: "filing", Reason: "strict_read_" + strictErr.Kind})
-	}
-	filed := fileRows(ctx, rows, requested, widened, strictPtr)
+	filed := fileRows(ctx, cfg, rows, requested, widened, strictPtr)
 	env.Partial = append(env.Partial, filed.partial...)
 
 	env.Counts = &commitmentCounts{
-		OpenOrWaiting:     wide.Commitments.Count,
-		Overdue:           wide.Overdue.Count,
+		OpenOrWaiting:     commitments.Count,
+		Overdue:           overdue.Count,
 		Returned:          len(filed.rows),
 		ChangedDuringRead: filed.changed,
 	}
-	env.Partial = append(env.Partial, truncationParts(wide)...)
+	env.Partial = append(env.Partial, truncationParts(commitments, overdue)...)
 	env.Commitments = &filed.rows
 	env.Missing = []string{"owner", "sourceSession"}
 	env.GeneratedAt = wide.GeneratedAt
 	env.OK = true
 	return env
+}
+
+// strictSnapshot is the set of memory ids the strict read returned.
+type strictSnapshot map[string]struct{}
+
+// readStrict runs the strict read AFTER the widened one, never beside it. A
+// row it returns is labelled `project` with no lookup, so it must describe the
+// row's filing at or after the moment the widened read saw it: a row that moved
+// from the project to unscoped in between is then absent here and verified.
+// Its echo is held to selectorWithin like the widened one, and an incomplete
+// body counts as a failed read.
+func readStrict(ctx context.Context, cfg readConfig, requested briefingSelector) (strictSnapshot, *readError) {
+	var strict listBriefing
+	if err := apiGet(ctx, cfg, "briefing", "/api/v1/briefing"+buildCommitmentsQuery(strictSelector(requested)), &strict); err != nil {
+		return nil, err
+	}
+	if !selectorWithin(strictSelector(requested), strict.Selector) {
+		return nil, &readError{Kind: kindSelectorMismatch, Route: "briefing"}
+	}
+	commitments, overdue, complete := strict.sections()
+	if !complete {
+		return nil, &readError{Kind: kindBadResponse, Route: "briefing"}
+	}
+	ids := strictSnapshot{}
+	for _, item := range commitments.Items {
+		ids[item.MemoryID] = struct{}{}
+	}
+	for _, item := range overdue.Items {
+		ids[item.MemoryID] = struct{}{}
+	}
+	return ids, nil
 }
 
 // buildCommitmentsQuery is the briefing GET for the panel: the selector, the
@@ -227,13 +292,13 @@ func mergeSections(commitments, overdue commitmentSection) []commitmentRow {
 }
 
 // truncationParts labels each section the server cut.
-func truncationParts(resp briefingResponse) []partialPart {
+func truncationParts(commitments, overdue commitmentSection) []partialPart {
 	var parts []partialPart
-	if resp.Commitments.HasMore || resp.Commitments.Count > len(resp.Commitments.Items) {
-		parts = append(parts, countedPart("commitments", "truncated", len(resp.Commitments.Items), resp.Commitments.Count))
+	if commitments.HasMore || commitments.Count > len(commitments.Items) {
+		parts = append(parts, countedPart("commitments", "truncated", len(commitments.Items), commitments.Count))
 	}
-	if resp.Overdue.HasMore || resp.Overdue.Count > len(resp.Overdue.Items) {
-		parts = append(parts, countedPart("overdue", "truncated", len(resp.Overdue.Items), resp.Overdue.Count))
+	if overdue.HasMore || overdue.Count > len(overdue.Items) {
+		parts = append(parts, countedPart("overdue", "truncated", len(overdue.Items), overdue.Count))
 	}
 	return parts
 }
@@ -253,19 +318,14 @@ type filedRows struct {
 // requested scope, `project` with the requested project, and is dropped as
 // changed during the read otherwise. A candidate that could not be read is
 // `unknown`.
-func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelector, widened bool, strict *briefingResponse) filedRows {
+func fileRows(ctx context.Context, cfg readConfig, rows []commitmentRow, requested briefingSelector, widened bool, strict *strictSnapshot) filedRows {
 	if !widened {
 		return filedRows{rows: rows}
 	}
 	out := filedRows{rows: []commitmentRow{}}
-	inStrict := map[string]struct{}{}
+	inStrict := strictSnapshot{}
 	if strict != nil {
-		for _, item := range strict.Commitments.Items {
-			inStrict[item.MemoryID] = struct{}{}
-		}
-		for _, item := range strict.Overdue.Items {
-			inStrict[item.MemoryID] = struct{}{}
-		}
+		inStrict = *strict
 	}
 
 	var candidates []int
@@ -284,7 +344,7 @@ func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelec
 	}
 	verdicts := make([]filingVerdict, len(lookups))
 	forEachBounded(ctx, len(lookups), readConcurrency, func(ctx context.Context, n int) {
-		verdicts[n] = verifyFiling(ctx, rows[lookups[n]].MemoryID, requested)
+		verdicts[n] = verifyFiling(ctx, cfg, rows[lookups[n]].MemoryID, requested)
 	})
 
 	drop := map[int]struct{}{}
@@ -331,13 +391,13 @@ type filingVerdict struct {
 
 // verifyFiling reads one candidate's memory and decides its filing from the
 // stored row, not from which response it appeared in.
-func verifyFiling(ctx context.Context, memoryID string, requested briefingSelector) filingVerdict {
+func verifyFiling(ctx context.Context, cfg readConfig, memoryID string, requested briefingSelector) filingVerdict {
 	path, ok := memoryPath(memoryID, "")
 	if !ok {
 		return filingVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
 	}
 	var m memoryFiling
-	if err := apiGet(ctx, "memory", path, &m); err != nil {
+	if err := apiGet(ctx, cfg, "memory", path, &m); err != nil {
 		// Gone between the two reads: it left the selector, like a move.
 		if err.Kind == kindNotFound {
 			return filingVerdict{done: true, drop: true}

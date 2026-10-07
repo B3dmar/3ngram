@@ -39,7 +39,7 @@ type readRequest struct {
 
 // allowedReadPath is every path a commitments subcommand may touch. Anything
 // else, and any method but GET, fails the test that triggered it.
-var allowedReadPath = regexp.MustCompile(`^/api/v1/(me|briefing|proposals|memories/[0-9a-f-]+(/history)?)$`)
+var allowedReadPath = regexp.MustCompile(`^/api/v1/(me|briefing|proposals|memories/[0-9a-fA-F-]+(/history)?)$`)
 
 func newReadServer(t *testing.T) *readServer {
 	t.Helper()
@@ -48,7 +48,12 @@ func newReadServer(t *testing.T) *readServer {
 		s.mu.Lock()
 		s.requests = append(s.requests, readRequest{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("X-API-Key")})
 		s.mu.Unlock()
+		// Like the real server, memory ids match whatever their case: a uuid
+		// path parameter is compared as a uuid, not as text.
 		key := r.URL.Path
+		if strings.HasPrefix(key, "/api/v1/memories/") {
+			key = strings.ToLower(key)
+		}
 		if r.URL.Path == "/api/v1/briefing" {
 			key += "?includeUnscoped=" + r.URL.Query().Get("includeUnscoped")
 		}
@@ -56,7 +61,7 @@ func newReadServer(t *testing.T) *readServer {
 			h(w, r)
 			return
 		}
-		if h, ok := s.routes[r.URL.Path]; ok {
+		if h, ok := s.routes[strings.SplitN(key, "?", 2)[0]]; ok {
 			h(w, r)
 			return
 		}

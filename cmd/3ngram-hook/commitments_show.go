@@ -173,19 +173,14 @@ func memoryInSelector(scope string, project *string, sel briefingSelector) (bool
 }
 
 // showCommitment runs the detail read under the operation's deadline in ctx.
-func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expect string, stderr io.Writer) commitmentsEnvelope {
-	if apiKey() == "" {
+func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope, memoryID, expect string, stderr io.Writer) commitmentsEnvelope {
+	if cfg.key == "" {
 		return failEnvelope(env, &readError{Kind: kindNoKey, Route: "config"})
 	}
 	if selErr := validateCommitmentsSelector(env.Context); selErr != nil {
 		return failEnvelope(env, selErr)
 	}
-	// Ids are compared as the server writes them, lowercase. An uppercase id
-	// would still be found (uuid matching is case-insensitive) but would then
-	// match nothing in the history or the proposals.
-	memoryID = strings.ToLower(memoryID)
 	memoryURL, okID := memoryPath(memoryID, "")
-	historyURL, _ := memoryPath(memoryID, "/history")
 	// Compared first, before any request: a detail asked for under a context
 	// that has since changed is refused without reading anything.
 	if expect != "" && expect != env.Context.Fingerprint {
@@ -197,13 +192,18 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 	sel := env.Context.Requested
 
 	var memory memoryDetail
-	if err := apiGet(ctx, "memory", memoryURL, &memory); err != nil {
+	if err := apiGet(ctx, cfg, "memory", memoryURL, &memory); err != nil {
 		logReadFailure(stderr, err)
 		return failEnvelope(env, err)
 	}
-	if memory.ID != memoryID {
+	// From here on the id is the server's own spelling of it. The requested
+	// one may differ in case (uuid matching ignores it), and every later
+	// comparison, against history and proposal ids, uses the server's form.
+	if !strings.EqualFold(memory.ID, memoryID) {
 		return failEnvelope(env, &readError{Kind: kindBadResponse, Route: "memory", Hint: "the server answered for another id"})
 	}
+	memoryID = memory.ID
+	historyURL, _ := memoryPath(memoryID, "/history")
 	inside, filing := memoryInSelector(memory.Scope, memory.Project, sel)
 	if !inside || memory.MemoryType != "commitment" {
 		return failEnvelope(env, &readError{Kind: kindOutsideSelector, Route: "memory"})
@@ -216,11 +216,11 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		historyErr = apiGet(ctx, "history", historyURL, &history)
+		historyErr = apiGet(ctx, cfg, "history", historyURL, &history)
 	}()
 	go func() {
 		defer wg.Done()
-		proposalsErr = apiGet(ctx, "proposals", proposalsQuery(), &proposals)
+		proposalsErr = apiGet(ctx, cfg, "proposals", proposalsQuery(), &proposals)
 	}()
 	wg.Wait()
 
@@ -246,7 +246,7 @@ func showCommitment(ctx context.Context, env commitmentsEnvelope, memoryID, expe
 		env.Partial = append(env.Partial, historySectionParts(history)...)
 	}
 
-	env.Evidence = collectEvidence(ctx, memoryID, sel, env.History, visible, proposals, proposalsErr, stderr)
+	env.Evidence = collectEvidence(ctx, cfg, memoryID, sel, env.History, visible, proposals, proposalsErr, stderr)
 	env.Partial = append(env.Partial, env.Evidence.partial...)
 	env.Missing = []string{"owner", "sourceSession", "resolveReason"}
 	env.OK = true
