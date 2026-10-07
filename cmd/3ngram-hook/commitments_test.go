@@ -2,6 +2,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -702,6 +704,48 @@ func TestCommitmentsListCommitmentStatusDecidesOnlyWhenKnown(t *testing.T) {
 				t.Fatalf("filing = %q, env = %s", got, r.stdout)
 			}
 		})
+	}
+}
+
+// A briefing item that omits a required field cannot be shown or
+// de-duplicated: the read fails instead of emitting an empty-id row.
+func TestCommitmentsListRejectsIncompleteItems(t *testing.T) {
+	for _, field := range []string{"id", "memoryId", "status", "topic", "dueAt", "overdue"} {
+		t.Run(field, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, meBody)
+			var body map[string]any
+			_ = json.Unmarshal([]byte(briefingBody(projectSel("demo"), section(1, item(1, "a")), section(0))), &body)
+			items := body["commitments"].(map[string]any)["items"].([]any)
+			delete(items[0].(map[string]any), field)
+			s.json("/api/v1/briefing", 200, mustMarshal(body))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+			if r.code != 2 || r.env.Error == nil || r.env.Error.Kind != kindBadResponse || r.env.Commitments != nil {
+				t.Fatalf("code=%d env=%s", r.code, r.stdout)
+			}
+		})
+	}
+}
+
+func TestCommitmentsAcceptTheAgentFlag(t *testing.T) {
+	newReadServer(t)
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "context", "--agent", "codex")
+	if r.code != 0 || !r.env.OK {
+		t.Fatalf("--agent is accepted and ignored: code=%d env=%s", r.code, r.stdout)
+	}
+}
+
+// With no --cwd and no caller-supplied directory, the process directory is
+// resolved under the deadline.
+func TestCommitmentsResolveTheProcessDirectory(t *testing.T) {
+	newReadServer(t)
+	t.Chdir(projectDir(t, "from-process"))
+	var stdout, stderr bytes.Buffer
+	commitmentsMain(context.Background(), []string{"context"}, "", &stdout, &stderr)
+	if !strings.Contains(stdout.String(), `"name":"from-process"`) {
+		t.Fatalf("stdout = %s", stdout.String())
 	}
 }
 
