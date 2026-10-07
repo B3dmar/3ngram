@@ -90,9 +90,33 @@ type listBriefing struct {
 }
 
 type listSection struct {
-	Count   *int                  `json:"count"`
-	Items   *[]briefingCommitment `json:"items"`
-	HasMore *bool                 `json:"hasMore"`
+	Count   *int        `json:"count"`
+	Items   *[]listItem `json:"items"`
+	HasMore *bool       `json:"hasMore"`
+}
+
+// listItem is one briefing commitment with every required field tracked for
+// presence: an item that omits one cannot be shown or de-duplicated safely,
+// so it fails the read instead of becoming an empty-id row.
+type listItem struct {
+	ID       *string      `json:"id"`
+	MemoryID *string      `json:"memoryId"`
+	Topic    *string      `json:"topic"`
+	Status   *string      `json:"status"`
+	DueAt    jsonNullable `json:"dueAt"`
+	Overdue  *bool        `json:"overdue"`
+}
+
+func (it listItem) commitment() (briefingCommitment, bool) {
+	if it.ID == nil || *it.ID == "" || it.MemoryID == nil || *it.MemoryID == "" ||
+		it.Status == nil || *it.Status == "" || it.Topic == nil || !it.DueAt.Present || it.Overdue == nil {
+		return briefingCommitment{}, false
+	}
+	c := briefingCommitment{ID: *it.ID, MemoryID: *it.MemoryID, Topic: *it.Topic, Status: *it.Status, Overdue: *it.Overdue}
+	if it.DueAt.Value != nil {
+		c.DueAt = *it.DueAt.Value
+	}
+	return c, true
 }
 
 // sections returns both sections, or false when either is incomplete.
@@ -106,7 +130,15 @@ func (s *listSection) section() (commitmentSection, bool) {
 	if s == nil || s.Count == nil || s.Items == nil {
 		return commitmentSection{}, false
 	}
-	out := commitmentSection{Count: *s.Count, Items: *s.Items}
+	items := make([]briefingCommitment, 0, len(*s.Items))
+	for _, it := range *s.Items {
+		c, ok := it.commitment()
+		if !ok {
+			return commitmentSection{}, false
+		}
+		items = append(items, c)
+	}
+	out := commitmentSection{Count: *s.Count, Items: items}
 	// An older server without the hasMore signal still reports truncation
 	// through count > items, which truncationParts reads too.
 	if s.HasMore != nil {
