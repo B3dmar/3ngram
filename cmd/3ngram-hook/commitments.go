@@ -42,6 +42,8 @@ type commitmentsOptions struct {
 	cwd             string
 	scope           string
 	includeUnscoped bool
+	// scopeGiven is whether --scope was passed at all, blank or not.
+	scopeGiven bool
 }
 
 // commitmentsEnvelope is the whole stdout contract. `context` is present on
@@ -188,6 +190,11 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return opts, false
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "scope" {
+			opts.scopeGiven = true
+		}
+	})
 	opts.scope = strings.TrimSpace(opts.scope)
 	return opts, true
 }
@@ -196,6 +203,11 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 // unscoped records exist only within a scope, so asking for them without one
 // would either read nothing or tempt a silent widening.
 func selectorFlagError(opts commitmentsOptions) *readError {
+	// A --scope given blank (an unset "$SCOPE") is not an omitted one: reading
+	// the whole project instead would silently widen what was asked for.
+	if opts.scopeGiven && opts.scope == "" {
+		return &readError{Kind: kindInvalidSelector, Route: "selector", Hint: "--scope is blank"}
+	}
 	if opts.includeUnscoped && opts.scope == "" {
 		return &readError{Kind: kindInvalidSelector, Route: "selector", Hint: "--include-unscoped requires --scope"}
 	}
