@@ -1,6 +1,6 @@
 # 3ngram for Claude Code
 
-A read-only commitment panel inside Claude Code. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
+A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
 
 Needs Claude Code 2.1.287 or later in the terminal (2.1.286 or later in the Desktop app's Code tab), where mods are on by default; no feature flag is needed, and the early-access `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is ignored from 2.1.287. Tested with 2.1.291 and 2.1.292. The plugin API (mods) is early access and can change between releases.
 
@@ -27,6 +27,10 @@ Run `/commitments` to open the panel. Change the options with `/plugin configure
 | `refresh_minutes` | 5 | Background refresh interval, at least 1 |
 | `github_evidence` | on | Look up the GitHub issues and pull requests commitments mention, read-only |
 | `auto_open` | off | Open the panel at session start, on a terminal wide enough to dock it |
+
+## The bundled hooks
+
+The plugin also registers the four 3ngram session hooks (SessionStart briefing, PreToolUse precheck, Stop heartbeat, SessionEnd close) through `scripts/run-hook`. If you already registered them in `settings.json`, the plugin's copies stand down for each event instance the guard can confirm your settings cover. This is best effort, not exact: where it cannot tell, the plugin copy runs too, and a few setups it cannot see are listed in [the hook README](../../cmd/3ngram-hook/README.md#claude-code-plugin). Registering the hooks in one place, settings or the plugin, avoids both. A machine without `3ngram-hook`, or with a build older than the guard, gets no hooks from the plugin and no error. The plugin supports macOS and Linux; Windows is not supported in this version (there is no Windows build of `3ngram-hook`).
 
 ## What it shows, and what it does not
 

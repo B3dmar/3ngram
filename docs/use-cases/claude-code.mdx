@@ -134,6 +134,12 @@ any related evidence that it is done. It changes no records. It reads through
 the `3ngram-hook` binary from Layer 2, so it uses the same API key and the same
 project, and needs a build that has the `commitments` subcommand.
 
+The plugin also bundles the Layer 2 hooks. You can install it instead of the
+`settings.json` block, or alongside it: its copies stand down for each event the
+guard can confirm your settings cover. That is best effort, so registering the
+hooks in one place is the sure way to run each once. The plugin supports macOS and
+Linux.
+
 <Steps>
   <Step title="Load the plugin">
     From a checkout of the repository, for one session:

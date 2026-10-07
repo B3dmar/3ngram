@@ -16,7 +16,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|stop|close|precheck|commitments|sync|verify|version> [--agent <name>]")
+		fmt.Fprintln(os.Stderr, "usage: 3ngram-hook <briefing|stop|close|precheck|commitments|capabilities|sync|verify|version> [--agent <name>]")
 		os.Exit(1)
 	}
 
@@ -24,6 +24,19 @@ func main() {
 	// session natural key) are passed through rather than parsed here, so a hook
 	// registration names the harness that will run it.
 	args := os.Args[2:]
+
+	// The Claude Code plugin runs its copies of the hooks with `--via plugin`.
+	// Such a copy stands down when settings already run this subcommand for
+	// this event instance (see plugin_guard.go); otherwise it runs exactly as a
+	// settings hook would, on the same stdin.
+	if via, rest := viaPlugin(args); via {
+		input, complete := readHookInput(os.Stdin)
+		if complete && deferToSettings(os.Args[1], input, currentGuardEnv()) {
+			os.Exit(0)
+		}
+		replayStdin(input, os.Stdin)
+		args = rest
+	}
 
 	switch os.Args[1] {
 	case "briefing":
@@ -49,6 +62,13 @@ func main() {
 		os.Exit(runSync())
 	case "verify":
 		os.Exit(runVerify())
+	// What this binary supports, one token per line, for callers that must
+	// not guess: the plugin's hook shim runs its copies only when the deferral
+	// guard (`via-plugin`) is there, so an older binary never runs them twice.
+	case "capabilities":
+		fmt.Println("via-plugin")
+		fmt.Println(commitmentsContract)
+		os.Exit(0)
 	case "version", "--version", "-v":
 		fmt.Printf("3ngram-hook %s\n", version)
 		os.Exit(0)
