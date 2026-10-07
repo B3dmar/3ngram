@@ -519,3 +519,39 @@ func emptyHistory() string {
 		"sections":            map[string]any{"lineage": "ok", "events": "ok"},
 	})
 }
+
+// With the history and the proposals unread, a GitHub reference that was
+// checked is still a search over its window; a gh that could not run is not.
+func TestCommitmentsShowVerdictCountsCheckedGitHubReferences(t *testing.T) {
+	unread := func(t *testing.T) {
+		s := showServer(t, emptyHistory(), []any{})
+		memory := strings.Replace(commitmentMemory("work", strPtr("3ngram")), "Full commitment text", "See B3dmar/3ngram#255.", 1)
+		if !strings.Contains(memory, "B3dmar/3ngram#255") {
+			t.Fatal("fixture edit did not apply")
+		}
+		s.json("/api/v1/memories/"+commitmentID, 200, memory)
+		s.json("/api/v1/memories/"+commitmentID+"/history", 503, `{"error":"unavailable"}`)
+		s.json("/api/v1/proposals", 503, `{"error":"unavailable"}`)
+	}
+	t.Run("an open reference checked", func(t *testing.T) {
+		installFakeGH(t)
+		unread(t)
+
+		r := runCommitmentsForTest(t, projectDir(t, "3ngram"), "show", commitmentID, "--github")
+
+		if r.env.Evidence.Verdict != verdictNoneFound || r.env.Evidence.Inspected.GitHub.Checked != 1 {
+			t.Fatalf("env = %s", r.stdout)
+		}
+	})
+	t.Run("gh missing", func(t *testing.T) {
+		unread(t)
+		dir := projectDir(t, "3ngram")
+		t.Setenv("PATH", t.TempDir())
+
+		r := runCommitmentsForTest(t, dir, "show", commitmentID, "--github")
+
+		if r.env.Evidence.Verdict != verdictNotInspected || !hasPartial(r.env, "github", "gh_missing") {
+			t.Fatalf("env = %s", r.stdout)
+		}
+	})
+}
