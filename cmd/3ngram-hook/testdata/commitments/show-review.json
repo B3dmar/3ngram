@@ -1,0 +1,184 @@
+{
+  "contract": "3ngram-hook.commitments.v1",
+  "operation": "show",
+  "ok": true,
+  "binary": "3ngram-hook test",
+  "context": {
+    "fingerprint": "f1f1f1f1f1f1f1f1",
+    "apiHost": "api.example.test",
+    "project": {
+      "name": "demo",
+      "source": "directory-name"
+    },
+    "requested": {
+      "kind": "scope_project",
+      "scope": "work",
+      "project": "demo",
+      "includeUnscoped": false
+    }
+  },
+  "missing": [
+    "owner",
+    "sourceSession",
+    "resolveReason"
+  ],
+  "commitment": {
+    "memoryId": "00000000-0000-4000-8000-a00000000050",
+    "memoryType": "commitment",
+    "topic": "Ship the panel",
+    "content": "Full commitment text",
+    "scope": "work",
+    "project": "demo",
+    "filing": "project",
+    "status": "active",
+    "commitmentStatus": "open",
+    "current": true,
+    "tags": [
+      "panel"
+    ],
+    "validFrom": "2026-10-01T00:00:00.000Z",
+    "validTo": null,
+    "recordedAt": "2026-10-01T00:00:00.000Z"
+  },
+  "source": {
+    "createdBy": "user_mcp",
+    "createdAt": "2026-10-01T00:00:00.000Z",
+    "session": null,
+    "sessionReason": "not_exposed"
+  },
+  "history": {
+    "events": [
+      {
+        "eventKind": "create",
+        "actorKind": "user_mcp",
+        "createdAt": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "eventsTruncated": false,
+    "lineage": [
+      {
+        "id": "00000000-0000-4000-8000-a00000000051",
+        "memoryType": "decision",
+        "topic": "Earlier note in demo",
+        "project": "demo",
+        "scope": "work",
+        "status": "active",
+        "validTo": null,
+        "recordedAt": "2026-10-02T00:00:00.000Z",
+        "isCurrent": false,
+        "lifecycleState": "current"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "fromId": "00000000-0000-4000-8000-a00000000050",
+        "toId": "00000000-0000-4000-8000-a00000000051",
+        "edgeType": "updates",
+        "createdBy": "user",
+        "createdAt": "2026-10-03T00:00:00.000Z"
+      }
+    ],
+    "relationships": [
+      {
+        "memory": {
+          "id": "00000000-0000-4000-8000-a00000000054",
+          "memoryType": "decision",
+          "topic": "Newer decision in this project",
+          "project": "demo",
+          "scope": "work",
+          "status": "active",
+          "validTo": null,
+          "recordedAt": "2026-10-02T00:00:00.000Z",
+          "isCurrent": true,
+          "lifecycleState": "current"
+        },
+        "edge": {
+          "id": "e4",
+          "fromId": "00000000-0000-4000-8000-a00000000054",
+          "toId": "00000000-0000-4000-8000-a00000000050",
+          "edgeType": "updates",
+          "createdBy": "user",
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        }
+      },
+      {
+        "memory": {
+          "id": "00000000-0000-4000-8000-a00000000051",
+          "memoryType": "decision",
+          "topic": "Earlier note in demo",
+          "project": "demo",
+          "scope": "work",
+          "status": "active",
+          "validTo": null,
+          "recordedAt": "2026-10-02T00:00:00.000Z",
+          "isCurrent": false,
+          "lifecycleState": "current"
+        },
+        "edge": {
+          "id": "e1",
+          "fromId": "00000000-0000-4000-8000-a00000000050",
+          "toId": "00000000-0000-4000-8000-a00000000051",
+          "edgeType": "updates",
+          "createdBy": "user",
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        }
+      }
+    ],
+    "lineageTruncated": false,
+    "relationshipsTruncated": false,
+    "hiddenOutsideSelector": {
+      "nodes": 2,
+      "edges": 2,
+      "relationships": 1
+    }
+  },
+  "evidence": {
+    "verdict": "review",
+    "items": [
+      {
+        "kind": "related_memory",
+        "source": "3ngram",
+        "edgeType": "updates",
+        "relation": "successor",
+        "memoryId": "00000000-0000-4000-8000-a00000000054",
+        "memoryType": "decision",
+        "topic": "Newer decision in this project",
+        "recordedAt": "2026-10-02T00:00:00.000Z",
+        "current": true
+      },
+      {
+        "kind": "consolidation_proposal",
+        "source": "3ngram",
+        "edgeType": "updates",
+        "relation": "successor",
+        "memoryId": "00000000-0000-4000-8000-a00000000055",
+        "topic": "Proposed successor in demo",
+        "proposalId": "00000000-0000-4000-8000-b00000000001",
+        "similarity": 0.91,
+        "rationale": "Both ends are in demo"
+      }
+    ],
+    "inspected": {
+      "proposals": {
+        "status": "proposed",
+        "order": "newest_first",
+        "limit": 100,
+        "returned": 2,
+        "mayHaveMore": false,
+        "partnerLookups": 2
+      },
+      "history": {
+        "lineageNodeCap": 25,
+        "lineageEdgeCap": 50,
+        "relationshipCap": 50,
+        "eventCap": 50,
+        "lineageTruncated": false,
+        "relationshipsTruncated": false,
+        "eventsTruncated": false
+      }
+    },
+    "hiddenOutsideSelector": 1,
+    "unverifiedPartners": 0
+  }
+}

@@ -52,7 +52,12 @@ func newReadServer(t *testing.T) *readServer {
 		// segment there, though r.URL.Path decodes it into two.
 		s.requests = append(s.requests, readRequest{r.Method, r.URL.EscapedPath(), r.URL.RawQuery, r.Header.Get("X-API-Key")})
 		s.mu.Unlock()
+		// Like the real server, memory ids match whatever their case: a uuid
+		// path parameter is compared as a uuid, not as text.
 		key := r.URL.Path
+		if strings.HasPrefix(key, "/api/v1/memories/") {
+			key = strings.ToLower(key)
+		}
 		if r.URL.Path == "/api/v1/briefing" {
 			key += "?includeUnscoped=" + r.URL.Query().Get("includeUnscoped")
 		}
@@ -60,7 +65,7 @@ func newReadServer(t *testing.T) *readServer {
 			h(w, r)
 			return
 		}
-		if h, ok := s.routes[r.URL.Path]; ok {
+		if h, ok := s.routes[strings.SplitN(key, "?", 2)[0]]; ok {
 			h(w, r)
 			return
 		}
