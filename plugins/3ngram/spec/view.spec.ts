@@ -17,7 +17,7 @@ import { FP_A, golden, goldenText, withFingerprint } from './fixtures.ts'
 
 const list = withFingerprint(golden('list-unscoped.json'), FP_A)
 const ready: PanelState = [
-  { type: 'refresh_started', gen: 1, selectionKey: 'k' } as const,
+  { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A } as const,
   { type: 'list_envelope', gen: 1, envelope: list, at: Date.UTC(2026, 9, 7, 12, 30) } as const,
 ].reduce(reduce, initialState)
 
@@ -78,12 +78,15 @@ test('partial notes say how much was read', () => {
 })
 
 test('stale and error states say so in words, not only by tone', () => {
-  const stale = reduce(reduce(ready, { type: 'refresh_started', gen: 2, selectionKey: 'k' }), {
-    type: 'list_failed',
-    gen: 2,
-    failure: 'timeout',
-    at: 0,
-  })
+  const stale = reduce(
+    reduce(ready, { type: 'refresh_started', gen: 2, selectionKey: 'k', fingerprint: FP_A }),
+    {
+      type: 'list_failed',
+      gen: 2,
+      failure: 'timeout',
+      at: 0,
+    },
+  )
   const verified = reduce(stale, {
     type: 'context_verified',
     gen: 2,
@@ -111,10 +114,32 @@ test('the status line carries counts only, never a topic', () => {
 })
 
 test('nothing is shown while loading, even with a record held', () => {
-  const loading = reduce(ready, { type: 'refresh_started', gen: 2, selectionKey: 'other' })
+  const loading = reduce(ready, {
+    type: 'refresh_started',
+    gen: 2,
+    selectionKey: 'other',
+    fingerprint: FP_A,
+  })
   assert.equal(panelView(loading).sections.length, 0)
   assert.deepEqual(panelView(loading).header, ['3ngram commitments'])
   assert.equal(panelView(loading).canCancel, true)
+})
+
+test('a pull request closed without merging says so', () => {
+  assert.equal(
+    githubLabel({
+      kind: 'github_reference',
+      source: 'github',
+      ref: 'o/r#7',
+      referenceForm: 'qualified',
+      type: 'pull_request',
+      state: 'closed',
+      stateReason: null,
+      closedAt: '2026-10-01T00:00:00Z',
+      mergedAt: null,
+    }),
+    'PR o/r#7 closed without merging 2026-10-01',
+  )
 })
 
 test('GitHub references read as related, never as done', () => {

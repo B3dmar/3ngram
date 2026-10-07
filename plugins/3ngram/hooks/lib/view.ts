@@ -80,8 +80,15 @@ export function githubLabel(g: GitHubEvidence): string {
   switch (g.state) {
     case 'merged':
       return `${kind} ${g.ref} merged${g.mergedAt ? ` ${day(g.mergedAt)}` : ''}`
-    case 'closed':
-      return `${kind} ${g.ref} closed${g.stateReason === 'not_planned' ? ' as not planned' : ''}${g.closedAt ? ` ${day(g.closedAt)}` : ''}`
+    case 'closed': {
+      const how =
+        g.type === 'pull_request'
+          ? ' without merging'
+          : g.stateReason === 'not_planned'
+            ? ' as not planned'
+            : ''
+      return `${kind} ${g.ref} closed${how}${g.closedAt ? ` ${day(g.closedAt)}` : ''}`
+    }
     case 'not_found':
       return `${g.ref} not found or not visible`
     default:

@@ -7,14 +7,14 @@ import { contextArgv, isAllowedArgv, listArgv, selectionKey, showArgv } from './
 import { parseEnvelope } from './lib/contract.ts'
 import { classifyEmptyOutput, classifySpawnError } from './lib/process.ts'
 import type { FailureKind, PanelEvent, PanelState } from './lib/state.ts'
-import { initialState, needsVerification, reduce } from './lib/state.ts'
+import { initialState, needsVerification, reduce, visibleDetail } from './lib/state.ts'
 import { detailView, panelView, statusLine } from './lib/view.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
 // commitments`. Everything it shows comes from that binary's JSON envelopes;
 // the module itself never reads the API key, never calls the network or an
 // MCP server, and never writes a file or the store. All of that is pinned by
-// tests/panel.test.ts and by `claude plugin validate` (env reads: nothing).
+// tests/panel.test.ts and by `claude plugin validate` (it reads no env).
 
 const PANE = '3ngram-commitments'
 const TITLE = '3ngram commitments'
@@ -33,21 +33,31 @@ async function readPanel($: EngineInterface): Promise<PanelState> {
   return (await read($, panel)) as unknown as PanelState
 }
 
-// The child a refresh or detail is waiting on, so Cancel and a session
-// transition can stop it. Module state on purpose: a hot reload drops it
-// together with the children, which the engine kills on unload.
-let inflight: { gen: number; stop: () => void } | null = null
-// The token of the refresh that holds the single-flight guard. Taken
-// synchronously, before the first await, so two triggers in the same tick
-// cannot both start one; released when that refresh ends, or at once when its
-// read is stopped (its results are ignored by generation from then on).
+// Module state, on purpose: a hot reload drops it together with the children
+// and timers, which the engine ends on unload.
+//
+// active is the token of the refresh holding the single-flight guard, taken
+// synchronously before its first await so two triggers in one tick cannot
+// both start one. A refresh asked for while one runs is not dropped: queued
+// makes it run once the current one ends. listRead and detailRead are the
+// children in flight, so Cancel, a session transition and a reload can stop
+// them; a stopped read's results are ignored by generation or sequence.
 let active: number | null = null
 let tokens = 0
+let queued = false
+let listRead: { token: number; stop: () => void } | null = null
+let detailRead: { seq: number; stop: () => void } | null = null
+// The refresh interval and the startup kick of the last session.start, ended
+// before a later session.start arms new ones. One-shot kicks from commands
+// and transitions fire at once and are not kept.
+let tick: { cancel: () => void } | null = null
+let kick: { cancel: () => void } | null = null
 
-// stopRead ends the read in flight, if any, and frees the guard for the next.
-function stopRead(): void {
-  inflight?.stop()
-  inflight = null
+function stopReads(): void {
+  listRead?.stop()
+  detailRead?.stop()
+  listRead = null
+  detailRead = null
   active = null
 }
 
@@ -78,13 +88,21 @@ async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelSta
   return next
 }
 
+// fire runs work a handler or timer does not wait for, so a failure in it is
+// still seen: in the panel's state where it can be, in the debug log always.
+function fire($: EngineInterface, work: Promise<unknown>): void {
+  work.catch(() => {
+    $.ui.log('3ngram: a panel action failed', { to: 'debug' })
+  })
+}
+
 // runHook spawns one allow-listed command and collects its stdout under a
-// hard ceiling. onStop receives the function that ends the child early.
+// hard ceiling. onStart receives the function that ends the child early.
 async function runHook(
   $: EngineInterface,
   argv: string[],
   ceilingMs: number,
-  onStop?: (stop: () => void) => void,
+  onStart?: (stop: () => void) => void,
 ): Promise<RunOutcome> {
   if (!isAllowedArgv(argv)) return { kind: 'failure', failure: 'contract' }
   let stdout = ''
@@ -93,10 +111,13 @@ async function runHook(
   const stream = $.process.spawn({ argv })
   const stop = (why: 'timeout' | 'cancelled' | 'crash') => {
     stopped ??= why
-    void stream.return(undefined as never)
+    // Returning the stream ends the child (SIGTERM).
+    stream.return(undefined as never).catch(() => {
+      $.ui.log('3ngram: stopping a child failed', { to: 'debug' })
+    })
   }
   const timer = $.clock.after(ceilingMs, () => stop('timeout'))
-  onStop?.(() => stop('cancelled'))
+  onStart?.(() => stop('cancelled'))
   try {
     for await (const chunk of stream) {
       if (chunk.stream === 'stdout') stdout += chunk.text
@@ -105,10 +126,8 @@ async function runHook(
     }
   } catch (err) {
     if (stopped) return { kind: 'failure', failure: stopped }
-    return {
-      kind: 'failure',
-      failure: classifySpawnError(err instanceof Error ? err.message : String(err)),
-    }
+    const message = err instanceof Error ? err.message : String(err)
+    return { kind: 'failure', failure: classifySpawnError(message) }
   } finally {
     timer.cancel()
   }
@@ -117,39 +136,93 @@ async function runHook(
   return { kind: 'output', stdout }
 }
 
-// verifyIfNeeded runs the local `commitments context` probe when a failure left
-// rows whose context is unconfirmed, and reports the fingerprint it found
-// (null when the probe could not answer).
-async function verifyIfNeeded($: EngineInterface, sel: Selection): Promise<void> {
+// probe runs `commitments context`, which makes no network call, and answers
+// the fingerprint of the context a read would use now, or null.
+async function probe($: EngineInterface, sel: Selection): Promise<string | null> {
+  const outcome = await runHook($, contextArgv(sel), PROBE_CEILING_MS)
+  if (outcome.kind !== 'output') return null
+  const parsed = parseEnvelope(outcome.stdout)
+  return parsed.ok && parsed.envelope.ok ? parsed.envelope.context.fingerprint : null
+}
+
+// verifyIfNeeded settles a pending verification: the probe's fingerprint, or
+// null when the probe, or even reading the session's directory, failed. It
+// never leaves the panel waiting on a verification nothing will finish.
+async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<void> {
   const s = await readPanel($)
   if (!needsVerification(s)) return
-  const gen = s.gen
-  const outcome = await runHook($, contextArgv(sel), PROBE_CEILING_MS)
   let fingerprint: string | null = null
-  if (outcome.kind === 'output') {
-    const parsed = parseEnvelope(outcome.stdout)
-    if (parsed.ok && parsed.envelope.ok) fingerprint = parsed.envelope.context.fingerprint
+  try {
+    fingerprint = await probe($, selectionOf(options, await $.session.cwd()))
+  } catch {
+    fingerprint = null
   }
-  await dispatch($, { type: 'context_verified', gen, fingerprint, at: await $.clock.now() })
+  await dispatch($, { type: 'context_verified', gen: s.gen, fingerprint, at: await $.clock.now() })
 }
 
 async function refresh($: EngineInterface, options: PluginOptions): Promise<void> {
-  if (active !== null) return
+  if (active !== null) {
+    queued = true
+    return
+  }
   const token = ++tokens
   active = token
   try {
-    await refreshOnce($, options)
+    await refreshOnce($, options, token)
   } catch {
-    await reportUnexpected($)
+    await reportUnexpected($, options)
   } finally {
     if (active === token) active = null
   }
+  if (queued && active === null) {
+    queued = false
+    await refresh($, options)
+  }
+}
+
+// refreshOnce is one read. It stops at every await where its token may have
+// been taken away (a cancel, a session transition, a reload), so a read that
+// was stopped before its child started never starts one.
+async function refreshOnce(
+  $: EngineInterface,
+  options: PluginOptions,
+  token: number,
+): Promise<void> {
+  const sel = selectionOf(options, await $.session.cwd())
+  // With rows held, the context is checked before the read: rows read under
+  // another key or backend are cleared now, not after the read returns.
+  const held = (await readPanel($)).record !== null
+  const fingerprint = held ? await probe($, sel) : null
+  if (active !== token) return
+  const gen = (await readPanel($)).gen + 1
+  await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel), fingerprint })
+  if (active !== token) return
+  const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
+    if (active === token) listRead = { token, stop }
+    else stop()
+  })
+  if (listRead?.token === token) listRead = null
+  if (outcome.kind === 'failure' && outcome.failure === 'cancelled') return
+  const at = await $.clock.now()
+  if (outcome.kind === 'output') {
+    const parsed = parseEnvelope(outcome.stdout)
+    await dispatch(
+      $,
+      parsed.ok
+        ? { type: 'list_envelope', gen, envelope: parsed.envelope, at }
+        : { type: 'list_failed', gen, failure: parsed.reason, at },
+    )
+  } else {
+    await dispatch($, { type: 'list_failed', gen, failure: outcome.failure, at })
+  }
+  await verifyIfNeeded($, options)
 }
 
 // A refresh that failed outside its own handling (the session's directory
 // could not be read, a state write was refused) is still a visible failure,
-// never a silent one: it fails the current generation like a crash.
-async function reportUnexpected($: EngineInterface): Promise<void> {
+// never a silent one: it fails the current generation like a crash, and any
+// verification that leaves pending is settled at once.
+async function reportUnexpected($: EngineInterface, options: PluginOptions): Promise<void> {
   try {
     const s = await readPanel($)
     await dispatch($, {
@@ -158,60 +231,19 @@ async function reportUnexpected($: EngineInterface): Promise<void> {
       failure: 'crash',
       at: await $.clock.now(),
     })
+    await verifyIfNeeded($, options)
   } catch {
     $.ui.status('3ngram: unavailable')
   }
 }
 
-// startup is the first read of a session or a reload: finish any
-// verification a reload interrupted, then refresh.
-async function startup($: EngineInterface, options: PluginOptions, cwd: string): Promise<void> {
-  try {
-    await verifyIfNeeded($, selectionOf(options, cwd))
-  } catch {
-    await reportUnexpected($)
-  }
-  await refresh($, options)
-}
-
-async function refreshOnce($: EngineInterface, options: PluginOptions): Promise<void> {
-  const sel = selectionOf(options, await $.session.cwd())
-  const gen = (await readPanel($)).gen + 1
-  await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel) })
-  try {
-    const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
-      inflight = { gen, stop }
-    })
-    const at = await $.clock.now()
-    if (outcome.kind === 'output') {
-      const parsed = parseEnvelope(outcome.stdout)
-      await dispatch(
-        $,
-        parsed.ok
-          ? { type: 'list_envelope', gen, envelope: parsed.envelope, at }
-          : { type: 'list_failed', gen, failure: parsed.reason, at },
-      )
-    } else if (outcome.failure === 'cancelled') {
-      // cancel() already moved the generation on and runs the probe itself.
-      return
-    } else {
-      await dispatch($, { type: 'list_failed', gen, failure: outcome.failure, at })
-    }
-  } catch {
-    await dispatch($, { type: 'list_failed', gen, failure: 'crash', at: await $.clock.now() })
-  } finally {
-    if (inflight?.gen === gen) inflight = null
-  }
-  await verifyIfNeeded($, sel)
-}
-
 async function cancel($: EngineInterface, options: PluginOptions): Promise<void> {
-  stopRead()
+  stopReads()
   try {
     await dispatch($, { type: 'cancel' })
-    await verifyIfNeeded($, selectionOf(options, await $.session.cwd()))
+    await verifyIfNeeded($, options)
   } catch {
-    await reportUnexpected($)
+    await reportUnexpected($, options)
   }
 }
 
@@ -220,40 +252,48 @@ async function openDetail(
   options: PluginOptions,
   memoryId: string,
 ): Promise<void> {
-  try {
-    await openDetailOnce($, options, memoryId)
-  } catch {
-    const seq = (await readPanel($)).detail?.seq
-    if (seq !== undefined) await dispatch($, { type: 'detail_failed', seq, failure: 'crash' })
-  }
-}
-
-async function openDetailOnce(
-  $: EngineInterface,
-  options: PluginOptions,
-  memoryId: string,
-): Promise<void> {
   const s = await dispatch($, { type: 'detail_requested', memoryId })
   const detail = s.detail
   if (!detail || detail.memoryId !== memoryId) return
-  const sel = selectionOf(options, await $.session.cwd())
-  const outcome = await runHook($, showArgv(sel, memoryId, detail.fingerprint), PROCESS_CEILING_MS)
-  if (outcome.kind === 'failure') {
-    await dispatch($, { type: 'detail_failed', seq: detail.seq, failure: outcome.failure })
-    return
+  const seq = detail.seq
+  try {
+    detailRead?.stop()
+    const sel = selectionOf(options, await $.session.cwd())
+    const outcome = await runHook(
+      $,
+      showArgv(sel, memoryId, detail.fingerprint),
+      PROCESS_CEILING_MS,
+      (stop) => {
+        detailRead = { seq, stop }
+      },
+    )
+    if (detailRead?.seq === seq) detailRead = null
+    if (outcome.kind === 'failure') {
+      await dispatch($, { type: 'detail_failed', seq, failure: outcome.failure })
+      return
+    }
+    const parsed = parseEnvelope(outcome.stdout)
+    if (!parsed.ok) {
+      await dispatch($, { type: 'detail_failed', seq, failure: parsed.reason })
+      return
+    }
+    const after = await dispatch($, { type: 'detail_envelope', seq, envelope: parsed.envelope })
+    // The binary refused because the context moved on: read the list again.
+    if (after.detail?.error?.kind === 'context_changed') await refresh($, options)
+  } catch {
+    await dispatch($, { type: 'detail_failed', seq, failure: 'crash' })
   }
-  const parsed = parseEnvelope(outcome.stdout)
-  if (!parsed.ok) {
-    await dispatch($, { type: 'detail_failed', seq: detail.seq, failure: parsed.reason })
-    return
-  }
-  const after = await dispatch($, {
-    type: 'detail_envelope',
-    seq: detail.seq,
-    envelope: parsed.envelope,
-  })
-  // The binary refused because the context moved on: read the list again.
-  if (after.detail?.error?.kind === 'context_changed') void refresh($, options)
+}
+
+async function closeDetail($: EngineInterface): Promise<void> {
+  detailRead?.stop()
+  detailRead = null
+  await dispatch($, { type: 'detail_closed' })
+}
+
+async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
+  await verifyIfNeeded($, options)
+  await refresh($, options)
 }
 
 function clip(text: string, max: number): string {
@@ -267,21 +307,22 @@ export const register: Register = (on, options) => {
       name: 'commitments',
       description: 'Open the read-only 3ngram commitment panel',
     })
-    // A reload while a read was in flight: the child is gone with the old
-    // module, so the read counts as cancelled and its context is re-checked.
-    // A child this environment still holds is stopped for the same reason.
-    stopRead()
+    // session.start fires again after a reload. Whatever this environment
+    // still holds from an earlier start (its timers, a child) is ended first,
+    // so timers never pile up; a read the reload interrupted counts as
+    // cancelled and its context is checked again.
+    tick?.cancel()
+    kick?.cancel()
+    stopReads()
     const s = await readPanel($)
     if (s.status === 'loading' || s.status === 'refreshing') await dispatch($, { type: 'reloaded' })
     // Background work starts from timers, never inside this dispatch, so the
     // first prompt is never held by a read.
-    $.clock.after(0, () => {
-      void startup($, options, e.cwd)
-    })
-    $.clock.every(refreshMs(options), () => {
-      void refresh($, options)
-    })
-    if (options.auto_open === true && e.isInteractive) void $.ui.open({ id: PANE, title: TITLE })
+    kick = $.clock.after(0, () => fire($, startup($, options)))
+    tick = $.clock.every(refreshMs(options), () => fire($, refresh($, options)))
+    if (options.auto_open === true && e.isInteractive) {
+      fire($, $.ui.open({ id: PANE, title: TITLE }))
+    }
     return next(e)
   })
 
@@ -289,20 +330,16 @@ export const register: Register = (on, options) => {
     // /clear, /resume and /branch keep the module but not the conversation:
     // nothing read for the old one is kept, and the next read starts over.
     if (e.reason === 'clear' || e.reason === 'resume') {
-      stopRead()
+      stopReads()
       await dispatch($, { type: 'session_transition' })
-      $.clock.after(0, () => {
-        void refresh($, options)
-      })
+      $.clock.after(0, () => fire($, refresh($, options)))
     }
     return next(e)
   })
 
   on('command.run', { command: 'commitments' }, async ($) => {
     await $.ui.open({ id: PANE, title: TITLE, focus: true })
-    $.clock.after(0, () => {
-      void refresh($, options)
-    })
+    $.clock.after(0, () => fire($, refresh($, options)))
     // The model reads this line: it names the action, never a record.
     return { text: 'Opened the 3ngram commitments panel.' }
   })
@@ -311,17 +348,19 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const s = await readPanel($)
 
-    if (s.detail) {
-      const d = detailView(s.detail)
+    const shownDetail = visibleDetail(s)
+    if (shownDetail) {
+      const d = detailView(shownDetail)
+      const lines = (prefix: string, items: string[], dim: boolean) =>
+        items.map((line, i) => (
+          <Text key={`${prefix}-${i}`} dimColor={dim}>
+            {line}
+          </Text>
+        ))
       return (
         <Box flexDirection="column">
           <Box>
-            <Button
-              key="back"
-              label="Back"
-              hotkey="b"
-              onPress={() => void dispatch($, { type: 'detail_closed' })}
-            />
+            <Button key="back" label="Back" hotkey="b" onPress={() => fire($, closeDetail($))} />
           </Box>
           <Text bold>{d.title}</Text>
           <Text bold={d.status.tone === 'error'} dimColor={d.status.tone === 'busy'}>
@@ -329,31 +368,13 @@ export const register: Register = (on, options) => {
           </Text>
           {d.labels.length > 0 ? <Text dimColor>{d.labels.join(' · ')}</Text> : null}
           {d.content !== null ? <Text>{d.content}</Text> : null}
-          {d.source.map((line) => (
-            <Text key={`source-${line}`} dimColor>
-              {line}
-            </Text>
-          ))}
+          {lines('source', d.source, true)}
           {d.evidence.length > 0 ? <Text bold>Evidence</Text> : null}
-          {d.evidence.map((line) => (
-            <Text key={`evidence-${line}`}>{line}</Text>
-          ))}
-          {d.window.map((line) => (
-            <Text key={`window-${line}`} dimColor>
-              {line}
-            </Text>
-          ))}
+          {lines('evidence', d.evidence, false)}
+          {lines('window', d.window, true)}
           {d.history.length > 0 ? <Text bold>History</Text> : null}
-          {d.history.map((line) => (
-            <Text key={`history-${line}`} dimColor>
-              {line}
-            </Text>
-          ))}
-          {d.notes.map((line) => (
-            <Text key={`note-${line}`} dimColor>
-              {line}
-            </Text>
-          ))}
+          {lines('history', d.history, true)}
+          {lines('note', d.notes, true)}
         </Box>
       )
     }
@@ -362,7 +383,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {view.header.map((line, i) => (
-          <Text key={`header-${line}`} bold={i === 0}>
+          <Text key={`header-${i}`} bold={i === 0}>
             {line}
           </Text>
         ))}
@@ -377,36 +398,36 @@ export const register: Register = (on, options) => {
             key="refresh"
             label="Refresh"
             hotkey="r"
-            onPress={() => void refresh($, options)}
+            onPress={() => fire($, refresh($, options))}
           />
           {view.canCancel ? (
             <Button
               key="cancel"
               label="Cancel"
               hotkey="c"
-              onPress={() => void cancel($, options)}
+              onPress={() => fire($, cancel($, options))}
             />
           ) : null}
         </Box>
         {view.empty !== null ? <Text dimColor>{view.empty}</Text> : null}
-        {view.sections.map((section) => (
-          <Box key={`section-${section.title}`} flexDirection="column" marginTop={1}>
+        {view.sections.map((section, si) => (
+          <Box key={`section-${si}`} flexDirection="column" marginTop={1}>
             <Text bold>{section.title}</Text>
-            {section.rows.map((row) => (
-              <Box key={`row-${row.memoryId}`} flexDirection="column">
+            {section.rows.map((row, ri) => (
+              <Box key={`row-${si}-${ri}`} flexDirection="column">
                 <Button
-                  key={`open-${row.memoryId}`}
+                  key={`open-${si}-${ri}`}
                   label={clip(row.title, MAX_LABEL)}
                   plain
-                  onPress={() => void openDetail($, options, row.memoryId)}
+                  onPress={() => fire($, openDetail($, options, row.memoryId))}
                 />
                 <Text dimColor>{row.labels.join(' · ')}</Text>
               </Box>
             ))}
           </Box>
         ))}
-        {view.notes.map((note) => (
-          <Text key={`note-${note}`} dimColor>
+        {view.notes.map((note, i) => (
+          <Text key={`note-${i}`} dimColor>
             {note}
           </Text>
         ))}

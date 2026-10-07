@@ -68,13 +68,15 @@ export function isAllowedArgv(argv: readonly string[]): boolean {
   let i = 3
   if (operation === 'show') {
     const id = argv[3]
-    if (id === undefined || id === '' || id.startsWith('-')) return false
+    if (id === undefined || id === '' || id.startsWith('-') || /[\s\p{Cc}]/u.test(id)) return false
     i = 4
   }
   for (; i < argv.length; i++) {
     const arg = argv[i] ?? ''
     if (BARE_FLAGS.has(arg)) continue
-    if (VALUE_FLAGS.has(arg) && i + 1 < argv.length) {
+    const value = argv[i + 1]
+    // A flag's value never looks like a flag, so no value can be read as one.
+    if (VALUE_FLAGS.has(arg) && value !== undefined && !value.startsWith('-')) {
       i++
       continue
     }

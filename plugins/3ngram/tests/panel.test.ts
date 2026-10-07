@@ -9,7 +9,7 @@
 // explicitly.
 
 import type { On } from 'claude-code'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Mounted } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 const PLUGIN = '3ngram'
@@ -74,12 +74,63 @@ function errorEnvelope(kind: string, fingerprint: string): string {
   })
 }
 
-type Answer = { stdout?: string; stderr?: string; throws?: string; wait?: Promise<void> }
+type Answer = {
+  stdout?: string
+  stderr?: string
+  throws?: string
+  wait?: Promise<void>
+  hang?: boolean
+}
+
+// fire starts work the test does not await here, without leaving a promise
+// floating unhandled.
+function fire(work: Promise<unknown>): void {
+  work.catch(() => undefined)
+}
+
+function showEnvelope(fingerprint: string): string {
+  return JSON.stringify({
+    contract: '3ngram-hook.commitments.v1',
+    operation: 'show',
+    ok: true,
+    binary: '3ngram-hook test',
+    context: context(fingerprint),
+    commitment: {
+      memoryId: '00000000-0000-4000-8000-a00000000001',
+      topic: TOPIC,
+      content: 'Full commitment text',
+      scope: 'work',
+      project: 'demo',
+      filing: 'project',
+      status: 'active',
+      commitmentStatus: 'open',
+      current: true,
+      tags: [],
+      recordedAt: '2026-10-01T00:00:00.000Z',
+    },
+    source: {
+      createdBy: 'user_mcp',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      session: null,
+      sessionReason: 'not_exposed',
+    },
+    evidence: {
+      verdict: 'none_found',
+      items: [],
+      inspected: { proposals: null, history: null },
+      hiddenOutsideSelector: 0,
+      unverifiedPartners: 0,
+    },
+  })
+}
 
 // world answers every `$` call the plugin makes, and records the commands it
 // runs and anything it must never touch.
 function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: boolean } = {}) {
   const spawned: string[][] = []
+  // Each spawn the plugin ended early (Cancel, the ceiling) by returning it.
+  const returned: string[][] = []
+  const holds: (() => void)[] = []
   const forbidden: string[] = []
   const statuses: (string | undefined)[] = []
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 7, 12) })
@@ -101,6 +152,19 @@ function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: b
     const a = answer(argv)
     if (a.wait) await a.wait
     if (a.throws) throw new Error(a.throws)
+    if (a.hang) {
+      // A child that never answers. The kit has no timers, so it waits on a
+      // hold the test releases; each release lets it write one byte, which is
+      // where a stream the plugin returned in the meantime ends.
+      try {
+        for (;;) {
+          await new Promise<void>((resolve) => holds.push(resolve))
+          yield { stream: 'stderr' as const, text: ' ' }
+        }
+      } finally {
+        returned.push(argv)
+      }
+    }
     if (a.stdout) yield { stream: 'stdout' as const, text: a.stdout }
     if (a.stderr) yield { stream: 'stderr' as const, text: a.stderr }
     return { value: { code: a.stdout ? 0 : 1, signal: null } } as never
@@ -119,7 +183,7 @@ function world(on: On, answer: (argv: string[]) => Answer, opts: { cwdThrows?: b
       return { deny: `${noun} is not allowed for the read-only panel` } as never
     })
   }
-  return { spawned, forbidden, statuses, clock }
+  return { spawned, returned, holds, forbidden, statuses, clock }
 }
 
 function paneProps() {
@@ -139,7 +203,7 @@ async function start($: Engine, clock: { advance: (ms: number) => Promise<void> 
   await clock.advance(1)
 }
 
-type Pane = Awaited<ReturnType<Engine['ui']['mount']>>
+type Pane = Mounted<'terminal' | 'desktop', 'Pane'>
 
 // mountPane draws the pane once per surface; textOf re-reads the drawing as
 // it stands now.
@@ -218,11 +282,37 @@ describe('the read-only data path', () => {
 })
 
 describe('switching accounts cannot show the previous context', () => {
-  test('a key change followed by a crash clears the rows once the probe disagrees', async ($, on) => {
+  test('a key swap is caught by the probe before the read: old rows never show during it', async ($, on) => {
+    let release: () => void = () => undefined
     let reads = 0
     const w = world(on, (argv) => {
-      if (argv[2] === 'list') return ++reads === 1 ? { stdout: listEnvelope(FP_A) } : {}
-      return { stdout: contextEnvelope(FP_B) }
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_B) }
+      reads++
+      if (reads === 1) return { stdout: listEnvelope(FP_A) }
+      return {
+        wait: new Promise<void>((r) => {
+          release = r
+        }),
+        stdout: listEnvelope(FP_B, 'Read under the new key'),
+      }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    await w.clock.advance(5 * 60_000)
+    // The second read is still running, and the old rows are already gone.
+    expect(await textOf(ui)).not.toContain(TOPIC)
+    release()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Read under the new key')
+  })
+
+  test('a key rotated during a read that fails without an answer: the probe disagrees, rows clear', async ($, on) => {
+    let reads = 0
+    let probes = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes === 1 ? FP_A : FP_B) }
+      return ++reads === 1 ? { stdout: listEnvelope(FP_A) } : {}
     })
     await start($, w.clock)
     const ui = await mountPane($)
@@ -231,7 +321,6 @@ describe('switching accounts cannot show the previous context', () => {
     const text = await textOf(ui)
     expect(text).not.toContain(TOPIC)
     expect(text).toContain('could not be confirmed')
-    expect(w.spawned.some((argv) => argv[2] === 'context')).toBe(true)
   })
 
   test('the same failure under the same context keeps the rows, marked stale', async ($, on) => {
@@ -247,17 +336,19 @@ describe('switching accounts cannot show the previous context', () => {
     expect(text).toContain('STALE since')
   })
 
-  test('an error envelope from another fingerprint clears the rows without a probe', async ($, on) => {
+  test('an error envelope from another fingerprint clears the rows with no extra probe', async ($, on) => {
     let reads = 0
     const w = world(on, (argv) =>
       argv[2] === 'list'
         ? { stdout: ++reads === 1 ? listEnvelope(FP_A) : errorEnvelope('unavailable', FP_B) }
-        : {},
+        : { stdout: contextEnvelope(FP_A) },
     )
     await start($, w.clock)
     await w.clock.advance(5 * 60_000)
     expect(await textOf(await mountPane($))).not.toContain(TOPIC)
-    expect(w.spawned.some((argv) => argv[2] === 'context')).toBe(false)
+    // One probe before the second read; none after it, since the envelope
+    // named its own context.
+    expect(w.spawned.filter((argv) => argv[2] === 'context').length).toBe(1)
   })
 })
 
@@ -265,8 +356,9 @@ describe('cancellation and lifecycle', () => {
   test('cancel stops the read; a key change meanwhile clears the rows', async ($, on) => {
     let release: () => void = () => undefined
     let reads = 0
+    let probes = 0
     const w = world(on, (argv) => {
-      if (argv[2] !== 'list') return { stdout: contextEnvelope(FP_B) }
+      if (argv[2] === 'context') return { stdout: contextEnvelope(++probes === 1 ? FP_A : FP_B) }
       reads++
       if (reads === 1) return { stdout: listEnvelope(FP_A) }
       return {
@@ -278,14 +370,105 @@ describe('cancellation and lifecycle', () => {
     })
     await start($, w.clock)
     const ui = await mountPane($)
-    void ui.press({ key: 'refresh' })
+    fire(ui.press({ key: 'refresh' }))
     await w.clock.advance(1)
+    // The pre-read probe confirmed the context, so the rows show while it runs.
+    expect(await textOf(ui)).toContain(TOPIC)
     await ui.press({ key: 'cancel' })
     release()
     await w.clock.advance(1)
     const text = await textOf(ui)
     expect(text).not.toContain(TOPIC)
     expect(text).toContain('The refresh was cancelled.')
+    expect(text).toContain('could not be confirmed')
+  })
+
+  test('cancel under the same context keeps the rows, marked stale', async ($, on) => {
+    let release: () => void = () => undefined
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      reads++
+      if (reads === 1) return { stdout: listEnvelope(FP_A) }
+      return {
+        wait: new Promise<void>((r) => {
+          release = r
+        }),
+        stdout: listEnvelope(FP_A),
+      }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'refresh' }))
+    await w.clock.advance(1)
+    await ui.press({ key: 'cancel' })
+    release()
+    await w.clock.advance(1)
+    const text = await textOf(ui)
+    expect(text).toContain(TOPIC)
+    expect(text).toContain('STALE since')
+  })
+
+  test('a read that hangs is ended at the ceiling and shown as a timeout', async ($, on) => {
+    const w = world(on, () => ({ hang: true }))
+    await start($, w.clock)
+    await w.clock.advance(13_000)
+    for (const release of w.holds.splice(0)) release()
+    await w.clock.advance(1)
+    expect(await textOf(await mountPane($))).toContain('The read timed out.')
+    expect(w.returned.length).toBe(1)
+  })
+
+  test('a refresh asked for during a read runs once that read ends', async ($, on) => {
+    let release: () => void = () => undefined
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      reads++
+      if (reads === 1)
+        return {
+          wait: new Promise<void>((r) => {
+            release = r
+          }),
+          stdout: listEnvelope(FP_A),
+        }
+      return { stdout: listEnvelope(FP_A, 'The queued read') }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'refresh' }))
+    release()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('The queued read')
+  })
+
+  test('an open detail hides with the rows when a read fails, until the context is confirmed', async ($, on) => {
+    let reads = 0
+    let release: () => void = () => undefined
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+      reads++
+      if (reads === 1) return { stdout: listEnvelope(FP_A) }
+      return {
+        wait: new Promise<void>((r) => {
+          release = r
+        }),
+      }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await ui.press({ key: 'open-0-0' })
+    expect(await textOf(ui)).toContain('Full commitment text')
+    fire(ui.press({ key: 'back' }).then(() => ui.press({ key: 'open-0-0' })))
+    await w.clock.advance(5 * 60_000)
+    release()
+    await w.clock.advance(1)
+    // The read failed without an answer; the rows return as stale, the
+    // detail does not.
+    const text = await textOf(ui)
+    expect(text).not.toContain('Full commitment text')
+    expect(text).toContain('STALE since')
   })
 
   test('/clear clears everything and reads again', async ($, on) => {
@@ -306,6 +489,17 @@ describe('cancellation and lifecycle', () => {
     await w.clock.advance(15 * 60_000)
     // The first read, then one per five minutes: no duplicate intervals.
     expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(4)
+  })
+
+  test('a second session.start in the same environment does not stack timers', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    await start($, w.clock)
+    await w.clock.advance(5 * 60_000)
+    // One read per start, then ONE per interval.
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(3)
   })
 
   test('a reload during a read counts it as cancelled and reads again', async ($, on) => {

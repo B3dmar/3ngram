@@ -7,13 +7,16 @@ import type { CommitmentRow, Envelope } from './contract.ts'
 //
 // - Rows exist only inside a record, next to the envelope (and so the context
 //   fingerprint) that produced them; a new envelope replaces a record whole.
-// - A refresh for a different selection clears the record before anything is
-//   read, and a result from an older generation is ignored.
+// - A refresh for a different selection, or one whose context probe could not
+//   confirm the held record's fingerprint, clears the record before anything
+//   is read; a result from an older generation is ignored.
 // - After a failure, rows are kept (as stale) only when the failed attempt's
 //   context is VERIFIED to be the record's: by the error envelope's own
 //   fingerprint, or, when no envelope came back at all (a timeout, a missing
 //   binary, a crash, a cancel), by the local `commitments context` probe.
 //   Otherwise list and detail are both cleared.
+// - The detail view shows under exactly the conditions the rows do, and is
+//   dropped whenever the rows stop showing.
 
 // How a run can fail without producing an envelope.
 export type FailureKind =
@@ -71,7 +74,9 @@ export const initialState: PanelState = {
 }
 
 export type PanelEvent =
-  | { type: 'refresh_started'; gen: number; selectionKey: string }
+  // fingerprint is what the local context probe reported just before this
+  // refresh: null when it could not answer, or when no record was held.
+  | { type: 'refresh_started'; gen: number; selectionKey: string; fingerprint: string | null }
   | { type: 'list_envelope'; gen: number; envelope: Envelope; at: number }
   | { type: 'list_failed'; gen: number; failure: FailureKind; at: number }
   | { type: 'cancel' }
@@ -89,42 +94,31 @@ const TRANSIENT = new Set(['timeout', 'unavailable', 'rate_limited', 'cancelled'
 
 const IN_FLIGHT = new Set<PanelStatus>(['loading', 'refreshing'])
 
+// The statuses in which rows, and an open detail, are shown.
+const SHOWING = new Set<PanelStatus>(['ready', 'refreshing', 'stale'])
+
 function cleared(s: PanelState, status: PanelStatus, error: PanelError | null): PanelState {
   return { ...s, status, error, record: null, detail: null, stale: null, pending: null }
 }
 
 export function reduce(s: PanelState, e: PanelEvent): PanelState {
   switch (e.type) {
-    case 'refresh_started': {
-      if (e.selectionKey !== s.selectionKey) {
-        return { ...cleared(s, 'loading', null), gen: e.gen, selectionKey: e.selectionKey }
-      }
-      // Rows stay visible during a refresh only if they were visible before
-      // it: a record whose context is still being verified, or one an error
-      // already hid, must not reappear just because a new read started.
-      const shown =
-        s.record !== null &&
-        (s.status === 'ready' || s.status === 'refreshing' || s.status === 'stale')
-      return {
-        ...s,
-        gen: e.gen,
-        status: shown ? 'refreshing' : 'loading',
-        error: null,
-        pending: null,
-      }
-    }
+    case 'refresh_started':
+      return onRefreshStarted(s, e.gen, e.selectionKey, e.fingerprint)
     case 'list_envelope':
       return e.gen === s.gen ? onListEnvelope(s, e.envelope, e.at) : s
     case 'list_failed': {
       if (e.gen !== s.gen) return s
       if (!s.record) return cleared(s, 'error', { kind: e.failure })
-      return { ...s, status: 'verifying', pending: e.failure }
+      // The detail goes with the rows: neither shows while the context is
+      // unconfirmed, and a confirmed context brings back the rows only.
+      return { ...s, status: 'verifying', pending: e.failure, detail: null }
     }
     case 'cancel': {
       if (!IN_FLIGHT.has(s.status)) return s
       const next = { ...s, gen: s.gen + 1 }
       return s.record
-        ? { ...next, status: 'verifying', pending: 'cancelled' }
+        ? { ...next, status: 'verifying', pending: 'cancelled', detail: null }
         : cleared(next, 'error', { kind: 'cancelled' })
     }
     case 'context_verified': {
@@ -154,11 +148,37 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
       return { ...s, detail: null }
     case 'session_transition':
       return { ...cleared(s, 'idle', null), gen: s.gen + 1, selectionKey: null }
-    case 'reloaded': {
+    case 'reloaded':
       // A reload drops the module and kills the children it was waiting on.
       // Whatever was in flight is treated as cancelled.
       return reduce(s, { type: 'cancel' })
-    }
+  }
+}
+
+function onRefreshStarted(
+  s: PanelState,
+  gen: number,
+  selectionKey: string,
+  fingerprint: string | null,
+): PanelState {
+  // A different selection, or a held record the probe could not confirm
+  // (another key, another backend, or no answer), is cleared before the read
+  // starts: its rows never show while the new context is being read.
+  const unconfirmed = s.record !== null && fingerprint !== s.record.envelope.context.fingerprint
+  if (selectionKey !== s.selectionKey || unconfirmed) {
+    return { ...cleared(s, 'loading', null), gen, selectionKey }
+  }
+  // Rows stay visible during a refresh only if they were visible before it:
+  // a record whose context is still being verified, or one an error already
+  // hid, must not reappear just because a new read started.
+  const shown = s.record !== null && SHOWING.has(s.status)
+  return {
+    ...s,
+    gen,
+    status: shown ? 'refreshing' : 'loading',
+    error: null,
+    pending: null,
+    detail: shown ? s.detail : null,
   }
 }
 
@@ -206,8 +226,9 @@ function onDetailRequested(s: PanelState, memoryId: string): PanelState {
 
 function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): PanelState {
   const detail = s.detail
-  if (!detail || detail.seq !== seq) return s
-  // A detail is only ever shown under the context its list came from.
+  // A detail lands only while its rows show, under the context its list came
+  // from.
+  if (!detail || detail.seq !== seq || !SHOWING.has(s.status)) return s
   if (!s.record || s.record.envelope.context.fingerprint !== detail.fingerprint) {
     return { ...s, detail: null }
   }
@@ -227,9 +248,15 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
 // visibleRows is the ONLY way the view reads rows: none while a load, a
 // verification or an error is showing, even if a record is still held.
 export function visibleRows(s: PanelState): CommitmentRow[] | null {
-  if (!s.record) return null
-  if (s.status !== 'ready' && s.status !== 'refreshing' && s.status !== 'stale') return null
+  if (!s.record || !SHOWING.has(s.status)) return null
   return s.record.envelope.commitments ?? null
+}
+
+// visibleDetail is the only way the view reads the detail: the same gate as
+// the rows, and only under the record's own context.
+export function visibleDetail(s: PanelState): DetailState | null {
+  if (!s.detail || !s.record || !SHOWING.has(s.status)) return null
+  return s.detail.fingerprint === s.record.envelope.context.fingerprint ? s.detail : null
 }
 
 export function needsVerification(s: PanelState): boolean {

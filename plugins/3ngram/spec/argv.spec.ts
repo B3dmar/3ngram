@@ -62,10 +62,16 @@ test('anything but a read-only commitments command is refused', () => {
   }
 })
 
-test('a value position cannot smuggle a flag the allowlist would refuse', () => {
-  // `--cwd --github` reads --github as the cwd VALUE; the binary does the same.
-  assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'list', '--cwd', '--github']), true)
+test('a value never looks like a flag, and an id is one plain word', () => {
+  assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'list', '--cwd', '--github']), false)
+  assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'list', '--scope', '-x']), false)
   assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'list', '--cwd', '/r', 'stray']), false)
+  assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'show', 'a b']), false)
+  assert.equal(isAllowedArgv(['3ngram-hook', 'commitments', 'show', 'a\nb']), false)
+  assert.equal(
+    isAllowedArgv(['3ngram-hook', 'commitments', 'show', 'mem-1', '--expect-fingerprint', '-f']),
+    false,
+  )
 })
 
 test('the selection key changes with what is read, not with GitHub lookups', () => {

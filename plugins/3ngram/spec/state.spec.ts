@@ -4,7 +4,13 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { Envelope } from '../hooks/lib/contract.ts'
 import type { FailureKind, PanelEvent, PanelState } from '../hooks/lib/state.ts'
-import { initialState, needsVerification, reduce, visibleRows } from '../hooks/lib/state.ts'
+import {
+  initialState,
+  needsVerification,
+  reduce,
+  visibleDetail,
+  visibleRows,
+} from '../hooks/lib/state.ts'
 import { FP_A, FP_B, golden, withFingerprint } from './fixtures.ts'
 
 const KEY_A = '["/repo","work",true]'
@@ -26,7 +32,7 @@ function errorEnvelope(kind: string, fingerprint: string): Envelope {
 
 // A panel showing context A's rows, generation 1.
 const showingA = run([
-  { type: 'refresh_started', gen: 1, selectionKey: KEY_A },
+  { type: 'refresh_started', gen: 1, selectionKey: KEY_A, fingerprint: FP_A },
   { type: 'list_envelope', gen: 1, envelope: listA, at: 1000 },
 ])
 
@@ -41,14 +47,24 @@ describe('rows only ever show with the context that produced them', () => {
   })
 
   test('a refresh for another selection clears rows before anything is read', () => {
-    const s = reduce(showingA, { type: 'refresh_started', gen: 2, selectionKey: KEY_B })
+    const s = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_B,
+      fingerprint: FP_A,
+    })
     assert.equal(s.record, null)
     assert.equal(rowCount(s), null)
     assert.equal(s.status, 'loading')
   })
 
   test('a refresh for the same selection keeps rows visible while it runs', () => {
-    const s = reduce(showingA, { type: 'refresh_started', gen: 2, selectionKey: KEY_A })
+    const s = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_A,
+      fingerprint: FP_A,
+    })
     assert.equal(s.status, 'refreshing')
     assert.equal(rowCount(s), 4)
   })
@@ -56,7 +72,7 @@ describe('rows only ever show with the context that produced them', () => {
   test('a result from an older generation is ignored', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_B },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_B, fingerprint: FP_A },
         { type: 'list_envelope', gen: 1, envelope: listA, at: 2000 },
       ],
       showingA,
@@ -67,7 +83,7 @@ describe('rows only ever show with the context that produced them', () => {
   test('a new envelope replaces the record whole, under its own fingerprint', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_envelope', gen: 2, envelope: listB, at: 2000 },
       ],
       showingA,
@@ -81,7 +97,7 @@ describe('an error envelope keeps rows only when it proves the same context', ()
     test(`${kind} under the same fingerprint leaves the rows stale`, () => {
       const s = run(
         [
-          { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+          { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
           { type: 'list_envelope', gen: 2, envelope: errorEnvelope(kind, FP_A), at: 2000 },
         ],
         showingA,
@@ -94,7 +110,7 @@ describe('an error envelope keeps rows only when it proves the same context', ()
     test(`${kind} under another fingerprint (key or backend changed) clears the rows`, () => {
       const s = run(
         [
-          { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+          { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
           { type: 'list_envelope', gen: 2, envelope: errorEnvelope(kind, FP_B), at: 2000 },
         ],
         showingA,
@@ -108,7 +124,7 @@ describe('an error envelope keeps rows only when it proves the same context', ()
   test('an auth failure clears the rows even under the same fingerprint', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_envelope', gen: 2, envelope: errorEnvelope('auth', FP_A), at: 2000 },
       ],
       showingA,
@@ -128,7 +144,7 @@ describe('a failure without an envelope keeps rows only after verification', () 
   for (const failure of failures) {
     const failed = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_failed', gen: 2, failure, at: 2000 },
       ],
       showingA,
@@ -146,7 +162,7 @@ describe('a failure without an envelope keeps rows only after verification', () 
       )
       const s = run(
         [
-          { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+          { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
           { type: 'list_failed', gen: 2, failure, at: 2000 },
           { type: 'context_verified', gen: 2, fingerprint: FP_B, at: 2100 },
         ],
@@ -174,7 +190,7 @@ describe('a failure without an envelope keeps rows only after verification', () 
 
   test('with no rows held, a failure is an error at once', () => {
     const s = run([
-      { type: 'refresh_started', gen: 1, selectionKey: KEY_A },
+      { type: 'refresh_started', gen: 1, selectionKey: KEY_A, fingerprint: FP_A },
       { type: 'list_failed', gen: 1, failure: 'missing_binary', at: 1000 },
     ])
     assert.equal(s.status, 'error')
@@ -184,9 +200,9 @@ describe('a failure without an envelope keeps rows only after verification', () 
   test('a refresh that starts during verification does not reveal the rows', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
-        { type: 'refresh_started', gen: 3, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 3, selectionKey: KEY_A, fingerprint: FP_A },
       ],
       showingA,
     )
@@ -197,9 +213,9 @@ describe('a failure without an envelope keeps rows only after verification', () 
   test('a verification for an older generation is ignored', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
-        { type: 'refresh_started', gen: 3, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 3, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 },
       ],
       showingA,
@@ -212,7 +228,7 @@ describe('cancellation', () => {
   test('cancel invalidates the generation; the cancelled read cannot land', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'cancel' },
         { type: 'list_envelope', gen: 2, envelope: listB, at: 2000 },
       ],
@@ -226,7 +242,7 @@ describe('cancellation', () => {
   test('cancel after a key change: the probe disagrees and everything is cleared', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'cancel' },
         { type: 'context_verified', gen: 3, fingerprint: FP_B, at: 2100 },
       ],
@@ -239,7 +255,7 @@ describe('cancellation', () => {
   test('cancel under the same context leaves the rows stale', () => {
     const s = run(
       [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'cancel' },
         { type: 'context_verified', gen: 3, fingerprint: FP_A, at: 2100 },
       ],
@@ -255,7 +271,10 @@ describe('cancellation', () => {
 
   test('a hot reload during a read acts as a cancel', () => {
     const s = run(
-      [{ type: 'refresh_started', gen: 2, selectionKey: KEY_A }, { type: 'reloaded' }],
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'reloaded' },
+      ],
       showingA,
     )
     assert.equal(s.gen, 3)
@@ -289,7 +308,12 @@ describe('detail', () => {
     assert.equal(s.detail?.fingerprint, FP_A)
     assert.equal(s.detail?.status, 'loading')
     assert.equal(reduce(showingA, { type: 'detail_requested', memoryId: 'not-a-row' }).detail, null)
-    const loading = reduce(showingA, { type: 'refresh_started', gen: 2, selectionKey: KEY_B })
+    const loading = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_B,
+      fingerprint: FP_A,
+    })
     assert.equal(reduce(loading, { type: 'detail_requested', memoryId }).detail, null)
   })
 
@@ -310,7 +334,7 @@ describe('detail', () => {
     const s = run(
       [
         { type: 'detail_requested', memoryId },
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
         { type: 'list_envelope', gen: 2, envelope: listB, at: 2000 },
         { type: 'detail_envelope', seq: 1, envelope: show },
       ],
@@ -343,5 +367,106 @@ describe('detail', () => {
     )
     assert.equal(s.detail?.status, 'error')
     assert.equal(s.detail?.envelope, null)
+  })
+})
+
+describe('the probe before each refresh', () => {
+  test('a held record the probe confirms keeps showing while the read runs', () => {
+    const s = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_A,
+      fingerprint: FP_A,
+    })
+    assert.equal(s.status, 'refreshing')
+    assert.equal(rowCount(s), 4)
+  })
+
+  test('a key or backend change is caught before the read: the record is cleared', () => {
+    const s = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_A,
+      fingerprint: FP_B,
+    })
+    assert.equal(s.record, null)
+    assert.equal(s.status, 'loading')
+  })
+
+  test('a probe that could not answer clears the record too', () => {
+    const s = reduce(showingA, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_A,
+      fingerprint: null,
+    })
+    assert.equal(s.record, null)
+  })
+})
+
+describe('the detail never outlives the context check of its list', () => {
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  const open = run(
+    [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ],
+    showingA,
+  )
+
+  test('an open detail is visible while its rows are', () => {
+    assert.equal(visibleDetail(open)?.status, 'ready')
+  })
+
+  test('a failure without an envelope drops the detail with the rows', () => {
+    const s = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
+      ],
+      open,
+    )
+    assert.equal(s.detail, null)
+    assert.equal(visibleDetail(s), null)
+    // Confirmed: the rows come back, the detail does not.
+    const back = reduce(s, { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 })
+    assert.equal(rowCount(back), 4)
+    assert.equal(back.detail, null)
+  })
+
+  test('a cancel drops the detail with the rows', () => {
+    const s = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'cancel' },
+      ],
+      open,
+    )
+    assert.equal(s.detail, null)
+  })
+
+  test('a detail answer arriving while the list is verified is ignored', () => {
+    const pendingDetail = run(
+      [
+        { type: 'detail_requested', memoryId },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
+        { type: 'detail_envelope', seq: 1, envelope: show },
+      ],
+      showingA,
+    )
+    assert.equal(pendingDetail.detail, null)
+    assert.equal(visibleDetail(pendingDetail), null)
+  })
+
+  test('a refresh that hides the rows hides the detail', () => {
+    const s = reduce(open, {
+      type: 'refresh_started',
+      gen: 2,
+      selectionKey: KEY_B,
+      fingerprint: FP_A,
+    })
+    assert.equal(visibleDetail(s), null)
   })
 })
