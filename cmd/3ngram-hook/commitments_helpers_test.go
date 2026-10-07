@@ -48,7 +48,9 @@ func newReadServer(t *testing.T) *readServer {
 	s := &readServer{t: t, routes: map[string]http.HandlerFunc{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
-		s.requests = append(s.requests, readRequest{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("X-API-Key")})
+		// The escaped path, as sent: an id with an escaped separator is one
+		// segment there, though r.URL.Path decodes it into two.
+		s.requests = append(s.requests, readRequest{r.Method, r.URL.EscapedPath(), r.URL.RawQuery, r.Header.Get("X-API-Key")})
 		s.mu.Unlock()
 		key := r.URL.Path
 		if r.URL.Path == "/api/v1/briefing" {
