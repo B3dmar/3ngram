@@ -343,6 +343,37 @@ describe('detail', () => {
     assert.equal(s.detail, null)
   })
 
+  // Filing can change in place while the id stays: the refreshed list then
+  // holds the row under another filing, and the detail read under the old
+  // one must not survive the refresh.
+  test('a refresh that moves the row to another filing drops the open detail', () => {
+    const refiled = (filing: 'project' | 'unscoped' | 'unknown'): Envelope => ({
+      ...listA,
+      commitments: (listA.commitments ?? []).map((row) =>
+        row.memoryId === memoryId ? { ...row, filing } : row,
+      ),
+    })
+    const refresh = (envelope: Envelope): PanelEvent[] => [
+      { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+      { type: 'list_envelope', gen: 2, envelope, at: 2000 },
+    ]
+    const opened: PanelEvent[] = [{ type: 'detail_requested', memoryId }]
+    const loaded: PanelEvent[] = [...opened, { type: 'detail_envelope', seq: 1, envelope: show }]
+
+    // Still loading: compared with the row it was opened from.
+    assert.equal(run([...opened, ...refresh(refiled('unscoped'))], showingA).detail, null)
+    assert.equal(
+      run([...opened, ...refresh(refiled('project'))], showingA).detail?.status,
+      'loading',
+    )
+    // Loaded: compared with the filing its own answer reported.
+    assert.equal(run([...loaded, ...refresh(refiled('unscoped'))], showingA).detail, null)
+    assert.equal(run([...loaded, ...refresh(refiled('project'))], showingA).detail?.status, 'ready')
+    // A row whose lookup failed this time is unknown, not moved: the detail
+    // its own read verified stays.
+    assert.equal(run([...loaded, ...refresh(refiled('unknown'))], showingA).detail?.status, 'ready')
+  })
+
   test('a detail lands when it matches; a stale sequence is ignored', () => {
     const s = run(
       [

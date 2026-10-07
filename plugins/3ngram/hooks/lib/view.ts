@@ -269,13 +269,20 @@ export function detailView(d: DetailState): DetailView {
 function sourceLines(e: Envelope): string[] {
   const src = e.source
   if (!src) return []
-  const historyRead = !(e.partial ?? []).some((p) => p.part === 'history')
+  // The creation event is read from the audit events: an unavailable events
+  // section leaves it as unread as a failed history does.
+  const parts = e.partial ?? []
+  const unread = parts.some((p) => p.part === 'history')
+    ? 'the history'
+    : parts.some((p) => p.part === 'events')
+      ? 'the audit events'
+      : null
   const created =
     src.createdBy && src.createdAt
       ? `Created by ${src.createdBy} on ${day(src.createdAt)}.`
-      : historyRead
+      : unread === null
         ? 'Creation is outside the event window.'
-        : 'Creation is unknown: the history could not be read.'
+        : `Creation is unknown: ${unread} could not be read.`
   return [created, 'Source session: not exposed by the 3ngram read API.']
 }
 
@@ -286,11 +293,14 @@ function historyLines(e: Envelope): string[] {
   for (const rel of h.relationships) {
     lines.push(`Linked ${rel.memory.memoryType} "${rel.memory.topic}" (${rel.edge.edgeType})`)
   }
-  const hidden = h.hiddenOutsideSelector.nodes + h.hiddenOutsideSelector.relationships
-  if (hidden > 0)
-    lines.push(
-      `${hidden} related memor${hidden === 1 ? 'y is' : 'ies are'} outside this selection and hidden.`,
-    )
+  // The two counts are kept apart: one hidden memory can be both a lineage
+  // node and a direct link, so their sum is not a count of memories.
+  const { nodes, relationships } = h.hiddenOutsideSelector
+  const hidden: string[] = []
+  if (nodes > 0) hidden.push(`${nodes} lineage memor${nodes === 1 ? 'y' : 'ies'}`)
+  if (relationships > 0)
+    hidden.push(`${relationships} direct link${relationships === 1 ? '' : 's'}`)
+  if (hidden.length > 0) lines.push(`Outside this selection and hidden: ${hidden.join(', ')}.`)
   return lines
 }
 

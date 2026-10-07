@@ -195,12 +195,13 @@ function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelSta
   if (envelope.ok) {
     const fingerprint = envelope.context.fingerprint
     // An open detail survives a refresh only under the same context AND while
-    // its commitment is still in the list: one resolved or superseded since
-    // must not keep showing its old state.
-    const stillListed = (envelope.commitments ?? []).some(
-      (row) => row.memoryId === s.detail?.memoryId,
-    )
-    const detail = s.detail && s.detail.fingerprint === fingerprint && stillListed ? s.detail : null
+    // its commitment is still in the list with the filing it was opened
+    // under: one resolved or superseded since, or moved between this project
+    // and unscoped in place, must not keep showing its old state.
+    const detail =
+      s.detail && s.detail.fingerprint === fingerprint && sameFiling(s, envelope, s.detail.memoryId)
+        ? s.detail
+        : null
     return {
       ...s,
       status: 'ready',
@@ -219,6 +220,21 @@ function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelSta
   }
   const error: PanelError = envelope.error?.hint ? { kind, hint: envelope.error.hint } : { kind }
   return cleared(s, 'error', error)
+}
+
+// sameFiling reports whether the refreshed list still holds memoryId and does
+// not contradict the filing the open detail was read under: the detail's own
+// answer once it has one, the row it was opened from before that. `unknown`
+// contradicts nothing: a list row is unknown when its lookup failed or was
+// over budget, which says nothing about a move.
+function sameFiling(s: PanelState, envelope: Envelope, memoryId: string): boolean {
+  const row = (envelope.commitments ?? []).find((r) => r.memoryId === memoryId)
+  if (!row) return false
+  const held =
+    s.detail?.envelope?.commitment?.filing ??
+    s.record?.envelope.commitments?.find((r) => r.memoryId === memoryId)?.filing
+  if (held === undefined || held === 'unknown' || row.filing === 'unknown') return true
+  return row.filing === held
 }
 
 function onDetailRequested(s: PanelState, memoryId: string): PanelState {
