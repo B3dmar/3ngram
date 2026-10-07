@@ -525,6 +525,32 @@ describe('cancellation and lifecycle', () => {
     expect(await textOf(await mountPane($))).toContain('After the reload')
   })
 
+  test('a reload during a detail read closes the detail instead of leaving it loading', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (argv[2] === 'show')
+        return {
+          wait: new Promise<void>((r) => {
+            release = r
+          }),
+          stdout: showEnvelope(FP_A),
+        }
+      return { stdout: listEnvelope(FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    fire(ui.press({ key: 'open-0-0' }))
+    await w.clock.advance(1)
+    // A reload runs session.start again with the state the host kept.
+    await start($, w.clock)
+    release()
+    await w.clock.advance(1)
+    const text = await textOf(ui)
+    expect(text).not.toContain('Loading')
+    expect(text).toContain(TOPIC)
+  })
+
   test('a refresh that throws outside its own handling is shown, not swallowed', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }), { cwdThrows: true })
     await start($, w.clock)

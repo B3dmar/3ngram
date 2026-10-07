@@ -300,6 +300,9 @@ async function openDetail(
 }
 
 async function closeDetail($: EngineInterface): Promise<void> {
+  // A detail read that has not started its child yet sees the epoch move and
+  // never starts one.
+  stops++
   detailRead?.stop()
   detailRead = null
   await dispatch($, { type: 'detail_closed' })
@@ -330,6 +333,9 @@ export const register: Register = (on, options) => {
     stopReads()
     const s = await readPanel($)
     if (s.status === 'loading' || s.status === 'refreshing') await dispatch($, { type: 'reloaded' })
+    // A detail read the reload killed would otherwise stay "Loading…" for good.
+    if (s.detail?.status === 'loading')
+      await dispatch($, { type: 'detail_closed', seq: s.detail.seq })
     // Background work starts from timers, never inside this dispatch, so the
     // first prompt is never held by a read.
     kick = $.clock.after(0, () => fire($, startup($, options)))

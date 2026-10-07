@@ -187,7 +187,13 @@ function onRefreshStarted(
 function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelState {
   if (envelope.ok) {
     const fingerprint = envelope.context.fingerprint
-    const detail = s.detail && s.detail.fingerprint === fingerprint ? s.detail : null
+    // An open detail survives a refresh only under the same context AND while
+    // its commitment is still in the list: one resolved or superseded since
+    // must not keep showing its old state.
+    const stillListed = (envelope.commitments ?? []).some(
+      (row) => row.memoryId === s.detail?.memoryId,
+    )
+    const detail = s.detail && s.detail.fingerprint === fingerprint && stillListed ? s.detail : null
     return {
       ...s,
       status: 'ready',
