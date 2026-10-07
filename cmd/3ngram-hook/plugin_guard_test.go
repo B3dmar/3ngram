@@ -18,6 +18,9 @@ import (
 // files, and nothing else on the machine.
 type guardFixture struct {
 	env guardEnv
+	// bin is an executable 3ngram-hook stand-in, also first on PATH, so a
+	// registration names a program that starts, on any machine.
+	bin string
 }
 
 func newGuardFixture(t *testing.T) *guardFixture {
@@ -28,11 +31,16 @@ func newGuardFixture(t *testing.T) *guardFixture {
 		projectDir: filepath.Join(root, "project"),
 		managed:    []string{filepath.Join(root, "managed", "managed-settings.json")},
 	}}
-	for _, dir := range []string{f.env.configDir, filepath.Join(f.env.projectDir, ".claude"), filepath.Dir(f.env.managed[0])} {
+	for _, dir := range []string{f.env.configDir, filepath.Join(f.env.projectDir, ".claude"), filepath.Dir(f.env.managed[0]), filepath.Join(root, "bin")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	f.bin = filepath.Join(root, "bin", "3ngram-hook")
+	if err := os.WriteFile(f.bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Join(root, "bin"))
 	return f
 }
 
@@ -90,7 +98,11 @@ func TestGuardDefersOnlyWhenSettingsCoverThisInstance(t *testing.T) {
 		{"partial coverage: startup only, deferred on startup", hooksJSON("SessionStart", "startup", "3ngram-hook briefing"), "briefing", `{"source":"startup"}`, true},
 		{"exact list", hooksJSON("SessionStart", "startup|resume|clear", "3ngram-hook briefing"), "briefing", `{"source":"clear"}`, true},
 		{"exact list misses fork", hooksJSON("SessionStart", "startup|resume|clear|compact", "3ngram-hook briefing"), "briefing", `{"source":"fork"}`, false},
-		{"comma list", hooksJSON("SessionStart", "startup, resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, true},
+		{"comma list", hooksJSON("SessionStart", "startup,resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, true},
+		{"spaces in a list claim nothing (trimming is unconfirmed)", hooksJSON("SessionStart", "startup, resume", "3ngram-hook briefing"), "briefing", `{"source":"resume"}`, false},
+		{"inline regex flag claims nothing", hooksJSON("PreToolUse", "(?i)edit", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
+		{"Go-only anchor claims nothing", hooksJSON("PreToolUse", `\AEdit`, "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
+		{"escape class claims nothing", hooksJSON("PreToolUse", `Edit\w*`, "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
 		{"regex matcher", hooksJSON("PreToolUse", "^(Edit|Write)$", "3ngram-hook precheck"), "precheck", `{"tool_name":"Write"}`, true},
 		{"unanchored regex", hooksJSON("PreToolUse", "Edit.*", "3ngram-hook precheck"), "precheck", `{"tool_name":"NotebookEdit"}`, true},
 		{"regex RE2 cannot compile claims nothing", hooksJSON("PreToolUse", "(?<=x)Edit", "3ngram-hook precheck"), "precheck", `{"tool_name":"Edit"}`, false},
@@ -99,7 +111,7 @@ func TestGuardDefersOnlyWhenSettingsCoverThisInstance(t *testing.T) {
 		{"heartbeat in settings defers stop", hooksJSON("Stop", "-", "3ngram-hook heartbeat"), "stop", `{}`, true},
 		{"stop in settings defers heartbeat", hooksJSON("Stop", "-", "3ngram-hook stop"), "heartbeat", `{}`, true},
 		{"Stop ignores a matcher", hooksJSON("Stop", "anything", "3ngram-hook stop"), "stop", `{}`, true},
-		{"full path and --agent still count", hooksJSON("SessionEnd", "-", "/Users/x/.local/bin/3ngram-hook close --agent claude-code"), "close", `{"reason":"clear"}`, true},
+		{"a path to a binary that is gone claims nothing", hooksJSON("SessionEnd", "-", "/nonexistent/bin/3ngram-hook close"), "close", `{"reason":"clear"}`, false},
 		{"SessionEnd reason matcher", hooksJSON("SessionEnd", "logout", "3ngram-hook close"), "close", `{"reason":"clear"}`, false},
 		{"a precheck in settings does not cover the briefing", hooksJSON("PreToolUse", "-", "3ngram-hook precheck"), "briefing", `{"source":"startup"}`, false},
 		{"another event does not count", hooksJSON("SessionEnd", "-", "3ngram-hook briefing"), "briefing", `{"source":"startup"}`, false},
@@ -145,9 +157,58 @@ func TestGuardReadsEverySettingsSource(t *testing.T) {
 
 func TestGuardExecFormHandler(t *testing.T) {
 	f := newGuardFixture(t)
-	f.user(t, `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/bin/3ngram-hook","args":["briefing","--agent","claude-code"]}]}]}}`)
+	f.user(t, `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":`+quote(f.bin)+`,"args":["briefing","--agent","claude-code"]}]}]}}`)
 	if !deferToSettings("briefing", []byte(`{"source":"startup"}`), f.env) {
 		t.Fatal("an exec-form registration counts")
+	}
+}
+
+func TestGuardFullPathCounts(t *testing.T) {
+	f := newGuardFixture(t)
+	f.user(t, hooksJSON("SessionEnd", "-", f.bin+" close --agent claude-code"))
+	if !deferToSettings("close", []byte(`{"reason":"clear"}`), f.env) {
+		t.Fatal("a full path to an executable 3ngram-hook counts")
+	}
+}
+
+// A handler field that changes when or whether the hook runs makes it claim
+// nothing, as does a handler with no type or less time than the plugin copy.
+func TestGuardHandlerFieldsThatChangeWhenItRuns(t *testing.T) {
+	cases := map[string]struct {
+		handler string
+		want    bool
+	}{
+		"plain":                {`{"type":"command","command":"3ngram-hook precheck"}`, true},
+		"status message":       {`{"type":"command","command":"3ngram-hook precheck","statusMessage":"3ngram"}`, true},
+		"enough time":          {`{"type":"command","command":"3ngram-hook precheck","timeout":2}`, true},
+		"less time":            {`{"type":"command","command":"3ngram-hook precheck","timeout":1}`, false},
+		"permission rule (if)": {`{"type":"command","command":"3ngram-hook precheck","if":"Edit(*.ts)"}`, false},
+		"async":                {`{"type":"command","command":"3ngram-hook precheck","async":true}`, false},
+		"once":                 {`{"type":"command","command":"3ngram-hook precheck","once":true}`, false},
+		"shell":                {`{"type":"command","command":"3ngram-hook precheck","shell":"powershell"}`, false},
+		"no type":              {`{"command":"3ngram-hook precheck"}`, false},
+		"another type":         {`{"type":"http","command":"3ngram-hook precheck"}`, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newGuardFixture(t)
+			f.user(t, `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[`+tc.handler+`]}]}}`)
+			if got := deferToSettings("precheck", []byte(`{"tool_name":"Edit"}`), f.env); got != tc.want {
+				t.Fatalf("deferToSettings = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadHookInputFlagsOversizedInput(t *testing.T) {
+	small, complete := readHookInput(strings.NewReader(`{"source":"startup"}`))
+	if !complete || string(small) != `{"source":"startup"}` {
+		t.Fatal("a small input is read whole")
+	}
+	big := strings.Repeat("x", maxHookInput+10)
+	prefix, complete := readHookInput(strings.NewReader(big))
+	if complete || len(prefix) != maxHookInput+1 {
+		t.Fatalf("an oversized input is flagged: complete=%v len=%d", complete, len(prefix))
 	}
 }
 
@@ -197,8 +258,11 @@ func TestGuardEndToEnd(t *testing.T) {
 		// worktrees, and this test may run from one.
 		cmd.Dir = project
 		cmd.Stdin = strings.NewReader(stdin)
+		// The built binary is the 3ngram-hook the settings name, found on
+		// PATH as it would be in a session; nothing else on the machine is.
 		cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+config, "CLAUDE_PROJECT_DIR="+project, "CLAUDECODE=1",
-			"THREENGRAM_API_BASE="+srv.URL, "THREENGRAM_API_KEY="+testAPIKey)
+			"THREENGRAM_API_BASE="+srv.URL, "THREENGRAM_API_KEY="+testAPIKey,
+			"PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+"/usr/bin:/bin")
 		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 		_ = cmd.Run()
 	}

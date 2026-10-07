@@ -30,11 +30,11 @@ func main() {
 	// this event instance (see plugin_guard.go); otherwise it runs exactly as a
 	// settings hook would, on the same stdin.
 	if via, rest := viaPlugin(args); via {
-		input := readHookInput(os.Stdin)
-		if deferToSettings(os.Args[1], input, currentGuardEnv()) {
+		input, complete := readHookInput(os.Stdin)
+		if complete && deferToSettings(os.Args[1], input, currentGuardEnv()) {
 			os.Exit(0)
 		}
-		replayStdin(input)
+		replayStdin(input, os.Stdin)
 		args = rest
 	}
 
