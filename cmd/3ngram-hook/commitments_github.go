@@ -134,7 +134,7 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 	}
 	for _, m := range githubBareRef.FindAllStringSubmatchIndex(text, -1) {
 		hash := m[2] - 1
-		if consumed[hash] {
+		if consumed[hash] || labelsGitHubLink(text[m[1]:]) {
 			continue
 		}
 		if bareRepo == nil || followsRepoLikeToken(text, hash) {
@@ -156,6 +156,20 @@ func extractGitHubRefs(text string, bareRepo *githubRepo) refScan {
 		scan.refs = append(scan.refs, h.ref)
 	}
 	return scan
+}
+
+// labelsGitHubLink reports whether the text right after a bare #N makes it
+// the label of a markdown link to a GitHub issue or pull request
+// ("[#718](https://github.com/org/other/issues/718)"). The destination names
+// the reference, and the URL pass reads it; the label must not also be read
+// as this repository's #718.
+func labelsGitHubLink(after string) bool {
+	dest, ok := strings.CutPrefix(after, "](")
+	if !ok {
+		return false
+	}
+	loc := githubURLRef.FindStringIndex(dest)
+	return loc != nil && loc[0] == 0
 }
 
 func markConsumed(consumed []bool, from, to int) {
