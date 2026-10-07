@@ -74,10 +74,15 @@ test('a value never looks like a flag, and an id is one plain word', () => {
   )
 })
 
-test('the selection key changes with what is read, not with GitHub lookups', () => {
+test('the selection key changes with everything a read depends on', () => {
   const base = selectionKey(sel)
-  assert.notEqual(selectionKey({ ...sel, cwd: '/other' }), base)
-  assert.notEqual(selectionKey({ ...sel, scope: 'personal' }), base)
-  assert.notEqual(selectionKey({ ...sel, includeUnscoped: false }), base)
-  assert.equal(selectionKey({ ...sel, github: false }), base)
+  for (const other of [
+    { ...sel, cwd: '/other' },
+    { ...sel, scope: 'personal' },
+    { ...sel, includeUnscoped: false },
+    { ...sel, github: false },
+  ]) {
+    assert.notEqual(selectionKey(other), base)
+  }
+  assert.equal(selectionKey({ ...sel }), base)
 })

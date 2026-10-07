@@ -209,9 +209,15 @@ func briefingBody(selector map[string]any, commitments, overdue map[string]any) 
 	return string(b)
 }
 
+// memoryBody answers GET /api/v1/memories/:id. Use memoryBodyFor when the
+// handler must answer for a specific id (filing lookups check it).
 func memoryBody(scope string, project *string, status string, validTo *string) string {
+	return memoryBodyFor("ignored", scope, project, status, validTo)
+}
+
+func memoryBodyFor(id, scope string, project *string, status string, validTo *string) string {
 	b, _ := json.Marshal(map[string]any{
-		"id": "ignored", "memoryType": "commitment", "topic": "ignored", "content": "SECRET CONTENT",
+		"id": id, "memoryType": "commitment", "topic": "ignored", "content": "SECRET CONTENT",
 		"scope": scope, "project": project, "status": status, "tags": []string{}, "commitmentStatus": "open",
 		"validFrom": "2026-10-01T00:00:00.000Z", "validTo": validTo,
 		"recordedAt": "2026-10-01T00:00:00.000Z", "createdAt": "2026-10-01T00:00:00.000Z",

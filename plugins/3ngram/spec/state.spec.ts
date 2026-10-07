@@ -576,3 +576,43 @@ describe('rows hide while the context is checked before a refresh', () => {
     assert.equal(s.detail, null)
   })
 })
+
+// Reproduction from review: a detail answer that lands while the context is
+// being checked must not leave the detail "Loading…" for good.
+describe('a detail answer during the context check', () => {
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+
+  test('is kept hidden, and shows once the check confirms the context', () => {
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId },
+        { type: 'check_started' },
+        { type: 'detail_envelope', seq: 1, envelope: show },
+      ],
+      showingA,
+    )
+    assert.equal(visibleDetail(s), null)
+    const confirmed = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 2, envelope: listA, at: 2000 },
+      ],
+      s,
+    )
+    assert.equal(visibleDetail(confirmed)?.status, 'ready')
+  })
+
+  test('is cleared with everything when the check disagrees', () => {
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId },
+        { type: 'check_started' },
+        { type: 'detail_envelope', seq: 1, envelope: show },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_B },
+      ],
+      showingA,
+    )
+    assert.equal(s.detail, null)
+  })
+})

@@ -243,7 +243,10 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
   const detail = s.detail
   // A detail lands only while its rows show, under the context its list came
   // from.
-  if (!detail || detail.seq !== seq || !SHOWING.has(s.status)) return s
+  // While the context is being checked the detail is kept but hidden, so an
+  // answer that lands then is kept too; visibleDetail shows it only once the
+  // check confirms the context, and a disagreeing check clears it.
+  if (!detail || detail.seq !== seq || !(SHOWING.has(s.status) || s.status === 'checking')) return s
   if (!s.record || s.record.envelope.context.fingerprint !== detail.fingerprint) {
     return { ...s, detail: null }
   }
