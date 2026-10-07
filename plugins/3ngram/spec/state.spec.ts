@@ -488,3 +488,41 @@ describe('closing a detail', () => {
     assert.equal(reduce(s, { type: 'detail_closed' }).detail, null)
   })
 })
+
+describe('a refresh and the open detail', () => {
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  const open = run(
+    [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ],
+    showingA,
+  )
+
+  test('a detail whose commitment left the list is closed by the refresh', () => {
+    const without = {
+      ...listA,
+      commitments: (listA.commitments ?? []).filter((r) => r.memoryId !== memoryId),
+    }
+    const s = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 2, envelope: without, at: 2000 },
+      ],
+      open,
+    )
+    assert.equal(s.detail, null)
+  })
+
+  test('a detail whose commitment is still listed stays open', () => {
+    const s = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 2, envelope: listA, at: 2000 },
+      ],
+      open,
+    )
+    assert.equal(s.detail?.status, 'ready')
+  })
+})
