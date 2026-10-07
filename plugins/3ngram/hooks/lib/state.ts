@@ -84,7 +84,8 @@ export type PanelEvent =
   | { type: 'detail_requested'; memoryId: string }
   | { type: 'detail_envelope'; seq: number; envelope: Envelope }
   | { type: 'detail_failed'; seq: number; failure: FailureKind }
-  | { type: 'detail_closed' }
+  // seq, when given, closes only that detail (a later one stays open).
+  | { type: 'detail_closed'; seq?: number }
   | { type: 'session_transition' }
   | { type: 'reloaded' }
 
@@ -145,6 +146,7 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
       }
     }
     case 'detail_closed':
+      if (e.seq !== undefined && s.detail?.seq !== e.seq) return s
       return { ...s, detail: null }
     case 'session_transition':
       return { ...cleared(s, 'idle', null), gen: s.gen + 1, selectionKey: null }

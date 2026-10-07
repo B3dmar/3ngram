@@ -470,3 +470,21 @@ describe('the detail never outlives the context check of its list', () => {
     assert.equal(visibleDetail(s), null)
   })
 })
+
+describe('closing a detail', () => {
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+
+  test('a close for an earlier detail leaves a later one open', () => {
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId },
+        { type: 'detail_requested', memoryId },
+        { type: 'detail_closed', seq: 1 },
+      ],
+      showingA,
+    )
+    assert.equal(s.detail?.seq, 2)
+    assert.equal(reduce(s, { type: 'detail_closed', seq: 2 }).detail, null)
+    assert.equal(reduce(s, { type: 'detail_closed' }).detail, null)
+  })
+})

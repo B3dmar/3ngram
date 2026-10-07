@@ -52,8 +52,12 @@ let detailRead: { seq: number; stop: () => void } | null = null
 // and transitions fire at once and are not kept.
 let tick: { cancel: () => void } | null = null
 let kick: { cancel: () => void } | null = null
+// stops counts stopReads calls, so a read that had not started its child
+// when it was stopped still sees that it was, and never starts one.
+let stops = 0
 
 function stopReads(): void {
+  stops++
   listRead?.stop()
   detailRead?.stop()
   listRead = null
@@ -170,7 +174,9 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
   try {
     await refreshOnce($, options, token)
   } catch {
-    await reportUnexpected($, options)
+    // A refresh that was already superseded reports nothing: the current
+    // generation belongs to the read that replaced it.
+    if (active === token) await reportUnexpected($, options)
   } finally {
     if (active === token) active = null
   }
@@ -256,6 +262,7 @@ async function openDetail(
   const detail = s.detail
   if (!detail || detail.memoryId !== memoryId) return
   const seq = detail.seq
+  const epoch = stops
   try {
     detailRead?.stop()
     const sel = selectionOf(options, await $.session.cwd())
@@ -264,10 +271,17 @@ async function openDetail(
       showArgv(sel, memoryId, detail.fingerprint),
       PROCESS_CEILING_MS,
       (stop) => {
-        detailRead = { seq, stop }
+        if (stops === epoch) detailRead = { seq, stop }
+        else stop()
       },
     )
     if (detailRead?.seq === seq) detailRead = null
+    // Stopped (Back, Cancel, a transition): close this detail quietly rather
+    // than showing the stop as an error.
+    if (outcome.kind === 'failure' && outcome.failure === 'cancelled') {
+      await dispatch($, { type: 'detail_closed', seq })
+      return
+    }
     if (outcome.kind === 'failure') {
       await dispatch($, { type: 'detail_failed', seq, failure: outcome.failure })
       return
