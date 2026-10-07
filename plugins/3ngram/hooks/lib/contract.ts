@@ -91,7 +91,7 @@ export type EvidenceItem = {
 }
 
 export type Evidence = {
-  verdict: 'review' | 'none_found'
+  verdict: 'review' | 'none_found' | 'not_inspected'
   items: EvidenceItem[]
   inspected: {
     proposals: {

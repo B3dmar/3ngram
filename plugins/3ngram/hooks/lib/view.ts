@@ -336,7 +336,9 @@ function evidenceLines(e: Envelope): string[] {
   lines.unshift(
     ev.verdict === 'review'
       ? 'Related evidence to review. It does not prove the commitment is done.'
-      : 'No evidence found in the inspected window.',
+      : ev.verdict === 'not_inspected'
+        ? 'No evidence source could be read, so nothing was searched.'
+        : 'No evidence found in the inspected window.',
   )
   return lines
 }

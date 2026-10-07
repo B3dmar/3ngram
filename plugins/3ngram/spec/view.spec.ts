@@ -219,6 +219,34 @@ test('a detail with nothing found says so, without claiming nothing exists', () 
   assert.equal(view.evidence[0], 'No evidence found in the inspected window.')
 })
 
+test('a detail where no source could be read never says nothing was found', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  assert.ok(show.evidence)
+  const unread = {
+    ...show,
+    evidence: {
+      ...show.evidence,
+      verdict: 'not_inspected' as const,
+      items: [],
+      inspected: { proposals: null, history: null },
+    },
+    partial: [
+      { part: 'history', reason: 'unavailable' },
+      { part: 'proposals', reason: 'unavailable' },
+    ],
+  }
+  const view = detailView({
+    seq: 1,
+    memoryId: 'm',
+    fingerprint: FP_A,
+    status: 'ready',
+    envelope: unread,
+    error: null,
+  })
+  assert.equal(view.evidence[0], 'No evidence source could be read, so nothing was searched.')
+  assert.ok(!view.evidence.some((l) => l.startsWith('No evidence found')))
+})
+
 test('a failed detail shows the reason', () => {
   const view = detailView({
     seq: 1,
