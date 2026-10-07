@@ -11,13 +11,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 )
 
 // The read-only client behind `3ngram-hook commitments`. It is deliberately a
 // SEPARATE path from apiRequest: apiRequest takes any method and is what the
 // lifecycle hooks write through, while everything a commitments subcommand sends
 // goes through apiGet, which can only GET. The "zero panel-initiated writes"
-// guarantee of #255 rests on that split, and commitments_ast_test.go pins it.
+// guarantee of #255 rests on that split, and TestCommitmentsDataPathIsReadOnly
+// in readapi_test.go pins it.
 
 // maxReadBody bounds one response body. The largest read here is a 100-item
 // briefing slice or a memory with its 10k-character content, both far below it;
@@ -79,9 +81,12 @@ func apiGet(ctx context.Context, route, path string, out any) *readError {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReadBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReadBody+1))
 	if err != nil {
 		return classifyReadFailure(ctx, route, resp.StatusCode, err)
+	}
+	if len(body) > maxReadBody {
+		return &readError{Kind: kindBadResponse, Route: route, Status: resp.StatusCode, Hint: "response body too large"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return classifyReadFailure(ctx, route, resp.StatusCode, nil)
@@ -116,6 +121,8 @@ func classifyReadFailure(ctx context.Context, route string, status int, err erro
 		return &readError{Kind: kindAuth, Route: route, Status: status, Hint: "run 3ngram-hook verify"}
 	case status == http.StatusNotFound:
 		return &readError{Kind: kindNotFound, Route: route, Status: status}
+	case status >= 300 && status <= 399:
+		return &readError{Kind: kindBadRequest, Route: route, Status: status, Hint: "redirect not followed"}
 	case status == http.StatusTooManyRequests:
 		return &readError{Kind: kindRateLimited, Route: route, Status: status}
 	case status >= 500:
@@ -156,6 +163,20 @@ func contextFingerprint(apiBase, key string, sel briefingSelector) string {
 	}{apiBase, credentialHash(key), sel})
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:8])
+}
+
+// memoryIDPattern is the uuid form every memory id has. An id that does not
+// match is never put into a request path: the id comes from a server response,
+// and `..` or a stray separator would otherwise steer a keyed GET to another
+// route.
+var memoryIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// memoryPath is the only way a data-path file builds a /memories/:id path.
+func memoryPath(memoryID, suffix string) (string, bool) {
+	if !memoryIDPattern.MatchString(memoryID) {
+		return "", false
+	}
+	return "/api/v1/memories/" + memoryID + suffix, true
 }
 
 // apiHost is the backend as the header shows it: the host alone, never a path

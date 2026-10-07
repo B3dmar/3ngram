@@ -54,10 +54,12 @@ type commitmentsEnvelope struct {
 	Context     commitmentsContext `json:"context"`
 	GeneratedAt string             `json:"generatedAt,omitempty"`
 	Counts      *commitmentCounts  `json:"counts,omitempty"`
-	Commitments []commitmentRow    `json:"commitments,omitempty"`
-	Partial     []partialPart      `json:"partial,omitempty"`
-	Missing     []string           `json:"missing,omitempty"`
-	Error       *readError         `json:"error,omitempty"`
+	// Commitments is a pointer so an ok list always serialises its rows,
+	// `[]` included, while envelopes of other operations omit the key.
+	Commitments *[]commitmentRow `json:"commitments,omitempty"`
+	Partial     []partialPart    `json:"partial,omitempty"`
+	Missing     []string         `json:"missing,omitempty"`
+	Error       *readError       `json:"error,omitempty"`
 }
 
 type commitmentsContext struct {
@@ -80,11 +82,18 @@ type projectInfo struct {
 }
 
 // partialPart labels one part of a response that is incomplete, and why.
+// Returned and Total are present exactly when the part is countable, so "0 of
+// 25 done" is distinguishable from a part that has no count.
 type partialPart struct {
 	Part     string `json:"part"`
 	Reason   string `json:"reason"`
-	Returned int    `json:"returned,omitempty"`
-	Total    int    `json:"total,omitempty"`
+	Returned *int   `json:"returned,omitempty"`
+	Total    *int   `json:"total,omitempty"`
+}
+
+// countedPart is a partialPart with a count.
+func countedPart(part, reason string, returned, total int) partialPart {
+	return partialPart{Part: part, Reason: reason, Returned: &returned, Total: &total}
 }
 
 // runCommitments is the process entry: it wires the real stdout/stderr, the
@@ -180,7 +189,7 @@ func requestedSelector(opts commitmentsOptions) (briefingSelector, projectInfo) 
 // validateCommitmentsSelector rejects the combinations that would otherwise
 // widen silently or read nothing meaningful. It runs before any request.
 func validateCommitmentsSelector(c commitmentsContext) *readError {
-	if c.Project.Name == "" || c.Project.Name == "unknown" {
+	if c.Project.Source == projectSourceNone || c.Project.Name == "" {
 		return &readError{Kind: kindInvalidSelector, Route: "selector", Hint: "no project could be derived"}
 	}
 	return nil

@@ -29,14 +29,14 @@ func TestCommitmentsListProjectSelector(t *testing.T) {
 	if ctx.Account == nil || ctx.Account.Email != "owner@example.test" {
 		t.Fatalf("account = %+v", ctx.Account)
 	}
-	if len(r.env.Commitments) != 2 || r.env.Counts.OpenOrWaiting != 2 || r.env.Counts.Overdue != 1 {
-		t.Fatalf("rows=%d counts=%+v", len(r.env.Commitments), r.env.Counts)
+	if len(rowsOf(r.env)) != 2 || r.env.Counts.OpenOrWaiting != 2 || r.env.Counts.Overdue != 1 {
+		t.Fatalf("rows=%d counts=%+v", len(rowsOf(r.env)), r.env.Counts)
 	}
-	first, second := r.env.Commitments[0], r.env.Commitments[1]
+	first, second := rowsOf(r.env)[0], rowsOf(r.env)[1]
 	if first.DueAt != nil || first.Overdue || second.DueAt == nil || !second.Overdue {
 		t.Fatalf("due/overdue not carried: %+v %+v", first, second)
 	}
-	for _, row := range r.env.Commitments {
+	for _, row := range rowsOf(r.env) {
 		if row.Filing != filingProject || row.Ownership != unclearOwnership {
 			t.Fatalf("row filing/ownership = %+v", row)
 		}
@@ -111,7 +111,7 @@ func TestCommitmentsListRejectsAWiderEcho(t *testing.T) {
 
 			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work")
 
-			if r.code != 2 || r.env.Error.Kind != kindSelectorMismatch || len(r.env.Commitments) != 0 {
+			if r.code != 2 || r.env.Error.Kind != kindSelectorMismatch || r.env.Commitments != nil {
 				t.Fatalf("code=%d env=%s", r.code, r.stdout)
 			}
 			if strings.Contains(r.stdout, "leak?") {
@@ -151,7 +151,7 @@ func TestCommitmentsListLabelsTruncation(t *testing.T) {
 	}
 	found := false
 	for _, p := range r.env.Partial {
-		if p.Part == "commitments" && p.Reason == "truncated" && p.Returned == 2 && p.Total == 140 {
+		if p.Part == "commitments" && p.Reason == "truncated" && p.Returned != nil && *p.Returned == 2 && p.Total != nil && *p.Total == 140 {
 			found = true
 		}
 	}
@@ -188,9 +188,9 @@ func TestCommitmentsListVerifiesUnscopedUnderTruncation(t *testing.T) {
 func TestCommitmentsListFilingChangesDuringRead(t *testing.T) {
 	s := newReadServer(t)
 	s.json("/api/v1/me", 200, meBody)
-	moved, failed, superseded, rescoped := item(1, "moved"), item(2, "lookup fails"), item(3, "superseded"), item(4, "rescoped")
+	moved, failed, superseded, rescoped, vanished := item(1, "moved"), item(2, "lookup fails"), item(3, "superseded"), item(4, "rescoped"), item(5, "vanished")
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true),
-		section(4, moved, failed, superseded, rescoped), section(0)))
+		section(5, moved, failed, superseded, rescoped, vanished), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
 	s.json("/api/v1/memories/"+moved.memoryID, 200, memoryBody("work", strPtr("elsewhere"), "active", nil))
 	s.json("/api/v1/memories/"+failed.memoryID, 500, `{"error":"internal"}`)
@@ -203,13 +203,13 @@ func TestCommitmentsListFilingChangesDuringRead(t *testing.T) {
 	if len(got) != 1 || got[failed.memoryID] != filingUnknown {
 		t.Fatalf("only the failed lookup may remain, as unknown: %v", got)
 	}
-	if r.env.Counts.ChangedDuringRead != 3 {
+	if r.env.Counts.ChangedDuringRead != 4 {
 		t.Fatalf("changedDuringRead = %d", r.env.Counts.ChangedDuringRead)
 	}
 	if !hasPartial(r.env, "filing", kindUnavailable) {
 		t.Fatalf("partial = %+v", r.env.Partial)
 	}
-	for _, topic := range []string{"moved", "superseded", "rescoped"} {
+	for _, topic := range []string{"moved", "superseded", "rescoped", "vanished"} {
 		if strings.Contains(r.stdout, `"`+topic+`"`) {
 			t.Fatalf("row %q left the selector and must not be emitted", topic)
 		}
@@ -363,6 +363,7 @@ func TestSelectorWithin(t *testing.T) {
 	}{
 		{"same strict", sp("w", "p", &no), sp("w", "p", &no), true},
 		{"echo omits flag", sp("w", "p", &no), sp("w", "p", nil), true},
+		{"request omits flag, echo widened", sp("w", "p", nil), sp("w", "p", &yes), false},
 		{"narrowed", sp("w", "p", &yes), sp("w", "p", &no), true},
 		{"widened", sp("w", "p", &no), sp("w", "p", &yes), false},
 		{"other scope", sp("w", "p", &no), sp("x", "p", &no), false},
@@ -384,6 +385,74 @@ func TestBuildBriefingQueryScopeProject(t *testing.T) {
 	}
 }
 
+// A strict read that answers under a wider selector must not decide filing:
+// its rows could be unscoped, so every row is verified instead.
+func TestCommitmentsListRejectsAWiderStrictEcho(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	u := item(1, "unscoped but echoed as strict")
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, u), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, u), section(0)))
+	s.json("/api/v1/memories/"+u.memoryID, 200, memoryBody("work", nil, "active", nil))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if got := filings(r.env)[u.memoryID]; got != filingUnscoped {
+		t.Fatalf("filing = %q, want unscoped from the memory read", got)
+	}
+	if !hasPartial(r.env, "filing", "strict_read_selector_mismatch") {
+		t.Fatalf("partial = %+v", r.env.Partial)
+	}
+}
+
+func TestCommitmentsListEmptyKeepsAnExplicitList(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), section(0), section(0)))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if !strings.Contains(r.stdout, `"commitments":[]`) || !strings.Contains(r.stdout, `"changedDuringRead":0`) {
+		t.Fatalf("an empty ok list must say so explicitly: %s", r.stdout)
+	}
+}
+
+func TestCommitmentsListZeroVerifiedIsCounted(t *testing.T) {
+	withDeadline(t, 150*time.Millisecond)
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	a := item(1, "slow")
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+	s.handle("/api/v1/memories/"+a.memoryID, func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if !strings.Contains(r.stdout, `"part":"filing","reason":"timeout","returned":0,"total":1`) {
+		t.Fatalf("0 of 1 verified must be explicit: %s", r.stdout)
+	}
+}
+
+func TestCommitmentsListNeverPutsAMalformedIDInAPath(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	bad := item(1, "hostile id")
+	bad.memoryID = ".."
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, bad), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	for _, req := range s.recorded() {
+		if strings.HasPrefix(req.Path, "/api/v1/memories") {
+			t.Fatalf("a malformed id reached a request path: %s", req.Path)
+		}
+	}
+	if filings(r.env)[".."] != filingUnknown || !hasPartial(r.env, "filing", kindBadResponse) {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
 func briefingQuery(t *testing.T, s *readServer) url.Values {
 	t.Helper()
 	for _, r := range s.recorded() {
@@ -399,9 +468,16 @@ func briefingQuery(t *testing.T, s *readServer) url.Values {
 	return nil
 }
 
+func rowsOf(env commitmentsEnvelope) []commitmentRow {
+	if env.Commitments == nil {
+		return nil
+	}
+	return *env.Commitments
+}
+
 func filings(env commitmentsEnvelope) map[string]string {
 	out := map[string]string{}
-	for _, row := range env.Commitments {
+	for _, row := range rowsOf(env) {
 		out[row.MemoryID] = row.Filing
 	}
 	return out

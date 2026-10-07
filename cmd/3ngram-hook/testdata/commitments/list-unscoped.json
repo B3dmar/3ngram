@@ -31,7 +31,8 @@
   "counts": {
     "openOrWaiting": 4,
     "overdue": 1,
-    "returned": 4
+    "returned": 4,
+    "changedDuringRead": 0
   },
   "commitments": [
     {

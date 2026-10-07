@@ -50,7 +50,7 @@ type commitmentCounts struct {
 	Returned      int `json:"returned"`
 	// ChangedDuringRead counts rows dropped because their memory, read back
 	// for filing, was no longer live or no longer inside the selector.
-	ChangedDuringRead int `json:"changedDuringRead,omitempty"`
+	ChangedDuringRead int `json:"changedDuringRead"`
 }
 
 // The bounds of one list read. The filing lookups and their concurrency are
@@ -129,6 +129,12 @@ func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Wri
 	}
 
 	rows := mergeSections(wide.Commitments, wide.Overdue)
+	// The strict read decides filing for the rows it returns, so its echo is
+	// held to the same rule as the widened one: a strict read that answered
+	// under a wider selector proves nothing, and every row is verified instead.
+	if widened && strictErr == nil && !selectorWithin(strictSelector(requested), strict.Selector) {
+		strictErr = &readError{Kind: kindSelectorMismatch, Route: "briefing"}
+	}
 	var strictPtr *briefingResponse
 	if widened && strictErr == nil {
 		strictPtr = &strict
@@ -146,7 +152,7 @@ func listCommitments(ctx context.Context, env commitmentsEnvelope, stderr io.Wri
 		ChangedDuringRead: filed.changed,
 	}
 	env.Partial = append(env.Partial, truncationParts(wide)...)
-	env.Commitments = filed.rows
+	env.Commitments = &filed.rows
 	env.Missing = []string{"owner", "sourceSession"}
 	env.GeneratedAt = wide.GeneratedAt
 	env.OK = true
@@ -224,10 +230,10 @@ func mergeSections(commitments, overdue commitmentSection) []commitmentRow {
 func truncationParts(resp briefingResponse) []partialPart {
 	var parts []partialPart
 	if resp.Commitments.HasMore || resp.Commitments.Count > len(resp.Commitments.Items) {
-		parts = append(parts, partialPart{Part: "commitments", Reason: "truncated", Returned: len(resp.Commitments.Items), Total: resp.Commitments.Count})
+		parts = append(parts, countedPart("commitments", "truncated", len(resp.Commitments.Items), resp.Commitments.Count))
 	}
 	if resp.Overdue.HasMore || resp.Overdue.Count > len(resp.Overdue.Items) {
-		parts = append(parts, partialPart{Part: "overdue", Reason: "truncated", Returned: len(resp.Overdue.Items), Total: resp.Overdue.Count})
+		parts = append(parts, countedPart("overdue", "truncated", len(resp.Overdue.Items), resp.Overdue.Count))
 	}
 	return parts
 }
@@ -251,6 +257,7 @@ func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelec
 	if !widened {
 		return filedRows{rows: rows}
 	}
+	out := filedRows{rows: []commitmentRow{}}
 	inStrict := map[string]struct{}{}
 	if strict != nil {
 		for _, item := range strict.Commitments.Items {
@@ -280,23 +287,22 @@ func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelec
 		verdicts[n] = verifyFiling(ctx, rows[lookups[n]].MemoryID, requested)
 	})
 
-	out := filedRows{}
 	drop := map[int]struct{}{}
 	verified, failedKind := 0, ""
 	for n, idx := range lookups {
 		switch v := verdicts[n]; {
+		case !v.done:
+			// Never started: the deadline (or a cancel) stopped the launch.
+			failedKind = classifyReadFailure(ctx, "memory", 0, nil).Kind
 		case v.err != nil:
 			failedKind = v.err.Kind
 		case v.drop:
 			drop[idx] = struct{}{}
 			out.changed++
 			verified++
-		case v.filing != "":
+		default:
 			rows[idx].Filing = v.filing
 			verified++
-		default:
-			// Never started: the deadline (or a cancel) stopped the launch.
-			failedKind = classifyReadFailure(ctx, "memory", 0, nil).Kind
 		}
 	}
 	if verified < len(candidates) {
@@ -304,7 +310,7 @@ func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelec
 		if failedKind != "" {
 			reason = failedKind
 		}
-		out.partial = append(out.partial, partialPart{Part: "filing", Reason: reason, Returned: verified, Total: len(candidates)})
+		out.partial = append(out.partial, countedPart("filing", reason, verified, len(candidates)))
 	}
 	for i, row := range rows {
 		if _, gone := drop[i]; !gone {
@@ -314,7 +320,10 @@ func fileRows(ctx context.Context, rows []commitmentRow, requested briefingSelec
 	return out
 }
 
+// filingVerdict is one lookup's outcome. done is false for a lookup the
+// deadline kept from starting.
 type filingVerdict struct {
+	done   bool
 	filing string
 	drop   bool
 	err    *readError
@@ -323,20 +332,28 @@ type filingVerdict struct {
 // verifyFiling reads one candidate's memory and decides its filing from the
 // stored row, not from which response it appeared in.
 func verifyFiling(ctx context.Context, memoryID string, requested briefingSelector) filingVerdict {
+	path, ok := memoryPath(memoryID, "")
+	if !ok {
+		return filingVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
+	}
 	var m memoryFiling
-	if err := apiGet(ctx, "memory", "/api/v1/memories/"+url.PathEscape(memoryID), &m); err != nil {
-		return filingVerdict{err: err}
+	if err := apiGet(ctx, "memory", path, &m); err != nil {
+		// Gone between the two reads: it left the selector, like a move.
+		if err.Kind == kindNotFound {
+			return filingVerdict{done: true, drop: true}
+		}
+		return filingVerdict{done: true, err: err}
 	}
 	if m.Status != "active" || m.ValidTo != nil || m.Scope != requested.Scope {
-		return filingVerdict{drop: true}
+		return filingVerdict{done: true, drop: true}
 	}
 	if m.Project == nil {
-		return filingVerdict{filing: filingUnscoped}
+		return filingVerdict{done: true, filing: filingUnscoped}
 	}
 	if *m.Project == requested.Project {
-		return filingVerdict{filing: filingProject}
+		return filingVerdict{done: true, filing: filingProject}
 	}
-	return filingVerdict{drop: true}
+	return filingVerdict{done: true, drop: true}
 }
 
 // forEachBounded runs fn for 0..n-1 with at most limit in flight. It stops

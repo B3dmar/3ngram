@@ -4,11 +4,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -111,60 +113,140 @@ func TestAPIHost(t *testing.T) {
 	}
 }
 
-// The read-only guarantee is structural: every file of the commitments data
-// path is parsed, and none may call the write-capable request helper, the raw
-// request constructor, the sentinel writer, or anything that writes a file.
-// http.NewRequestWithContext is allowed only with http.MethodGet.
+// The read-only guarantee is structural. Every non-test file of the
+// commitments data path (named commitments*.go or readapi*.go) is parsed and
+// held to an allowlist: no reference at all to the write-capable request helper
+// or the sentinel writer, no http convenience call or default client, no os
+// member beyond reading the environment and the working directory, no exec or
+// ioutil import, Do only on readClient, and requests only as exactly
+// http.MethodGet.
 func TestCommitmentsDataPathIsReadOnly(t *testing.T) {
-	files, err := filepath.Glob("commitments*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	files = append(files, "readapi.go")
-	forbidden := map[string]bool{
-		"apiRequest": true, "warnMissingAPIKey": true, "NewRequest": true,
-		"WriteFile": true, "Create": true, "OpenFile": true, "MkdirAll": true,
-		"Mkdir": true, "Remove": true, "RemoveAll": true, "Rename": true, "Post": true, "PostForm": true,
-	}
-	fset := token.NewFileSet()
-	checked := 0
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		checked++
-		file, err := parser.ParseFile(fset, name, nil, 0)
+	var files []string
+	for _, pattern := range []string{"commitments*.go", "readapi*.go"} {
+		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		for _, m := range matches {
+			if !strings.HasSuffix(m, "_test.go") {
+				files = append(files, m)
 			}
-			callee := calleeName(call.Fun)
-			if forbidden[callee] {
-				t.Errorf("%s: %s calls %s, which the read-only data path must not", name, fset.Position(call.Pos()), callee)
-			}
-			if callee == "NewRequestWithContext" {
-				if len(call.Args) < 2 || calleeName(call.Args[1]) != "MethodGet" {
-					t.Errorf("%s: %s builds a request that is not http.MethodGet", name, fset.Position(call.Pos()))
-				}
-			}
-			return true
-		})
+		}
 	}
-	if checked < 3 {
-		t.Fatalf("only %d data-path files were checked", checked)
+	if len(files) < 3 {
+		t.Fatalf("only %d data-path files found: %v", len(files), files)
+	}
+	for _, name := range files {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range readOnlyViolations(t, name, string(src)) {
+			t.Error(v)
+		}
 	}
 }
 
-func calleeName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.SelectorExpr:
-		return e.Sel.Name
+// The checker itself is tested against a file that breaks every rule, so a
+// checker that silently stopped matching would fail here, not pass everything.
+func TestReadOnlyCheckerCatchesViolations(t *testing.T) {
+	const bad = `package main
+import (
+	"io/ioutil"
+	"net/http"
+	"os"
+	"os/exec"
+)
+func bad() {
+	f := apiRequest
+	_ = f
+	warnMissingAPIKey()
+	_, _ = http.Get("x")
+	_, _ = http.Post("x", "", nil)
+	_ = http.DefaultClient
+	_ = os.WriteFile("x", nil, 0)
+	_ = os.Remove("x")
+	_ = ioutil.Discard
+	_ = exec.Command("x")
+	var c http.Client
+	_, _ = c.Do(nil)
+	_, _ = http.NewRequestWithContext(nil, "POST", "x", nil)
+	_, _ = http.NewRequestWithContext(nil, other.MethodGet, "x", nil)
+}`
+	got := strings.Join(readOnlyViolations(t, "bad.go", bad), "\n")
+	for _, want := range []string{
+		"import io/ioutil", "import os/exec", "references apiRequest", "references warnMissingAPIKey",
+		"http.Get", "http.Post", "http.DefaultClient", "os.WriteFile", "os.Remove",
+		"Do on something other than readClient", "not exactly http.MethodGet",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("checker missed %q in:\n%s", want, got)
+		}
 	}
-	return ""
+	if n := strings.Count(got, "not exactly http.MethodGet"); n != 2 {
+		t.Errorf("both non-GET requests must be flagged, got %d", n)
+	}
+}
+
+var allowedOSMembers = map[string]bool{
+	"Getenv": true, "Getwd": true, "Stdout": true, "Stderr": true, "Interrupt": true,
+}
+
+func readOnlyViolations(t *testing.T, name, src string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	flag := func(n ast.Node, msg string) {
+		out = append(out, fmt.Sprintf("%s: %s", fset.Position(n.Pos()), msg))
+	}
+	for _, imp := range file.Imports {
+		if path := strings.Trim(imp.Path.Value, `"`); path == "io/ioutil" || path == "os/exec" {
+			flag(imp, "import "+path)
+		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.Ident:
+			if node.Name == "apiRequest" || node.Name == "warnMissingAPIKey" {
+				flag(node, "references "+node.Name)
+			}
+		case *ast.SelectorExpr:
+			if pkg, ok := node.X.(*ast.Ident); ok {
+				switch {
+				case pkg.Name == "http" && map[string]bool{"Get": true, "Head": true, "Post": true, "PostForm": true, "NewRequest": true, "DefaultClient": true}[node.Sel.Name]:
+					flag(node, "uses http."+node.Sel.Name)
+				case pkg.Name == "os" && !allowedOSMembers[node.Sel.Name]:
+					flag(node, "uses os."+node.Sel.Name)
+				}
+			}
+		case *ast.CallExpr:
+			sel, ok := node.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if sel.Sel.Name == "Do" {
+				if recv, ok := sel.X.(*ast.Ident); !ok || recv.Name != "readClient" {
+					flag(node, "calls Do on something other than readClient")
+				}
+			}
+			if sel.Sel.Name == "NewRequestWithContext" && (len(node.Args) < 2 || !isHTTPMethodGet(node.Args[1])) {
+				flag(node, "builds a request that is not exactly http.MethodGet")
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func isHTTPMethodGet(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "http" && sel.Sel.Name == "MethodGet"
 }
