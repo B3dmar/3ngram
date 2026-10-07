@@ -45,6 +45,7 @@ type commitmentsOptions struct {
 	includeUnscoped bool
 	memoryID        string
 	expect          string
+	github          bool
 }
 
 // commitmentsEnvelope is the whole stdout contract. `context` is present on
@@ -64,6 +65,8 @@ type commitmentsEnvelope struct {
 	Partial     []partialPart    `json:"partial,omitempty"`
 	Missing     []string         `json:"missing,omitempty"`
 	Error       *readError       `json:"error,omitempty"`
+	// GitHubSearch is how far a list's GitHub lookups got (with --github).
+	GitHubSearch *githubWindow `json:"githubSearch,omitempty"`
 	// The `show` operation's parts.
 	Commitment *commitmentDetail   `json:"commitment,omitempty"`
 	Source     *commitmentSource   `json:"source,omitempty"`
@@ -152,9 +155,9 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 		env.OK = true
 		return writeEnvelope(stdout, env)
 	case "list":
-		return writeEnvelope(stdout, listCommitments(opCtx, cfg, env, stderr))
+		return writeEnvelope(stdout, listCommitments(opCtx, cfg, env, githubFor(opCtx, opts), stderr))
 	case "show":
-		return writeEnvelope(stdout, showCommitment(opCtx, cfg, env, opts.memoryID, opts.expect, stderr))
+		return writeEnvelope(stdout, showCommitment(opCtx, cfg, env, opts.memoryID, opts.expect, githubFor(opCtx, opts), stderr))
 	default:
 		return writeEnvelope(stdout, failEnvelope(env, &readError{Kind: kindUsage, Route: "args"}))
 	}
@@ -182,6 +185,7 @@ func parseCommitmentsFlags(args []string) (commitmentsOptions, bool) {
 	fs.StringVar(&opts.cwd, "cwd", "", "directory the project is derived from")
 	fs.StringVar(&opts.scope, "scope", "", "scope to read within (optional)")
 	fs.BoolVar(&opts.includeUnscoped, "include-unscoped", false, "also read the scope's records with no project")
+	fs.BoolVar(&opts.github, "github", false, "look up GitHub issues and pull requests the commitments reference (gh api, GET only)")
 	// --json is accepted for readability at call sites; output is always JSON.
 	fs.Bool("json", true, "emit JSON (always on)")
 	if opts.operation == "show" {
@@ -250,6 +254,7 @@ func failEnvelope(env commitmentsEnvelope, e *readError) commitmentsEnvelope {
 	env.Commitments = nil
 	env.Counts = nil
 	env.Commitment, env.Source, env.History, env.Evidence = nil, nil, nil, nil
+	env.GitHubSearch = nil
 	env.Partial = nil
 	return env
 }

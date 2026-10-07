@@ -70,7 +70,26 @@ type commitmentEvidence struct {
 	Inspected  evidenceWindow `json:"inspected"`
 	Hidden     int            `json:"hiddenOutsideSelector"`
 	Unverified int            `json:"unverifiedPartners"`
-	partial    []partialPart
+	// GitHub is set with --github: the references the commitment names.
+	GitHub  []githubEvidence `json:"github,omitempty"`
+	partial []partialPart
+}
+
+// decideVerdict is `review` when there is evidence that could explain a
+// resolution: a 3ngram item, or a referenced issue or pull request that is
+// closed or merged. Open references are listed as context and change nothing.
+func (ev *commitmentEvidence) decideVerdict() {
+	ev.Verdict = verdictNoneFound
+	if len(ev.Items) > 0 {
+		ev.Verdict = verdictReview
+		return
+	}
+	for _, g := range ev.GitHub {
+		if g.signalsResolution() {
+			ev.Verdict = verdictReview
+			return
+		}
+	}
 }
 
 // evidenceWindow is how far the evidence search looked. A nil part was not
@@ -78,6 +97,7 @@ type commitmentEvidence struct {
 type evidenceWindow struct {
 	Proposals *proposalWindow `json:"proposals"`
 	History   *historyWindow  `json:"history"`
+	GitHub    *githubWindow   `json:"github,omitempty"`
 }
 
 type proposalWindow struct {
@@ -123,10 +143,7 @@ func collectEvidence(ctx context.Context, cfg readConfig, memoryID string, sel b
 		ev.Inspected.Proposals = &window
 		ev.partial = append(ev.partial, partial...)
 	}
-	ev.Verdict = verdictNoneFound
-	if len(ev.Items) > 0 {
-		ev.Verdict = verdictReview
-	}
+	ev.decideVerdict()
 	return ev
 }
 

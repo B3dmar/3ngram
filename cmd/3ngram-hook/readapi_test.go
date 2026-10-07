@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -198,6 +199,33 @@ func bad() {
 	if n := strings.Count(got, "not exactly http.MethodGet"); n != 2 {
 		t.Errorf("both non-GET requests must be flagged, got %d", n)
 	}
+
+	const github = `package main
+import "os/exec"
+func lookups(ctx context.Context, p, verb string) {
+	_ = exec.CommandContext(ctx, "gh", "api", "--method", "GET", p)
+	_ = exec.CommandContext(ctx, "gh", "api", "--method", "POST", p)
+	_ = exec.CommandContext(ctx, "gh", "api", "--method", verb, p)
+	_ = exec.CommandContext(ctx, "sh", "-c", "gh", "api", p)
+	_ = exec.CommandContext(ctx, "gh", "api", "--method", "GET", p, "-f", "x=1")
+	_ = exec.Command("gh")
+	_ = exec.LookPath
+}`
+	got = strings.Join(readOnlyViolations(t, "commitments_github.go", github), "\n")
+	if strings.Contains(got, "import os/exec") {
+		t.Error("commitments_github.go may import os/exec")
+	}
+	if n := strings.Count(got, "not exactly gh api --method GET"); n != 4 {
+		t.Errorf("four non-GET gh calls must be flagged, got %d:\n%s", n, got)
+	}
+	for _, want := range []string{"exec.Command", "exec.LookPath"} {
+		if !strings.Contains(got, "uses "+want) {
+			t.Errorf("checker missed %s:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "\n")+1 != 6 {
+		t.Errorf("the one GET call must pass, got:\n%s", got)
+	}
 }
 
 var allowedOSMembers = map[string]bool{
@@ -215,8 +243,12 @@ func readOnlyViolations(t *testing.T, name, src string) []string {
 	flag := func(n ast.Node, msg string) {
 		out = append(out, fmt.Sprintf("%s: %s", fset.Position(n.Pos()), msg))
 	}
+	// commitments_github.go alone may run a process, and only `gh api
+	// --method GET <path>`; every other data-path file may not import exec.
+	githubFile := filepath.Base(name) == "commitments_github.go"
 	for _, imp := range file.Imports {
-		if path := strings.Trim(imp.Path.Value, `"`); path == "io/ioutil" || path == "os/exec" {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if path == "io/ioutil" || (path == "os/exec" && !githubFile) {
 			flag(imp, "import "+path)
 		}
 	}
@@ -233,6 +265,8 @@ func readOnlyViolations(t *testing.T, name, src string) []string {
 					flag(node, "uses http."+node.Sel.Name)
 				case pkg.Name == "os" && !allowedOSMembers[node.Sel.Name]:
 					flag(node, "uses os."+node.Sel.Name)
+				case pkg.Name == "exec" && node.Sel.Name != "CommandContext" && node.Sel.Name != "ErrNotFound":
+					flag(node, "uses exec."+node.Sel.Name)
 				}
 			}
 		case *ast.CallExpr:
@@ -248,10 +282,28 @@ func readOnlyViolations(t *testing.T, name, src string) []string {
 			if sel.Sel.Name == "NewRequestWithContext" && (len(node.Args) < 2 || !isHTTPMethodGet(node.Args[1])) {
 				flag(node, "builds a request that is not exactly http.MethodGet")
 			}
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "exec" && sel.Sel.Name == "CommandContext" && !isGHAPIGet(node.Args) {
+				flag(node, "runs a command that is not exactly gh api --method GET")
+			}
 		}
 		return true
 	})
 	return out
+}
+
+// isGHAPIGet reports whether CommandContext's arguments are ctx, then the
+// string literals "gh", "api", "--method", "GET", then one path.
+func isGHAPIGet(args []ast.Expr) bool {
+	if len(args) != 6 {
+		return false
+	}
+	for i, want := range []string{"gh", "api", "--method", "GET"} {
+		lit, ok := args[i+1].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING || lit.Value != strconv.Quote(want) {
+			return false
+		}
+	}
+	return true
 }
 
 func isHTTPMethodGet(expr ast.Expr) bool {

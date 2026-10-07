@@ -56,6 +56,19 @@ func deriveProjectWithSourceCtx(ctx context.Context, cwd string) (string, string
 	return strings.ToLower(filepath.Base(cwd)), projectSourceDirectory, nil
 }
 
+// originRemoteURL is the origin remote's URL, bounded by ctx, or "" when
+// there is none or git could not answer in time.
+func originRemoteURL(ctx context.Context, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", cwd, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // isSecondaryWorktree reports whether cwd lives in a LINKED (secondary) git
 // worktree rather than the main checkout. It compares ROOTS, not raw cwd: cwd is
 // rarely the worktree root (Claude may launch from a subdirectory), and the bare

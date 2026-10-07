@@ -21,6 +21,9 @@ type commitmentRow struct {
 	Overdue      bool      `json:"overdue"`
 	Filing       string    `json:"filing"`
 	Ownership    ownership `json:"ownership"`
+	// GitHub is the references the topic names, as GitHub reported them; only
+	// with --github, and only references that were looked up.
+	GitHub []githubEvidence `json:"github,omitempty"`
 }
 
 // ownership is reported, never inferred. The read routes do not expose
@@ -115,7 +118,7 @@ func (s *listSection) section() (commitmentSection, bool) {
 // listCommitments reads the selector's open and waiting commitments under the
 // operation's single deadline in ctx, with the one credential cfg pinned for
 // the whole operation.
-func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelope, stderr io.Writer) commitmentsEnvelope {
+func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelope, gh githubOptions, stderr io.Writer) commitmentsEnvelope {
 	if cfg.key == "" {
 		return failEnvelope(env, &readError{Kind: kindNoKey, Route: "config"})
 	}
@@ -186,6 +189,11 @@ func listCommitments(ctx context.Context, cfg readConfig, env commitmentsEnvelop
 		ChangedDuringRead: filed.changed,
 	}
 	env.Partial = append(env.Partial, truncationParts(commitments, overdue)...)
+	if gh.enabled {
+		window, parts := attachGitHub(ctx, filed.rows, requested, gh)
+		env.GitHubSearch = &window
+		env.Partial = append(env.Partial, parts...)
+	}
 	env.Commitments = &filed.rows
 	env.Missing = []string{"owner", "sourceSession"}
 	env.GeneratedAt = wide.GeneratedAt
@@ -437,4 +445,23 @@ launch:
 		}(i)
 	}
 	wg.Wait()
+}
+
+// attachGitHub looks up the references the rows' topics name, after filing so
+// a bare #N is only resolved for a row verified to belong to the project.
+func attachGitHub(ctx context.Context, rows []commitmentRow, sel briefingSelector, gh githubOptions) (githubWindow, []partialPart) {
+	scans := make([]refScan, len(rows))
+	for i, row := range rows {
+		scans[i] = extractGitHubRefs(row.Topic, bareRepoFor(gh.remote, row.Filing, sel))
+	}
+	refs, window := capRefs(scans)
+	found, failure, checked := githubBatch(ctx, refs)
+	window.Checked = checked
+	for i := range rows {
+		rows[i].GitHub = sortedEvidence(scans[i].refs, found)
+		if len(rows[i].GitHub) == 0 {
+			rows[i].GitHub = nil
+		}
+	}
+	return window, githubParts(window, failure)
 }
