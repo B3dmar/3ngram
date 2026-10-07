@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -197,6 +198,31 @@ func decodeHistory(raw json.RawMessage, memoryID string) (historyResponse, *read
 			!knownSectionStatus(sec.Lineage) || !knownSectionStatus(sec.Events) {
 			return historyResponse{}, bad
 		}
+		// An unavailable section comes back empty; one that carries rows
+		// anyway says two things at once, and neither can be trusted.
+		lineageRows := len(*l.Nodes) + len(*l.Edges) + len(*d.Predecessors) + len(*d.Successors)
+		if (*sec.Lineage == "unavailable" && lineageRows > 0) || (*sec.Events == "unavailable" && len(*shape.AuditEvents) > 0) {
+			return historyResponse{}, bad
+		}
+	}
+	// Every memory the history names carries the identity fields the output
+	// shows; a missing one would be emitted as a zero value (a successor
+	// reported as not current, a blank recordedAt).
+	if !hasFields(*shape.Memory, historyIdentityFields, historyIdentityNullable) {
+		return historyResponse{}, bad
+	}
+	for _, node := range *l.Nodes {
+		if !hasFields(node, historyIdentityFields, historyIdentityNullable) {
+			return historyResponse{}, bad
+		}
+	}
+	for _, raw := range append(append([]json.RawMessage{}, *d.Predecessors...), *d.Successors...) {
+		var rel struct {
+			Memory json.RawMessage `json:"memory"`
+		}
+		if json.Unmarshal(raw, &rel) != nil || !hasFields(rel.Memory, historyIdentityFields, historyIdentityNullable) {
+			return historyResponse{}, bad
+		}
 	}
 	if !strings.EqualFold(h.Memory.ID, memoryID) {
 		return historyResponse{}, bad
@@ -210,6 +236,12 @@ func decodeHistory(raw json.RawMessage, memoryID string) (historyResponse, *read
 	}
 	for _, edge := range h.Lineage.Edges {
 		if !edgeComplete(edge) {
+			return historyResponse{}, bad
+		}
+	}
+	// The audit events are what the source block and the event list read.
+	for _, ev := range h.AuditEvents {
+		if ev.EventKind == "" || ev.ActorKind == "" || ev.CreatedAt == "" {
 			return historyResponse{}, bad
 		}
 	}
@@ -228,6 +260,39 @@ func decodeHistory(raw json.RawMessage, memoryID string) (historyResponse, *read
 		}
 	}
 	return h, nil
+}
+
+// The identity fields every memory in a history answer carries, null or not.
+var (
+	historyIdentityFields   = []string{"id", "memoryType", "topic", "scope", "status", "recordedAt", "isCurrent", "lifecycleState"}
+	historyIdentityNullable = []string{"project", "validTo"}
+)
+
+// The fields the detail shows from GET /api/v1/memories/:id. commitmentStatus
+// is left out: the route omits it when it is not set.
+var (
+	memoryDetailFields   = []string{"id", "memoryType", "topic", "content", "scope", "status", "validFrom", "recordedAt"}
+	memoryDetailNullable = []string{"project", "validTo", "tags"}
+)
+
+// hasFields reports whether raw is a JSON object with every key in required
+// set to a non-null value, and every key in nullable present, null or not.
+func hasFields(raw json.RawMessage, required, nullable []string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return false
+	}
+	for _, key := range required {
+		if v, ok := fields[key]; !ok || bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return false
+		}
+	}
+	for _, key := range nullable {
+		if _, ok := fields[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func edgeComplete(e historyEdge) bool {
@@ -297,10 +362,16 @@ func showCommitment(ctx context.Context, cfg readConfig, env commitmentsEnvelope
 	}
 	sel := env.Context.Requested
 
-	var memory memoryDetail
-	if err := apiGet(ctx, cfg, "memory", memoryURL, &memory); err != nil {
+	var memoryRaw json.RawMessage
+	if err := apiGet(ctx, cfg, "memory", memoryURL, &memoryRaw); err != nil {
 		logReadFailure(stderr, err)
 		return failEnvelope(env, err)
+	}
+	// An answer missing a field the detail shows is not this memory: it would
+	// come back with blank timestamps or a false "no longer current".
+	var memory memoryDetail
+	if json.Unmarshal(memoryRaw, &memory) != nil || !hasFields(memoryRaw, memoryDetailFields, memoryDetailNullable) {
+		return failEnvelope(env, &readError{Kind: kindBadResponse, Route: "memory", Hint: "memory fields missing"})
 	}
 	// From here on the id is the server's own spelling of it. The requested
 	// one may differ in case (uuid matching ignores it), and every later

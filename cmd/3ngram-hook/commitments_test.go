@@ -956,3 +956,118 @@ func TestCommitmentsEnvelopeDropsUserInfoFromTheHost(t *testing.T) {
 		t.Fatalf("stdout = %s", r.stdout)
 	}
 }
+
+// A section larger than the sectionLimit the read asked for is not its
+// answer, however consistent its own counts are.
+func TestCommitmentsListRejectsASectionOverTheCeiling(t *testing.T) {
+	items := make([]fixtureItem, maxBriefingSectionCeiling+1)
+	for i := range items {
+		items[i] = item(i+1, "row")
+	}
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), section(len(items), items...), section(0)))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if r.env.OK || r.env.Error.Kind != kindBadResponse || r.env.Commitments != nil {
+		t.Fatalf("code=%d error=%+v", r.code, r.env.Error)
+	}
+}
+
+// A list without generatedAt has no freshness, so it is incomplete.
+func TestCommitmentsListRejectsAReadWithoutGeneratedAt(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	body := strings.Replace(briefingBody(projectSel("demo"), section(1, item(1, "a")), section(0)), `"generatedAt":"2026-10-07T12:00:00.000Z",`, "", 1)
+	if strings.Contains(body, "generatedAt") {
+		t.Fatal("fixture edit did not apply")
+	}
+	s.json("/api/v1/briefing", 200, body)
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+	if r.env.OK || r.env.Error.Kind != kindBadResponse {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A /me 200 without the account's id and email is not an identity: the rows
+// come back with an account partial, never under a blank account.
+func TestCommitmentsListTreatsAnEmptyIdentityAsPartial(t *testing.T) {
+	for name, body := range map[string]string{"empty": `{}`, "no email": `{"id":"u1"}`, "no id": `{"email":"a@b.test"}`} {
+		t.Run(name, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, body)
+			s.json("/api/v1/briefing", 200, briefingBody(projectSel("demo"), section(1, item(1, "a")), section(0)))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list")
+
+			if !r.env.OK || r.env.Context.Account != nil || !hasPartial(r.env, "account", kindBadResponse) {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// A memory id is one path segment as sent, escaped separators included; the
+// fake server judges the escaped path, so it imposes no id shape of its own.
+func TestCommitmentsListLooksUpAnIdWithAnEscapedSeparator(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	odd := item(1, "odd id")
+	odd.memoryID = "odd/id"
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, odd), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+	s.json("/api/v1/memories/odd/id", 200, memoryBodyFor("odd/id", "work", nil, "active", nil))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if got := filings(r.env)["odd/id"]; got != filingUnscoped {
+		t.Fatalf("filing = %q, env = %s", got, r.stdout)
+	}
+	found := false
+	for _, req := range s.recorded() {
+		found = found || req.Path == "/api/v1/memories/odd%2Fid"
+	}
+	if !found {
+		t.Fatalf("requests = %+v", s.recorded())
+	}
+}
+
+// The PATH lookup for git runs under the deadline too: a PATH entry on a
+// stalled filesystem ends the operation with a timeout envelope.
+func TestCommitmentsDeadlineCoversTheGitLookup(t *testing.T) {
+	withDeadline(t, 200*time.Millisecond)
+	newReadServer(t)
+	release := make(chan struct{})
+	orig := execLookPath
+	execLookPath = func(string) (string, error) {
+		<-release
+		return "", os.ErrDeadlineExceeded
+	}
+	t.Cleanup(func() {
+		execLookPath = orig
+		close(release)
+	})
+
+	r := runWithin(t, 3*time.Second, projectDir(t, "demo"), "context")
+
+	if r.env.OK || r.env.Error == nil || r.env.Error.Kind != kindTimeout {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A cancelled batch launches no lookup, even though a free slot and the
+// cancellation are ready together (select would pick either at random).
+func TestForEachBoundedStopsLaunchingOnceCancelled(t *testing.T) {
+	for trial := 0; trial < 200; trial++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		var calls atomic.Int32
+		forEachBounded(ctx, 50, 4, func(context.Context, int) { calls.Add(1) })
+		if n := calls.Load(); n != 0 {
+			t.Fatalf("trial %d: %d lookups launched in a cancelled batch", trial, n)
+		}
+	}
+}

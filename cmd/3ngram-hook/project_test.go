@@ -77,3 +77,27 @@ func TestIsSecondaryWorktree(t *testing.T) {
 		})
 	}
 }
+
+// The project name is the remote's last path segment. User info, a query or a
+// fragment never reach it: the name is sent to the API and printed in
+// envelopes, and a remote URL can carry a token in any of them.
+func TestProjectFromRemote(t *testing.T) {
+	for remote, want := range map[string]string{
+		"git@github.com:B3dmar/3ngram.git":             "3ngram",
+		"github.com:B3dmar/3ngram":                     "3ngram",
+		"https://github.com/B3dmar/3ngram.git":         "3ngram",
+		"https://github.com/B3dmar/3ngram/":            "3ngram",
+		"ssh://git@github.com:22/B3dmar/3ngram.git":    "3ngram",
+		"https://host/org/Repo.git?token=SECRET":       "repo",
+		"https://user:SECRET@host/org/repo.git#SECRET": "repo",
+		"git@host:org/repo.git?token=SECRET":           "repo",
+		"/srv/git/repo.git\n":                          "repo",
+		"https://host":                                 "host",
+		"https://host/org/repo.git/":                   "repo.git",
+		"https://h/o/my%20repo":                        "my%20repo",
+	} {
+		if got := projectFromRemote(remote); got != want {
+			t.Errorf("projectFromRemote(%q) = %q, want %q", remote, got, want)
+		}
+	}
+}
