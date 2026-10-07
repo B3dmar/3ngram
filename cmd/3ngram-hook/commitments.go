@@ -119,17 +119,21 @@ func commitmentsMain(ctx context.Context, args []string, cwd string, stdout, std
 	if opts.cwd == "" {
 		opts.cwd = cwd
 	}
-	if opts.cwd == "" {
-		resolved, err := getwdCtx(opCtx)
+	// An absent or relative directory is resolved against the working
+	// directory, read under the deadline: os.Getwd (and so filepath.Abs) can
+	// block on a stalled or automounted filesystem. A failure still resolves
+	// the credential under the deadline, for the envelope's fingerprint.
+	if !filepath.IsAbs(opts.cwd) {
+		base, err := getwdCtx(opCtx)
 		if err != nil {
-			env, _ := newCommitmentsEnvelope(opCtx, resolveReadConfig(), opts)
+			opts.cwd = ""
+			cfg, _ := resolveReadConfigCtx(opCtx)
+			env, _ := newCommitmentsEnvelope(opCtx, cfg, opts)
 			return writeEnvelope(stdout, failEnvelope(env, classifyReadFailure(opCtx, "cwd", 0, err)))
 		}
-		opts.cwd = resolved
+		opts.cwd = filepath.Join(base, opts.cwd)
 	}
-	if abs, err := filepath.Abs(opts.cwd); err == nil {
-		opts.cwd = abs
-	}
+	opts.cwd = filepath.Clean(opts.cwd)
 	cfg, resolved := resolveReadConfigCtx(opCtx)
 	env, deriveErr := newCommitmentsEnvelope(opCtx, cfg, opts)
 	if !resolved {
@@ -198,6 +202,9 @@ func selectorFlagError(opts commitmentsOptions) *readError {
 	return nil
 }
 
+// osGetwd is os.Getwd, a variable so a test can stall it.
+var osGetwd = os.Getwd
+
 // getwdCtx is os.Getwd under ctx: on a stalled filesystem it gives up when the
 // operation's deadline does, so the envelope is still written in time.
 func getwdCtx(ctx context.Context) (string, error) {
@@ -206,8 +213,11 @@ func getwdCtx(ctx context.Context) (string, error) {
 		err error
 	}
 	done := make(chan result, 1)
+	// Read here, not in the goroutine: a stalled call outlives this function,
+	// and a test that restores osGetwd must not race with it.
+	getwd := osGetwd
 	go func() {
-		dir, err := os.Getwd()
+		dir, err := getwd()
 		done <- result{dir, err}
 	}()
 	select {
