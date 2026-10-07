@@ -125,6 +125,7 @@ func TestExtractGitHubRefs(t *testing.T) {
 		{"comment anchor is no reference", "issues/12#issuecomment-9", repo, nil, 0},
 		{"ten digits is no reference", "#1234567890", repo, nil, 0},
 		{"dot segment repo is refused", "o/..#3", nil, nil, 0},
+		{"url host in any case", "see HTTPS://GitHub.com/B3dmar/3ngram/issues/233", nil, []string{"B3dmar/3ngram#233"}, 0},
 		{"text order across forms", "#1 then https://github.com/B3dmar/x/pull/2 then B3dmar/y#3", repo, []string{"B3dmar/3ngram#1", "B3dmar/x#2", "B3dmar/y#3"}, 0},
 	}
 	for _, tc := range cases {
@@ -155,6 +156,9 @@ func TestGitHubRemote(t *testing.T) {
 		"https://user@github.com/B3dmar/3ngram":      "B3dmar/3ngram",
 		"ssh://git@github.com.evil.example/B3dmar/x": "",
 		"git@gitlab.com:B3dmar/3ngram.git":           "",
+		"github.com:B3dmar/3ngram.git":               "B3dmar/3ngram",
+		"GitHub.com:B3dmar/3ngram":                   "B3dmar/3ngram",
+		"/local/path:with/colon":                     "",
 		"":                                           "",
 	} {
 		got := ""

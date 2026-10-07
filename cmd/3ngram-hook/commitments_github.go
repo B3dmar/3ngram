@@ -81,7 +81,7 @@ func (g githubEvidence) signalsResolution() bool {
 }
 
 var (
-	githubURLRef       = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/(?:issues|pull)/(\d{1,9})\b`)
+	githubURLRef       = regexp.MustCompile(`(?i:https?://github\.com)/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/(?:issues|pull)/(\d{1,9})\b`)
 	githubQualifiedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#(\d{1,9})\b`)
 	githubBareRef      = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/#&])#(\d{1,9})\b`)
 	githubSegment      = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -198,11 +198,13 @@ func githubRemote(remote string) *githubRepo {
 	if u, err := url.Parse(remote); err == nil && u.Scheme != "" && u.Host != "" {
 		// https://[user@]github.com[:port]/owner/repo, ssh://git@github.com[:port]/owner/repo
 		host, path = u.Hostname(), u.Path
-	} else if at := strings.Index(remote, "@"); at >= 0 && strings.Contains(remote[at:], ":") && !strings.Contains(remote, "://") {
-		// The SCP-like form git uses for ssh: [user@]github.com:owner/repo
-		rest := remote[at+1:]
-		colon := strings.Index(rest, ":")
-		host, path = rest[:colon], rest[colon+1:]
+	} else if colon := strings.Index(remote, ":"); colon > 0 && !strings.Contains(remote, "://") && !strings.Contains(remote[:colon], "/") {
+		// The SCP-like form git uses for ssh: [user@]github.com:owner/repo,
+		// the user optional (ssh config may supply it).
+		host, path = remote[:colon], remote[colon+1:]
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			host = host[at+1:]
+		}
 	} else {
 		return nil
 	}
