@@ -39,6 +39,10 @@ const (
 	// claims a deeper search than the server ran.
 	historyLineageNodeCap = 25
 
+	// MEMORY_HISTORY_LINEAGE_EDGE_LIMIT.
+	// Lineage edges the history read returns at most; it truncates on its own.
+	historyLineageEdgeCap = 50
+
 	// MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT.
 	// Direct relationships the history read returns at most (see above).
 	historyRelationshipCap = 50

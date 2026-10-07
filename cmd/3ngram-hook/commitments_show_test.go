@@ -303,8 +303,7 @@ func TestCommitmentsShowDegradesPartByPart(t *testing.T) {
 		}
 	})
 	t.Run("history section unavailable", func(t *testing.T) {
-		degraded := strings.Replace(richHistory(), `"lineage":"ok"`, `"lineage":"unavailable"`, 1)
-		showServer(t, degraded, []any{})
+		showServer(t, unavailableLineage(t), []any{})
 
 		r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 
@@ -513,8 +512,7 @@ func TestCommitmentsShowRejectsHistoryForAnotherMemory(t *testing.T) {
 // A degraded history (lineage unavailable) comes back as 200 with empty lists;
 // that is not an inspected window, so it is not reported as one.
 func TestCommitmentsShowUnavailableLineageIsNotAnInspectedWindow(t *testing.T) {
-	degraded := strings.Replace(richHistory(), `"lineage":"ok"`, `"lineage":"unavailable"`, 1)
-	showServer(t, degraded, []any{})
+	showServer(t, unavailableLineage(t), []any{})
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 
@@ -534,9 +532,9 @@ func TestCommitmentsShowRejectsAProposalsAnswerWithoutTheList(t *testing.T) {
 	}
 }
 
-// An answer that omits a memory's project is not an unscoped memory: with
-// unscoped records included, it is still outside the selector.
-func TestCommitmentsShowOmittedProjectIsOutside(t *testing.T) {
+// An answer that omits a memory's project is incomplete, not an unscoped
+// memory: with unscoped records included it is still never shown.
+func TestCommitmentsShowOmittedProjectIsABadResponse(t *testing.T) {
 	s := showServer(t, richHistory(), []any{})
 	var body map[string]any
 	_ = json.Unmarshal([]byte(commitmentMemory("work", nil)), &body)
@@ -545,7 +543,7 @@ func TestCommitmentsShowOmittedProjectIsOutside(t *testing.T) {
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work", "--include-unscoped")
 
-	if r.code != 2 || r.env.Error.Kind != kindOutsideSelector || strings.Contains(r.stdout, "Full commitment text") {
+	if r.code != 2 || r.env.Error.Kind != kindBadResponse || strings.Contains(r.stdout, "Full commitment text") {
 		t.Fatalf("env = %s", r.stdout)
 	}
 }
@@ -646,6 +644,30 @@ func TestCommitmentsShowRejectsIncompleteHistory(t *testing.T) {
 		"lineage edge without type": func(h map[string]any) {
 			delete(group(h, "lineage")["edges"].([]any)[0].(map[string]any), "edgeType")
 		},
+		"successor without isCurrent": func(h map[string]any) {
+			succ := group(h, "directRelationships")["successors"].([]any)[0].(map[string]any)
+			delete(succ["memory"].(map[string]any), "isCurrent")
+		},
+		"successor without recordedAt": func(h map[string]any) {
+			succ := group(h, "directRelationships")["successors"].([]any)[0].(map[string]any)
+			delete(succ["memory"].(map[string]any), "recordedAt")
+		},
+		"predecessor with a null memoryType": func(h map[string]any) {
+			pred := group(h, "directRelationships")["predecessors"].([]any)[0].(map[string]any)
+			pred["memory"].(map[string]any)["memoryType"] = nil
+		},
+		"node without lifecycleState": func(h map[string]any) {
+			delete(group(h, "lineage")["nodes"].([]any)[1].(map[string]any), "lifecycleState")
+		},
+		"memory without isCurrent": func(h map[string]any) { delete(group(h, "memory"), "isCurrent") },
+		"a null audit event": func(h map[string]any) {
+			h["auditEvents"] = append(h["auditEvents"].([]any), nil)
+		},
+		"an audit event without eventKind": func(h map[string]any) {
+			delete(h["auditEvents"].([]any)[0].(map[string]any), "eventKind")
+		},
+		"lineage unavailable but carrying rows": func(h map[string]any) { group(h, "sections")["lineage"] = "unavailable" },
+		"events unavailable but carrying rows":  func(h map[string]any) { group(h, "sections")["events"] = "unavailable" },
 		"partner without scope": func(h map[string]any) {
 			succ := group(h, "directRelationships")["successors"].([]any)[1].(map[string]any)
 			delete(succ["memory"].(map[string]any), "scope")
@@ -692,7 +714,8 @@ func TestCommitmentsShowReportsTheGeneratedHistoryWindow(t *testing.T) {
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 
 	w := r.env.Evidence.Inspected.History
-	if w == nil || w.LineageNodeCap != historyLineageNodeCap || w.RelationshipCap != historyRelationshipCap || w.EventCap != historyEventCap {
+	if w == nil || w.LineageNodeCap != historyLineageNodeCap || w.LineageEdgeCap != historyLineageEdgeCap ||
+		w.RelationshipCap != historyRelationshipCap || w.EventCap != historyEventCap {
 		t.Fatalf("window = %+v", w)
 	}
 }
@@ -700,7 +723,7 @@ func TestCommitmentsShowReportsTheGeneratedHistoryWindow(t *testing.T) {
 // A proposals answer with a row missing a field the evidence reads is not an
 // inspected window: the row would otherwise be skipped in silence.
 func TestCommitmentsShowRejectsIncompleteProposals(t *testing.T) {
-	for _, field := range []string{"id", "fromId", "toId", "edgeType", "status"} {
+	for _, field := range []string{"id", "fromId", "toId", "edgeType", "status", "similarity"} {
 		t.Run(field, func(t *testing.T) {
 			row := proposalJSON("p1", newerID, commitmentID, "rationale")
 			delete(row, field)
@@ -733,5 +756,58 @@ func TestCommitmentsShowNothingInspectedIsNotNoneFound(t *testing.T) {
 	r = runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
 	if r.env.Evidence.Verdict != verdictNoneFound {
 		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// unavailableLineage is richHistory as the server degrades it: the lineage
+// section unavailable, its arrays empty.
+func unavailableLineage(t *testing.T) string {
+	return mutatedHistory(t, func(h map[string]any) {
+		h["lineage"] = map[string]any{"nodes": []any{}, "edges": []any{}, "truncated": false}
+		h["directRelationships"] = map[string]any{"predecessors": []any{}, "successors": []any{}, "truncated": false}
+		h["sections"].(map[string]any)["lineage"] = "unavailable"
+	})
+}
+
+// The proposals read asks for status=proposed; a decided row in its answer is
+// not pending evidence, and a null similarity is no similarity.
+func TestCommitmentsShowRejectsProposalRowsThatContradictTheRead(t *testing.T) {
+	for name, change := range map[string]func(map[string]any){
+		"applied":         func(p map[string]any) { p["status"] = "applied" },
+		"null similarity": func(p map[string]any) { p["similarity"] = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := proposalJSON("p1", newerID, commitmentID, "rationale")
+			change(row)
+			showServer(t, richHistory(), []any{row})
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+			if r.env.Evidence.Inspected.Proposals != nil || !hasPartial(r.env, "proposals", kindBadResponse) {
+				t.Fatalf("env = %s", r.stdout)
+			}
+		})
+	}
+}
+
+// The memory answer must carry every field the detail shows; a missing one
+// would come back as a blank timestamp or a false "no longer current".
+func TestCommitmentsShowRejectsAnIncompleteMemory(t *testing.T) {
+	// project, validTo and tags may be null but must be there; a null tags or
+	// validTo is covered by the other tests and accepted.
+	for _, field := range []string{"status", "validFrom", "recordedAt", "content", "memoryType", "topic", "scope", "project", "validTo", "tags"} {
+		t.Run(field, func(t *testing.T) {
+			s := showServer(t, richHistory(), []any{})
+			var body map[string]any
+			_ = json.Unmarshal([]byte(commitmentMemory("work", strPtr("demo"))), &body)
+			delete(body, field)
+			s.json("/api/v1/memories/"+commitmentID, 200, mustJSON(body))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "show", commitmentID, "--scope", "work")
+
+			if r.code != 2 || r.env.Error.Kind != kindBadResponse || len(s.recorded()) != 1 {
+				t.Fatalf("code=%d requests=%d env=%s", r.code, len(s.recorded()), r.stdout)
+			}
+		})
 	}
 }
