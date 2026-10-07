@@ -173,8 +173,8 @@ func TestCommitmentsListVerifiesUnscopedUnderTruncation(t *testing.T) {
 	a, b, c := item(1, "kept by strict"), item(2, "cut from strict"), item(3, "really unscoped")
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(3, a, b, c), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(2, a), section(0)))
-	s.json("/api/v1/memories/"+b.memoryID, 200, memoryBody("work", strPtr("demo"), "active", nil))
-	s.json("/api/v1/memories/"+c.memoryID, 200, memoryBody("work", nil, "active", nil))
+	s.json("/api/v1/memories/"+b.memoryID, 200, memoryBodyFor(b.memoryID, "work", strPtr("demo"), "active", nil))
+	s.json("/api/v1/memories/"+c.memoryID, 200, memoryBodyFor(c.memoryID, "work", nil, "active", nil))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -197,10 +197,10 @@ func TestCommitmentsListFilingChangesDuringRead(t *testing.T) {
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true),
 		section(5, moved, failed, superseded, rescoped, vanished), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
-	s.json("/api/v1/memories/"+moved.memoryID, 200, memoryBody("work", strPtr("elsewhere"), "active", nil))
+	s.json("/api/v1/memories/"+moved.memoryID, 200, memoryBodyFor(moved.memoryID, "work", strPtr("elsewhere"), "active", nil))
 	s.json("/api/v1/memories/"+failed.memoryID, 500, `{"error":"internal"}`)
-	s.json("/api/v1/memories/"+superseded.memoryID, 200, memoryBody("work", nil, "active", strPtr("2026-10-07T00:00:00.000Z")))
-	s.json("/api/v1/memories/"+rescoped.memoryID, 200, memoryBody("personal", nil, "active", nil))
+	s.json("/api/v1/memories/"+superseded.memoryID, 200, memoryBodyFor(superseded.memoryID, "work", nil, "active", strPtr("2026-10-07T00:00:00.000Z")))
+	s.json("/api/v1/memories/"+rescoped.memoryID, 200, memoryBodyFor(rescoped.memoryID, "personal", nil, "active", nil))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -227,7 +227,7 @@ func TestCommitmentsListStrictReadFailureVerifiesEveryRow(t *testing.T) {
 	a := item(1, "a")
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 503, `{"error":"unavailable"}`)
-	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBody("work", strPtr("demo"), "active", nil))
+	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBodyFor(a.memoryID, "work", strPtr("demo"), "active", nil))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -398,7 +398,7 @@ func TestCommitmentsListRejectsAWiderStrictEcho(t *testing.T) {
 	u := item(1, "unscoped but echoed as strict")
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, u), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, u), section(0)))
-	s.json("/api/v1/memories/"+u.memoryID, 200, memoryBody("work", nil, "active", nil))
+	s.json("/api/v1/memories/"+u.memoryID, 200, memoryBodyFor(u.memoryID, "work", nil, "active", nil))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -477,7 +477,7 @@ func TestCommitmentsListPinsOneCredential(t *testing.T) {
 		_, _ = w.Write([]byte(briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0))))
 	})
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
-	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBody("work", nil, "active", nil))
+	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBodyFor(a.memoryID, "work", nil, "active", nil))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -584,7 +584,7 @@ func TestCommitmentsListOmittedFilingFieldsAreUnknown(t *testing.T) {
 			s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
 			s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
 			var body map[string]any
-			_ = json.Unmarshal([]byte(memoryBody("work", nil, "active", nil)), &body)
+			_ = json.Unmarshal([]byte(memoryBodyFor(a.memoryID, "work", nil, "active", nil)), &body)
 			delete(body, field)
 			s.json("/api/v1/memories/"+a.memoryID, 200, mustMarshal(body))
 
@@ -605,7 +605,7 @@ func TestCommitmentsListDropsACommitmentResolvedDuringTheRead(t *testing.T) {
 	a := item(1, "resolved meanwhile")
 	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
 	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
-	s.json("/api/v1/memories/"+a.memoryID, 200, strings.Replace(memoryBody("work", nil, "active", nil), `"commitmentStatus":"open"`, `"commitmentStatus":"resolved"`, 1))
+	s.json("/api/v1/memories/"+a.memoryID, 200, strings.Replace(memoryBodyFor(a.memoryID, "work", nil, "active", nil), `"commitmentStatus":"open"`, `"commitmentStatus":"resolved"`, 1))
 
 	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
 
@@ -642,6 +642,66 @@ func TestCommitmentsDeadlineCoversKeyResolution(t *testing.T) {
 	}
 	if r.env.OK || r.env.Error.Kind != kindTimeout {
 		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A filing answer for another memory says nothing about this row.
+func TestCommitmentsListFilingAnswerForAnotherIDIsUnknown(t *testing.T) {
+	s := newReadServer(t)
+	s.json("/api/v1/me", 200, meBody)
+	a := item(1, "answered for another id")
+	s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
+	s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+	s.json("/api/v1/memories/"+a.memoryID, 200, memoryBodyFor(uuidFor("m", 99), "work", nil, "active", nil))
+
+	r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+	if filings(r.env)[a.memoryID] != filingUnknown || !hasPartial(r.env, "filing", kindBadResponse) {
+		t.Fatalf("env = %s", r.stdout)
+	}
+}
+
+// A missing or unrecognised commitment status keeps the row as unknown; only
+// a status the briefing filter excludes (resolved, expired) drops it.
+func TestCommitmentsListCommitmentStatusDecidesOnlyWhenKnown(t *testing.T) {
+	cases := map[string]struct {
+		status  string
+		filing  string
+		dropped bool
+	}{
+		"waiting":      {status: "waiting", filing: filingUnscoped},
+		"expired":      {status: "expired", dropped: true},
+		"missing":      {status: "", filing: filingUnknown},
+		"unrecognised": {status: "snoozed", filing: filingUnknown},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := newReadServer(t)
+			s.json("/api/v1/me", 200, meBody)
+			a := item(1, "status "+name)
+			s.json("/api/v1/briefing?includeUnscoped=true", 200, briefingBody(scopeProjectSel("work", "demo", true), section(1, a), section(0)))
+			s.json("/api/v1/briefing?includeUnscoped=false", 200, briefingBody(scopeProjectSel("work", "demo", false), section(0), section(0)))
+			var body map[string]any
+			_ = json.Unmarshal([]byte(memoryBodyFor(a.memoryID, "work", nil, "active", nil)), &body)
+			if tc.status == "" {
+				delete(body, "commitmentStatus")
+			} else {
+				body["commitmentStatus"] = tc.status
+			}
+			s.json("/api/v1/memories/"+a.memoryID, 200, mustMarshal(body))
+
+			r := runCommitmentsForTest(t, projectDir(t, "demo"), "list", "--scope", "work", "--include-unscoped")
+
+			if tc.dropped {
+				if len(rowsOf(r.env)) != 0 || r.env.Counts.ChangedDuringRead != 1 {
+					t.Fatalf("env = %s", r.stdout)
+				}
+				return
+			}
+			if got := filings(r.env)[a.memoryID]; got != tc.filing || r.env.Counts.ChangedDuringRead != 0 {
+				t.Fatalf("filing = %q, env = %s", got, r.stdout)
+			}
+		})
 	}
 }
 
