@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -72,6 +73,7 @@ type meResponse struct {
 // memoryFiling is the subset of GET /api/v1/memories/:id the filing check
 // reads. Content is in that body too, and is discarded here.
 type memoryFiling struct {
+	ID               string       `json:"id"`
 	Scope            string       `json:"scope"`
 	Project          jsonNullable `json:"project"`
 	Status           string       `json:"status"`
@@ -413,14 +415,20 @@ func verifyFiling(ctx context.Context, cfg readConfig, memoryID string, requeste
 		}
 		return filingVerdict{done: true, err: err}
 	}
-	// project and validTo are required but nullable: an answer that omits
-	// either says nothing about the filing, and is never read as null.
-	if !m.Project.Present || !m.ValidTo.Present || m.Scope == "" || m.Status == "" {
+	// An answer for another memory, or one that omits a required field
+	// (project and validTo are required but nullable), says nothing about this
+	// row's filing: it stays unknown, never unscoped and never dropped.
+	if !strings.EqualFold(m.ID, memoryID) || !m.Project.Present || !m.ValidTo.Present ||
+		m.Scope == "" || m.Status == "" || m.CommitmentStatus == "" {
 		return filingVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory"}}
+	}
+	listed, known := commitmentListed(m.CommitmentStatus)
+	if !known {
+		return filingVerdict{done: true, err: &readError{Kind: kindBadResponse, Route: "memory", Hint: "unrecognised commitment status"}}
 	}
 	// No longer live (superseded, archived, or the commitment resolved or
 	// expired since the widened read listed it): it left the list.
-	if m.Status != "active" || m.ValidTo.Value != nil || m.Scope != requested.Scope || !openCommitment(m.CommitmentStatus) {
+	if m.Status != "active" || m.ValidTo.Value != nil || m.Scope != requested.Scope || !listed {
 		return filingVerdict{done: true, drop: true}
 	}
 	if m.Project.Value == nil {
@@ -432,9 +440,18 @@ func verifyFiling(ctx context.Context, cfg readConfig, memoryID string, requeste
 	return filingVerdict{done: true, drop: true}
 }
 
-// openCommitment is the briefing's own notion of a listed commitment.
-func openCommitment(status string) bool {
-	return status == "open" || status == "waiting"
+// commitmentListed reads a commitment status the way the briefing filter does
+// (packages/db/src/briefing-read.ts lists open and waiting). known is false
+// for a status this build does not recognise, so a status a later schema adds
+// leaves the row unknown rather than dropping it as resolved.
+func commitmentListed(status string) (listed, known bool) {
+	switch status {
+	case "open", "waiting":
+		return true, true
+	case "resolved", "expired":
+		return false, true
+	}
+	return false, false
 }
 
 // forEachBounded runs fn for 0..n-1 with at most limit in flight. It stops
