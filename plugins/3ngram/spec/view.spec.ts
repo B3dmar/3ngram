@@ -8,6 +8,7 @@ import {
   detailView,
   githubLabel,
   headerLines,
+  MAX_CONTENT,
   panelView,
   partialNote,
   rowView,
@@ -296,4 +297,35 @@ test('an unavailable events section leaves creation unknown, not outside the win
     error: null,
   })
   assert.equal(view.source[0], 'Creation is unknown: the audit events could not be read.')
+})
+
+test('long content is cut to a bound the drawing can hold, and says so', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  assert.ok(show.commitment)
+  const long = 'x'.repeat(MAX_CONTENT + 5)
+  const view = detailView({
+    seq: 1,
+    memoryId: 'm',
+    fingerprint: FP_A,
+    status: 'ready',
+    envelope: { ...show, commitment: { ...show.commitment, content: long } },
+    error: null,
+  })
+  assert.ok(view.content)
+  assert.ok(view.content.startsWith('x'.repeat(MAX_CONTENT)))
+  assert.ok(view.content.length < MAX_CONTENT + 100)
+  assert.ok(
+    view.content.endsWith(
+      `[Showing the first 20,000 of ${(MAX_CONTENT + 5).toLocaleString('en-US')} characters.]`,
+    ),
+  )
+  const short = detailView({
+    seq: 1,
+    memoryId: 'm',
+    fingerprint: FP_A,
+    status: 'ready',
+    envelope: { ...show, commitment: { ...show.commitment, content: 'short' } },
+    error: null,
+  })
+  assert.equal(short.content, 'short')
 })

@@ -199,7 +199,7 @@ function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelSta
     // under: one resolved or superseded since, or moved between this project
     // and unscoped in place, must not keep showing its old state.
     const detail =
-      s.detail && s.detail.fingerprint === fingerprint && sameFiling(s, envelope, s.detail.memoryId)
+      s.detail && s.detail.fingerprint === fingerprint && sameRow(s, envelope, s.detail.memoryId)
         ? s.detail
         : null
     return {
@@ -222,17 +222,22 @@ function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelSta
   return cleared(s, 'error', error)
 }
 
-// sameFiling reports whether the refreshed list still holds memoryId and does
-// not contradict the filing the open detail was read under: the detail's own
-// answer once it has one, the row it was opened from before that. `unknown`
-// contradicts nothing: a list row is unknown when its lookup failed or was
-// over budget, which says nothing about a move.
-function sameFiling(s: PanelState, envelope: Envelope, memoryId: string): boolean {
+// sameRow reports whether the refreshed list still holds memoryId as the
+// open detail knows it: the same commitment status (open and waiting change
+// in place) and no contradicting filing. What the detail knows is its own
+// answer once it has one, the row it was opened from before that. A filing of
+// `unknown` contradicts nothing: a list row is unknown when its lookup failed
+// or was over budget, which says nothing about a move.
+function sameRow(s: PanelState, envelope: Envelope, memoryId: string): boolean {
   const row = (envelope.commitments ?? []).find((r) => r.memoryId === memoryId)
   if (!row) return false
-  const held =
-    s.detail?.envelope?.commitment?.filing ??
-    s.record?.envelope.commitments?.find((r) => r.memoryId === memoryId)?.filing
+  const opened = s.record?.envelope.commitments?.find((r) => r.memoryId === memoryId)
+  const commitment = s.detail?.envelope?.commitment
+  // The detail's commitmentStatus is the list's status vocabulary (open,
+  // waiting); its memory status (active) is not, so it is never compared.
+  const heldStatus = commitment?.commitmentStatus ?? opened?.status
+  if (heldStatus !== undefined && row.status !== heldStatus) return false
+  const held = commitment?.filing ?? opened?.filing
   if (held === undefined || held === 'unknown' || row.filing === 'unknown') return true
   return row.filing === held
 }

@@ -224,6 +224,17 @@ export type DetailView = {
   notes: string[]
 }
 
+// MAX_CONTENT is how much of a commitment's content the detail draws. One
+// drawing shows at most 100,000 characters, and imported content can be far
+// longer, so the rest of the detail would otherwise be cut off unannounced.
+export const MAX_CONTENT = 20_000
+
+function boundedContent(content: string): string {
+  const chars = [...content]
+  if (chars.length <= MAX_CONTENT) return content
+  return `${chars.slice(0, MAX_CONTENT).join('')}…\n\n[Showing the first ${MAX_CONTENT.toLocaleString('en-US')} of ${chars.length.toLocaleString('en-US')} characters.]`
+}
+
 export function detailView(d: DetailState): DetailView {
   const base: DetailView = {
     title: 'Commitment',
@@ -251,7 +262,7 @@ export function detailView(d: DetailState): DetailView {
   }
   if (c) {
     view.title = c.topic
-    view.content = c.content
+    view.content = boundedContent(c.content)
     view.labels = [
       c.commitmentStatus ?? c.status,
       c.filing === 'unscoped' ? 'unscoped (no project)' : `project ${c.project ?? ''}`,
