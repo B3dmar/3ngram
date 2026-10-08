@@ -8,6 +8,7 @@ import {
   initialState,
   needsVerification,
   reduce,
+  unconfirmed,
   visibleDetail,
   visibleRows,
 } from '../hooks/lib/state.ts'
@@ -279,6 +280,22 @@ describe('cancellation', () => {
     )
     assert.equal(s.gen, 3)
     assert.equal(needsVerification(s), true)
+  })
+
+  test('a second verification of a settled reload is ignored, leaving the very same state', () => {
+    // register.tsx tells its own verification from one that settled first
+    // by this identity: only the one the reducer took settles a startup.
+    const settled = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'reloaded' },
+        { type: 'context_verified', gen: 3, fingerprint: FP_A, at: 2100 },
+      ],
+      showingA,
+    )
+    assert.equal(settled.status, 'stale')
+    const again = reduce(settled, { type: 'context_verified', gen: 3, fingerprint: FP_B, at: 2200 })
+    assert.equal(again, settled)
   })
 })
 
@@ -704,4 +721,22 @@ describe('a detail answer during the context check', () => {
     )
     assert.equal(s.detail, null)
   })
+})
+
+test('an unconfirmed selection draws neither rows nor a detail', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const held = run(
+    [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ],
+    showingA,
+  )
+  assert.ok(visibleRows(held)?.length)
+  assert.ok(visibleDetail(held))
+  const masked = unconfirmed(held)
+  assert.equal(visibleRows(masked), null)
+  assert.equal(visibleDetail(masked), null)
+  assert.equal(masked.status, 'checking')
 })

@@ -17,6 +17,9 @@ import type { CommitmentRow, Envelope } from './contract.ts'
 //   Otherwise list and detail are both cleared.
 // - The detail view shows under exactly the conditions the rows do, and is
 //   dropped whenever the rows stop showing.
+// - An event the state does not take (an older generation, a verification
+//   already settled, a detail no longer open) returns the very state it was
+//   given, so a caller can tell its event was ignored.
 
 // How a run can fail without producing an envelope.
 export type FailureKind =
@@ -163,6 +166,13 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
       // Whatever was in flight is treated as cancelled.
       return reduce(s, { type: 'cancel' })
   }
+}
+
+// unconfirmed is what the pane may draw while the current selection is not
+// yet confirmed against the state the host kept: nothing read before, neither
+// rows nor a detail, only that a check is under way.
+export function unconfirmed(s: PanelState): PanelState {
+  return { ...s, status: 'checking', record: null, detail: null, stale: null, error: null }
 }
 
 function onRefreshStarted(

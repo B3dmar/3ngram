@@ -7,7 +7,7 @@ import { contextArgv, isAllowedArgv, listArgv, selectionKey, showArgv } from './
 import { parseEnvelope } from './lib/contract.ts'
 import { classifyEmptyOutput, classifySpawnError } from './lib/process.ts'
 import type { FailureKind, PanelEvent, PanelState } from './lib/state.ts'
-import { initialState, needsVerification, reduce, visibleDetail } from './lib/state.ts'
+import { initialState, needsVerification, reduce, unconfirmed, visibleDetail } from './lib/state.ts'
 import { detailView, panelView, statusLine } from './lib/view.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
@@ -66,6 +66,36 @@ let resetPending = false
 // changed mid-read, so a probe and a list that keep disagreeing about one
 // context re-run it once, not forever.
 let requeuedFor: string | null = null
+// selectionConfirmed gates what the pane draws. The host keeps $.state across
+// a reload, and a reload is how a changed scope, include_unscoped or GitHub
+// option takes effect, so rows and a detail read under the old options are
+// still held while startup awaits the session's directory. A record held
+// under the same selection can still be another account's or backend's (the
+// key rotated between sessions). The gate is closed from the moment the
+// module loads (this line), and closed again, before any await, at every
+// session.start; it opens only once the held state has been compared with
+// the current selection and its record, if any, with the current context:
+// cleared when either differs, or confirmed by the context probe
+// (confirmSelection). A failure that settles the held state the same way
+// opens it too, so the pane shows the failure instead of staying blank.
+let selectionConfirmed = false
+// startEpoch counts session.starts. Every startup and refresh takes the
+// epoch it began in, so one begun before the latest session.start can never
+// open the gate that start closed.
+let startEpoch = 0
+
+// Opening the gate redraws the pane and republishes the status line from the
+// state now held: a dispatch made while the gate was closed (a failure, a
+// check or refresh start) published the unconfirmed status, which would
+// otherwise stay until the next dispatch.
+async function confirmSelection($: EngineInterface, epoch: number): Promise<void> {
+  if (selectionConfirmed || epoch !== startEpoch) return
+  selectionConfirmed = true
+  $.ui.invalidate('ui.render')
+  const held = await readPanel($)
+  // A later session.start may have closed the gate during the read.
+  if (selectionConfirmed && epoch === startEpoch) $.ui.status(statusLine(held))
+}
 
 // releaseDetailRead forgets the handle of a detail read that has ended, if it
 // is still the one held.
@@ -119,9 +149,22 @@ function refreshMs(options: PluginOptions): number {
 }
 
 async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelState> {
+  return (await dispatchApplied($, event)).state
+}
+
+// dispatchApplied is dispatch that also answers whether the reducer took the
+// event: one it ignores (an older generation, a verification another one
+// already settled) comes back as the very state it was given.
+async function dispatchApplied(
+  $: EngineInterface,
+  event: PanelEvent,
+): Promise<{ state: PanelState; applied: boolean }> {
   let next = initialState
+  let applied = false
   await update($, panel, (s) => {
-    next = reduce((s as unknown as PanelState | undefined) ?? initialState, event)
+    const prev = (s as unknown as PanelState | undefined) ?? initialState
+    next = reduce(prev, event)
+    applied = next !== prev
     return next
   })
   // A detail the panel no longer holds (a refresh found another context, its
@@ -133,8 +176,10 @@ async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelSta
     detailRead.stop()
     detailRead = null
   }
-  $.ui.status(statusLine(next))
-  return next
+  // The status line is gated like the pane: no counts of an unconfirmed
+  // selection.
+  $.ui.status(statusLine(selectionConfirmed ? next : unconfirmed(next)))
+  return { state: next, applied }
 }
 
 // fire runs work a handler or timer does not wait for, so a failure in it is
@@ -196,17 +241,29 @@ async function probe($: EngineInterface, sel: Selection): Promise<string | null>
 
 // verifyIfNeeded settles a pending verification: the probe's fingerprint, or
 // null when the probe, or even reading the session's directory, failed. It
-// never leaves the panel waiting on a verification nothing will finish.
-async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<void> {
+// never leaves the panel waiting on a verification nothing will finish, and
+// answers whether its own probe settled one: the record is then kept, as
+// stale, only under the context that probe confirmed. Two calls can find the
+// same verification pending (a reload landing while an earlier startup's
+// probe runs). The first answer settles it, possibly for the context from
+// before the reload; the reducer ignores the second, which answers false.
+async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<boolean> {
   const s = await readPanel($)
-  if (!needsVerification(s)) return
+  if (!needsVerification(s)) return false
   let fingerprint: string | null = null
   try {
     fingerprint = await probe($, selectionOf(options, await $.session.cwd()))
   } catch {
     fingerprint = null
   }
-  await dispatch($, { type: 'context_verified', gen: s.gen, fingerprint, at: await $.clock.now() })
+  const at = await $.clock.now()
+  const verified = await dispatchApplied($, {
+    type: 'context_verified',
+    gen: s.gen,
+    fingerprint,
+    at,
+  })
+  return verified.applied
 }
 
 async function refresh($: EngineInterface, options: PluginOptions): Promise<void> {
@@ -216,12 +273,14 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
   }
   const token = ++tokens
   active = token
+  const epoch = startEpoch
   try {
-    await refreshOnce($, options, token)
+    await refreshOnce($, options, token, epoch)
   } catch {
     // A refresh that was already superseded reports nothing: the current
-    // generation belongs to the read that replaced it.
-    if (active === token) await reportUnexpected($, options)
+    // generation belongs to the read that replaced it. A reported failure
+    // has cleared or verified what was held, so the pane shows it.
+    if (active === token && (await reportUnexpected($, options))) await confirmSelection($, epoch)
   } finally {
     if (active === token) active = null
   }
@@ -233,11 +292,14 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
 
 // refreshOnce is one read. It stops at every await where its token may have
 // been taken away (a cancel, a session transition, a reload), so a read that
-// was stopped before its child started never starts one.
+// was stopped before its child started never starts one. epoch is the
+// session.start it began under: a reload closes the gate before it takes the
+// token away, and a read still running in between must not reopen it.
 async function refreshOnce(
   $: EngineInterface,
   options: PluginOptions,
   token: number,
+  epoch: number,
 ): Promise<void> {
   const sel = selectionOf(options, await $.session.cwd())
   // Stopped while the directory was read (a /clear, a fork, a reload): the
@@ -254,6 +316,9 @@ async function refreshOnce(
   const gen = (await readPanel($)).gen + 1
   if (active !== token) return
   await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel), fingerprint })
+  // refresh_started clears whatever was held under another selection, or
+  // under a context the probe did not confirm.
+  await confirmSelection($, epoch)
   if (active !== token) return
   const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
     if (active === token) listRead = { token, stop }
@@ -313,7 +378,7 @@ async function refreshOnce(
 // could not be read, a state write was refused) is still a visible failure,
 // never a silent one: it fails the current generation like a crash, and any
 // verification that leaves pending is settled at once.
-async function reportUnexpected($: EngineInterface, options: PluginOptions): Promise<void> {
+async function reportUnexpected($: EngineInterface, options: PluginOptions): Promise<boolean> {
   try {
     const s = await readPanel($)
     await dispatch($, {
@@ -323,8 +388,10 @@ async function reportUnexpected($: EngineInterface, options: PluginOptions): Pro
       at: await $.clock.now(),
     })
     await verifyIfNeeded($, options)
+    return true
   } catch {
     $.ui.status('3ngram: unavailable')
+    return false
   }
 }
 
@@ -419,20 +486,44 @@ async function closeDetail($: EngineInterface): Promise<void> {
 
 // startup is the first read after a session start or a reload. A reload
 // that changed the options (a scope, the unscoped opt-in, GitHub lookups)
-// leaves rows and a detail read under the old ones: they are cleared before
-// anything else, not when the next read lands.
+// leaves rows and a detail read under the old ones in the state the host
+// kept, and one under the same options can keep rows read under another key.
+// They never draw (selectionConfirmed is closed until they are confirmed)
+// and they are cleared before any read, not when the next read lands.
 async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
+  const epoch = startEpoch
+  let settled = false
   try {
-    const key = selectionKey(selectionOf(options, await $.session.cwd()))
-    const held = await readPanel($)
-    if (held.selectionKey !== null && held.selectionKey !== key) {
-      await dispatch($, { type: 'session_transition' })
-    }
+    settled = await settleHeld($, options)
   } catch {
-    await reportUnexpected($, options)
+    // Failed and cleared, or verified by the probe; if even that could not
+    // be written, the gate stays closed and the status line says so.
+    settled = await reportUnexpected($, options)
   }
-  await verifyIfNeeded($, options)
+  if (settled) await confirmSelection($, epoch)
+  // A record that is not settled yet is the refresh's to confirm: its probe
+  // runs before the read, and refresh_started (or a reported failure) opens
+  // the gate.
   await refresh($, options)
+}
+
+// settleHeld compares the state the host kept with the current selection and
+// answers whether it now belongs to it: true when a different selection was
+// cleared, when no record is held, or when this startup's own probe settled
+// a pending verification (the record kept as stale under the context that
+// probe confirmed, cleared otherwise). A record held under the same
+// selection with nothing pending, or one another verification settled
+// first, is not settled here: its context is checked by the refresh that
+// follows, so startup makes no read of its own.
+async function settleHeld($: EngineInterface, options: PluginOptions): Promise<boolean> {
+  const key = selectionKey(selectionOf(options, await $.session.cwd()))
+  const held = await readPanel($)
+  if (held.selectionKey !== null && held.selectionKey !== key) {
+    await dispatch($, { type: 'session_transition' })
+    return true
+  }
+  if (held.record === null) return true
+  return verifyIfNeeded($, options)
 }
 
 function clip(text: string, max: number): string {
@@ -442,6 +533,12 @@ function clip(text: string, max: number): string {
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
+    // First, before any await: nothing the host kept draws until the current
+    // selection is confirmed (see selectionConfirmed).
+    selectionConfirmed = false
+    startEpoch++
+    $.ui.invalidate('ui.render')
+    $.ui.status(statusLine(unconfirmed(initialState)))
     await $.command.register({
       name: 'commitments',
       description: 'Open the read-only 3ngram commitment panel',
@@ -526,7 +623,8 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const s = await readPanel($)
+    const held = await readPanel($)
+    const s = selectionConfirmed ? held : unconfirmed(held)
 
     const shownDetail = visibleDetail(s)
     if (shownDetail) {
