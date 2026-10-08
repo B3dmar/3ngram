@@ -30,9 +30,15 @@ eval-metrics/
 
 # Local AI-assistant and tooling context (kept on disk, never published).
 CLAUDE.local.md
-.claude/
+.claude/*
 .agents/
 .specify/
+# Exception: the committed Claude Code cloud-session bootstrap (project settings +
+# the SessionStart hook). No personal context, no secrets — toolchain setup only.
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 
 # Local pnpm content-addressable store (created by `pnpm install --store-dir`);
 # machine-local cache, never source.
