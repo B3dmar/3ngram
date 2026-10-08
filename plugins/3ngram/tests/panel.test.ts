@@ -134,6 +134,9 @@ function world(
     surfaces?: string[]
     cwdHold?: { armed: () => boolean; until: Promise<void> }
     cwdOf?: () => Promise<string>
+    // Holds the command registration a session.start awaits, while it returns
+    // a promise.
+    registerHold?: () => Promise<void> | null
   } = {},
 ) {
   const spawned: string[][] = []
@@ -156,7 +159,11 @@ function world(
     if (opts.cwdHold?.armed() && ++cwdCalls === 1) await opts.cwdHold.until
     return { value: opts.cwdOf ? await opts.cwdOf() : '/repo' }
   })
-  on('command.register', async () => ({ value: undefined }) as never)
+  on('command.register', async () => {
+    const hold = opts.registerHold?.()
+    if (hold) await hold
+    return { value: undefined } as never
+  })
   on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
   on('ui.status', async (_$, e) => {
     statuses.push((e as { text?: string }).text)
@@ -437,6 +444,139 @@ describe('switching accounts cannot show the previous context', () => {
     expect(after).toContain('Rows of the new selection')
     expect(after).not.toContain(TOPIC)
     expect(after).not.toContain('Full commitment text')
+  })
+
+  test('a refresh begun before a reload cannot open the gate the reload closed', async ($, on) => {
+    let dir = '/repo'
+    let probeHold: Promise<void> | null = null
+    let registerHold: Promise<void> | null = null
+    let releaseProbe: () => void = () => undefined
+    let releaseRegister: () => void = () => undefined
+    const w = world(
+      on,
+      (argv) => {
+        const other = argv[argv.indexOf('--cwd') + 1] === '/other'
+        const fp = other ? FP_B : FP_A
+        if (argv[2] === 'context') {
+          const wait = probeHold ?? undefined
+          probeHold = null
+          return { wait, stdout: contextEnvelope(fp) }
+        }
+        return { stdout: listEnvelope(fp, other ? 'Rows of the new selection' : TOPIC) }
+      },
+      { cwdOf: async () => dir, registerHold: () => registerHold },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    // A refresh under the old selection waits on its pre-read probe.
+    probeHold = new Promise<void>((r) => {
+      releaseProbe = r
+    })
+    fire(ui.press({ key: 'refresh' }))
+    await w.clock.advance(1)
+    // The reload under another selection closes the gate, then waits on its
+    // command registration, before startup has compared anything.
+    registerHold = new Promise<void>((r) => {
+      releaseRegister = r
+    })
+    dir = '/other'
+    const reloading = $.session.start({ cwd: '/other', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    // The old refresh now confirms the old selection against itself: that
+    // must not open the gate the reload closed.
+    releaseProbe()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const during = await textOf(ui)
+    expect(during).not.toContain(TOPIC)
+    expect(w.statuses.at(-1) ?? '').not.toContain('open')
+    registerHold = null
+    releaseRegister()
+    await reloading
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const after = await textOf(ui)
+    expect(after).toContain('Rows of the new selection')
+    expect(after).not.toContain(TOPIC)
+  })
+
+  test('a reload under the same selection draws nothing it held until the probe confirms the key', async ($, on) => {
+    // The key the hook reads: rotated between the two session starts, so the
+    // rows and detail the host kept were read under another account.
+    let current = FP_A
+    let armed = false
+    let cwdCalls = 0
+    let release: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      release = r
+    })
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
+        if (argv[2] === 'show') return { stdout: showEnvelope(current) }
+        return {
+          stdout: listEnvelope(current, current === FP_A ? TOPIC : 'Read under the new key'),
+        }
+      },
+      {
+        // After the reload, startup reads the directory first and its
+        // refresh second; the refresh's read is held.
+        cwdOf: async () => {
+          if (armed && ++cwdCalls === 2) await until
+          return '/repo'
+        },
+      },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await ui.press({ key: 'open-0-0' })
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Full commitment text')
+    current = FP_B
+    armed = true
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const during = await textOf(ui)
+    expect(cwdCalls).toBe(2)
+    expect(during).not.toContain(TOPIC)
+    expect(during).not.toContain('Full commitment text')
+    expect(w.statuses.at(-1) ?? '').not.toContain('open')
+    release()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const after = await textOf(ui)
+    expect(after).toContain('Read under the new key')
+    expect(after).not.toContain(TOPIC)
+    expect(after).not.toContain('Full commitment text')
+  })
+
+  test('a reload whose refresh fails before its probe still opens the pane on the failure', async ($, on) => {
+    let armed = false
+    let cwdCalls = 0
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      {
+        // After the reload only startup's directory read answers.
+        cwdOf: async () => {
+          if (armed && ++cwdCalls >= 2) throw new Error('cwd unavailable')
+          return '/repo'
+        },
+      },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    armed = true
+    await start($, w.clock)
+    await w.clock.advance(1)
+    const text = await textOf(ui)
+    expect(text).not.toContain(TOPIC)
+    expect(text).toContain('ERROR')
   })
 
   test('a key rotated while a list read runs never shows that read', async ($, on) => {

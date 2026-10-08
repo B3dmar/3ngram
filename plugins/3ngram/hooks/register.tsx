@@ -69,17 +69,22 @@ let requeuedFor: string | null = null
 // selectionConfirmed gates what the pane draws. The host keeps $.state across
 // a reload, and a reload is how a changed scope, include_unscoped or GitHub
 // option takes effect, so rows and a detail read under the old options are
-// still held while startup awaits the session's directory. The gate is
-// closed from the moment the module loads (this line), and closed again,
-// before any await, at every session.start; it opens only once the current
-// selection has been compared with the held one and, when they differ,
-// cleared (confirmSelection).
+// still held while startup awaits the session's directory. A record held
+// under the same selection can still be another account's or backend's (the
+// key rotated between sessions). The gate is closed from the moment the
+// module loads (this line), and closed again, before any await, at every
+// session.start; it opens only once the held state has been compared with
+// the current selection and its record, if any, with the current context:
+// cleared when either differs, or confirmed by the context probe
+// (confirmSelection). A failure that settles the held state the same way
+// opens it too, so the pane shows the failure instead of staying blank.
 let selectionConfirmed = false
-// startEpoch counts session.starts, so a startup begun before the latest one
-// can never open the gate the latest one closed.
+// startEpoch counts session.starts. Every startup and refresh takes the
+// epoch it began in, so one begun before the latest session.start can never
+// open the gate that start closed.
 let startEpoch = 0
 
-function confirmSelection($: EngineInterface, epoch = startEpoch): void {
+function confirmSelection($: EngineInterface, epoch: number): void {
   if (selectionConfirmed || epoch !== startEpoch) return
   selectionConfirmed = true
   $.ui.invalidate('ui.render')
@@ -216,10 +221,12 @@ async function probe($: EngineInterface, sel: Selection): Promise<string | null>
 
 // verifyIfNeeded settles a pending verification: the probe's fingerprint, or
 // null when the probe, or even reading the session's directory, failed. It
-// never leaves the panel waiting on a verification nothing will finish.
-async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<void> {
+// never leaves the panel waiting on a verification nothing will finish, and
+// answers whether one was pending: the record is then kept, as stale, only
+// under the context the probe confirmed.
+async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<boolean> {
   const s = await readPanel($)
-  if (!needsVerification(s)) return
+  if (!needsVerification(s)) return false
   let fingerprint: string | null = null
   try {
     fingerprint = await probe($, selectionOf(options, await $.session.cwd()))
@@ -227,6 +234,7 @@ async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promi
     fingerprint = null
   }
   await dispatch($, { type: 'context_verified', gen: s.gen, fingerprint, at: await $.clock.now() })
+  return true
 }
 
 async function refresh($: EngineInterface, options: PluginOptions): Promise<void> {
@@ -236,12 +244,14 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
   }
   const token = ++tokens
   active = token
+  const epoch = startEpoch
   try {
-    await refreshOnce($, options, token)
+    await refreshOnce($, options, token, epoch)
   } catch {
     // A refresh that was already superseded reports nothing: the current
-    // generation belongs to the read that replaced it.
-    if (active === token) await reportUnexpected($, options)
+    // generation belongs to the read that replaced it. A reported failure
+    // has cleared or verified what was held, so the pane shows it.
+    if (active === token && (await reportUnexpected($, options))) confirmSelection($, epoch)
   } finally {
     if (active === token) active = null
   }
@@ -253,11 +263,14 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
 
 // refreshOnce is one read. It stops at every await where its token may have
 // been taken away (a cancel, a session transition, a reload), so a read that
-// was stopped before its child started never starts one.
+// was stopped before its child started never starts one. epoch is the
+// session.start it began under: a reload closes the gate before it takes the
+// token away, and a read still running in between must not reopen it.
 async function refreshOnce(
   $: EngineInterface,
   options: PluginOptions,
   token: number,
+  epoch: number,
 ): Promise<void> {
   const sel = selectionOf(options, await $.session.cwd())
   // Stopped while the directory was read (a /clear, a fork, a reload): the
@@ -274,8 +287,9 @@ async function refreshOnce(
   const gen = (await readPanel($)).gen + 1
   if (active !== token) return
   await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel), fingerprint })
-  // refresh_started clears whatever was held under another selection.
-  confirmSelection($)
+  // refresh_started clears whatever was held under another selection, or
+  // under a context the probe did not confirm.
+  confirmSelection($, epoch)
   if (active !== token) return
   const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
     if (active === token) listRead = { token, stop }
@@ -444,27 +458,42 @@ async function closeDetail($: EngineInterface): Promise<void> {
 // startup is the first read after a session start or a reload. A reload
 // that changed the options (a scope, the unscoped opt-in, GitHub lookups)
 // leaves rows and a detail read under the old ones in the state the host
-// kept. They never draw (selectionConfirmed is closed until this compares the
-// selections) and they are cleared before any read, not when the next read
-// lands.
+// kept, and one under the same options can keep rows read under another key.
+// They never draw (selectionConfirmed is closed until they are confirmed)
+// and they are cleared before any read, not when the next read lands.
 async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
   const epoch = startEpoch
   let settled = false
   try {
-    const key = selectionKey(selectionOf(options, await $.session.cwd()))
-    const held = await readPanel($)
-    if (held.selectionKey !== null && held.selectionKey !== key) {
-      await dispatch($, { type: 'session_transition' })
-    }
-    settled = true
+    settled = await settleHeld($, options)
   } catch {
+    // Failed and cleared, or verified by the probe; if even that could not
+    // be written, the gate stays closed and the status line says so.
     settled = await reportUnexpected($, options)
   }
-  // The held state now belongs to the current selection, or was failed and
-  // cleared; if even that could not be written, the gate stays closed.
   if (settled) confirmSelection($, epoch)
-  await verifyIfNeeded($, options)
+  // A record that is not settled yet is the refresh's to confirm: its probe
+  // runs before the read, and refresh_started (or a reported failure) opens
+  // the gate.
   await refresh($, options)
+}
+
+// settleHeld compares the state the host kept with the current selection and
+// answers whether it now belongs to it: true when a different selection was
+// cleared, when no record is held, or when a pending verification settled
+// the record (kept as stale under the context the probe confirmed, cleared
+// otherwise). A record held under the same selection with nothing pending
+// is not settled here: its context is checked by the refresh that follows,
+// so startup makes no read of its own.
+async function settleHeld($: EngineInterface, options: PluginOptions): Promise<boolean> {
+  const key = selectionKey(selectionOf(options, await $.session.cwd()))
+  const held = await readPanel($)
+  if (held.selectionKey !== null && held.selectionKey !== key) {
+    await dispatch($, { type: 'session_transition' })
+    return true
+  }
+  if (held.record === null) return true
+  return verifyIfNeeded($, options)
 }
 
 function clip(text: string, max: number): string {
