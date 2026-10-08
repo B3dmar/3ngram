@@ -48,7 +48,7 @@ fi
 # pnpm >= 10 self-switches to the pinned version on first run; corepack is the
 # fallback when no pnpm is on PATH at all.
 if ! command -v pnpm >/dev/null 2>&1; then
-  corepack enable pnpm
+  corepack enable pnpm >&2
 fi
 
 echo "session-start: node $(node --version), pnpm $(pnpm --version)"
