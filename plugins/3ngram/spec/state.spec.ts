@@ -281,6 +281,22 @@ describe('cancellation', () => {
     assert.equal(s.gen, 3)
     assert.equal(needsVerification(s), true)
   })
+
+  test('a second verification of a settled reload is ignored, leaving the very same state', () => {
+    // register.tsx tells its own verification from one that settled first
+    // by this identity: only the one the reducer took settles a startup.
+    const settled = run(
+      [
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'reloaded' },
+        { type: 'context_verified', gen: 3, fingerprint: FP_A, at: 2100 },
+      ],
+      showingA,
+    )
+    assert.equal(settled.status, 'stale')
+    const again = reduce(settled, { type: 'context_verified', gen: 3, fingerprint: FP_B, at: 2200 })
+    assert.equal(again, settled)
+  })
 })
 
 describe('session transitions', () => {

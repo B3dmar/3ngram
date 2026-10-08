@@ -149,9 +149,22 @@ function refreshMs(options: PluginOptions): number {
 }
 
 async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelState> {
+  return (await dispatchApplied($, event)).state
+}
+
+// dispatchApplied is dispatch that also answers whether the reducer took the
+// event: one it ignores (an older generation, a verification another one
+// already settled) comes back as the very state it was given.
+async function dispatchApplied(
+  $: EngineInterface,
+  event: PanelEvent,
+): Promise<{ state: PanelState; applied: boolean }> {
   let next = initialState
+  let applied = false
   await update($, panel, (s) => {
-    next = reduce((s as unknown as PanelState | undefined) ?? initialState, event)
+    const prev = (s as unknown as PanelState | undefined) ?? initialState
+    next = reduce(prev, event)
+    applied = next !== prev
     return next
   })
   // A detail the panel no longer holds (a refresh found another context, its
@@ -166,7 +179,7 @@ async function dispatch($: EngineInterface, event: PanelEvent): Promise<PanelSta
   // The status line is gated like the pane: no counts of an unconfirmed
   // selection.
   $.ui.status(statusLine(selectionConfirmed ? next : unconfirmed(next)))
-  return next
+  return { state: next, applied }
 }
 
 // fire runs work a handler or timer does not wait for, so a failure in it is
@@ -229,8 +242,11 @@ async function probe($: EngineInterface, sel: Selection): Promise<string | null>
 // verifyIfNeeded settles a pending verification: the probe's fingerprint, or
 // null when the probe, or even reading the session's directory, failed. It
 // never leaves the panel waiting on a verification nothing will finish, and
-// answers whether one was pending: the record is then kept, as stale, only
-// under the context the probe confirmed.
+// answers whether its own probe settled one: the record is then kept, as
+// stale, only under the context that probe confirmed. Two calls can find the
+// same verification pending (a reload landing while an earlier startup's
+// probe runs). The first answer settles it, possibly for the context from
+// before the reload; the reducer ignores the second, which answers false.
 async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promise<boolean> {
   const s = await readPanel($)
   if (!needsVerification(s)) return false
@@ -240,8 +256,14 @@ async function verifyIfNeeded($: EngineInterface, options: PluginOptions): Promi
   } catch {
     fingerprint = null
   }
-  await dispatch($, { type: 'context_verified', gen: s.gen, fingerprint, at: await $.clock.now() })
-  return true
+  const at = await $.clock.now()
+  const verified = await dispatchApplied($, {
+    type: 'context_verified',
+    gen: s.gen,
+    fingerprint,
+    at,
+  })
+  return verified.applied
 }
 
 async function refresh($: EngineInterface, options: PluginOptions): Promise<void> {
@@ -487,11 +509,12 @@ async function startup($: EngineInterface, options: PluginOptions): Promise<void
 
 // settleHeld compares the state the host kept with the current selection and
 // answers whether it now belongs to it: true when a different selection was
-// cleared, when no record is held, or when a pending verification settled
-// the record (kept as stale under the context the probe confirmed, cleared
-// otherwise). A record held under the same selection with nothing pending
-// is not settled here: its context is checked by the refresh that follows,
-// so startup makes no read of its own.
+// cleared, when no record is held, or when this startup's own probe settled
+// a pending verification (the record kept as stale under the context that
+// probe confirmed, cleared otherwise). A record held under the same
+// selection with nothing pending, or one another verification settled
+// first, is not settled here: its context is checked by the refresh that
+// follows, so startup makes no read of its own.
 async function settleHeld($: EngineInterface, options: PluginOptions): Promise<boolean> {
   const key = selectionKey(selectionOf(options, await $.session.cwd()))
   const held = await readPanel($)

@@ -582,6 +582,82 @@ describe('switching accounts cannot show the previous context', () => {
     expect(w.statuses.at(-1)).toBe('3ngram: unavailable')
   })
 
+  test("an older startup's probe answering first cannot open a newer reload's pane", async ($, on) => {
+    // The key the hook reads. Each probe answers the key it started under.
+    let current = FP_A
+    let hangList = false
+    let holdProbes = false
+    const probeHolds: (() => void)[] = []
+    let cwdBlock: Promise<void> | null = null
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] === 'context') {
+          const stdout = contextEnvelope(current)
+          if (!holdProbes) return { stdout }
+          return { wait: new Promise<void>((r) => probeHolds.push(r)), stdout }
+        }
+        if (hangList) return { hang: true }
+        return {
+          stdout: listEnvelope(current, current === FP_A ? TOPIC : 'Read under the new key'),
+        }
+      },
+      {
+        cwdOf: async () => {
+          if (cwdBlock) await cwdBlock
+          return '/repo'
+        },
+      },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain(TOPIC)
+    // The first reload lands while a refresh reads: it counts the read as
+    // cancelled, so the rows it kept wait for a verification, and that
+    // startup's probe runs under the old key.
+    hangList = true
+    fire(ui.press({ key: 'refresh' }))
+    await w.clock.advance(1)
+    const mark = w.statuses.length
+    holdProbes = true
+    await start($, w.clock)
+    expect(probeHolds.length).toBe(1)
+    // The key rotates and a second reload lands with that probe still out:
+    // its startup finds the same verification pending and probes again.
+    current = FP_B
+    await start($, w.clock)
+    expect(probeHolds.length).toBe(2)
+    // The older probe answers first and keeps the old rows as stale under
+    // the old key. The refresh that older startup goes on to is held at its
+    // directory read, so nothing else settles the state before the newer
+    // probe answers, which the reducer then ignores.
+    let releaseCwd: () => void = () => undefined
+    cwdBlock = new Promise<void>((r) => {
+      releaseCwd = r
+    })
+    probeHolds[0]?.()
+    await w.clock.advance(1)
+    probeHolds[1]?.()
+    await w.clock.advance(1)
+    const during = await textOf(ui)
+    expect(during).not.toContain(TOPIC)
+    expect(during).not.toContain('STALE')
+    expect(w.statuses.slice(mark).some((s) => (s ?? '').includes('open'))).toBe(false)
+    // Everything is released: the refresh clears the old rows against the
+    // new key, and only the new selection's rows draw.
+    holdProbes = false
+    hangList = false
+    cwdBlock = null
+    releaseCwd()
+    for (const release of w.holds.splice(0)) release()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const after = await textOf(ui)
+    expect(after).toContain('Read under the new key')
+    expect(after).not.toContain(TOPIC)
+    expect(w.statuses.at(-1)).toBe('3ngram: 1 open · 0 overdue')
+  })
+
   test('a key rotated while a list read runs never shows that read', async ($, on) => {
     let current = FP_A
     let release: () => void = () => undefined

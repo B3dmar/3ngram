@@ -17,6 +17,9 @@ import type { CommitmentRow, Envelope } from './contract.ts'
 //   Otherwise list and detail are both cleared.
 // - The detail view shows under exactly the conditions the rows do, and is
 //   dropped whenever the rows stop showing.
+// - An event the state does not take (an older generation, a verification
+//   already settled, a detail no longer open) returns the very state it was
+//   given, so a caller can tell its event was ignored.
 
 // How a run can fail without producing an envelope.
 export type FailureKind =
