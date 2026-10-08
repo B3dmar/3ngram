@@ -577,6 +577,9 @@ describe('switching accounts cannot show the previous context', () => {
     const text = await textOf(ui)
     expect(text).not.toContain(TOPIC)
     expect(text).toContain('ERROR')
+    // Opening the gate republishes the status line, which the failure
+    // dispatched while it was closed had left at loading.
+    expect(w.statuses.at(-1)).toBe('3ngram: unavailable')
   })
 
   test('a key rotated while a list read runs never shows that read', async ($, on) => {

@@ -84,10 +84,17 @@ let selectionConfirmed = false
 // open the gate that start closed.
 let startEpoch = 0
 
-function confirmSelection($: EngineInterface, epoch: number): void {
+// Opening the gate redraws the pane and republishes the status line from the
+// state now held: a dispatch made while the gate was closed (a failure, a
+// check or refresh start) published the unconfirmed status, which would
+// otherwise stay until the next dispatch.
+async function confirmSelection($: EngineInterface, epoch: number): Promise<void> {
   if (selectionConfirmed || epoch !== startEpoch) return
   selectionConfirmed = true
   $.ui.invalidate('ui.render')
+  const held = await readPanel($)
+  // A later session.start may have closed the gate during the read.
+  if (selectionConfirmed && epoch === startEpoch) $.ui.status(statusLine(held))
 }
 
 // releaseDetailRead forgets the handle of a detail read that has ended, if it
@@ -251,7 +258,7 @@ async function refresh($: EngineInterface, options: PluginOptions): Promise<void
     // A refresh that was already superseded reports nothing: the current
     // generation belongs to the read that replaced it. A reported failure
     // has cleared or verified what was held, so the pane shows it.
-    if (active === token && (await reportUnexpected($, options))) confirmSelection($, epoch)
+    if (active === token && (await reportUnexpected($, options))) await confirmSelection($, epoch)
   } finally {
     if (active === token) active = null
   }
@@ -289,7 +296,7 @@ async function refreshOnce(
   await dispatch($, { type: 'refresh_started', gen, selectionKey: selectionKey(sel), fingerprint })
   // refresh_started clears whatever was held under another selection, or
   // under a context the probe did not confirm.
-  confirmSelection($, epoch)
+  await confirmSelection($, epoch)
   if (active !== token) return
   const outcome = await runHook($, listArgv(sel), PROCESS_CEILING_MS, (stop) => {
     if (active === token) listRead = { token, stop }
@@ -471,7 +478,7 @@ async function startup($: EngineInterface, options: PluginOptions): Promise<void
     // be written, the gate stays closed and the status line says so.
     settled = await reportUnexpected($, options)
   }
-  if (settled) confirmSelection($, epoch)
+  if (settled) await confirmSelection($, epoch)
   // A record that is not settled yet is the refresh's to confirm: its probe
   // runs before the read, and refresh_started (or a reported failure) opens
   // the gate.
