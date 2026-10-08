@@ -133,6 +133,7 @@ function world(
     cwdThrows?: boolean
     surfaces?: string[]
     cwdHold?: { armed: () => boolean; until: Promise<void> }
+    cwdOf?: () => Promise<string>
   } = {},
 ) {
   const spawned: string[][] = []
@@ -153,7 +154,7 @@ function world(
     if (opts.cwdThrows) throw new Error('cwd unavailable')
     // The first directory read after the test arms the hold waits on it.
     if (opts.cwdHold?.armed() && ++cwdCalls === 1) await opts.cwdHold.until
-    return { value: '/repo' }
+    return { value: opts.cwdOf ? await opts.cwdOf() : '/repo' }
   })
   on('command.register', async () => ({ value: undefined }) as never)
   on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
@@ -383,6 +384,59 @@ describe('switching accounts cannot show the previous context', () => {
     const text = await textOf(await mountPane($))
     expect(text).toContain(TOPIC)
     expect(text).toContain('STALE since')
+  })
+
+  test('a reload under another selection draws nothing it held until that selection is confirmed', async ($, on) => {
+    // Each selection has its own fingerprint and rows; the selection here
+    // changes through the directory, the same selection key a changed scope
+    // or include_unscoped changes (the kit loads options once per test).
+    let dir = '/repo'
+    let block: Promise<void> | null = null
+    const w = world(
+      on,
+      (argv) => {
+        const other = argv[argv.indexOf('--cwd') + 1] === '/other'
+        const fp = other ? FP_B : FP_A
+        if (argv[2] === 'context') return { stdout: contextEnvelope(fp) }
+        if (argv[2] === 'show') return { stdout: showEnvelope(fp) }
+        return { stdout: listEnvelope(fp, other ? 'Rows of the new selection' : TOPIC) }
+      },
+      {
+        cwdOf: async () => {
+          if (block) await block
+          return dir
+        },
+      },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await ui.press({ key: 'open-0-0' })
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Full commitment text')
+    // The reload, under another selection: the host keeps the ready rows and
+    // the open detail, and startup's directory read is held.
+    let release: () => void = () => undefined
+    block = new Promise<void>((r) => {
+      release = r
+    })
+    dir = '/other'
+    await $.session.start({ cwd: '/other', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    const during = await textOf(ui)
+    expect(during).not.toContain(TOPIC)
+    expect(during).not.toContain('Full commitment text')
+    expect(during).not.toContain('Rows of the new selection')
+    // Nor does the status line carry the old selection's counts.
+    expect(w.statuses.at(-1) ?? '').not.toContain('open')
+    // Verification completes: only the confirmed selection appears.
+    block = null
+    release()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    const after = await textOf(ui)
+    expect(after).toContain('Rows of the new selection')
+    expect(after).not.toContain(TOPIC)
+    expect(after).not.toContain('Full commitment text')
   })
 
   test('a key rotated while a list read runs never shows that read', async ($, on) => {

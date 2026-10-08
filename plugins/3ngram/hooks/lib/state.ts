@@ -165,6 +165,13 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
   }
 }
 
+// unconfirmed is what the pane may draw while the current selection is not
+// yet confirmed against the state the host kept: nothing read before, neither
+// rows nor a detail, only that a check is under way.
+export function unconfirmed(s: PanelState): PanelState {
+  return { ...s, status: 'checking', record: null, detail: null, stale: null, error: null }
+}
+
 function onRefreshStarted(
   s: PanelState,
   gen: number,

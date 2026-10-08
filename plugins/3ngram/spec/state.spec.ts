@@ -8,6 +8,7 @@ import {
   initialState,
   needsVerification,
   reduce,
+  unconfirmed,
   visibleDetail,
   visibleRows,
 } from '../hooks/lib/state.ts'
@@ -704,4 +705,22 @@ describe('a detail answer during the context check', () => {
     )
     assert.equal(s.detail, null)
   })
+})
+
+test('an unconfirmed selection draws neither rows nor a detail', () => {
+  const show = withFingerprint(golden('show-review.json'), FP_A)
+  const memoryId = listA.commitments?.[0]?.memoryId ?? ''
+  const held = run(
+    [
+      { type: 'detail_requested', memoryId },
+      { type: 'detail_envelope', seq: 1, envelope: show },
+    ],
+    showingA,
+  )
+  assert.ok(visibleRows(held)?.length)
+  assert.ok(visibleDetail(held))
+  const masked = unconfirmed(held)
+  assert.equal(visibleRows(masked), null)
+  assert.equal(visibleDetail(masked), null)
+  assert.equal(masked.status, 'checking')
 })
