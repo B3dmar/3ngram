@@ -13,6 +13,10 @@
 # SessionStart stdout is injected into the model context, so installer noise goes
 # to stderr and stdout carries only the two "session-start:" status lines.
 set -euo pipefail
+# A failure below must reach the model, not only the terminal: SessionStart
+# cannot block the session and its stderr goes to the user alone, so the trap
+# puts one line on stdout, which Claude Code adds to the session context.
+trap 'echo "session-start: FAILED (exit $? at line $LINENO). Dependencies may be stale or missing: run pnpm install --frozen-lockfile, read its error and fix it before pnpm check or test."' ERR
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
