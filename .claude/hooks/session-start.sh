@@ -14,9 +14,10 @@
 # to stderr and stdout carries only the two "session-start:" status lines.
 set -euo pipefail
 # A failure below must reach the model, not only the terminal: SessionStart
-# cannot block the session and its stderr goes to the user alone, so the trap
-# puts one line on stdout, which Claude Code adds to the session context.
-trap 'echo "session-start: FAILED (exit $? at line $LINENO). Dependencies may be stale or missing: run pnpm install --frozen-lockfile, read its error and fix it before pnpm check or test."' ERR
+# cannot block the session, its stderr goes to the user alone, and stdout is
+# added to the session context only on exit 0. So the trap puts one line on
+# stdout and exits 0; the line, not the exit status, is what fails closed.
+trap 'echo "session-start: FAILED (exit $? at line $LINENO). Dependencies may be stale or missing: run pnpm install --frozen-lockfile, read its error and fix it before pnpm check or test."; exit 0' ERR
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
