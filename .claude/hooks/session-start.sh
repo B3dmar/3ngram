@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # SessionStart hook for Claude Code cloud sessions.
 #
 # Brings a fresh cloud container to CI parity so `pnpm run check` / `pnpm run test`
@@ -8,6 +9,9 @@
 #
 # Idempotent and non-interactive. Runs synchronously (the session waits for it),
 # so the agent never races a half-finished install.
+#
+# SessionStart stdout is injected into the model context, so installer noise goes
+# to stderr and stdout carries only the two "session-start:" status lines.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
@@ -24,7 +28,7 @@ if [ -s "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
   if ! nvm ls "$NODE_MAJOR" >/dev/null 2>&1; then
-    nvm install "$NODE_MAJOR" --no-progress
+    nvm install "$NODE_MAJOR" --no-progress >&2
   fi
   nvm use "$NODE_MAJOR" >/dev/null
   nvm alias default "$NODE_MAJOR" >/dev/null
@@ -52,6 +56,6 @@ echo "session-start: node $(node --version), pnpm $(pnpm --version)"
 # --- Install (frozen) — same command CI runs; lifecycle scripts stay denied --------
 # strictDepBuilds + allowBuilds in pnpm-workspace.yaml make this fail closed on any
 # new postinstall, exactly as in CI. Cached by the container snapshot after first run.
-pnpm install --frozen-lockfile
+pnpm install --frozen-lockfile >&2
 
 echo "session-start: dependencies ready"

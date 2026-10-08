@@ -37,6 +37,8 @@ CLAUDE.local.md
 # the SessionStart hook). No personal context, no secrets — toolchain setup only.
 !.claude/settings.json
 !.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 
 # Local pnpm content-addressable store (created by `pnpm install --store-dir`);
 # machine-local cache, never source.
