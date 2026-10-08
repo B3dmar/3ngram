@@ -1,5 +1,31 @@
 # @3ngram/worker
 
+## 1.8.4
+
+### Patch Changes
+
+- 49abc82: Clear the release image scan that blocked v1.8.3. New advisories landed after v1.8.2: perl-base CVE-2026-13221 (critical), libpcre2-8-0 CVE-2026-103111 (high), proxy-addr CVE-2026-90711 (critical) and two nodemailer advisories (CVE-2026-90776, GHSA-v53p-9fqp-m79j). Both images move to the current `node:24-bookworm-slim` digest (libpcre2 10.42-1+deb12u2) and upgrade perl-base to 5.36.0-7+deb12u4 from Debian security until the base image catches up; proxy-addr is overridden to 2.0.8; nodemailer moves to 10.0.12, which keeps the transport API, requires Node 20+, and ships its own types, so `@types/nodemailer` is dropped.
+
+## 1.8.3
+
+### Patch Changes
+
+- Updated dependencies [063e312]
+  - @3ngram/schema@0.11.1
+  - @3ngram/core@0.13.1
+
+## 1.8.2
+
+### Patch Changes
+
+- Re-cut of v1.8.1, whose tag was pushed against the wrong commit before its promotion had merged; the immutable tag ruleset makes that number unusable. No code change.
+
+## 1.8.1
+
+### Patch Changes
+
+- eefaa05: Release images move to the current `node:24-bookworm-slim` digest, which carries libpcre2 10.42-1+deb12u1. The v1.8.0 release scan rejected the previous pinned digest on CVE-2026-86145 (libpcre2-8-0, high), so that tag is burned and v1.8.1 carries its content.
+
 ## 1.8.0
 
 ### Patch Changes

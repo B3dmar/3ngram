@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "plugins/*"
   - "eval"
 
 # Advisory fixes (pnpm audit --fix=override; scoped selectors so unaffected majors stay put).
@@ -12,13 +13,24 @@ overrides:
   body-parser@<2.3.0: ^2.3.0
   esbuild@<0.25.0: ">=0.25.0"
   esbuild@>=0.27.3 <0.28.1: ^0.28.1
-  hono@<4.12.34: ^4.12.34
-  ip-address@<10.3.1: 10.3.1
+  # GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx (<4.13.5) and
+  # GHSA-hxh3-vqpv-xpqv (<4.13.7). Transitive under @modelcontextprotocol/node ->
+  # @hono/node-server (peer range), so the direct apps/server pin alone does not
+  # move it. Re-cut 2026-10-06 from <4.12.34.
+  hono@<4.13.7: ^4.13.7
+  # GHSA-rpw4-54j3-4h4q, GHSA-2vr4-cq9g-pvrc (<=10.5.0), GHSA-j6r3-76f7-8jcv,
+  # GHSA-h3mg-xc3c-68pw (<=10.7.0). Transitive under express-rate-limit (^10.2.0).
+  # Re-cut 2026-10-06 from <10.3.1.
+  ip-address@<10.7.1: 10.7.1
   js-yaml@<3.15.1: ^3.15.1
   js-yaml@>=4.0.0 <4.3.1: ^4.3.1
   nanoid@<3.3.18: ^3.3.18
-  nodemailer@<=9.0.0: ^9.0.1
+  nodemailer@<10.0.6: ^10.0.6
   postcss@<=8.5.22: 8.5.23
+  proxy-addr@<2.0.8: ^2.0.8
+  # GHSA-x5fp-wj9c-mxmx (>=6.14.2 <=6.15.3), GHSA-4mjr-xmp4-gh2g (<6.16.0). Transitive
+  # under express (^6.14.0) and body-parser (^6.15.2); nothing direct can reach it.
+  qs@<6.16.0: ^6.16.0
 
 # Supply-chain posture (docs/contributing.mdx — active npm worm era).
 # pnpm 11 reads these from pnpm-workspace.yaml, NOT .npmrc (.npmrc is auth/registry only in v11).

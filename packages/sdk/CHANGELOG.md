@@ -1,5 +1,18 @@
 # @3ngram/sdk
 
+## 1.8.4
+
+## 1.8.3
+
+### Patch Changes
+
+- Updated dependencies [063e312]
+  - @3ngram/schema@0.11.1
+
+## 1.8.2
+
+## 1.8.1
+
 ## 1.8.0
 
 ### Minor Changes

@@ -255,6 +255,43 @@ describe('resolveOAuthClient — DCR then CIMD', () => {
       authenticateClientCredentials(clientId, 'secret', 'client_secret_post', resolver),
     ).resolves.toBeUndefined()
   })
+
+  // ChatGPT's live document (captured 2026-10-05) prefers private_key_jwt and
+  // lists none as supported. This AS advertises no private_key_jwt, so ChatGPT
+  // falls back to none; the document must resolve as a public client at both
+  // /authorize and /token rather than fail as invalid_client.
+  it('resolves the ChatGPT document as a public client', async () => {
+    const chatgptId = 'https://chatgpt.com/oauth/client.json'
+    const resolver = new ClientMetadataResolver({
+      fetchDocument: async () => ({
+        document: {
+          client_id: chatgptId,
+          client_uri: 'https://chatgpt.com/',
+          redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+          token_endpoint_auth_method: 'private_key_jwt',
+          token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          client_name: 'ChatGPT',
+          logo_uri: 'https://persistent.oaistatic.com/sonic/misc/openai-logo.png',
+          token_endpoint_auth_signing_alg: 'RS256',
+          jwks_uri: 'https://chatgpt.com/oauth/jwks.json',
+        },
+        headers: new Headers(),
+      }),
+    })
+
+    await expect(resolveOAuthClient(chatgptId, resolver)).resolves.toMatchObject({
+      client_id: chatgptId,
+      redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+    })
+    expect(storedRows.get(chatgptId)?.tokenEndpointAuthMethod).toBe('none')
+    await expect(
+      authenticateClientCredentials(chatgptId, undefined, undefined, resolver),
+    ).resolves.toMatchObject({ client_id: chatgptId, token_endpoint_auth_method: 'none' })
+  })
 })
 
 describe('hashClientSecret', () => {

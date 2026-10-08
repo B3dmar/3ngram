@@ -1,0 +1,11 @@
+{
+  "name": "3ngram",
+  "owner": { "name": "B3dmar", "url": "https://github.com/B3dmar" },
+  "plugins": [
+    {
+      "name": "3ngram",
+      "source": "./plugins/3ngram",
+      "description": "A read-only commitment panel over your 3ngram memory."
+    }
+  ]
+}

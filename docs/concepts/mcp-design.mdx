@@ -66,7 +66,7 @@ Every tool also declares [annotations](https://modelcontextprotocol.io/specifica
 
 ## OAuth client registration
 
-[Client ID Metadata Documents (CIMD)](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration) are supported alongside RFC 7591 Dynamic Client Registration (DCR). A persisted DCR client wins; an HTTPS URL-shaped `client_id` otherwise resolves as CIMD. DCR remains advertised as a compatibility fallback.
+[Client ID Metadata Documents (CIMD)](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration) are supported alongside RFC 7591 Dynamic Client Registration (DCR). A persisted DCR client wins; an HTTPS URL-shaped `client_id` otherwise resolves as CIMD. DCR remains advertised as a compatibility fallback. CIMD clients are public PKCE clients: a document resolves when it lists `none` among `token_endpoint_auth_methods_supported`, or, without that list, declares `none` or no method. A preferred method this server does not implement, such as ChatGPT's `private_key_jwt`, is not grounds for rejection.
 
 CIMD fetching is a security boundary: validate the URL and document at the schema boundary, resolve every hop, reject any non-public DNS answer, connect to the validated IP while verifying TLS for the original hostname, and cap redirects, bytes, time, concurrency, and cache size. Cache only valid documents and honor shared-cache directives. The materialized `oauth_clients` row exists for foreign keys and connected-app display; the fetched document remains the authorization source.
 

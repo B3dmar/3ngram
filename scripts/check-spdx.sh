@@ -12,7 +12,7 @@ set -euo pipefail
 
 APACHE_HEADER_RE='SPDX-License-Identifier:[[:space:]]*Apache-2\.0[[:space:]]*$'
 
-bad_headers=$(git ls-files 'apps/**/*.ts' 'apps/**/*.tsx' 'packages/**/*.ts' 'packages/**/*.tsx' 'eval/**/*.ts' 'cmd/**/*.go' \
+bad_headers=$(git ls-files 'apps/**/*.ts' 'apps/**/*.tsx' 'packages/**/*.ts' 'packages/**/*.tsx' 'eval/**/*.ts' 'cmd/**/*.go' 'plugins/**/*.ts' 'plugins/**/*.tsx' \
   | while read -r f; do
       header=$(head -3 "$f" | grep 'SPDX-License-Identifier:' || true)
       if [[ -z "$header" ]]; then

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   clientIdMetadataDocumentSchema,
@@ -139,6 +141,95 @@ describe('clientIdMetadataDocumentSchema', () => {
     const parsed = clientIdMetadataDocumentSchema.parse(
       document({ response_types: ['code', 'y'.repeat(300)] }),
     )
+    expect(parsed.response_types).toEqual(['code'])
+  })
+})
+
+// token_endpoint_auth_method is the client's PREFERENCE. A document that also
+// lists `none` as supported is a public client this AS can serve; rejecting it
+// locked out ChatGPT, which prefers private_key_jwt and falls back to `none`.
+describe('clientIdMetadataDocumentSchema token endpoint auth method', () => {
+  it.each([
+    { token_endpoint_auth_method: 'none' },
+    {
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+    },
+    { token_endpoint_auth_methods_supported: ['none'] },
+    // The supported list outranks the preference, whatever the preference is.
+    {
+      token_endpoint_auth_method: 'client_secret_basic',
+      token_endpoint_auth_methods_supported: ['none', 'client_secret_basic'],
+    },
+  ])('resolves a public client: %o', (override) => {
+    const parsed = clientIdMetadataDocumentSchema.parse(document(override))
+    expect(parsed.token_endpoint_auth_method).toBe('none')
+    expect(parsed).not.toHaveProperty('token_endpoint_auth_methods_supported')
+  })
+
+  it.each([
+    { token_endpoint_auth_method: 'private_key_jwt' },
+    {
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: ['private_key_jwt'],
+    },
+    {
+      token_endpoint_auth_method: 'client_secret_basic',
+      token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+    },
+    { token_endpoint_auth_method: '' },
+    { token_endpoint_auth_methods_supported: ['private_key_jwt'] },
+    {
+      token_endpoint_auth_method: 'none',
+      token_endpoint_auth_methods_supported: ['private_key_jwt'],
+    },
+    { token_endpoint_auth_method: 'private_key_jwt', token_endpoint_auth_methods_supported: [] },
+    {
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: 'none',
+    },
+    {
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: [
+        'none',
+        ...Array.from({ length: 16 }, (_, i) => `m${i}`),
+      ],
+    },
+  ])('rejects a client that cannot authenticate as none: %o', (override) => {
+    expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
+  })
+})
+
+// Verbatim live documents of the clients users actually connect. Every CIMD
+// outage so far came from a real client adding a field or value this schema
+// rejected; these fail CI instead of production. Refresh by re-fetching each
+// client_id URL (captured 2026-10-05).
+describe('clientIdMetadataDocumentSchema real client documents', () => {
+  const fixture = (name: string): unknown =>
+    JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures/cimd', `${name}.json`), 'utf8'))
+
+  it.each([
+    [
+      'chatgpt',
+      'https://chatgpt.com/oauth/client.json',
+      ['https://chatgpt.com/connector_platform_oauth_redirect'],
+    ],
+    [
+      'claude-ai',
+      'https://claude.ai/oauth/mcp-oauth-client-metadata',
+      ['https://claude.ai/api/mcp/auth_callback'],
+    ],
+    [
+      'claude-code',
+      'https://claude.ai/oauth/claude-code-client-metadata',
+      ['http://localhost/callback', 'http://127.0.0.1/callback'],
+    ],
+  ])('parses %s as a public authorization-code client', (name, clientIdUrl, redirectUris) => {
+    const parsed = clientIdMetadataDocumentSchema.parse(fixture(name))
+    expect(parsed.client_id).toBe(clientIdUrl)
+    expect(parsed.redirect_uris).toEqual(redirectUris)
+    expect(parsed.token_endpoint_auth_method).toBe('none')
+    expect(parsed.grant_types).toEqual(['authorization_code', 'refresh_token'])
     expect(parsed.response_types).toEqual(['code'])
   })
 })
