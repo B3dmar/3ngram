@@ -126,7 +126,11 @@ export async function readDirectRelationships(
     INNER JOIN memories related
       ON related.user_id = e.user_id
      AND related.id = CASE WHEN e.from_id = ${memoryId}::uuid THEN e.to_id ELSE e.from_id END
-    WHERE e.from_id = ${memoryId}::uuid OR e.to_id = ${memoryId}::uuid
+    -- Bind the edge scan to the target row's tenant (issue #240): with the
+    -- predicate both user_id-leading indexes apply; RLS alone would leave the
+    -- OR on from_id/to_id as a scan over every edge visible to the connection.
+    WHERE e.user_id = (SELECT target.user_id FROM memories target WHERE target.id = ${memoryId}::uuid)
+      AND (e.from_id = ${memoryId}::uuid OR e.to_id = ${memoryId}::uuid)
     ORDER BY e.created_at DESC, e.id DESC
     LIMIT ${MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT + 1}
   `)

@@ -1,0 +1,24 @@
+{
+  "contract": "3ngram-hook.commitments.v1",
+  "operation": "show",
+  "ok": false,
+  "binary": "3ngram-hook test",
+  "context": {
+    "fingerprint": "f1f1f1f1f1f1f1f1",
+    "apiHost": "api.example.test",
+    "project": {
+      "name": "demo",
+      "source": "directory-name"
+    },
+    "requested": {
+      "kind": "scope_project",
+      "scope": "work",
+      "project": "demo",
+      "includeUnscoped": false
+    }
+  },
+  "error": {
+    "kind": "outside_selector",
+    "route": "memory"
+  }
+}

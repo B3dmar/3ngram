@@ -3,9 +3,9 @@
 //
 // The bounds cmd/3ngram-hook must honour BEFORE it builds a request body,
 // mirrored from packages/schema (the single validation boundary, AGENTS.md hard
-// rule 2). Regenerate with `pnpm run docs:generate`; the docs-reference CI lane
-// diffs this file byte for byte, so a schema change that is not regenerated
-// here goes red.
+// rule 2), plus the history read's window sizes from packages/db. Regenerate
+// with `pnpm run docs:generate`; the docs-reference CI lane diffs this file
+// byte for byte, so a schema change that is not regenerated here goes red.
 //
 // CONSTANTS ONLY. Shape validation (agent-name kebab-case, uuid form, enum
 // membership) is deliberately NOT mirrored: the server's Zod parse is the one
@@ -26,4 +26,34 @@ const (
 	// the whole open 400s and the session loses its sessionRunId, so the hook
 	// stops collecting rather than trading every row for the last one.
 	maxBriefedMemories = 100
+
+	// MAX_BRIEFING_SECTION_CEILING.
+	// Largest `sectionLimit` the briefing GET accepts. `commitments list` asks
+	// for exactly this, so `hasMore` is the only reason a row can be missing;
+	// one past it would 400 the whole read.
+	maxBriefingSectionCeiling = 100
+
+	// MEMORY_HISTORY_LINEAGE_NODE_LIMIT.
+	// Lineage nodes the history read returns at most. `commitments show`
+	// reports it as the window it inspected, so a none_found verdict never
+	// claims a deeper search than the server ran.
+	historyLineageNodeCap = 25
+
+	// MEMORY_HISTORY_LINEAGE_EDGE_LIMIT.
+	// Lineage edges the history read returns at most; it truncates on its own.
+	historyLineageEdgeCap = 50
+
+	// MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT.
+	// Direct relationships the history read returns at most (see above).
+	historyRelationshipCap = 50
+
+	// MEMORY_HISTORY_EVENT_LIMIT.
+	// Audit events the history read returns at most (see above).
+	historyEventCap = 50
+
+	// MAX_REST_PROPOSALS_LIMIT.
+	// Largest `limit` GET /api/v1/proposals accepts. `commitments show` reads
+	// this many pending proposals and reports the window it inspected, since a
+	// bounded tenant-wide list cannot prove no evidence exists.
+	maxRestProposalsLimit = 100
 )

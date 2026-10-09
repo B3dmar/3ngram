@@ -1,0 +1,1 @@
+CREATE INDEX "memory_edges_target_idx" ON "memory_edges" USING btree ("user_id","to_id","edge_type");

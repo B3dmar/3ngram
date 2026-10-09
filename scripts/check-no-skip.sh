@@ -19,7 +19,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   exit $fail
 fi
 
-violations=$(git ls-files '*.test.ts' '*.test.tsx' '*.int.test.ts' \
+violations=$(git ls-files '*.test.ts' '*.test.tsx' '*.int.test.ts' '*.spec.ts' \
   | xargs -r grep -lnE "$PATTERN" || true)
 
 if [[ -n "$violations" ]]; then
