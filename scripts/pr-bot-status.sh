@@ -39,8 +39,9 @@ repo=${GH_REPO:-}
 if [[ -z "$repo" ]]; then
   repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || { echo "gh repo view failed" >&2; exit 2; }
 fi
-# GH_REPO may carry a leading host (HOST/OWNER/REPO); drop it.
-[[ "$repo" == */*/* ]] && repo=${repo#*/}
+# GH_REPO may carry a leading host (HOST/OWNER/REPO); keep it for gh api.
+host=""
+[[ "$repo" == */*/* ]] && { host=${repo%%/*}; repo=${repo#*/}; }
 owner=${repo%/*}
 name=${repo#*/}
 
@@ -56,7 +57,7 @@ query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, nam
 # A missing PR makes gh exit non-zero but still print partial data, so keep the
 # output and let the null check below name the PR.
 api_status=0
-result=$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name") || api_status=$?
+result=$(gh api graphql ${host:+--hostname "$host"} -f query="$query" -f owner="$owner" -f name="$name") || api_status=$?
 if ! jq -e '.data.repository | type == "object"' <<<"$result" >/dev/null 2>&1; then
   echo "gh api graphql failed (auth, network, or a repository that does not exist)" >&2
   exit 2
@@ -83,11 +84,11 @@ open=$(jq '
     | $pr.reviewThreads.nodes[]
     | select(.isResolved | not)
     | .comments.nodes as $c
-    | select(($c | length) > 0 and ($c[0] | bot))
     | ([range(0; $c | length) | select($c[.] | bot)] | max) as $last_bot
+    | select($last_bot != null)
     | select([$c[$last_bot + 1:][] | select(bot | not)] | length == 0)
-    | {pr: $pr.number, path, line: (.line // .originalLine // "file"), title: ($c[0] | title),
-       url: $c[0].url, truncated: $more}]
+    | {pr: $pr.number, path, line: (.line // .originalLine // "file"), title: ($c[$last_bot] | title),
+       url: $c[$last_bot].url, truncated: $more}]
 ' <<<"$result")
 
 long_threads=$(jq -r '[.data.repository[] | select(any(.reviewThreads.nodes[]; .comments.pageInfo.hasNextPage)) | "#" + (.number | tostring)] | join(", ")' <<<"$result")
