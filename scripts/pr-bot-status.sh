@@ -3,8 +3,8 @@
 #
 # Lists the reviewer-bot review threads (Codex, CodeQL, any bot author) that
 # nobody has answered yet, for one or more PRs, in ONE GraphQL call. A thread
-# counts as answered once a comment by a non-bot author follows the bot's, or
-# once it is resolved.
+# counts as answered once a comment by a non-bot author follows the bot's
+# newest comment, or once it is resolved.
 #
 # Run it after the last push, right before merging: the bots review every
 # push, so a count taken earlier goes stale (AGENTS.md, Workflow).
@@ -13,13 +13,13 @@
 #   scripts/pr-bot-status.sh --json 257   # the open threads as JSON
 #
 # Exit 0: nothing open. Exit 1: threads open. Exit 2: usage, a failed API call
-# (auth, network, a PR that does not exist), or a PR with more than 100 review
-# threads, whose newest ones were not checked.
+# (auth, network, a PR that does not exist), a PR with more than 100 review
+# threads, or a thread with more than 100 comments, whose newest were not checked.
 #
 # Scope: inline review threads, which is where Codex and CodeQL put their
 # findings. A bot's plain PR comment, a review body or a check annotation
 # outside the diff is not seen. The repository is the current one, or
-# GH_REPO=owner/name.
+# GH_REPO=[HOST/]OWNER/REPO.
 set -euo pipefail
 
 json=0
@@ -39,6 +39,8 @@ repo=${GH_REPO:-}
 if [[ -z "$repo" ]]; then
   repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || { echo "gh repo view failed" >&2; exit 2; }
 fi
+# GH_REPO may carry a leading host (HOST/OWNER/REPO); drop it.
+[[ "$repo" == */*/* ]] && repo=${repo#*/}
 owner=${repo%/*}
 name=${repo#*/}
 
@@ -47,17 +49,30 @@ fields=""
 for pr in "$@"; do
   fields+=" pr$pr: pullRequest(number: $pr) { number reviewThreads(first: 100) {"
   fields+=" pageInfo { hasNextPage } nodes { isResolved path line originalLine"
-  fields+=" comments(first: 100) { nodes { url author { __typename login } body } } } } }"
+  fields+=" comments(first: 100) { pageInfo { hasNextPage } nodes { url author { __typename login } body } } } } }"
 done
 query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) {$fields } }"
 
-result=$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name") || {
-  echo "gh api graphql failed (auth, network, or a PR that does not exist)" >&2
+# A missing PR makes gh exit non-zero but still print partial data, so keep the
+# output and let the null check below name the PR.
+api_status=0
+result=$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name") || api_status=$?
+if ! jq -e '.data.repository | type == "object"' <<<"$result" >/dev/null 2>&1; then
+  echo "gh api graphql failed (auth, network, or a repository that does not exist)" >&2
   exit 2
-}
+fi
+missing=$(jq -r '[.data.repository | to_entries[] | select(.value == null) | .key | ltrimstr("pr")] | map("#" + .) | join(", ")' <<<"$result")
+if [[ -n "$missing" ]]; then
+  echo "PR not found: $missing" >&2
+  exit 2
+fi
+if [[ $api_status -ne 0 ]]; then
+  echo "gh api graphql reported errors (exit $api_status)" >&2
+  exit 2
+fi
 
 # A thread is open when it is unresolved, a bot wrote its first comment, and
-# no comment after that one is by a non-bot author.
+# no non-bot comment follows the bot's newest comment.
 open=$(jq '
   def bot: .author.__typename == "Bot" or ((.author.login // "") | test("\\[bot\\]$"));
   def title: (.body | split("\n")[0]
@@ -69,10 +84,17 @@ open=$(jq '
     | select(.isResolved | not)
     | .comments.nodes as $c
     | select(($c | length) > 0 and ($c[0] | bot))
-    | select([$c[1:][] | select(bot | not)] | length == 0)
+    | ([range(0; $c | length) | select($c[.] | bot)] | max) as $last_bot
+    | select([$c[$last_bot + 1:][] | select(bot | not)] | length == 0)
     | {pr: $pr.number, path, line: (.line // .originalLine // "file"), title: ($c[0] | title),
        url: $c[0].url, truncated: $more}]
 ' <<<"$result")
+
+long_threads=$(jq -r '[.data.repository[] | select(any(.reviewThreads.nodes[]; .comments.pageInfo.hasNextPage)) | "#" + (.number | tostring)] | join(", ")' <<<"$result")
+if [[ -n "$long_threads" ]]; then
+  echo "a thread with more than 100 comments on $long_threads; only the oldest 100 were checked" >&2
+  exit 2
+fi
 
 truncated=$(jq -r '[.data.repository[] | select(.reviewThreads.pageInfo.hasNextPage) | .number] | join(", ")' <<<"$result")
 if [[ -n "$truncated" ]]; then
