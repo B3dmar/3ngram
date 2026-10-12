@@ -1,6 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", ":semanticCommits"],
+  "baseBranchPatterns": ["staging"],
+  "automergeStrategy": "merge-commit",
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "rangeStrategy": "pin",
@@ -17,19 +19,24 @@
       "pinDigests": true
     },
     {
-      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above)",
+      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above). The automerge/ branch prefix is what the changeset guard exempts (a slash cannot occur in a Renovate branch topic, so it cannot collide with a package name); a runtime occurrence of the same package lands on a separate renovate/ branch",
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["patch", "minor"],
-      "automerge": true
+      "automerge": true,
+      "additionalBranchPrefix": "automerge/",
+      "addLabels": ["renovate-automerge"]
     },
     {
-      "description": "Automerge digest pins (SHA-pinned GitHub Actions digest bumps)",
+      "description": "Automerge SHA-pinned GitHub Actions digest bumps only; Docker base-image digests stay ordinary PRs that need a changeset and a release",
+      "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest", "pinDigest"],
-      "automerge": true
+      "automerge": true,
+      "additionalBranchPrefix": "automerge/",
+      "addLabels": ["renovate-automerge"]
     }
   ],
   "prConcurrentLimit": 3,
   "prHourlyLimit": 2,
   "branchConcurrentLimit": 5,
-  "labels": ["area:ops"]
+  "labels": ["area:ops", "never-stale"]
 }
