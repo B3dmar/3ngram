@@ -19,16 +19,19 @@
       "pinDigests": true
     },
     {
-      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above)",
+      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above). The automerge- branch prefix is what the changeset guard exempts; a runtime occurrence of the same package lands on a separate renovate/ branch",
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["patch", "minor"],
       "automerge": true,
+      "additionalBranchPrefix": "automerge-",
       "addLabels": ["renovate-automerge"]
     },
     {
-      "description": "Automerge digest pins (SHA-pinned GitHub Actions digest bumps)",
+      "description": "Automerge SHA-pinned GitHub Actions digest bumps only; Docker base-image digests stay ordinary PRs that need a changeset and a release",
+      "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest", "pinDigest"],
       "automerge": true,
+      "additionalBranchPrefix": "automerge-",
       "addLabels": ["renovate-automerge"]
     }
   ],
