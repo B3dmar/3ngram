@@ -7,6 +7,10 @@
   "internalChecksFilter": "strict",
   "rangeStrategy": "pin",
   "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on monday"] },
+  "vulnerabilityAlerts": {
+    "automerge": false,
+    "addLabels": ["security"]
+  },
   "packageRules": [
     {
       "description": "pnpm overrides are security pins owned by the weekly triage (GHSA comment per selector, check-override-freshness gate). Renovate would pin their ranges and offer majors that force old consumers onto new majors",
