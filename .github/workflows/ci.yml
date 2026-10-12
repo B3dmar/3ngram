@@ -266,7 +266,9 @@ jobs:
             !(github.head_ref == 'staging' && github.base_ref == 'main')
           }}
         run: |
-          git fetch origin "${{ github.base_ref }}" --depth=1
+          # No --depth: the checkout has full history and a shallow fetch would
+          # cut the merge base the guard diffs from (#124).
+          git fetch origin "${{ github.base_ref }}"
           bash scripts/check-changeset.sh "origin/${{ github.base_ref }}"
       # DCO sign-off (CONTRIBUTING.md, LICENSING.md §5). Enforced only on
       # EXTERNAL (fork) PRs — DCO is required "once external contributions open",
