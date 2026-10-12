@@ -10,7 +10,7 @@
   },
   "packageManager": "pnpm@11.9.0",
   "engines": {
-    "node": ">=22"
+    "node": "^22.13 || ^24 || >=26"
   },
   "scripts": {
     "build": "turbo run build",
@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
-    "@changesets/cli": "2.31.0",
+    "@changesets/cli": "3.0.3",
     "jose": "6.2.3",
     "turbo": "2.9.16"
   }

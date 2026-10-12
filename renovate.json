@@ -13,6 +13,11 @@
   },
   "packageRules": [
     {
+      "description": "Majors wait for a tick on the Dependency Dashboard even when automated PRs are on: each one needs its upgrade wave (docs: 2026-10-12 dependency audit), not a drive-by PR",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "pnpm overrides are security pins owned by the weekly triage (GHSA comment per selector, check-override-freshness gate). Renovate would pin their ranges and offer majors that force old consumers onto new majors",
       "matchDepTypes": ["pnpm-workspace.overrides", "pnpm.overrides"],
       "enabled": false

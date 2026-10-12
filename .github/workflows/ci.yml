@@ -33,7 +33,7 @@ jobs:
       go: ${{ steps.go.outputs.go }}
       container: ${{ steps.container.outputs.container }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # push events diff before..after; needs full history
       # `integration` is fail-safe for unknown code: '**' matches everything, the
@@ -185,7 +185,7 @@ jobs:
         if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go != 'true' }}
         run: echo "No Go hook changes detected; Go hook lane is satisfied."
       - if: ${{ matrix.lane != 'go-hook' || needs.changes.outputs.go == 'true' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history so the DCO gate can walk base..head on fork PRs
           # (the PR merge ref makes the fork head reachable).
@@ -193,14 +193,14 @@ jobs:
       - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' || matrix.lane == 'hygiene' }}
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
       # hygiene only runs `pnpm config get` (no install), so it needs Node + pnpm but NOT the
       # pnpm cache — `cache: pnpm` would fail trying to save a store that was never populated.
       - if: ${{ matrix.lane == 'hygiene' }}
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - name: Install (frozen)
@@ -397,9 +397,12 @@ jobs:
             exit 1
           }
       - if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.24'
+          go-version-file: cmd/3ngram-hook/go.mod
+          # stdlib-only module: there is no go.sum, so the default cache step
+          # can only log "Restore cache failed".
+          cache: false
       - name: Go fmt
         if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
         working-directory: cmd/3ngram-hook
@@ -441,7 +444,7 @@ jobs:
         if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container != 'true' }}
         run: echo "No container-relevant changes detected; container smoke is satisfied."
       - if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build release runner
         if: ${{ needs.changes.result == 'success' && needs.changes.outputs.container == 'true' }}
         run: |
@@ -546,8 +549,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - name: Golden-set gate
@@ -668,11 +671,11 @@ jobs:
         if: ${{ steps.shard.outputs.enabled != 'true' }}
         run: echo "Shard '${{ matrix.shard }}' is not relevant for these changed paths; skipping DB work."
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
