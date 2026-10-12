@@ -9,6 +9,11 @@
   "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on monday"] },
   "packageRules": [
     {
+      "description": "pnpm overrides are security pins owned by the weekly triage (GHSA comment per selector, check-override-freshness gate). Renovate would pin their ranges and offer majors that force old consumers onto new majors",
+      "matchDepTypes": ["pnpm-workspace.overrides", "pnpm.overrides"],
+      "enabled": false
+    },
+    {
       "description": "Cooldown applies hardest to npm — active worm era (research/05)",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "7 days"
