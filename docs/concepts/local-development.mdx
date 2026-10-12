@@ -51,7 +51,7 @@ Notes:
 docker compose up -d postgres redis
 ```
 
-Postgres (pgvector, PG18) listens on **54320**, Redis on **63790** — non-default ports so they never collide with system services. Images are pinned by digest; the tag each digest was resolved from is in the compose comments.
+Postgres (pgvector, PG18) listens on **54320**, Redis on **63790** — non-default ports so they never collide with system services. Images are pinned by digest, with the tag the digest was resolved from in front of it so Renovate can track it (`pgvector/pgvector:pg18@sha256:…`).
 
 ## 2. Configure the environment
 
