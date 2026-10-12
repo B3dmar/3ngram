@@ -8,10 +8,13 @@ set -euo pipefail
 
 base="${1:-origin/staging}"
 
-# Two-point diff on purpose: CI's PR checkout is a shallow merge commit, so a
-# merge-base (three-dot) diff is unavailable; diffing the base tip against
-# HEAD yields exactly the PR's effective changes.
-changed=$(git diff --name-only "$base" HEAD)
+# Diff from the merge base when history allows it (CI checks out with full
+# history). A plain two-point diff against the base tip attributes every
+# commit the base gained after the branch was cut to the PR, which produced
+# false positives on long-lived PRs (#124). Fall back to two-point only when
+# no common ancestor is reachable (e.g. a shallow local clone).
+from=$(git merge-base "$base" HEAD 2>/dev/null || echo "$base")
+changed=$(git diff --name-only "$from" HEAD)
 
 needs=$(grep -E '^(apps/|packages/)' <<<"$changed" || true)
 if [[ -z "$needs" ]]; then
@@ -24,7 +27,7 @@ fi
 # legitimately deletes consumed changesets while bumping apps — the workflow
 # step skips it by head-branch name, and skips renovate[bot] PRs on
 # renovate/automerge/* heads (devDependency patch/minor, Actions digest pins).
-added=$(git diff --name-only --diff-filter=A "$base" HEAD)
+added=$(git diff --name-only --diff-filter=A "$from" HEAD)
 has=$(grep -E '^\.changeset/[^/]+\.md$' <<<"$added" | grep -v 'README\.md' || true)
 if [[ -z "$has" ]]; then
   echo "ERROR: this change touches apps/* or packages/* but adds no changeset:" >&2

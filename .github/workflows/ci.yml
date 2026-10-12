@@ -193,14 +193,14 @@ jobs:
       - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' || matrix.lane == 'hygiene' }}
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - if: ${{ matrix.lane == 'biome' || matrix.lane == 'workspace-checks' || matrix.lane == 'unit' || matrix.lane == 'docs-reference' }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
       # hygiene only runs `pnpm config get` (no install), so it needs Node + pnpm but NOT the
       # pnpm cache — `cache: pnpm` would fail trying to save a store that was never populated.
       - if: ${{ matrix.lane == 'hygiene' }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
       - name: Install (frozen)
@@ -266,7 +266,9 @@ jobs:
             !(github.head_ref == 'staging' && github.base_ref == 'main')
           }}
         run: |
-          git fetch origin "${{ github.base_ref }}" --depth=1
+          # No --depth: the checkout has full history and a shallow fetch would
+          # cut the merge base the guard diffs from (#124).
+          git fetch origin "${{ github.base_ref }}"
           bash scripts/check-changeset.sh "origin/${{ github.base_ref }}"
       # DCO sign-off (CONTRIBUTING.md, LICENSING.md §5). Enforced only on
       # EXTERNAL (fork) PRs — DCO is required "once external contributions open",
@@ -545,7 +547,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
       - name: Golden-set gate
@@ -670,7 +672,7 @@ jobs:
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - if: ${{ steps.shard.outputs.enabled == 'true' }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
