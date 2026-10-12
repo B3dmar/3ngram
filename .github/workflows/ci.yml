@@ -400,6 +400,9 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: cmd/3ngram-hook/go.mod
+          # stdlib-only module: there is no go.sum, so the default cache step
+          # can only log "Restore cache failed".
+          cache: false
       - name: Go fmt
         if: ${{ matrix.lane == 'go-hook' && needs.changes.outputs.go == 'true' }}
         working-directory: cmd/3ngram-hook
