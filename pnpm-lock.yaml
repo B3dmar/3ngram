@@ -13,7 +13,6 @@ overrides:
   hono@<4.13.7: ^4.13.7
   ip-address@<10.7.1: 10.7.1
   nanoid@<3.3.18: ^3.3.18
-  nodemailer@<10.0.6: ^10.0.6
   postcss@<=8.5.22: 8.5.23
   proxy-addr@<2.0.8: ^2.0.8
   qs@<6.16.0: ^6.16.0
@@ -3572,9 +3571,9 @@ snapshots:
     dependencies:
       fast-string-width: 3.0.2
 
-  fdir@6.5.0(picomatch@4.0.5):
+  fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
-      picomatch: 4.0.5
+      picomatch: 4.0.7
 
   fengari-interop@0.1.4(fengari@0.1.5):
     dependencies:
@@ -4213,8 +4212,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.5)
-      picomatch: 4.0.5
+      fdir: 6.5.0(picomatch@4.0.7)
+      picomatch: 4.0.7
 
   tinyrainbow@3.1.0: {}
 
@@ -4274,7 +4273,7 @@ snapshots:
   vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
-      picomatch: 4.0.5
+      picomatch: 4.0.7
       postcss: 8.5.23
       rolldown: 1.0.3
       tinyglobby: 0.2.17

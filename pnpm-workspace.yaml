@@ -23,7 +23,6 @@ overrides:
   # Re-cut 2026-10-06 from <10.3.1.
   ip-address@<10.7.1: 10.7.1
   nanoid@<3.3.18: ^3.3.18
-  nodemailer@<10.0.6: ^10.0.6
   postcss@<=8.5.22: 8.5.23
   proxy-addr@<2.0.8: ^2.0.8
   # GHSA-x5fp-wj9c-mxmx (>=6.14.2 <=6.15.3), GHSA-4mjr-xmp4-gh2g (<6.16.0). Transitive
