@@ -19,11 +19,11 @@
       "pinDigests": true
     },
     {
-      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above). The automerge- branch prefix is what the changeset guard exempts; a runtime occurrence of the same package lands on a separate renovate/ branch",
+      "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above). The automerge/ branch prefix is what the changeset guard exempts (a slash cannot occur in a Renovate branch topic, so it cannot collide with a package name); a runtime occurrence of the same package lands on a separate renovate/ branch",
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["patch", "minor"],
       "automerge": true,
-      "additionalBranchPrefix": "automerge-",
+      "additionalBranchPrefix": "automerge/",
       "addLabels": ["renovate-automerge"]
     },
     {
@@ -31,7 +31,7 @@
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest", "pinDigest"],
       "automerge": true,
-      "additionalBranchPrefix": "automerge-",
+      "additionalBranchPrefix": "automerge/",
       "addLabels": ["renovate-automerge"]
     }
   ],

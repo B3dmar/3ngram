@@ -23,7 +23,7 @@ fi
 # satisfy the guard. The changesets release PR (changeset-release/* branch)
 # legitimately deletes consumed changesets while bumping apps — the workflow
 # step skips it by head-branch name, and skips renovate[bot] PRs on
-# renovate/automerge-* heads (devDependency patch/minor, Actions digest pins).
+# renovate/automerge/* heads (devDependency patch/minor, Actions digest pins).
 added=$(git diff --name-only --diff-filter=A "$base" HEAD)
 has=$(grep -E '^\.changeset/[^/]+\.md$' <<<"$added" | grep -v 'README\.md' || true)
 if [[ -z "$has" ]]; then

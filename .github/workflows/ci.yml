@@ -250,7 +250,7 @@ jobs:
       - name: Changeset guard (PRs only)
         # Version PRs consume their changesets; the staging→main promotion carries
         # only changes that already passed this guard or were exempt from it; and
-        # renovate/automerge-* heads opened by renovate[bot] from this repo
+        # renovate/automerge/* heads opened by renovate[bot] from this repo
         # (devDependency patch/minor, GitHub Actions digest pins) never change
         # published output. The prefix is set per rule in renovate.json and is
         # present at the opened event, unlike a label. Any other Renovate PR
@@ -262,7 +262,7 @@ jobs:
             !startsWith(github.head_ref, 'changeset-release/') &&
             !(github.event.pull_request.user.login == 'renovate[bot]' &&
               github.event.pull_request.head.repo.full_name == github.repository &&
-              startsWith(github.head_ref, 'renovate/automerge-')) &&
+              startsWith(github.head_ref, 'renovate/automerge/')) &&
             !(github.head_ref == 'staging' && github.base_ref == 'main')
           }}
         run: |
