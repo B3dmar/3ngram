@@ -1,6 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", ":semanticCommits"],
+  "baseBranchPatterns": ["staging"],
+  "automergeStrategy": "merge-commit",
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "rangeStrategy": "pin",
@@ -20,16 +22,18 @@
       "description": "Automerge safe updates: devDependencies patch/minor (still behind the 7-day npm cooldown above)",
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["patch", "minor"],
-      "automerge": true
+      "automerge": true,
+      "addLabels": ["renovate-automerge"]
     },
     {
       "description": "Automerge digest pins (SHA-pinned GitHub Actions digest bumps)",
       "matchUpdateTypes": ["digest", "pinDigest"],
-      "automerge": true
+      "automerge": true,
+      "addLabels": ["renovate-automerge"]
     }
   ],
   "prConcurrentLimit": 3,
   "prHourlyLimit": 2,
   "branchConcurrentLimit": 5,
-  "labels": ["area:ops"]
+  "labels": ["area:ops", "never-stale"]
 }

@@ -22,7 +22,8 @@ fi
 # Added files only: a PR editing or deleting an existing changeset must not
 # satisfy the guard. The changesets release PR (changeset-release/* branch)
 # legitimately deletes consumed changesets while bumping apps — the workflow
-# step skips it by head-branch name.
+# step skips it by head-branch name, and skips renovate[bot] PRs labelled
+# renovate-automerge (devDependency patch/minor, digest pins).
 added=$(git diff --name-only --diff-filter=A "$base" HEAD)
 has=$(grep -E '^\.changeset/[^/]+\.md$' <<<"$added" | grep -v 'README\.md' || true)
 if [[ -z "$has" ]]; then
