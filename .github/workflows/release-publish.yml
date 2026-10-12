@@ -481,12 +481,13 @@ jobs:
       # `--no-git-checks`: the checkout is a detached tag HEAD.
       - name: Publish to npm (OIDC; skips versions already on the registry)
         run: pnpm -r publish --no-git-checks
-      # `changeset tag` creates the per-package annotated tags that
-      # `changeset publish` would have created (skips tags that already
-      # exist; worker is excluded via privatePackages.tag: false).
+      # `changeset git-tag` (named `tag` before changesets 3) creates the
+      # per-package annotated tags that `changeset publish` would have
+      # created (skips tags that already exist locally or on the remote;
+      # worker is excluded via privatePackages.tag: false).
       - name: Create and push per-package release tags
         run: |
-          pnpm exec changeset tag
+          pnpm exec changeset git-tag
           git push origin --tags
 
   github-release:
