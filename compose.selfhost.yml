@@ -46,8 +46,7 @@ services:
     restart: "no"
 
   postgres:
-    # pgvector/pgvector:pg18
-    image: pgvector/pgvector@sha256:2ac2c62ac8f030b414b19ea633a6d1d4d37c03abe52ce91887a4e5b4fbb5c73c
+    image: pgvector/pgvector:pg18@sha256:2ac2c62ac8f030b414b19ea633a6d1d4d37c03abe52ce91887a4e5b4fbb5c73c
     restart: unless-stopped
     # Gate first init on the secret preflight: pgdata (and the password baked into
     # it) is only ever created once the secrets are proven strong. (#462)
