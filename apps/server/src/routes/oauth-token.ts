@@ -227,14 +227,14 @@ function exchangeFailureId(clientId: string): string {
 /**
  * The per-process fallback counter used when no Redis client is injected
  * (single-instance / CI). Exported for test inspection of the fallback path
- * only — the Redis path is exercised via an injected ioredis-mock client.
+ * only — the Redis path is exercised via an injected in-memory fake client.
  */
 export const _exchangeFailures = new Map<string, number>()
 
 /**
  * The injected failure-tracker Redis client, or undefined for the in-process
  * fallback. Set once by oauthTokenRouter at boot; the tracker functions read it
- * so the wiring stays a single injection seam (testable with ioredis-mock).
+ * so the wiring stays a single injection seam (testable with an in-memory fake).
  */
 let exchangeFailureRedis: Redis | undefined
 
