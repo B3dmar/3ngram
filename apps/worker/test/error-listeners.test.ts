@@ -5,29 +5,55 @@
 // it has an `error` listener, so an unregistered listener means the blocking
 // connection's failures vanish without a trace. bullmq is mocked with real
 // EventEmitters so the emit path is Node's own, not a stub's.
-import { EventEmitter } from 'node:events'
+import type { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const warn = vi.fn()
+// Hoisted mocks and a static import: the module graph loads once at collection,
+// outside any test's timeout, instead of cold inside the first test.
+const { warn } = vi.hoisted(() => ({ warn: vi.fn() }))
 
-async function boot() {
-  vi.doMock('bullmq', () => ({
-    Queue: class extends EventEmitter {
+vi.mock('bullmq', async () => {
+  const { EventEmitter: Emitter } = await import('node:events')
+  return {
+    Queue: class extends Emitter {
       upsertJobScheduler = vi.fn(async () => ({}))
       removeJobScheduler = vi.fn(async () => true)
       close = vi.fn(async () => {})
     },
-    Worker: class extends EventEmitter {
+    Worker: class extends Emitter {
       close = vi.fn(async () => {})
     },
-  }))
-  vi.doMock('@3ngram/config', () => ({
-    log: () => ({ info: vi.fn(), warn, error: vi.fn() }),
-    loadLlmGatewayConfig: () => undefined,
-    loadSessionCloserConfig: () => ({ enabled: false }),
-    loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
-  }))
-  const { startQueues, QUEUE_NAME } = await import('../src/queues.js')
+  }
+})
+vi.mock('@3ngram/config', () => ({
+  log: () => ({ info: vi.fn(), warn, error: vi.fn() }),
+  loadLlmGatewayConfig: () => undefined,
+  loadSessionCloserConfig: () => ({ enabled: false }),
+  loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
+}))
+// The job modules reach @3ngram/core and a database; this suite needs neither.
+vi.mock('../src/jobs/consolidation.js', () => ({
+  CONSOLIDATION_JOB: 'consolidation',
+  runConsolidation: vi.fn(),
+}))
+vi.mock('../src/jobs/surfacing.js', () => ({ SURFACING_JOB: 'surfacing', runSurfacing: vi.fn() }))
+vi.mock('../src/jobs/gc-clients.js', () => ({
+  GC_CLIENTS_JOB: 'gc-clients',
+  runGcClients: vi.fn(),
+}))
+vi.mock('../src/jobs/session-sweep.js', () => ({
+  SESSION_SWEEP_JOB: 'session-sweep',
+  runSessionSweep: vi.fn(),
+}))
+vi.mock('../src/jobs/session-closer.js', () => ({
+  SESSION_CLOSER_JOB: 'session-closer',
+  runSessionCloser: vi.fn(),
+  sessionCloserJobId: vi.fn(),
+}))
+
+import { QUEUE_NAME, startQueues } from '../src/queues.js'
+
+async function boot() {
   const handles = await startQueues({} as never)
   return {
     queue: handles.queue as unknown as EventEmitter,
@@ -37,9 +63,6 @@ async function boot() {
 }
 
 afterEach(() => {
-  vi.doUnmock('bullmq')
-  vi.doUnmock('@3ngram/config')
-  vi.resetModules()
   warn.mockReset()
 })
 
