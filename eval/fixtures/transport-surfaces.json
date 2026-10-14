@@ -1218,14 +1218,7 @@
                     "type": "string"
                   },
                   "confidence": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": ["number", "null"]
                   },
                   "validFrom": {
                     "type": "string",
@@ -1649,14 +1642,7 @@
               ]
             },
             "generatedFor": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": ["string", "null"]
             },
             "generatedAt": {
               "type": "string",
@@ -2289,14 +2275,7 @@
                         "type": "number"
                       },
                       "rationale": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": ["string", "null"]
                       },
                       "status": {
                         "type": "string",
@@ -2378,14 +2357,7 @@
                         ]
                       },
                       "confidence": {
-                        "anyOf": [
-                          {
-                            "type": "number"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": ["number", "null"]
                       },
                       "validFrom": {
                         "anyOf": [
@@ -2412,14 +2384,7 @@
                         ]
                       },
                       "rationale": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": ["string", "null"]
                       },
                       "status": {
                         "type": "string",
@@ -2511,14 +2476,7 @@
                       "type": "number"
                     },
                     "rationale": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["string", "null"]
                     },
                     "status": {
                       "type": "string",
@@ -2606,14 +2564,7 @@
                       "type": "number"
                     },
                     "rationale": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["string", "null"]
                     },
                     "status": {
                       "type": "string",
@@ -2698,14 +2649,7 @@
                       ]
                     },
                     "confidence": {
-                      "anyOf": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["number", "null"]
                     },
                     "validFrom": {
                       "anyOf": [
@@ -2732,14 +2676,7 @@
                       ]
                     },
                     "rationale": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["string", "null"]
                     },
                     "status": {
                       "type": "string",
@@ -2827,14 +2764,7 @@
                       ]
                     },
                     "confidence": {
-                      "anyOf": [
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["number", "null"]
                     },
                     "validFrom": {
                       "anyOf": [
@@ -2861,14 +2791,7 @@
                       ]
                     },
                     "rationale": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": ["string", "null"]
                     },
                     "status": {
                       "type": "string",

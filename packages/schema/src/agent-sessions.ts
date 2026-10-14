@@ -5,6 +5,7 @@
 // nativeRememberInputSchema (packages/schema/src/write.ts).
 import { z } from 'zod'
 import { briefingSelectorV2Schema } from './briefing-bounds.js'
+import { isoDateTime } from './iso-datetime.js'
 import { actorKindSchema, eventKindSchema } from './memory.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
@@ -230,9 +231,9 @@ export const agentSessionOpenResponseSchema = z
      * `closed_at` still null reopens too.
      */
     reopened: z.boolean(),
-    openedAt: z.iso.datetime(),
-    lastSeenAt: z.iso.datetime(),
-    briefingDeliveredAt: z.iso.datetime().nullable(),
+    openedAt: isoDateTime(),
+    lastSeenAt: isoDateTime(),
+    briefingDeliveredAt: isoDateTime().nullable(),
   })
   .strict()
 export type AgentSessionOpenResponse = z.infer<typeof agentSessionOpenResponseSchema>
@@ -251,7 +252,7 @@ export const agentSessionCloseResponseSchema = z
   .object({
     sessionRunId: sessionRunIdSchema,
     activationEpoch: z.number().int().positive(),
-    closedAt: z.iso.datetime(),
+    closedAt: isoDateTime(),
     alreadyClosed: z.boolean(),
   })
   .strict()
@@ -284,7 +285,7 @@ export const agentSessionHeartbeatResponseSchema = z
   .object({
     sessionRunId: sessionRunIdSchema,
     activationEpoch: z.number().int().positive(),
-    lastSeenAt: z.iso.datetime(),
+    lastSeenAt: isoDateTime(),
     resurrected: z.boolean(),
   })
   .strict()
@@ -467,13 +468,13 @@ export const MAX_TRIAGE_ATTEMPT_LOG = 50
  */
 const triageAttemptArmedShape = {
   attemptId: z.uuid(),
-  armedAt: z.iso.datetime(),
+  armedAt: isoDateTime(),
 }
 export const triageAttemptLogEntrySchema = z.union([
   z
     .object({
       ...triageAttemptArmedShape,
-      finalizedAt: z.iso.datetime(),
+      finalizedAt: isoDateTime(),
       outcome: triageOutcomeStatusSchema,
     })
     .strict(),
@@ -598,7 +599,7 @@ export const sessionEventSchema = z
     eventKind: eventKindSchema,
     actorKind: actorKindSchema,
     sessionRunId: sessionRunIdSchema,
-    createdAt: z.iso.datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 export type SessionEvent = z.infer<typeof sessionEventSchema>
@@ -659,10 +660,10 @@ export const agentSessionRunResponseSchema = z
     selector: briefingSelectorV2Schema,
     activationEpoch: z.number().int().positive(),
     triageStatus: agentSessionTriageStatusSchema,
-    openedAt: z.iso.datetime(),
-    closedAt: z.iso.datetime().nullable(),
-    lastSeenAt: z.iso.datetime(),
-    briefingDeliveredAt: z.iso.datetime().nullable(),
+    openedAt: isoDateTime(),
+    closedAt: isoDateTime().nullable(),
+    lastSeenAt: isoDateTime(),
+    briefingDeliveredAt: isoDateTime().nullable(),
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
   })
   .strict()

@@ -229,6 +229,9 @@ export {
   MAX_IMPORT_CONTENT_LENGTH,
   MAX_IMPORT_PAYLOAD_LENGTH,
 } from './import.js'
+// --- ISO 8601 datetime: the one datetime grammar, pinned to zod 4.4.3's ---
+export type { IsoDateTimeOptions } from './iso-datetime.js'
+export { isoDateTime } from './iso-datetime.js'
 // --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,

@@ -73,7 +73,7 @@
     "ioredis": "5.11.1",
     "nodemailer": "10.0.16",
     "rate-limiter-flexible": "11.2.1",
-    "zod": "4.4.3"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",

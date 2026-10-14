@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { MAX_IMPORT_CONTENT_LENGTH } from './import.js'
+import { isoDateTime } from './iso-datetime.js'
 import { MAX_EXCERPT_LENGTH } from './mcp.js'
 import { memoryStatusSchema, memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
@@ -131,9 +132,9 @@ export const getMemoriesItemSchema = z
       ),
     commitmentStatus: commitmentStatusSchema.optional(),
     tags: z.array(z.string()),
-    validFrom: z.iso.datetime(),
-    validTo: z.iso.datetime().nullable(),
-    recordedAt: z.iso.datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

@@ -17,6 +17,7 @@
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
+import { isoDateTime } from './iso-datetime.js'
 import { MAX_MEMORY_TYPES_FILTER, searchFiltersSchema } from './mcp.js'
 import {
   actorKindSchema,
@@ -165,11 +166,8 @@ export const memoriesListQuerySchema = z
     // ALWAYS live-gated (valid_to IS NULL), so the range narrows within the live
     // view — consistent with search filters V2: a recorded_at range is never
     // time travel and never widens what a read surfaces.
-    recordedAfter: z.iso.datetime().describe(recordedBoundDescription('recordedAfter')).optional(),
-    recordedBefore: z.iso
-      .datetime()
-      .describe(recordedBoundDescription('recordedBefore'))
-      .optional(),
+    recordedAfter: isoDateTime().describe(recordedBoundDescription('recordedAfter')).optional(),
+    recordedBefore: isoDateTime().describe(recordedBoundDescription('recordedBefore')).optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -202,8 +200,8 @@ export const memoryListItemSchema = z
     scope: scopeSchema,
     status: memoryStatusSchema,
     commitmentStatus: commitmentStatusSchema.optional(),
-    recordedAt: z.iso.datetime(),
-    createdAt: z.iso.datetime(),
+    recordedAt: isoDateTime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 export type MemoryListItem = z.infer<typeof memoryListItemSchema>
@@ -242,10 +240,10 @@ export const memoryDetailSchema = z
     status: memoryStatusSchema,
     commitmentStatus: commitmentStatusSchema.optional(),
     tags: z.array(z.string()),
-    validFrom: z.iso.datetime(),
-    validTo: z.iso.datetime().nullable(),
-    recordedAt: z.iso.datetime(),
-    createdAt: z.iso.datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 export type MemoryDetail = z.infer<typeof memoryDetailSchema>
@@ -280,10 +278,10 @@ export const memoryHistoryIdentitySchema = z
     project: projectSchema.nullable(),
     scope: scopeSchema,
     status: memoryStatusSchema,
-    validFrom: z.iso.datetime(),
-    validTo: z.iso.datetime().nullable(),
-    recordedAt: z.iso.datetime(),
-    createdAt: z.iso.datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
+    createdAt: isoDateTime(),
     isCurrent: z.boolean(),
     lifecycleState: memoryHistoryLifecycleStateSchema,
   })
@@ -298,7 +296,7 @@ export const memoryHistoryEdgeSchema = z
     toId: z.uuid(),
     edgeType: edgeTypeSchema,
     createdBy: actorKindSchema,
-    createdAt: z.iso.datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 export type MemoryHistoryEdge = z.infer<typeof memoryHistoryEdgeSchema>
@@ -333,7 +331,7 @@ export const memoryHistoryEventSchema = z
     id: z.uuid(),
     eventKind: eventKindSchema,
     actorKind: actorKindSchema,
-    createdAt: z.iso.datetime(),
+    createdAt: isoDateTime(),
     payloadMetadata: memoryHistoryEventPayloadMetadataSchema,
   })
   .strict()
