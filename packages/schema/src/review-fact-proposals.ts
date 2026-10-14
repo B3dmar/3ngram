@@ -12,6 +12,7 @@
 // that buys nothing.
 import { z } from 'zod'
 import { proposalStatusSchema } from './consolidation.js'
+import { isoDateTime } from './iso-datetime.js'
 import { reviewProposalsOutputSchema } from './mcp.js'
 import { memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
@@ -41,12 +42,12 @@ export const factProposalRecordSchema = z
     value: z.string(),
     memoryType: memoryTypeSchema,
     confidence: z.number().nullable(),
-    validFrom: z.iso.datetime().nullable(),
-    validTo: z.iso.datetime().nullable(),
+    validFrom: isoDateTime().nullable(),
+    validTo: isoDateTime().nullable(),
     rationale: z.string().nullable(),
     status: proposalStatusSchema,
-    decidedAt: z.iso.datetime().nullable(),
-    createdAt: z.iso.datetime(),
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

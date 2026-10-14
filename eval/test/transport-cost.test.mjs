@@ -159,7 +159,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // CLI has no revise command. The tool description is unchanged (no
       // embeddings regen). MEASURED on this PR's actual base (staging
       // post-#223), not summed.
-      mcp: [27777, 224032, 55981],
+      // MCP -77/-616/-150 (zod 4.4.3 -> 4.6.5): no schema or description
+      // changed, only zod's JSON Schema emitter. A nullable primitive now
+      // emits `type: [T, "null"]` instead of a two-branch `anyOf`, which
+      // shrinks the tools/list surface MCP pays per turn. Date-time patterns
+      // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
+      // REST and CLI are unchanged. MEASURED on this PR's actual base
+      // (staging 5edac14), not summed.
+      mcp: [27700, 223416, 55831],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },

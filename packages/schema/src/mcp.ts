@@ -25,6 +25,7 @@
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
+import { isoDateTime } from './iso-datetime.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
@@ -349,8 +350,8 @@ export const MAX_FACTS_LIMIT = 200
  */
 export const asOfSchema = z
   .object({
-    validAt: z.iso.datetime().optional(),
-    asKnownAt: z.iso.datetime().optional(),
+    validAt: isoDateTime().optional(),
+    asKnownAt: isoDateTime().optional(),
   })
   .strict()
   .refine((v) => v.validAt !== undefined || v.asKnownAt !== undefined, {
@@ -464,9 +465,9 @@ export const factSchema = z
     predicate: z.string(),
     value: z.string(),
     confidence: z.number().nullable(),
-    validFrom: z.iso.datetime(),
-    validTo: z.iso.datetime().nullable(),
-    recordedAt: z.iso.datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -564,7 +565,7 @@ export const scopeRecordSchema = z
     id: z.uuid(),
     name: scopeNameSchema,
     aliases: scopeAliasesSchema,
-    createdAt: z.iso.datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -715,8 +716,8 @@ export const proposalRecordSchema = z
     similarity: z.number(),
     rationale: z.string().nullable(),
     status: proposalStatusSchema,
-    decidedAt: z.iso.datetime().nullable(),
-    createdAt: z.iso.datetime(),
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -830,7 +831,7 @@ export const briefingCommitmentSchema = z
     memoryId: z.uuid(),
     topic: z.string(),
     status: commitmentStatusSchema,
-    dueAt: z.iso.datetime().nullable(),
+    dueAt: isoDateTime().nullable(),
     overdue: z.boolean(),
   })
   .strict()
@@ -850,8 +851,8 @@ export const briefingMemoryItemSchema = z
     topic: z.string(),
     scope: scopeSchema,
     project: projectSchema.nullable(),
-    recordedAt: z.iso.datetime(),
-    updatedAt: z.iso.datetime(),
+    recordedAt: isoDateTime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -878,7 +879,7 @@ export const briefingToolOutputSchema = z
   .object({
     selector: briefingSelectorOutputSchema,
     mode: briefingModeSchema,
-    generatedAt: z.iso.datetime(),
+    generatedAt: isoDateTime(),
     commitments: briefingSectionSchema(briefingCommitmentSchema),
     overdue: briefingSectionSchema(briefingCommitmentSchema),
     blockers: briefingSectionSchema(briefingMemoryItemSchema),
@@ -935,7 +936,7 @@ export const handoffCommitmentSchema = z
     memoryId: z.uuid(),
     topic: z.string(),
     status: commitmentStatusSchema,
-    dueAt: z.iso.datetime().nullable(),
+    dueAt: isoDateTime().nullable(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -952,7 +953,7 @@ export const handoffToolOutputSchema = z
   .object({
     selector: briefingSelectorOutputSchema,
     generatedFor: z.string().nullable(),
-    generatedAt: z.iso.datetime(),
+    generatedAt: isoDateTime(),
     decisions: z.array(handoffMemorySchema),
     commitments: z.array(handoffCommitmentSchema),
     preferences: z.array(handoffMemorySchema),
@@ -1006,8 +1007,8 @@ export const searchFiltersV2Schema = z
       .describe(
         'OR-set of memory types to match. Mutually exclusive with memoryType — pass one or the other, never both.',
       ),
-    recordedAfter: z.iso.datetime().describe(recordedBoundDescription('recordedAfter')),
-    recordedBefore: z.iso.datetime().describe(recordedBoundDescription('recordedBefore')),
+    recordedAfter: isoDateTime().describe(recordedBoundDescription('recordedAfter')),
+    recordedBefore: isoDateTime().describe(recordedBoundDescription('recordedBefore')),
   })
   .partial()
   .strict()

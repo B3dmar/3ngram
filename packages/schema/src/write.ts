@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod'
+import { isoDateTime } from './iso-datetime.js'
 import { actorKindSchema, edgeTypeSchema, memoryTypeSchema } from './memory.js'
 import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
@@ -127,8 +128,7 @@ function factBoundDescription(bound: 'start' | 'end'): string {
  * The import path's nullableTimestampSchema DOES admit a Date because it is a
  * programmatic/SDK contract, not a tool surface.
  */
-const factTimestampSchema = z.iso
-  .datetime()
+const factTimestampSchema = isoDateTime()
   .refine((value) => !exceedsFractionalSecondPrecision(value, MAX_FACT_WRITE_FRACTION_DIGITS), {
     message: `use at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits (millisecond precision) — a finer instant would be silently truncated`,
   })
@@ -168,7 +168,7 @@ export const factWriteSchema = z
   // so '2026-01-01T00:00:00Z' <= '2026-01-01T00:00:00.001Z' is false — a valid
   // 1ms window would be rejected, and the inverted pair accepted. Two
   // timestamps that differ only in precision are exactly what a model-written
-  // call produces. z.iso.datetime() has already validated both, so Date.parse
+  // call produces. isoDateTime() has already validated both, so Date.parse
   // cannot return NaN here.
   .refine(
     (fact) =>

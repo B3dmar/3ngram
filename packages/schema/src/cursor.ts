@@ -20,6 +20,7 @@
 // dependency-light (zod only — no @types/node). Clients treat the token as
 // opaque and never decode it.
 import { z } from 'zod'
+import { isoDateTime } from './iso-datetime.js'
 import { exceedsFractionalSecondPrecision } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 
@@ -121,12 +122,10 @@ export type CursorPayloadV2 = z.infer<typeof cursorPayloadV2Schema>
 export const cursorPayloadV3Schema = z
   .object({
     v: z.literal(3),
-    recordedAt: z.iso
-      .datetime()
-      .refine(
-        (iso) => !exceedsFractionalSecondPrecision(iso, MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS),
-        { message: 'recordedAt precision exceeds microseconds' },
-      ),
+    recordedAt: isoDateTime().refine(
+      (iso) => !exceedsFractionalSecondPrecision(iso, MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS),
+      { message: 'recordedAt precision exceeds microseconds' },
+    ),
     id: z.uuid(),
     fp: fingerprintShape,
   })

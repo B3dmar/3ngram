@@ -23,6 +23,7 @@
 // ceiling covers observed corpora; beyond it the answer is search + get_memories
 // per the existing "page via search" doctrine.
 import { z } from 'zod'
+import { isoDateTime } from './iso-datetime.js'
 import {
   briefingCommitmentSchema,
   briefingMemoryItemSchema,
@@ -258,7 +259,7 @@ function briefingOutputEnvelope<S extends z.ZodType>(selector: S) {
     .object({
       selector,
       mode: briefingModeSchema,
-      generatedAt: z.iso.datetime(),
+      generatedAt: isoDateTime(),
       commitments: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
       overdue: briefingSectionV2Schema(briefingCommitmentSchema).optional(),
       blockers: briefingSectionV2Schema(briefingMemoryItemSchema).optional(),
