@@ -326,6 +326,7 @@ describe('queue wiring (harness, Redis mocked)', () => {
         // durable sweep scheduler rather than merely skipping the upsert.
         removeJobScheduler = vi.fn(async () => true)
         add = vi.fn(async () => ({}))
+        on = vi.fn()
         close = vi.fn(async () => {})
       },
       Worker: class {
