@@ -66,8 +66,8 @@
     "@3ngram/core": "workspace:*",
     "@3ngram/llm": "workspace:*",
     "@3ngram/schema": "workspace:*",
-    "@modelcontextprotocol/node": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "express": "5.2.1",
     "hono": "4.13.11",
     "ioredis": "5.11.1",
@@ -76,7 +76,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "@types/express": "5.0.6",
     "@types/node": "25.9.1",
     "tsx": "4.22.4",
