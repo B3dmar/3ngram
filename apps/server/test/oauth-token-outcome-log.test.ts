@@ -9,7 +9,7 @@
 // createLogger(stream) precedent from packages/config/test/redaction.test.ts.
 import type { Server } from 'node:http'
 import { contentDigest, setLogDestination } from '@3ngram/config'
-import type { OAuthServerProvider } from '@modelcontextprotocol/server-legacy/auth'
+import type { OAuthServerProviderShape } from '@3ngram/core/auth'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const TOKENS = {
@@ -57,7 +57,7 @@ vi.mock('@3ngram/core/auth', async (importOriginal) => {
           if (exchangeShouldThrow) throw new Error('boom: an unexpected internal fault')
           return TOKENS
         },
-      }) as unknown as OAuthServerProvider,
+      }) as unknown as OAuthServerProviderShape,
     insertAuditLog: vi.fn(async () => undefined),
   }
 })

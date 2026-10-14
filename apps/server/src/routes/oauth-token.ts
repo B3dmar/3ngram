@@ -4,18 +4,18 @@
 // authenticate the client, delegate the grant exchange to the core provider,
 // shape the RFC 6749 response.
 //
-// CLIENT AUTH IS CUSTOM (by design): the SDK's authenticateClient
-// middleware compares a PLAINTEXT secret against what the clients store
-// returns — but our store never returns secret material (only the SHA-256 hash
-// is at rest), so the SDK default cannot work. authenticateClientCredentials
-// (core) hashes the presented secret and compares against the stored hash.
-// The retained legacy AS helper reads client credentials from req.body, so a
+// CLIENT AUTH IS CUSTOM (by design): a stock authenticateClient middleware
+// compares a PLAINTEXT secret against what the clients store returns — but our
+// store never returns secret material (only the SHA-256 hash is at rest), so
+// that default cannot work. authenticateClientCredentials (core) hashes the
+// presented secret and compares against the stored hash.
+// The token request schema reads client credentials from req.body, so a
 // Basic-auth shim decodes `Authorization: Basic` into the body first (RFC 6749 §2.3.1) —
 // that is how client_secret_basic (the RFC 7591 default) is honored.
 //
-// ERRORS ARE THE SDK'S TYPED ERRORS ONLY: every failure maps to
-// an OAuthError subclass and its RFC 6749 response object — a generic Error
-// becomes the opaque ServerError 500 and is logged crash-safe. Token, code,
+// ERRORS ARE THE SDK'S OAuthError ONLY: every failure maps to an OAuthError
+// carrying an OAuthErrorCode and its RFC 6749 response object — a generic Error
+// becomes the opaque server_error 500 and is logged crash-safe. Token, code,
 // and secret material never enter a log line or an error body.
 import { contentDigest, loadOAuthConfig, log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
@@ -30,17 +30,7 @@ import {
   touchClientLastUsed,
 } from '@3ngram/core/auth'
 import { type TokenEndpointAuthMethod, tokenRequestSchema } from '@3ngram/schema'
-import {
-  InvalidClientError,
-  InvalidGrantError,
-  InvalidRequestError,
-  InvalidTargetError,
-  InvalidTokenError,
-  OAuthError,
-  type OAuthServerProvider,
-  ServerError,
-  UnsupportedGrantTypeError,
-} from '@modelcontextprotocol/server-legacy/auth'
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
 import { type NextFunction, type Request, type Response, Router, urlencoded } from 'express'
 import type { Redis } from 'ioredis'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
@@ -116,7 +106,7 @@ function decodeBasicCredentials(
 }
 
 /**
- * RFC 6749 §2.3.1 / §3.2.1 client-authentication shim (S4). The SDK reads
+ * RFC 6749 §2.3.1 / §3.2.1 client-authentication shim (S4). The schema reads
  * credentials from req.body only, so this normalizes every accepted channel
  * into the body the schema validates AND attributes the presented method so the
  * auth step can enforce the registered token_endpoint_auth_method:
@@ -372,25 +362,31 @@ function logTokenOutcome(grantType: unknown, clientId: unknown, outcome: string)
   )
 }
 
-/** Map a thrown failure to the SDK's typed OAuthError (generic -> ServerError 500). */
+/** Map a thrown failure to the SDK's OAuthError (generic -> server_error 500). */
 export function toOAuthError(err: unknown): OAuthError {
   if (err instanceof OAuthError) return err
   if (err instanceof ResourceLimitExceededError) {
-    return new InvalidGrantError('Active MCP client limit reached')
+    return new OAuthError(OAuthErrorCode.InvalidGrant, 'Active MCP client limit reached')
   }
   if (err instanceof OAuthGrantError) {
     switch (err.code) {
       case 'invalid_grant':
-        return new InvalidGrantError('The provided grant is invalid, expired, or revoked')
+        return new OAuthError(
+          OAuthErrorCode.InvalidGrant,
+          'The provided grant is invalid, expired, or revoked',
+        )
       case 'invalid_client':
-        return new InvalidClientError('Client authentication failed')
+        return new OAuthError(OAuthErrorCode.InvalidClient, 'Client authentication failed')
       case 'invalid_target':
-        return new InvalidTargetError('The requested resource is not served by this server')
+        return new OAuthError(
+          OAuthErrorCode.InvalidTarget,
+          'The requested resource is not served by this server',
+        )
       case 'invalid_token':
-        return new InvalidTokenError('The access token is invalid')
+        return new OAuthError(OAuthErrorCode.InvalidToken, 'The access token is invalid')
     }
   }
-  return new ServerError('Internal Server Error')
+  return new OAuthError(OAuthErrorCode.ServerError, 'Internal Server Error')
 }
 
 /**
@@ -419,22 +415,34 @@ async function handleTokenRequest(
   // RFC 6749 §5.1 also mandates Pragma: no-cache on token-bearing responses.
   res.setHeader('Pragma', 'no-cache')
   if (rejectsNonFormContentType(req)) {
-    throw new InvalidRequestError('The token endpoint requires application/x-www-form-urlencoded')
+    throw new OAuthError(
+      OAuthErrorCode.InvalidRequest,
+      'The token endpoint requires application/x-www-form-urlencoded',
+    )
   }
   // A malformed Basic header or a Basic identity conflicting with a posted
   // client_id is a failed client authentication (RFC 6749 §2.3/§3.2.1) — a
   // uniform invalid_client with no oracle, decided before any schema/provider work.
-  if (clientAuthIsInvalid(req)) throw new InvalidClientError('Client authentication failed')
+  if (clientAuthIsInvalid(req)) {
+    throw new OAuthError(OAuthErrorCode.InvalidClient, 'Client authentication failed')
+  }
   const body = (req.body ?? {}) as Record<string, unknown>
   // RFC 6749 §5.2: a request missing required parameters is invalid_request.
   // An absent grant_type (e.g. an empty body) is a malformed request, distinct
   // from a PRESENT-but-unrecognized grant_type (unsupported_grant_type).
-  if (body.grant_type === undefined) throw new InvalidRequestError('Malformed token request')
+  if (body.grant_type === undefined) {
+    throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Malformed token request')
+  }
   if (body.grant_type !== 'authorization_code' && body.grant_type !== 'refresh_token') {
-    throw new UnsupportedGrantTypeError('The grant type is not supported by this server')
+    throw new OAuthError(
+      OAuthErrorCode.UnsupportedGrantType,
+      'The grant type is not supported by this server',
+    )
   }
   const parsed = tokenRequestSchema.safeParse(body)
-  if (!parsed.success) throw new InvalidRequestError('Malformed token request')
+  if (!parsed.success) {
+    throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Malformed token request')
+  }
   const input = parsed.data
   // Apply progressive delay before the grant exchange. The delay is keyed on
   // client_id (never logged) and ramps after DELAY_THRESHOLD
@@ -448,11 +456,9 @@ async function handleTokenRequest(
   )
   if (client === undefined || !client.grant_types.includes(input.grant_type)) {
     await recordExchangeFailure(input.client_id)
-    throw new InvalidClientError('Client authentication failed')
+    throw new OAuthError(OAuthErrorCode.InvalidClient, 'Client authentication failed')
   }
-  // COMPILE PIN: the core provider must remain assignable to the retained
-  // legacy OAuthServerProvider while DCR compatibility remains supported.
-  const provider: OAuthServerProvider = createOAuthServerProvider(loadOAuthConfig(), limits)
+  const provider = createOAuthServerProvider(loadOAuthConfig(), limits)
   const resource = input.resource === undefined ? undefined : new URL(input.resource)
   let tokens: Awaited<ReturnType<typeof provider.exchangeAuthorizationCode>>
   try {
@@ -516,14 +522,14 @@ export function oauthTokenRouter(options: OAuthTokenRouterOptions): Router {
           // outcome IS the mapped RFC error code (invalid_grant|invalid_client|
           // invalid_request|unsupported_grant_type|server_error) — docs/concepts/observability.mdx
           // wants the same vocabulary the client sees in the response body.
-          logTokenOutcome(body.grant_type, body.client_id, oauthError.errorCode)
-          if (oauthError instanceof ServerError) {
+          logTokenOutcome(body.grant_type, body.client_id, oauthError.code)
+          if (oauthError.code === OAuthErrorCode.ServerError) {
             log().error(crashSafeError(err), 'oauth: token endpoint failure')
           }
           // RFC 6749 §5.2: a failed client authentication is 401, not 400; and
           // when the client authenticated via the Authorization header, the
           // response MUST carry a matching WWW-Authenticate challenge.
-          if (oauthError instanceof InvalidClientError) {
+          if (oauthError.code === OAuthErrorCode.InvalidClient) {
             if (req.header('authorization')?.toLowerCase().startsWith('basic ') === true) {
               res.setHeader('WWW-Authenticate', 'Basic realm="oauth"')
             }
@@ -531,7 +537,7 @@ export function oauthTokenRouter(options: OAuthTokenRouterOptions): Router {
             return
           }
           res
-            .status(oauthError instanceof ServerError ? 500 : 400)
+            .status(oauthError.code === OAuthErrorCode.ServerError ? 500 : 400)
             .json(oauthError.toResponseObject())
         },
       )
