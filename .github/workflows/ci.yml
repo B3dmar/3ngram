@@ -232,6 +232,8 @@ jobs:
           bash scripts/check-docs-truth.sh
           bash scripts/check-no-direct-provider.sh --self-test
           bash scripts/check-no-direct-provider.sh
+          # Merge-readiness helper (needs gh at run time); the parsing is checked offline.
+          bash scripts/pr-bot-status.sh --self-test
           # Curated release notes must exist for the current apps/server version
           # BEFORE a v* tag is cut — release-publish.yml rejects the tag without
           # them and v* tags are immutable (this is how v1.2.5 was burned).
