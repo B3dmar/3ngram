@@ -13,7 +13,6 @@
 // there — apps/server has no @3ngram/db dependency by layering, hard rule 5).
 import type { Server } from 'node:http'
 import type { ClientRegistrationInput } from '@3ngram/schema'
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface FakeClientInformation {
@@ -36,10 +35,6 @@ vi.mock('@3ngram/core/auth', async (importOriginal) => {
 
 const { createTestApp } = await import('./test-app.js')
 const { oauthClientsStore } = await import('@3ngram/core/auth')
-
-// COMPILE-TIME contract: the core store must satisfy the retained legacy
-// OAuthRegisteredClientsStore interface while DCR compatibility remains.
-const sdkStore: OAuthRegisteredClientsStore = oauthClientsStore
 
 let server: Server
 let baseUrl: string
@@ -179,10 +174,10 @@ describe('POST /oauth/register — 400 contract (schema is the one boundary)', (
 })
 
 describe('oauthClientsStore (the A2 contract)', () => {
-  it('exposes the SDK-shaped getClient (assignability pinned at compile time above)', () => {
-    expect(typeof sdkStore.getClient).toBe('function')
+  it('exposes getClient and deliberately no registerClient', () => {
+    expect(typeof oauthClientsStore.getClient).toBe('function')
     // registerClient is DELIBERATELY absent: DCR is served only by this route,
-    // so the SDK router never mounts its own permissive /register handler.
-    expect(sdkStore.registerClient).toBeUndefined()
+    // through the one schema validation boundary (hard rule 2).
+    expect('registerClient' in oauthClientsStore).toBe(false)
   })
 })

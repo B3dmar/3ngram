@@ -44,11 +44,9 @@ import {
 const CLIENT_SECRET_BYTES = 32
 
 /**
- * RFC 7591 client information — structurally assignable to the legacy auth
- * package's `OAuthClientInformationFull` (client_id + redirect_uris required,
- * the rest optional). Declared locally because packages/core does not depend
- * on the transport SDK; apps/server pins assignability at compile time while
- * DCR remains a compatibility fallback.
+ * RFC 7591 client information (client_id + redirect_uris required, the rest
+ * optional). Declared locally because packages/core does not depend on the
+ * transport SDK.
  */
 export interface OAuthClientInformation {
   client_id: string
@@ -65,13 +63,11 @@ export interface OAuthClientInformation {
 }
 
 /**
- * Structural mirror of the SDK's `OAuthRegisteredClientsStore` getClient member
- * — the AS hands {@link oauthClientsStore} to mcpAuthRouter unchanged.
- * `registerClient` is deliberately NOT implemented on the store: the SDK's
+ * The registered-clients lookup the authorization server reads.
+ * `registerClient` is deliberately NOT implemented on the store: a generic,
  * permissive RFC 7591 metadata schema would bypass the packages/schema
  * redirect-URI policy (hard rule 2 — one validation boundary), so DCR is served
- * exclusively by POST /oauth/register; the SDK router consequently does not
- * mount its own /register handler.
+ * exclusively by POST /oauth/register.
  */
 export interface OAuthClientsStore {
   getClient(clientId: string): Promise<OAuthClientInformation | undefined>
@@ -148,7 +144,7 @@ export async function registerOAuthClient(
     : { ...info, client_secret: clientSecret, client_secret_expires_at: 0 }
 }
 
-/** The registered-clients store handed to the SDK's mcpAuthRouter. */
+/** The registered-clients store (dynamically registered clients only). */
 export const oauthClientsStore: OAuthClientsStore = {
   async getClient(clientId: string): Promise<OAuthClientInformation | undefined> {
     const row = await getClientByClientId(clientId)
