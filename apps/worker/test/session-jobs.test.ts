@@ -77,6 +77,7 @@ async function bootQueues(closerEnabled: boolean) {
           return {}
         },
       )
+      on = vi.fn()
       close = vi.fn(async () => {})
     },
     Worker: class {
@@ -302,7 +303,7 @@ describe('closer job removal policy', () => {
 
 describe('the job id is legal for BullMQ 5', () => {
   it('contains no colon at all', () => {
-    // BullMQ 5.78.0 rejects a custom id containing ':' UNLESS it splits into
+    // BullMQ 5.81.5 rejects a custom id containing ':' UNLESS it splits into
     // exactly three segments — a backwards-compatibility carve-out for legacy
     // repeatable ids (`name:id:millis`), carrying an in-source TODO to become a
     // blanket rejection. A three-segment colon id would pass today only by
@@ -310,7 +311,7 @@ describe('the job id is legal for BullMQ 5', () => {
     expect(sessionCloserJobId(DATA)).not.toContain(':')
   })
 
-  it('satisfies BullMQ 5.78.0 addJob validation directly', () => {
+  it('satisfies BullMQ 5.81.5 addJob validation directly', () => {
     // The check, transcribed from bullmq/dist/cjs/classes/job.js:
     //   if (jobId.includes(':') && jobId.split(':').length !== 3) throw
     //   if (`${parseInt(jobId, 10)}` === jobId) throw   // "cannot be integers"

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // OAuth authorization-server provider: the
 // authorization-code + PKCE policy behind /oauth/authorize + /oauth/token.
-// Structurally assignable to the legacy auth package's `OAuthServerProvider`
-// while DCR remains a compatibility fallback (the types are mirrored locally
-// so core has no transport SDK dependency; apps/server pins assignability).
+// The provider and client types are declared locally so core has no
+// transport SDK dependency.
 //
 // Grant mechanics:
 // - authorize: mint a 32-byte CSPRNG code, store its SHA-256 hash (the code
@@ -89,10 +88,9 @@ export interface OAuthTokenResponse {
 }
 
 /**
- * Parameters for issuing a code. Mirrors the SDK `AuthorizationParams` PLUS
- * the authenticated userId — the SDK leaves user interaction to the provider;
- * here the consent transport authenticates first and passes the subject in
- * (a strict subtype, so the SDK-shape compile pin still holds).
+ * Parameters for issuing a code: the OAuth authorization parameters PLUS the
+ * authenticated userId — the consent transport authenticates first and passes
+ * the subject in.
  */
 export interface AuthorizeCodeGrant {
   userId: string
@@ -145,7 +143,7 @@ export interface VerifiedTokenInfo {
   expiresAt?: number
 }
 
-/** Structural mirror of the legacy auth package's provider (compile-pinned in apps/server). */
+/** The authorization-server provider the /oauth/authorize and /oauth/token transports call. */
 export interface OAuthServerProviderShape {
   clientsStore: OAuthClientsStore
   /** PKCE is verified INSIDE exchangeAuthorizationCode (consume-then-verify). */
