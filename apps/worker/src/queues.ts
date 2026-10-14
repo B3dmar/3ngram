@@ -102,7 +102,7 @@ export interface WorkerHandles {
  * ever mitigated the high-volume case.
  *
  * TERMINAL ONLY. `removeOnFail` reaches `moveToFailedArgs` exclusively on the
- * non-retry branch of `Job.moveToFailed` (bullmq 5.78.0), so a job failing
+ * non-retry branch of `Job.moveToFailed` (bullmq 5.81.5), so a job failing
  * attempt 1 of 3 stays in the retry chain untouched — the id is freed once, when
  * the attempts are exhausted.
  *
@@ -160,7 +160,7 @@ function closerEnqueuer(queue: Queue): (request: CloserEnqueueRequest) => Promis
 /**
  * Is THIS invocation of the processor the last one BullMQ will make for `job`
  * (issue #184)? Mirrors the ATTEMPT-COUNT ARITHMETIC of `Job.shouldRetryJob`'s
- * own check (bullmq 5.78.0, classes/job.js) — NOT the whole check; see the
+ * own check (bullmq 5.81.5, classes/job.js) — NOT the whole check; see the
  * qualifier below — read at the same point in the lifecycle: our processor
  * runs BEFORE `moveToCompleted`/`moveToFailed` touch `job.attemptsMade`, so
  * during THIS call it still holds the count of attempts that already
@@ -236,6 +236,25 @@ function closerDisabled(jobName: string): { skipped: 'closer-disabled' } {
 }
 
 /**
+ * The `error` listener for the Queue and the Worker. Since bullmq 5.81.2 both
+ * forward a connection error only when something listens for `error` (5.78.0
+ * printed an unhandled one instead), so without this the failures of the
+ * blocking connection BullMQ duplicates from ours vanish: that client carries
+ * none of src/redis.ts's listeners.
+ *
+ * The error name plus the queue name only, like src/redis.ts. Never the error
+ * object or its message (hard rule 6): an ioredis ReplyError carries the failed
+ * command's arguments, and the Worker forwards a JSON.parse failure on stored
+ * job data whose message quotes a slice of that payload. `warn`, like
+ * src/redis.ts's client errors, because BullMQ reconnects on its own. Cannot
+ * throw: a non-Error value is reported by its type.
+ */
+export function logBullmqError(source: 'queue' | 'worker', err: unknown): void {
+  const name = err instanceof Error ? err.name : typeof err
+  log().warn({ queue: QUEUE_NAME, err: name }, `worker: bullmq ${source} error`)
+}
+
+/**
  * Build the Queue + Worker on the given connection and register both repeatable
  * job schedulers. The connection MUST be the worker's BullMQ-tuned client
  * (maxRetriesPerRequest:null — see src/redis.ts). Idempotent: upsertJobScheduler
@@ -243,6 +262,7 @@ function closerDisabled(jobName: string): { skipped: 'closer-disabled' } {
  */
 export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   const queue = new Queue(QUEUE_NAME, { connection })
+  queue.on('error', (err) => logBullmqError('queue', err))
   // The closer is the only job that needs generation. Resolve the gateway ONCE
   // at boot (env-gated, exactly as apps/server does) rather than per job: it is
   // a pure factory, and re-reading env per tick would let a live process drift.
@@ -267,6 +287,7 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
     (job) => process(job, queue, gateway, budget, closer.enabled),
     { connection },
   )
+  worker.on('error', (err) => logBullmqError('worker', err))
 
   worker.on('failed', (job, err) => {
     // ids + counts + error name only — never job data / memory content (hard
