@@ -14,9 +14,10 @@ overrides:
   esbuild@<0.25.0: ">=0.25.0"
   esbuild@>=0.27.3 <0.28.1: ^0.28.1
   # GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx (<4.13.5) and
-  # GHSA-hxh3-vqpv-xpqv (<4.13.7). Transitive under @modelcontextprotocol/node ->
-  # @hono/node-server (peer range), so the direct apps/server pin alone does not
-  # move it. Re-cut 2026-10-06 from <4.12.34.
+  # GHSA-hxh3-vqpv-xpqv (<4.13.7). Transitive: @modelcontextprotocol/node 2.1.1
+  # depends on hono ^4.11.4 directly and @hono/node-server takes it as a peer, so
+  # the direct apps/server pin alone does not move it. Re-cut 2026-10-06 from
+  # <4.12.34.
   hono@<4.13.7: ^4.13.7
   nanoid@<3.3.18: ^3.3.18
   postcss@<=8.5.22: 8.5.23

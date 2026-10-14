@@ -133,4 +133,23 @@ describe('MCP protocol compatibility', () => {
       client.callTool({ name: 'describe_environment', arguments: {} }),
     ).rejects.toMatchObject({ code: -32_020 })
   })
+
+  it('rejects a modern request that omits MCP-Protocol-Version', async () => {
+    // The 2026-07-28 revision makes the header mandatory on every POST; since
+    // @modelcontextprotocol/server 2.3.0 a missing one is a 400 / -32020
+    // instead of being inferred. Spec-conformant clients always send it.
+    const client = await connect(
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+      (request) => {
+        if (request.headers.get('mcp-method') !== 'tools/call') return request
+        const headers = new Headers(request.headers)
+        headers.delete('mcp-protocol-version')
+        return new Request(request, { headers })
+      },
+    )
+
+    await expect(
+      client.callTool({ name: 'describe_environment', arguments: {} }),
+    ).rejects.toMatchObject({ code: -32_020 })
+  })
 })
