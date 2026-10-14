@@ -33,10 +33,10 @@ export interface IsoDateTimeOptions {
   readonly local?: boolean
   /**
    * Fixed time precision: `-1` minutes only, `0` whole seconds, `n > 0` exactly
-   * `n` fractional digits. Omitted, seconds and any number of fractional digits
-   * are optional.
+   * `n` fractional digits. Omitted or `null` (zod's `TimePrecision.Any`),
+   * seconds and any number of fractional digits are optional.
    */
-  readonly precision?: number
+  readonly precision?: number | null
 }
 
 // zod 4.4.3 `dateSource`, verbatim: calendar-valid dates including leap days.
@@ -44,9 +44,9 @@ const DATE_SOURCE =
   '(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))'
 
 // zod 4.4.3 `timeSource`: with no precision, seconds stay optional even before `Z`.
-function timeSource(precision: number | undefined): string {
+function timeSource(precision: number | null | undefined): string {
   const hhmm = '(?:[01]\\d|2[0-3]):[0-5]\\d'
-  if (precision === undefined) return `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`
+  if (precision == null) return `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`
   if (precision === -1) return hhmm
   if (precision === 0) return `${hhmm}:[0-5]\\d`
   return `${hhmm}:[0-5]\\d\\.\\d{${precision}}`

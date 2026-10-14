@@ -63,6 +63,7 @@ const CASES: ReadonlyArray<readonly [string, boolean]> = [
 
 const OPTION_SETS: ReadonlyArray<IsoDateTimeOptions> = [
   {},
+  { precision: null }, // zod's TimePrecision.Any: same grammar as omitted
   { offset: true },
   { local: true },
   { offset: true, local: true },
