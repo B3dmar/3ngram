@@ -9,16 +9,16 @@
 //     Redis-backed counter (INCR + EXPIRE), shared across instances.
 // (d) Successful exchange clears the counter via clearExchangeFailures.
 //
-// The failure tracker is exercised against an injected ioredis-mock client
-// (setExchangeFailureRedis) so the Redis path is covered with NO real Redis,
-// matching the rate-limiter's "no real Redis in CI" contract.
+// The failure tracker is exercised against an injected in-memory FakeRedis
+// (./fake-redis.ts, via setExchangeFailureRedis) so the Redis path is covered
+// with NO real Redis, matching the rate-limiter's "no real Redis in CI" contract.
 import type { Server } from 'node:http'
 import { contentDigest, runWithContext } from '@3ngram/config'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import type { Redis } from 'ioredis'
-import RedisMock from 'ioredis-mock'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiKeyIdKey, createRateLimiter } from '../src/middleware/rate-limit.js'
+import { FakeRedis } from './fake-redis.js'
 
 // ---------------------------------------------------------------------------
 // (b) req.apiKeyId is set by apiKeyAuth from a valid key
@@ -41,7 +41,7 @@ const {
   _exchangeFailures,
 } = await import('../src/routes/oauth-token.js')
 
-// The Redis key prefix the tracker uses; the tests inspect the mock directly.
+// The Redis key prefix the tracker uses; the tests inspect the fake directly.
 const FAILURE_KEY_PREFIX = 'oauth:exchange-failure:'
 const failureKey = (clientId: string): string => `${FAILURE_KEY_PREFIX}${contentDigest(clientId)}`
 
@@ -210,8 +210,8 @@ describe('/api/v1 per-key rate limiter wiring (Part A, #146)', () => {
 //
 // The tracker now keeps its counter in Redis (INCR + EXPIRE keyed
 // `oauth:exchange-failure:{client_id}`) so the failure budget is shared across
-// Railway replicas. Every test injects a fresh ioredis-mock client via
-// setExchangeFailureRedis and inspects the mock's keyspace directly — no real
+// Railway replicas. Every test injects a fresh FakeRedis client via
+// setExchangeFailureRedis and inspects the fake's keyspace directly — no real
 // Redis is required (mirroring rate-limit.ts's "no real Redis in CI" contract).
 // ---------------------------------------------------------------------------
 
@@ -221,7 +221,7 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
   let redis: Redis
 
   beforeEach(() => {
-    redis = new RedisMock() as unknown as Redis
+    redis = new FakeRedis() as unknown as Redis
     setExchangeFailureRedis(redis)
   })
 
@@ -294,7 +294,7 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
   })
 
   it('the counter expires after the reset TTL, forgiving an idle client', async () => {
-    // Drive the mock's TTL clock forward to prove the key is reclaimed: a client
+    // Drive the fake's TTL clock forward to prove the key is reclaimed: a client
     // that stops failing for the window recovers with no successful exchange.
     vi.useFakeTimers()
     try {
@@ -331,7 +331,7 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
   })
 
   it('applyProgressiveDelay delays after DELAY_THRESHOLD failures are reached', async () => {
-    // Record against the mock with REAL timers (the mock's promise resolution
+    // Record against the fake with REAL timers (the fake's promise resolution
     // does not need timer advancement), then switch to fake timers to assert the
     // setTimeout-based backoff without waiting a real second.
     await recordExchangeFailure('cl_delay')
@@ -368,17 +368,19 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
   })
 
   it('shares the failure budget across instances via the same Redis keyspace (#246)', async () => {
-    // Simulate two replicas: each gets its own tracker binding but the SAME
+    // Simulate two replicas: each gets its own Redis client but the SAME
     // backing store. Failures recorded "on replica A" must be visible to the
     // delay decision "on replica B" — the cross-replica budget the migration buys.
     const replicaA = redis
-    const replicaB = redis // same keyspace, distinct logical instance
+    const replicaB = redis.duplicate() // distinct client, same keyspace
+    expect(replicaB).not.toBe(replicaA)
     setExchangeFailureRedis(replicaA)
     await recordExchangeFailure('cl_shared')
     await recordExchangeFailure('cl_shared')
     setExchangeFailureRedis(replicaB)
     await recordExchangeFailure('cl_shared') // count now 3 across both
     expect(await replicaB.get(failureKey('cl_shared'))).toBe('3')
+    expect(await replicaA.get(failureKey('cl_shared'))).toBe('3')
   })
 
   it('fails open when the Redis client errors (delay lapses, never throws)', async () => {
