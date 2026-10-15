@@ -1,5 +1,0 @@
----
-"@3ngram/server": patch
----
-
-Move the MCP SDK packages together past the 7-day release-age cooldown: `@modelcontextprotocol/server` 2.0.0 -> 2.3.1 and `@modelcontextprotocol/node` 2.0.0 -> 2.1.1 (it requires server ^2.3.0), plus the test-only `@modelcontextprotocol/client` 2.2.0 -> 2.3.1, which leaves one `@modelcontextprotocol/core` (2.3.1) in the graph. The tool, prompt and resource-template surface clients list is byte-for-byte unchanged, and `/mcp` already builds one server per request, which server 2.3.0 now requires. Three wire behaviours change. `prompts/get` for `debrief` with `arguments` omitted now renders the prompt instead of failing with -32602, matching its advertised all-optional arguments. A 2026-07-28 POST without the `MCP-Protocol-Version` header is refused with 400 / -32020; SDK clients always send it. A legacy JSON-RPC batch of more than 100 messages is refused with 400 / -32600. `express.json()`'s 100 KB limit still applies before the SDK's new 4 MiB body bound.
