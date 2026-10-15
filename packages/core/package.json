@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/core",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "description": "Domain services (auth, memory write path, retrieval). The apps->core->db layer; never imports express/MCP types (docs/concepts/architecture.mdx).",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",
@@ -47,9 +47,9 @@
     "@3ngram/db": "workspace:*",
     "@3ngram/llm": "workspace:*",
     "@3ngram/schema": "workspace:*",
-    "@node-rs/argon2": "2.0.2",
-    "ipaddr.js": "2.4.0",
-    "jose": "6.2.3"
+    "@node-rs/argon2": "2.2.2",
+    "ipaddr.js": "2.5.0",
+    "jose": "6.2.12"
   },
   "devDependencies": {
     "@types/node": "25.9.1",

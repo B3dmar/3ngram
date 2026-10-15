@@ -5,6 +5,7 @@
 // and briefing-bounds.ts: successor schemas compose beside the shipped one
 // (ADR-0011), never edit the shipped shape in place.
 import { z } from 'zod'
+import { isoDateTime } from './iso-datetime.js'
 import { factsQueryInputSchema } from './mcp.js'
 import {
   exceedsRecordedBoundPrecision,
@@ -37,16 +38,12 @@ import {
  */
 export const factsRangeSchema = z
   .object({
-    from: z.iso
-      .datetime()
-      .describe(
-        `Inclusive lower bound on valid_from (valid-time window). Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). Must not be later than \`to\` when both are given.`,
-      ),
-    to: z.iso
-      .datetime()
-      .describe(
-        `Exclusive upper bound on the valid-time window [from, to). Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). Must not be earlier than \`from\` when both are given.`,
-      ),
+    from: isoDateTime().describe(
+      `Inclusive lower bound on valid_from (valid-time window). Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). Must not be later than \`to\` when both are given.`,
+    ),
+    to: isoDateTime().describe(
+      `Exclusive upper bound on the valid-time window [from, to). Use at most ${MAX_RECORDED_BOUND_FRACTION_DIGITS} fractional-second digits (millisecond precision). Must not be earlier than \`from\` when both are given.`,
+    ),
   })
   .partial()
   .strict()

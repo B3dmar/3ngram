@@ -442,13 +442,9 @@ Read currently-valid facts, optionally with bi-temporal filters.
             "type": "string"
           },
           "confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "number",
+              "null"
             ]
           },
           "validFrom": {

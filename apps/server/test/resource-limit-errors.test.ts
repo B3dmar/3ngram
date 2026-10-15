@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ResourceLimitExceededError } from '@3ngram/core/auth'
-import { InvalidGrantError } from '@modelcontextprotocol/server-legacy/auth'
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
 import { describe, expect, it } from 'vitest'
 import { RESOURCE_LIMITS_ENFORCED } from '../src/app.js'
 import { toOAuthError } from '../src/routes/oauth-token.js'
@@ -21,7 +21,8 @@ describe('resource-limit transport mappings', () => {
   it('maps active-client denial to RFC invalid_grant with a safe description', () => {
     const mapped = toOAuthError(new ResourceLimitExceededError('active_mcp_clients'))
 
-    expect(mapped).toBeInstanceOf(InvalidGrantError)
+    expect(mapped).toBeInstanceOf(OAuthError)
+    expect(mapped.code).toBe(OAuthErrorCode.InvalidGrant)
     expect(mapped.toResponseObject()).toEqual({
       error: 'invalid_grant',
       error_description: 'Active MCP client limit reached',
