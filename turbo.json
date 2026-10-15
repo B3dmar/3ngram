@@ -23,6 +23,6 @@
     }
   },
   "remoteCache": {
-    "signature": true
+    "enabled": false
   }
 }
