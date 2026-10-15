@@ -1,5 +1,13 @@
 # @3ngram/cli
 
+## 1.8.6
+
+### Patch Changes
+
+- Updated dependencies [34f1985]
+  - @3ngram/schema@0.11.2
+  - @3ngram/sdk@1.8.6
+
 ## 1.8.5
 
 ### Patch Changes
