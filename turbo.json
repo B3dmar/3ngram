@@ -21,5 +21,8 @@
       "passThroughEnv": ["DATABASE_URL", "DATABASE_URL_UNPOOLED", "I_AM_AN_EPHEMERAL_DB"],
       "cache": false
     }
+  },
+  "remoteCache": {
+    "enabled": false
   }
 }
