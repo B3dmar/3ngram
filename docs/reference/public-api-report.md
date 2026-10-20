@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.5.0
+## `@3ngram/config` 0.5.1
 
 ### `.`
 
@@ -56,7 +56,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `0e9be93c5f8d` |
+| `envSchema` | const | `3b83b111807f` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -112,7 +112,7 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `0e9be93c5f8d` |
+| `envSchema` | const | `3b83b111807f` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `0d36c5eb44b0` |
@@ -176,7 +176,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.13.2
+## `@3ngram/core` 0.13.3
 
 ### `.`
 
@@ -539,7 +539,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.12.2
+## `@3ngram/db` 0.12.3
 
 ### `.`
 
@@ -921,7 +921,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `1b6488631dd9` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.11.1
+## `@3ngram/schema` 0.11.2
 
 ### `.`
 
@@ -1049,6 +1049,7 @@ its row here even when its name and kind are unchanged.
 | `ImportEventPayload` | type | `6ef87a97c981` |
 | `ImportFactInput` | type | `718fb338fc33` |
 | `ImportMemoryInput` | type | `4c9d8d2c948b` |
+| `IsoDateTimeOptions` | interface | `08eb6b3c3b90` |
 | `IssueApiKeyInput` | type | `cf1e734aba72` |
 | `LoginInput` | type | `80ad24a1c8e6` |
 | `MAX_BRIEFED_MEMORIES` | const | `a1a6ddbeaf28` |
@@ -1299,6 +1300,7 @@ its row here even when its name and kind are unchanged.
 | `importMemoryInputSchema` | const | `0cc6f9ca330d` |
 | `importTimestampSchema` | const | `46a7d9350b69` |
 | `invalidInputRestErrorResponseSchema` | const | `0667cb9d2d3d` |
+| `isoDateTime` | function | `738d868d7032` |
 | `issueApiKeyInputSchema` | const | `3e72d160312f` |
 | `legacyCursorPayloadSchema` | const | `013f4128701c` |
 | `loginInputSchema` | const | `8be1ee749cd1` |
@@ -1413,7 +1415,7 @@ its row here even when its name and kind are unchanged.
 | `versionResponseSchema` | const | `95603c3e8e8b` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.8.5
+## `@3ngram/server` 1.8.6
 
 ### `./app`
 

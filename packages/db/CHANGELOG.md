@@ -1,5 +1,12 @@
 # @3ngram/db
 
+## 0.12.3
+
+### Patch Changes
+
+- Updated dependencies [34f1985]
+  - @3ngram/schema@0.11.2
+
 ## 0.12.2
 
 ### Patch Changes

@@ -141,6 +141,15 @@ describe('prompts/get debrief', () => {
     expect(text).toContain('project')
   })
 
+  it('renders when the client omits arguments entirely', async () => {
+    // Every debrief argument is optional, so a bare prompts/get must render.
+    // @modelcontextprotocol/server 2.0.0 answered -32602 here; 2.3.0 fixed it.
+    const result = await client.getPrompt({ name: 'debrief' })
+    const text = result.messages[0]?.content.type === 'text' ? result.messages[0].content.text : ''
+    expect(text).toContain('remember')
+    expect(text).toContain('project')
+  })
+
   it('interpolates project so remember writes can hit a project briefing', async () => {
     const result = await client.getPrompt({
       name: 'debrief',

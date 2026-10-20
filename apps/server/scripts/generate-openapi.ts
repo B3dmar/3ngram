@@ -46,6 +46,7 @@ import {
   factsRangeSchema,
   factsToolOutputSchema,
   invalidInputRestErrorResponseSchema,
+  isoDateTime,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -148,7 +149,7 @@ const scopeRow = z
     id: z.uuid(),
     name: z.string(),
     aliases: z.array(z.string()),
-    createdAt: z.string().datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 const scopesList = z.object({ scopes: z.array(scopeRow), count: z.number().int().min(0) }).strict()
@@ -160,9 +161,9 @@ const exportAccount = z
   .object({
     id: z.uuid(),
     email: z.email(),
-    emailVerifiedAt: z.string().datetime().nullable(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
+    emailVerifiedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 const exportMemory = z
@@ -175,11 +176,11 @@ const exportMemory = z
     project: z.string().nullable(),
     status: z.string(),
     tags: z.array(z.string()),
-    validFrom: z.string().datetime(),
-    validTo: z.string().datetime().nullable(),
-    recordedAt: z.string().datetime(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
+    createdAt: isoDateTime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 const exportFact = z
@@ -190,10 +191,10 @@ const exportFact = z
     predicate: z.string(),
     value: z.string(),
     confidence: z.number().nullable(),
-    validFrom: z.string().datetime(),
-    validTo: z.string().datetime().nullable(),
-    recordedAt: z.string().datetime(),
-    createdAt: z.string().datetime(),
+    validFrom: isoDateTime(),
+    validTo: isoDateTime().nullable(),
+    recordedAt: isoDateTime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 const exportCommitment = z
@@ -202,12 +203,12 @@ const exportCommitment = z
     memoryId: z.uuid(),
     status: z.string(),
     owner: z.string().nullable(),
-    dueAt: z.string().datetime().nullable(),
+    dueAt: isoDateTime().nullable(),
     recurrence: z.unknown(),
-    nextSurfacingAt: z.string().datetime().nullable(),
-    resolvedAt: z.string().datetime().nullable(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
+    nextSurfacingAt: isoDateTime().nullable(),
+    resolvedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 const exportEdge = z
@@ -217,7 +218,7 @@ const exportEdge = z
     toId: z.uuid(),
     edgeType: z.string(),
     createdBy: z.string(),
-    createdAt: z.string().datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 const exportMemoryEvent = z
@@ -227,7 +228,7 @@ const exportMemoryEvent = z
     eventKind: z.string(),
     actorKind: z.string(),
     payload: z.unknown(),
-    createdAt: z.string().datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 const exportProposal = z
@@ -240,8 +241,8 @@ const exportProposal = z
     similarity: z.number(),
     rationale: z.string().nullable(),
     status: z.string(),
-    decidedAt: z.string().datetime().nullable(),
-    createdAt: z.string().datetime(),
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
   })
   .strict()
 // Staged fact proposals awaiting review: the extractor's candidate
@@ -256,13 +257,13 @@ const exportFactProposal = z
     predicate: z.string(),
     value: z.string(),
     confidence: z.number().nullable(),
-    validFrom: z.string().datetime().nullable(),
-    validTo: z.string().datetime().nullable(),
+    validFrom: isoDateTime().nullable(),
+    validTo: isoDateTime().nullable(),
     memoryType: z.string(),
     rationale: z.string().nullable(),
     status: z.string(),
-    decidedAt: z.string().datetime().nullable(),
-    createdAt: z.string().datetime(),
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
   })
   .strict()
 const exportAgentSession = z
@@ -274,17 +275,17 @@ const exportAgentSession = z
     project: z.string().nullable(),
     scope: z.string().nullable(),
     selector: z.unknown(),
-    openedAt: z.string().datetime(),
-    closedAt: z.string().datetime().nullable(),
-    lastSeenAt: z.string().datetime(),
+    openedAt: isoDateTime(),
+    closedAt: isoDateTime().nullable(),
+    lastSeenAt: isoDateTime(),
     activationEpoch: z.number().int(),
     triageStatus: z.string(),
     triageAttemptId: z.uuid().nullable(),
-    triageArmedAt: z.string().datetime().nullable(),
+    triageArmedAt: isoDateTime().nullable(),
     triageAttemptLog: z.array(triageAttemptLogEntrySchema),
     triageAttemptCount: z.number().int(),
     lastTriagedEventIds: z.array(z.uuid()),
-    briefingDeliveredAt: z.string().datetime().nullable(),
+    briefingDeliveredAt: isoDateTime().nullable(),
     briefedMemories: z.array(
       z
         .object({
@@ -297,7 +298,7 @@ const exportAgentSession = z
     lastMessageExcerpt: z.string().nullable(),
     needsLook: z.boolean(),
     closerFailureCount: z.number().int(),
-    closerNextAttemptAt: z.string().datetime().nullable(),
+    closerNextAttemptAt: isoDateTime().nullable(),
   })
   .strict()
 // Cost/usage rows — user-owned tables (user_budgets / llm_usage), RLS-scoped like
@@ -307,9 +308,9 @@ const exportBudget = z
   .object({
     id: z.uuid(),
     capUsdOverride: z.string().nullable(),
-    periodStart: z.string().datetime().nullable(),
-    periodEnd: z.string().datetime().nullable(),
-    updatedAt: z.string().datetime(),
+    periodStart: isoDateTime().nullable(),
+    periodEnd: isoDateTime().nullable(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 const exportLlmUsage = z
@@ -320,7 +321,7 @@ const exportLlmUsage = z
     inputTokens: z.number().int().min(0),
     outputTokens: z.number().int().min(0),
     costUsd: z.string().nullable(),
-    createdAt: z.string().datetime(),
+    createdAt: isoDateTime(),
   })
   .strict()
 // Onboarding "About you" profiling answers; a single nullable row —
@@ -332,8 +333,8 @@ const exportUserProfile = z
     useCase: z.string().nullable(),
     aiTools: z.array(z.string()).nullable(),
     referralSource: z.string().nullable(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
+    createdAt: isoDateTime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 // Stored retrieval policy in the portability archive. The row itself carries
@@ -343,13 +344,13 @@ const exportRetrievalPolicy = z
   .object({
     mode: retrievalScopeModeSchema,
     defaultScope: scopeNameSchema.nullable(),
-    updatedAt: z.string().datetime(),
+    updatedAt: isoDateTime(),
   })
   .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
-    exportedAt: z.string().datetime(),
+    exportedAt: isoDateTime(),
     account: exportAccount,
     memories: z.array(exportMemory),
     facts: z.array(exportFact),
