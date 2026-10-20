@@ -283,13 +283,33 @@ function resolveLimiters(
   }
 }
 
-/** A body-parser parse failure (malformed JSON body) — a 400, not a 500. */
-function isBodyParseError(err: unknown): boolean {
-  return (
-    err instanceof SyntaxError &&
-    'type' in err &&
-    (err as { type?: unknown }).type === 'entity.parse.failed'
-  )
+/**
+ * body-parser rejects a request before any route runs by throwing an http-error
+ * that carries a 4xx `status` and a dotted `type`: `entity.parse.failed` (400),
+ * `entity.too.large` (413), `encoding.unsupported` and `charset.unsupported`
+ * (415). A corrupt or truncated compressed body is the one rejection without a
+ * `type`: body-parser wraps the zlib error as a 400 and keeps its `Z_*` code.
+ * All of these are client errors and must never surface as the generic 500.
+ */
+interface RejectedBody {
+  status: number
+  type: string
+}
+
+function rejectedBody(err: unknown): RejectedBody | undefined {
+  if (typeof err !== 'object' || err === null) return undefined
+  const { status, type, code } = err as { status?: unknown; type?: unknown; code?: unknown }
+  if (typeof status !== 'number' || status < 400 || status > 499) return undefined
+  if (typeof type === 'string' && type.includes('.')) return { status, type }
+  if (typeof code === 'string' && code.startsWith('Z_')) return { status, type: code }
+  return undefined
+}
+
+/** Stable wire error code for a rejected body; any other 4xx is a plain 400. */
+function rejectedBodyResponse(status: number): { status: number; error: string } {
+  if (status === 413) return { status, error: 'payload_too_large' }
+  if (status === 415) return { status, error: 'unsupported_media_type' }
+  return { status: 400, error: 'invalid_request' }
 }
 
 /** App factory — tests drive it in-process; index.ts is the only listener. */
@@ -436,12 +456,16 @@ export function createApp(options: AppOptions = {}): Express {
   // logged via the crash-safe projection: an Error message built from memory
   // content must not reach stdout raw.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    // A malformed JSON body is a client error: express.json() throws a
-    // body-parser SyntaxError (status 400, type 'entity.parse.failed') before
-    // any route runs. Surface it as the documented 400 invalid_request contract
-    // rather than the generic 500.
-    if (isBodyParseError(err)) {
-      res.status(400).json({ error: 'invalid_request' })
+    // express.json() rejects a body before any route runs: malformed JSON or a
+    // corrupt compressed body is a 400 invalid_request, one over the size limit
+    // a 413 payload_too_large, an unsupported content encoding or charset a 415
+    // unsupported_media_type. Log body-parser's own status and type only — never
+    // the body — and keep the 500 for genuinely unhandled errors.
+    const rejected = rejectedBody(err)
+    if (rejected !== undefined) {
+      const { status, error } = rejectedBodyResponse(rejected.status)
+      log().warn({ status: rejected.status, type: rejected.type }, 'server: request body rejected')
+      res.status(status).json({ error })
       return
     }
     log().error(crashSafeError(err), 'server: unhandled error')
