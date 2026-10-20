@@ -1,5 +1,11 @@
 # @3ngram/db
 
+## 0.12.4
+
+### Patch Changes
+
+- 555cb9f: Bump the database and HTTP runtime pins to the newest releases past the 7-day release-age cooldown: `drizzle-orm` 0.45.2 -> 0.45.4 and `pg` 8.21.0 -> 8.23.1 in `@3ngram/db`, and `hono` 4.13.11 -> 4.13.13 in `@3ngram/server`. `drizzle-orm` 0.45.3 only adds a Netlify DB driver entry point, and 0.45.4 fixes explicit `.prepare(name)` on the `postgres-js` driver; the `node-postgres` driver this package uses is unchanged apart from the version string. `pg` 8.22/8.23 add opt-in `sslnegotiation=direct` and query pipelining (both off unless configured), rewrite the Bind message serializer, warn on an invalid `Date` parameter, and stop treating every extended-protocol `Sync` as a disconnect, so a socket reset on a pooled client now surfaces as the underlying `ECONNRESET` error instead of being swallowed until `Connection terminated unexpectedly`. `withTenant()`'s `set_config(..., true)` path is unchanged, `pg-pool` stays at 3.14.0, and `ssl` still defaults to off. `hono` 4.13.12/4.13.13 fix `etag`, `combine` and JSX details and add `hono/mount`; the engine does not import Hono directly (the pin governs the transitive `@hono/node-server` peer). The private platform pins `drizzle-orm` 0.45.2, `pg` 8.21.0 and `hono` 4.13.11 exactly; it must move all three to these versions in lockstep at its next engine adoption. Moving `drizzle-orm` alone is not enough, because its `pg` peer would still split it into two typed copies.
+
 ## 0.12.3
 
 ### Patch Changes

@@ -1,5 +1,0 @@
----
-"@3ngram/server": patch
----
-
-Bump the `express` pin from 5.2.1 to 5.3.0 (published 2026-10-09, past the 7-day release-age cooldown). 5.3.0 stops `res.send()` adding `Content-Length` when a `Transfer-Encoding` header is already set, lets `req.fresh` revalidate QUERY requests, adds a doctype and title to HTML redirect bodies, and moves to `content-type` 2.0 (a faster parser; `res.send()` now keeps existing `Content-Type` parameters when it appends the charset and no longer throws on an unparsable `Content-Type`) with `type-is` 2.1 and `content-disposition` 2.0.1. It also raises its own `qs` floor to `^6.16.0` and `proxy-addr` to `^2.0.8`, which the engine's advisory overrides already enforce. No route, body-parser or error-handling behaviour changes: the server suite passes unchanged. The private platform mounts its own routers into this app and pins `express` exactly, so it must move to 5.3.0 in lockstep at its next engine adoption; a platform-only bump would put two `express` copies behind one app.
