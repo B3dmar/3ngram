@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/server",
-  "version": "1.8.6",
+  "version": "1.8.7",
   "description": "MCP server and REST API for persistent, typed AI-agent memory.",
   "license": "Apache-2.0",
   "homepage": "https://3ngram.ai",
@@ -68,8 +68,8 @@
     "@3ngram/schema": "workspace:*",
     "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
-    "express": "5.2.1",
-    "hono": "4.13.11",
+    "express": "5.3.0",
+    "hono": "4.13.13",
     "ioredis": "5.11.1",
     "nodemailer": "10.0.16",
     "rate-limiter-flexible": "11.2.1",

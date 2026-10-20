@@ -1,5 +1,9 @@
 # @3ngram/sdk
 
+## 1.8.7
+
+No changes in this release.
+
 ## 1.8.6
 
 ### Patch Changes

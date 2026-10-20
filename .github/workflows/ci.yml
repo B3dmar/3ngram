@@ -161,9 +161,6 @@ jobs:
     permissions:
       contents: read
     env:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-      TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
       TURBO_TELEMETRY_DISABLED: '1'
     strategy:
       fail-fast: false
@@ -571,9 +568,6 @@ jobs:
     permissions:
       contents: read
     env:
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-      TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
       TURBO_TELEMETRY_DISABLED: '1'
       # Owner/migration connection to the throwaway Postgres service (below).
       # Fork-friendly: fixed, non-secret credentials against a disposable CI DB.
