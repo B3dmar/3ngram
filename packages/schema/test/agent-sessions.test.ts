@@ -24,6 +24,7 @@ import {
   sessionEventsResponseSchema,
   sessionProvenancePayloadSchema,
   sessionRunIdSchema,
+  triageAttemptLogEntrySchema,
 } from '../src/index.js'
 
 const RUN = '01890b6e-0000-7000-8000-000000000001'
@@ -535,5 +536,40 @@ describe('agentSessionTriageCompleteBodySchema', () => {
         JSON.stringify(body).slice(0, 60),
       ).toBe(false)
     }
+  })
+})
+
+// Issue #307: the union's two `.strict()` variants are the whole contract — a
+// half-finalized entry must fail BOTH, so a refactor to two independent
+// optional fields cannot pass silently.
+describe('triageAttemptLogEntrySchema', () => {
+  const ATTEMPT = '01890b6e-0000-7000-8000-0000000000a7'
+  const armed = { attemptId: ATTEMPT, armedAt: '2026-10-01T10:00:00.000Z' }
+  const finalized = {
+    ...armed,
+    finalizedAt: '2026-10-01T10:00:05.000Z',
+    outcome: 'completed' as const,
+  }
+
+  it('accepts an open (armed-only) entry and a fully finalized one', () => {
+    expect(triageAttemptLogEntrySchema.safeParse(armed).success).toBe(true)
+    expect(triageAttemptLogEntrySchema.safeParse(finalized).success).toBe(true)
+  })
+
+  it('rejects a finalized instant with no outcome', () => {
+    const { outcome: _outcome, ...noOutcome } = finalized
+    expect(triageAttemptLogEntrySchema.safeParse(noOutcome).success).toBe(false)
+  })
+
+  it('rejects an outcome with no finalized instant', () => {
+    const { finalizedAt: _finalizedAt, ...noInstant } = finalized
+    expect(triageAttemptLogEntrySchema.safeParse(noInstant).success).toBe(false)
+  })
+
+  it('rejects an unknown outcome and an unknown key', () => {
+    expect(
+      triageAttemptLogEntrySchema.safeParse({ ...finalized, outcome: 'ignored' }).success,
+    ).toBe(false)
+    expect(triageAttemptLogEntrySchema.safeParse({ ...armed, content: 'x' }).success).toBe(false)
   })
 })
