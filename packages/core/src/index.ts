@@ -15,9 +15,9 @@ export {
   incrementWindowCounter,
   type PostgresRateLimiterOptions,
   RATE_LIMIT_TABLE,
-  readWindowCounter,
   ResourceLimitExceededError,
   RlsGuardError,
+  readWindowCounter,
 } from '@3ngram/db'
 // --- budget: access gate port + Apache budget gate ---
 export type {
