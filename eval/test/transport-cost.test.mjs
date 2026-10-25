@@ -199,7 +199,24 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // embeddings regen). REST and CLI are unchanged: the REST surface does
       // not carry the proposals list and the CLI has no proposals command.
       // MEASURED on staging a21c604, not summed.
-      mcp: [28879, 232848, 58130],
+      // MCP +156/+1248/+304 (issue #321): describe_environment's output schema
+      // gains the required `account: { id }` object (a uuid with its field
+      // description) that MCP pays on tools/list per turn. The tool description
+      // is unchanged (no embeddings regen); REST and CLI are unchanged.
+      // MEASURED, not summed.
+      // MCP +112/+896/+219 (issue #168): describe_environment's output schema
+      // gains the required `facets: { scopes, projects }` inventory (the REST
+      // facets element schemas plus two field descriptions). The new
+      // threengram://facets resource rides resources/list, which surfaceTokens
+      // does not count. Tool description unchanged; REST and CLI unchanged.
+      // MEASURED, not summed.
+      // MCP +72/+576/+140 (issue #168 review): the inline facets arrays gain
+      // maxItems (MAX_INLINE_FACET_LABELS) and a required `truncated:
+      // { scopes, projects }` object with its description. Tool description
+      // unchanged; REST and CLI unchanged. MEASURED, not summed.
+      // Re-measured after composing onto #235 (describe_environment V5 =
+      // V4 + writeScopePolicy), re-measured on staging 0a6cdf3: the three deltas still hold.
+      mcp: [29219, 235568, 58793],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },
@@ -369,6 +386,15 @@ test('the MCP surface fixture covers resource templates and completions (additiv
   assert.equal(memoryTemplate.name, 'memory')
   assert.equal(memoryTemplate.uriTemplate, 'threengram://memory/{id}')
   assert.deepEqual(memoryTemplate.cacheHint, { ttlMs: 24 * 60 * 60_000, cacheScope: 'private' })
+
+  // resources/list: exactly ONE fixed-uri resource, the threengram://facets
+  // scope/project inventory (issue #168), cached private on a short TTL. The
+  // memory template stays unlisted (no corpus enumeration).
+  assert.deepEqual(
+    surfaces.mcp.resources.map((r) => [r.name, r.uri]),
+    [['facets', 'threengram://facets']],
+  )
+  assert.deepEqual(surfaces.mcp.resources[0].cacheHint, { ttlMs: 60_000, cacheScope: 'private' })
 
   // Completions coverage: which prompt args and resource-template URI variables
   // are wired to completable() (apps/server/src/mcp/completions.ts, resources.ts).

@@ -50,7 +50,7 @@ import {
   configureScopeInputV3Schema,
   configureScopeOutputV3Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentOutputV5Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
@@ -377,10 +377,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      // V2 + writeScopePolicy (issue #235). Once PR #335's account/facets
-      // successors land, this becomes
-      // describeEnvironmentOutputV4Schema.safeExtend(describeEnvironmentWritePolicyFields).
-      outputSchema: describeEnvironmentOutputWithWritePolicySchema,
+      // V4 (account identity #321, capped facets #168) + writeScopePolicy (#235).
+      outputSchema: describeEnvironmentOutputV5Schema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -392,26 +390,33 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput(
-        'describe_environment',
-        describeEnvironmentOutputWithWritePolicySchema,
-        {
-          capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
-          scopes: report.scopes.map(toScopeOutput),
-          // The active retrieval-scope policy (issue #47): a bounded mode enum +
-          // a registered scope NAME — the redaction posture is unchanged.
-          retrievalScopePolicy: report.retrievalScopePolicy,
-          // The effective write-scope policy (issue #235), same redaction posture.
-          writeScopePolicy: report.writeScopePolicy,
-          stats: {
-            memoriesByType: report.stats.memoriesByType,
-            activeMemories: report.stats.activeMemories,
-            supersededMemories: report.stats.supersededMemories,
-            archivedMemories: report.stats.archivedMemories,
-            commitmentsByStatus: report.stats.commitmentsByStatus,
-          },
+      const output = parseOutput('describe_environment', describeEnvironmentOutputV5Schema, {
+        // The authenticated account (issue #321): its users.id, read by core from
+        // the live users row — identity, distinct from scopes and the policies.
+        account: { id: report.account.id },
+        capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
+        scopes: report.scopes.map(toScopeOutput),
+        // The live scope/project inventory (issue #168), inlined for hosts that
+        // never surface the threengram://facets resource to the model. Core
+        // already capped it per array and flagged what it cut.
+        facets: {
+          scopes: report.facets.scopes,
+          projects: report.facets.projects,
+          truncated: report.facets.truncated,
         },
-      )
+        // The active retrieval-scope policy (issue #47): a bounded mode enum +
+        // a registered scope NAME — the redaction posture is unchanged.
+        retrievalScopePolicy: report.retrievalScopePolicy,
+        // The effective write-scope policy (issue #235), same redaction posture.
+        writeScopePolicy: report.writeScopePolicy,
+        stats: {
+          memoriesByType: report.stats.memoriesByType,
+          activeMemories: report.stats.activeMemories,
+          supersededMemories: report.stats.supersededMemories,
+          archivedMemories: report.stats.archivedMemories,
+          commitmentsByStatus: report.stats.commitmentsByStatus,
+        },
+      })
       return ok(output)
     },
   }

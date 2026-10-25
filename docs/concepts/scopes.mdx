@@ -60,3 +60,21 @@ The policy is stored per account (one row, tenant-isolated like every other user
 ## Binding sessions to a scope
 
 A practical pattern for agents: decide the scope once per session (or per client) and pass it on every write. For example, an agent doing consulting or business tasks writes with `scope: work`, while a life-admin assistant writes with `scope: personal`. Keeping the binding explicit at the call site avoids misfiled memories that are awkward to re-sort later — corrections require revising each memory, since nothing is bulk-rewritten in place. An account whose agents cannot be trusted to pass a scope can set the write policy to `require`, so a forgotten scope fails loudly instead of landing in `personal`.
+
+## Which account is this connector on?
+
+A scope partitions **one** account; it does not name the account. Every account starts with a `work` scope, so two connectors that both show a `work` scope may still reach two different accounts — or the same one. Three things are separate and should be checked separately:
+
+| | Answers | Where it comes from |
+|---|---|---|
+| **Account identity** | Which 3ngram account (corpus) does this credential reach? | `describe_environment` → `account.id`, equal to `GET /api/v1/me` `id` |
+| **Filing** — scope and project | Where in that account a memory is filed | The `scope`/`project` on each call; `configure_scope list` for the registry; `describe_environment` → `facets` (or the `threengram://facets` resource) for the names live memories use |
+| **Read and write policy** | What the account's unscoped reads default to | `describe_environment` → `retrievalScopePolicy` |
+
+When two connectors point at 3ngram and you need to know which account each one writes to, use this read-only check before writing anything:
+
+1. Call `describe_environment` on each connector and note `account.id`.
+2. Compare. The same id means both connectors reach one corpus, and the scope and project on each call are what separate the writes. Different ids mean two accounts, each with its own scopes, projects and memories.
+3. Only then inspect `scopes`, `facets` and `retrievalScopePolicy` (or `configure_scope list`) on the connector you intend to use, and pass the scope and project explicitly on the write.
+
+The check never changes anything, and nothing in 3ngram acts on its result: a write goes to the account its own credential authenticated as. 3ngram does not reroute a write to another account or switch credentials because a scope is called `work` or `personal` — choosing the connector is the caller's decision.
