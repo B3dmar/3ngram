@@ -113,6 +113,9 @@ export interface AllProposals {
  * completion through `listProposalsPage` (proposals-page.ts, issue #320),
  * which replaces a bounded window with a walk that can prove nothing was left
  * unseen. Kept because it is a published export.
+ *
+ * @deprecated Use `listProposalsPage` (issue #320), which pages both kinds to
+ * completion with a cursor.
  */
 export function listAllProposals(userId: string, query: ProposalsListQuery): Promise<AllProposals> {
   const dbQuery =
