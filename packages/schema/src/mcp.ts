@@ -830,7 +830,13 @@ export const briefingToolInputSchema = z
   .strict()
 export type BriefingToolInput = z.infer<typeof briefingToolInputSchema>
 
-/** A commitment line in the briefing (ids/topic/status/due + the overdue flag). */
+/**
+ * A commitment line in the briefing (ids/topic/status/due + the overdue flag),
+ * plus its owner and filing (issue #261): `owner` is the recorded owner label or
+ * null (never inferred from content); `scope`/`project` are the riding memory's
+ * filing, so a reader can label a row (including an unscoped `project: null` one)
+ * without reading each memory back.
+ */
 export const briefingCommitmentSchema = z
   .object({
     id: z.uuid(),
@@ -839,6 +845,9 @@ export const briefingCommitmentSchema = z
     status: commitmentStatusSchema,
     dueAt: isoDateTime().nullable(),
     overdue: z.boolean(),
+    owner: z.string().nullable(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

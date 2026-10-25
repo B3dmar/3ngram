@@ -186,7 +186,12 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // scope, nullable project, and optional commitmentStatus in both
       // projections. Descriptions are unchanged (no embeddings regen); REST
       // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
-      mcp: [28531, 230064, 57451],
+      // MCP +154/+1232/+300 (issue #261, owner/scope/project on briefing
+      // commitment items): three output fields ride the briefing output
+      // schema, paid on tools/list per turn. REST and CLI request surfaces are
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging ab8b193, not summed.
+      mcp: [28685, 231296, 57752],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },

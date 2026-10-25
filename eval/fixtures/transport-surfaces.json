@@ -255,9 +255,40 @@
                       },
                       "overdue": {
                         "type": "boolean"
+                      },
+                      "owner": {
+                        "type": ["string", "null"]
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
-                    "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
+                    "required": [
+                      "id",
+                      "memoryId",
+                      "topic",
+                      "status",
+                      "dueAt",
+                      "overdue",
+                      "owner",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 },
@@ -313,9 +344,40 @@
                       },
                       "overdue": {
                         "type": "boolean"
+                      },
+                      "owner": {
+                        "type": ["string", "null"]
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
-                    "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
+                    "required": [
+                      "id",
+                      "memoryId",
+                      "topic",
+                      "status",
+                      "dueAt",
+                      "overdue",
+                      "owner",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 },
