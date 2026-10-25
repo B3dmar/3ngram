@@ -396,6 +396,33 @@ await client.search('oauth refresh token', {
           },
           "superseded": {
             "type": "boolean"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commitmentStatus": {
+            "type": "string",
+            "enum": [
+              "open",
+              "waiting",
+              "resolved",
+              "expired"
+            ]
           }
         },
         "required": [
@@ -406,7 +433,9 @@ await client.search('oauth refresh token', {
           "contentLength",
           "truncated",
           "score",
-          "superseded"
+          "superseded",
+          "scope",
+          "project"
         ],
         "additionalProperties": true
       }

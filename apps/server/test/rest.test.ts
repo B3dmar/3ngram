@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
+import { searchRestResponseV2Schema } from '@3ngram/schema'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 // The REAL ZodError: the triage routes no longer pre-parse, so a rejected body
@@ -589,7 +590,22 @@ describe('POST /api/v1/search', () => {
           contentLength: 'hit'.length,
           truncated: false,
           score: 0.9,
+          superseded: false,
+          scope: 'work',
+          project: 'engine',
           commitmentStatus: 'waiting',
+        },
+        {
+          id: COMMIT_ID,
+          memoryType: 'note',
+          topic: 'n',
+          content: 'note',
+          contentLength: 'note'.length,
+          truncated: false,
+          score: 0.5,
+          superseded: false,
+          scope: 'work',
+          project: null,
         },
       ],
       appliedScope: null,
@@ -611,10 +627,19 @@ describe('POST /api/v1/search', () => {
       hasMore?: boolean
     }
     expect(body).not.toHaveProperty('hasMore')
+    expect(searchRestResponseV2Schema.safeParse(body).success).toBe(true)
     expect(body.count).toBe(body.hits.length)
-    expect(body.count).toBe(1)
+    expect(body.count).toBe(2)
     expect(body.hits[0]).toMatchObject({ content: 'hit', contentLength: 3, truncated: false })
-    expect(body.hits[0]).not.toHaveProperty('commitmentStatus')
+    // #319: filing + commitment lifecycle ride the public hit; a non-commitment
+    // gets no fabricated status.
+    expect(body.hits[0]).toMatchObject({
+      scope: 'work',
+      project: 'engine',
+      commitmentStatus: 'waiting',
+    })
+    expect(body.hits[1]).toMatchObject({ scope: 'work', project: null })
+    expect(body.hits[1]).not.toHaveProperty('commitmentStatus')
     expect(search).toHaveBeenCalledWith(
       TENANT,
       'find me',

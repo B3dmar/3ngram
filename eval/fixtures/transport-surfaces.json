@@ -3309,6 +3309,28 @@
                       },
                       "superseded": {
                         "type": "boolean"
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "commitmentStatus": {
+                        "type": "string",
+                        "enum": ["open", "waiting", "resolved", "expired"]
                       }
                     },
                     "required": [
@@ -3319,7 +3341,9 @@
                       "contentLength",
                       "truncated",
                       "score",
-                      "superseded"
+                      "superseded",
+                      "scope",
+                      "project"
                     ],
                     "additionalProperties": true
                   },
@@ -3342,9 +3366,39 @@
                       },
                       "superseded": {
                         "type": "boolean"
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "commitmentStatus": {
+                        "type": "string",
+                        "enum": ["open", "waiting", "resolved", "expired"]
                       }
                     },
-                    "required": ["id", "memoryType", "topic", "score", "superseded"],
+                    "required": [
+                      "id",
+                      "memoryType",
+                      "topic",
+                      "score",
+                      "superseded",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 ]

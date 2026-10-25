@@ -195,7 +195,12 @@ const SEARCH_OUT: SearchToolOutput = {
       memoryType: 'decision',
       topic: 'layering',
       content: 'apps -> core -> db',
+      contentLength: 18,
+      truncated: false,
       score: 0.873,
+      superseded: false,
+      scope: 'work',
+      project: null,
     },
   ],
   count: 1,
@@ -220,6 +225,17 @@ describe('search command', () => {
     ])
     expect(out.join('\n')).toContain('1 match')
     expect(out.join('\n')).toContain('[0.873] decision')
+    expect(out.join('\n')).toContain('2222 work\n')
+  })
+
+  it('labels a hit with its filing and commitment lifecycle (#319)', async () => {
+    const hit = SEARCH_OUT.hits[0] as SearchToolOutput['hits'][number]
+    const resolved = { ...hit, project: 'engine', commitmentStatus: 'resolved' as const }
+    const { client } = stubClient({ search: { hits: [resolved], count: 1 } })
+    const { io, out } = captureIo(client)
+
+    await run(['search', 'x'], io)
+    expect(out.join('\n')).toContain(`decision ${hit.id} work/engine commitment:resolved`)
   })
 
   it('accepts --query as an alternative to the positional', async () => {

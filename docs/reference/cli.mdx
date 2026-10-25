@@ -319,6 +319,33 @@ Search memories with optional filters before result fusion.
           },
           "superseded": {
             "type": "boolean"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commitmentStatus": {
+            "type": "string",
+            "enum": [
+              "open",
+              "waiting",
+              "resolved",
+              "expired"
+            ]
           }
         },
         "required": [
@@ -329,7 +356,9 @@ Search memories with optional filters before result fusion.
           "contentLength",
           "truncated",
           "score",
-          "superseded"
+          "superseded",
+          "scope",
+          "project"
         ],
         "additionalProperties": true
       }

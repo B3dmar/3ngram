@@ -682,7 +682,7 @@ its row here even when its name and kind are unchanged.
 | `ScopeRow` | interface | `6874069522c2` |
 | `SearchAsOf` | interface | `dd0fe1ef2631` |
 | `SearchFilters` | interface | `8131acb3c156` |
-| `SearchHit` | interface | `6decb1397014` |
+| `SearchHit` | interface | `fe3a50fe3f6c` |
 | `SessionEpochFencedError` | class | `cc4a11973844` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
@@ -1376,8 +1376,8 @@ its row here even when its name and kind are unchanged.
 | `scopeSchema` | const | `c80b675a855b` |
 | `searchFiltersSchema` | const | `95db88e873a1` |
 | `searchFiltersV2Schema` | const | `a9ee22e6bf07` |
-| `searchHitCompactSchema` | const | `5c2df271170f` |
-| `searchHitSchema` | const | `02afe1aa2c6a` |
+| `searchHitCompactSchema` | const | `d533cb5c96aa` |
+| `searchHitSchema` | const | `1ebde3a70a0c` |
 | `searchInputSchema` | const | `1b30debf20eb` |
 | `searchOrderSchema` | const | `53e1f0ae783f` |
 | `searchProjectionSchema` | const | `dbb4fe80fb3f` |
@@ -1387,10 +1387,10 @@ its row here even when its name and kind are unchanged.
 | `searchQueryV4ChronologicalSchema` | const | `13de60726a2b` |
 | `searchQueryV4RelevanceSchema` | const | `d8f3b10ea33d` |
 | `searchQueryV4Schema` | const | `fc8e00d5ee44` |
-| `searchRestResponseV2Schema` | const | `a21e9ddba2e7` |
-| `searchToolOutputSchema` | const | `9d19c5269b35` |
-| `searchToolOutputV2Schema` | const | `41ab7e7ce8e7` |
-| `searchToolOutputV3Schema` | const | `e6e81a99f01c` |
+| `searchRestResponseV2Schema` | const | `f21903378843` |
+| `searchToolOutputSchema` | const | `4df1b86b85cf` |
+| `searchToolOutputV2Schema` | const | `16a7124fcc79` |
+| `searchToolOutputV3Schema` | const | `6010b64ec578` |
 | `sessionCloserJobDataSchema` | const | `d8b375861c64` |
 | `sessionCloserJobId` | function | `d84e5b9d3442` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |

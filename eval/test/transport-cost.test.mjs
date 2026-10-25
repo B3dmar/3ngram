@@ -166,7 +166,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
-      mcp: [27700, 223416, 55831],
+      // MCP +170/+1360/+332 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging b1731b7, not summed.
+      mcp: [27870, 224776, 56163],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },
