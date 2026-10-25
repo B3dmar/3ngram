@@ -43,11 +43,16 @@ Run one worker mode per database; both at once double-runs every pass.
 | `surfacing` | `*/15 * * * *` |
 | `consolidation` | `0 * * * *` |
 | `gc-clients` | `10 3 * * *` |
-| `session-sweep` | `5,25,45 * * * *` (coming in a follow-up, only while `SESSION_CLOSER_ENABLED=true`) |
+| `session-sweep` | `5,25,45 * * * *` (only while `SESSION_CLOSER_ENABLED=true`) |
 
 Set the scheduler's retry limit to 3 (it replaces BullMQ's attempts) and each
 execution timeout below the job's cadence as the overlap guard: advisory locks
 are not safe on a transaction-mode pooler such as Neon's. Passes are idempotent.
+
+`session-sweep` drains its closers in the same execution, one at a time after
+the sweep, deduped by (run, epoch). A failed closer is not retried in-process:
+its row backs off and the next sweep tick retries it, and the execution exits
+`1`. With `SESSION_CLOSER_ENABLED=false` it exits `0` without sweeping.
 
 ## Deploy verification
 
