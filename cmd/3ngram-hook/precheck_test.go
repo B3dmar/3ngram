@@ -357,6 +357,10 @@ func TestRunPrecheckEditEmitsHookOutput(t *testing.T) {
 	if !strings.Contains(ctx, "hook envelope") {
 		t.Fatalf("additionalContext missing memory topic:\n%s", ctx)
 	}
+	// #263: the hit's string id must survive the search -> render mapping.
+	if !strings.Contains(ctx, "- [2] **hook envelope**") {
+		t.Fatalf("additionalContext missing the hit's id:\n%s", ctx)
+	}
 }
 
 // captureRunPrecheck drives runPrecheck with payload as stdin and returns
@@ -398,7 +402,7 @@ func captureRunPrecheck(t *testing.T, payload string) string {
 func TestRenderPrecheckSingular(t *testing.T) {
 	resp := dashboardResponse{
 		Items: []dashboardItem{
-			{ID: 7, Topic: "memory_service refactor", Content: "split into modules", MemoryType: "decision"},
+			{ID: "7", Topic: "memory_service refactor", Content: "split into modules", MemoryType: "decision"},
 		},
 		Total: 1,
 	}
@@ -414,8 +418,8 @@ func TestRenderPrecheckSingular(t *testing.T) {
 func TestRenderPrecheckPlural(t *testing.T) {
 	resp := dashboardResponse{
 		Items: []dashboardItem{
-			{ID: 1, Topic: "main.py overhaul", Content: "moved routers"},
-			{ID: 2, Topic: "main.py config", Content: "env var cleanup"},
+			{ID: "1", Topic: "main.py overhaul", Content: "moved routers"},
+			{ID: "2", Topic: "main.py config", Content: "env var cleanup"},
 		},
 		Total: 2,
 	}
@@ -428,10 +432,10 @@ func TestRenderPrecheckPlural(t *testing.T) {
 func TestRenderPrecheckRespectsLimit(t *testing.T) {
 	resp := dashboardResponse{
 		Items: []dashboardItem{
-			{ID: 1, Topic: "first"},
-			{ID: 2, Topic: "second"},
-			{ID: 3, Topic: "third"},
-			{ID: 4, Topic: "fourth"},
+			{ID: "1", Topic: "first"},
+			{ID: "2", Topic: "second"},
+			{ID: "3", Topic: "third"},
+			{ID: "4", Topic: "fourth"},
 		},
 		Total: 4,
 	}
@@ -447,11 +451,43 @@ func TestRenderPrecheckRespectsLimit(t *testing.T) {
 func TestRenderPrecheckTruncatesLongContent(t *testing.T) {
 	long := strings.Repeat("x", 300)
 	resp := dashboardResponse{
-		Items: []dashboardItem{{ID: 1, Topic: "t", Content: long}},
+		Items: []dashboardItem{{ID: "1", Topic: "t", Content: long}},
 		Total: 1,
 	}
 	got := renderPrecheck(resp, "stem", 3)
 	if strings.Contains(got, long) {
 		t.Errorf("content not truncated; output had full 300 chars")
+	}
+}
+
+// #263: every hit used to render as [0] because the int ID was never set from
+// the search hit's string id. Two hits must render with their own ids.
+func TestRenderPrecheckDistinctIDs(t *testing.T) {
+	resp := dashboardResponse{
+		Items: []dashboardItem{
+			{ID: "01890b6e-0000-7000-8000-0000000000a1", Topic: "first"},
+			{ID: "01890b6e-0000-7000-8000-0000000000a2", Topic: "second"},
+		},
+		Total: 2,
+	}
+	got := renderPrecheck(resp, "stem", 3)
+	for _, want := range []string{
+		"- [01890b6e-0000-7000-8000-0000000000a1] **first**",
+		"- [01890b6e-0000-7000-8000-0000000000a2] **second**",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "[0]") {
+		t.Errorf("rendered the zero id:\n%s", got)
+	}
+}
+
+func TestRenderPrecheckOmitsMissingID(t *testing.T) {
+	resp := dashboardResponse{Items: []dashboardItem{{Topic: "no id"}}, Total: 1}
+	got := renderPrecheck(resp, "stem", 3)
+	if !strings.Contains(got, "- **no id**") || strings.Contains(got, "[]") {
+		t.Errorf("expected a bracketless line for a missing id:\n%s", got)
 	}
 }
