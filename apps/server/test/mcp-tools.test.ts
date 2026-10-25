@@ -16,7 +16,7 @@ import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
   configureScopeOutputV3Schema,
-  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentOutputV5Schema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -32,7 +32,13 @@ import {
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import {
+  decodeCursor,
+  encodeCursor,
+  encodeProposalsCursor,
+  proposalsFingerprint,
+  searchFingerprint,
+} from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
@@ -58,7 +64,7 @@ const setWriteDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
-const listAllProposals = vi.fn()
+const listProposalsPage = vi.fn()
 const rejectProposalAnyKind = vi.fn()
 const acceptProposalAnyKind = vi.fn()
 
@@ -326,7 +332,7 @@ vi.mock('@3ngram/core', () => ({
   listProposals,
   rejectProposal,
   applyProposal,
-  listAllProposals,
+  listProposalsPage,
   rejectProposalAnyKind,
   acceptProposalAnyKind,
   ScopeNameConflictError,
@@ -2231,6 +2237,21 @@ function factProposalRecord(status = 'proposed') {
   }
 }
 
+/** A core proposals page (issue #320): the rows plus the pagination envelope. */
+function proposalsPage(
+  proposals: unknown[],
+  factProposals: unknown[] = [],
+  extra: { hasMore?: boolean; next?: { createdAt: string; id: string } } = {},
+) {
+  return {
+    proposals,
+    factProposals,
+    totals: { edge: proposals.length, fact: factProposals.length },
+    hasMore: extra.hasMore ?? false,
+    next: extra.next,
+  }
+}
+
 describe('configure_scope tool', () => {
   it('list: read-only token validates, calls core, returns schema-valid records', async () => {
     listScopes.mockResolvedValue([scopeRecord('work', ['job'])])
@@ -2320,26 +2341,31 @@ describe('configure_scope tool', () => {
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
   })
 
-  it('list: an edge-only tenant gets NO factProposals key (byte-stable V1 response)', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+  it('list: a page with no fact proposals gets NO factProposals key (never an empty array)', async () => {
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
       ctx({ scopes: ['memory:read'] }),
     )
 
-    // KEY ABSENCE, not `undefined`: a tenant with no fact proposals must see
-    // the response it always saw, with no new field appearing at all.
+    // KEY ABSENCE, not `undefined`: a page with no fact proposals carries no
+    // factProposals field; the only additions are the pagination envelope
+    // (issue #320), and a final page carries no nextCursor.
     const structured = result.structuredContent as Record<string, unknown>
     expect('factProposals' in structured).toBe(false)
-    expect(Object.keys(structured).sort()).toEqual(['action', 'count', 'proposals'])
+    expect(Object.keys(structured).sort()).toEqual([
+      'action',
+      'count',
+      'counts',
+      'hasMore',
+      'proposals',
+      'totals',
+    ])
   })
 
   it('list: surfaces fact proposals alongside edge ones, count stays the edge count', async () => {
-    listAllProposals.mockResolvedValue({
-      proposals: [proposalRecord()],
-      factProposals: [factProposalRecord()],
-    })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()], [factProposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2475,6 +2501,8 @@ describe('configure_scope tool', () => {
 describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       writeScopePolicy: { mode: 'off', scope: null },
@@ -2488,7 +2516,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2502,6 +2530,80 @@ describe('describe_environment tool', () => {
     expect(parsed.stats.supersededMemories).toBe(2)
     expect(parsed.stats.archivedMemories).toBe(1)
     expect(parsed.stats.commitmentsByStatus.resolved).toBe(4)
+    // The authenticated account (issue #321): core's users.id, verbatim.
+    expect(parsed.account).toEqual({ id: UID })
+    // The inlined inventory (issue #168): empty arrays, never omitted.
+    expect(parsed.facets).toEqual({
+      scopes: [],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    })
+  })
+
+  it('inlines the live scope/project inventory core reported (#168)', async () => {
+    describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: {
+        scopes: ['personal', 'work'],
+        projects: ['3ngram', 'garden'],
+        truncated: { scopes: false, projects: false },
+      },
+      scopes: [scopeRecord('work'), scopeRecord('personal'), scopeRecord('client-acme')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'off', scope: null },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 2,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
+    // The inventory is the LIVE-memory facets, distinct from the registry list:
+    // `client-acme` is registered but holds nothing, so it is not a facet.
+    expect(parsed.facets).toEqual({
+      scopes: ['personal', 'work'],
+      projects: ['3ngram', 'garden'],
+      truncated: { scopes: false, projects: false },
+    })
+    expect(parsed.scopes.map((s) => s.name)).toContain('client-acme')
+  })
+
+  it('reports the account id core read, not one derived from a scope name (#321)', async () => {
+    // core is the source of the id (the live users row); the transport neither
+    // substitutes ctx.userId nor derives anything from the scope registry.
+    const coreId = crypto.randomUUID()
+    describeEnvironment.mockResolvedValue({
+      account: { id: coreId },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
+      scopes: [scopeRecord('work'), scopeRecord('personal')],
+      retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      writeScopePolicy: { mode: 'off', scope: null },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
+    expect(parsed.account.id).toBe(coreId)
+    expect(describeEnvironment).toHaveBeenCalledWith(UID)
+    // Identity only: no email, label, or OAuth client id rides on the account.
+    expect(Object.keys(parsed.account)).toEqual(['id'])
+  })
+
+  it('an erased account yields account_deleted and NO identity (#321)', async () => {
+    describeEnvironment.mockRejectedValueOnce(new AccountDeletedError())
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('account_deleted')
+    expect(result.structuredContent).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain(UID)
   })
 
   it('REDACTION: the response never carries a configured secret (sentinel)', async () => {
@@ -2513,6 +2615,8 @@ describe('describe_environment tool', () => {
     process.env.OAUTH_PRIVATE_KEYS = SENTINEL
     try {
       describeEnvironment.mockResolvedValue({
+        account: { id: UID },
+        facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
         writeScopePolicy: { mode: 'off', scope: null },
@@ -2548,7 +2652,7 @@ describe('describe_environment tool', () => {
 
 describe('review_proposals tool', () => {
   it('list: read-only token returns bounded schema-valid records', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2562,17 +2666,108 @@ describe('review_proposals tool', () => {
       expect(parsed.proposals[0]?.status).toBe('proposed')
     }
     // The schema default limit is forwarded (no-firehose).
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
   })
 
   it('list: forwards a status filter and a caller limit', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([]))
     await call(
       'review_proposals',
       { action: 'list', status: 'rejected', limit: 10 },
       ctx({ scopes: ['memory:read'] }),
     )
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+  })
+
+  describe('list pagination (issue #320)', () => {
+    const POSITION = { createdAt: '2026-01-01T00:00:00.123456Z', id: PROPOSAL_ID }
+    const mcpFp = (status?: string, tenant = UID) =>
+      proposalsFingerprint({ surface: 'mcp', kinds: ['edge', 'fact'], status, tenant })
+    const readCtx = () => ctx({ scopes: ['memory:read'] })
+    const errorText = (result: Awaited<ReturnType<typeof call>>) =>
+      (result.content[0] as { text: string }).text
+
+    it('a page with more rows carries counts, live totals, hasMore and a nextCursor', async () => {
+      listProposalsPage.mockResolvedValue({
+        ...proposalsPage([proposalRecord()], [factProposalRecord()], {
+          hasMore: true,
+          next: POSITION,
+        }),
+        totals: { edge: 140, fact: 120 },
+      })
+      const result = await call('review_proposals', { action: 'list', limit: 2 }, readCtx())
+      const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+      if (parsed.action !== 'list') throw new Error('expected list')
+      // `count` keeps its shipped meaning: EDGE rows on this page, not a total.
+      expect(parsed.count).toBe(1)
+      expect(parsed.counts).toEqual({ edge: 1, fact: 1 })
+      expect(parsed.totals).toEqual({ edge: 140, fact: 120 })
+      expect(parsed.hasMore).toBe(true)
+      expect(parsed.nextCursor).toBe(encodeProposalsCursor(POSITION, mcpFp()))
+    })
+
+    it('a continuation resumes strictly after the cursor position, under the same filter', async () => {
+      listProposalsPage.mockResolvedValue(proposalsPage([]))
+      const cursor = encodeProposalsCursor(POSITION, mcpFp('proposed'))
+      const result = await call(
+        'review_proposals',
+        { action: 'list', status: 'proposed', cursor },
+        readCtx(),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(listProposalsPage).toHaveBeenCalledWith(UID, {
+        status: 'proposed',
+        limit: 25,
+        after: POSITION,
+      })
+    })
+
+    it.each([
+      ['garbled base64/JSON', 'not-a-cursor'],
+      [
+        'a search cursor',
+        encodeCursor({ v: 3, recordedAt: POSITION.createdAt, id: PROPOSAL_ID, fp: 'a'.repeat(16) }),
+      ],
+      [
+        'over-precise createdAt',
+        Buffer.from(
+          JSON.stringify({
+            v: 4,
+            kind: 'proposals',
+            createdAt: '2026-01-01T00:00:00.1234567Z',
+            id: PROPOSAL_ID,
+            fp: mcpFp(),
+          }),
+        ).toString('base64url'),
+      ],
+    ])('a malformed cursor (%s) is invalid input and never reaches core', async (_label, cursor) => {
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toContain('invalid input')
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['a different status filter', mcpFp('rejected')],
+      ['another tenant', mcpFp(undefined, crypto.randomUUID())],
+      [
+        'the REST edge-only walk',
+        proposalsFingerprint({ surface: 'rest', kinds: ['edge'], status: undefined, tenant: UID }),
+      ],
+    ])('a cursor minted for %s is a typed mismatch, never a silent re-page', async (_label, fp) => {
+      const cursor = encodeProposalsCursor(POSITION, fp)
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toBe(
+        'invalid input: cursor was issued for a different proposals listing — omit the cursor to start a new walk',
+      )
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it('the token never carries the tenant id', () => {
+      const token = encodeProposalsCursor(POSITION, mcpFp())
+      expect(Buffer.from(token, 'base64url').toString('utf8')).not.toContain(UID)
+    })
   })
 
   it('reject: write token transitions and echoes the updated record', async () => {
@@ -2657,7 +2852,7 @@ describe('review_proposals tool', () => {
     const result = await call('review_proposals', { action: 'list' }, writeOnly)
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
-    expect(listAllProposals).not.toHaveBeenCalled()
+    expect(listProposalsPage).not.toHaveBeenCalled()
   })
 
   it('TWO-LAYER SCOPE: a read-only token may list but NOT reject/accept', async () => {
@@ -2829,7 +3024,7 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     ['describe_environment', {}, 'read', describeEnvironment],
     ['configure_scope', { action: 'list' }, 'read', listScopes],
     ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],
-    ['review_proposals', { action: 'list' }, 'read', listProposals],
+    ['review_proposals', { action: 'list' }, 'read', listProposalsPage],
     ['review_proposals', { action: 'reject', proposalId: MEMO_ID }, 'write', rejectProposal],
   ]
 
@@ -2901,6 +3096,8 @@ describe('write-scope policy wiring', () => {
 
   it('describe_environment reports the write policy next to the retrieval policy', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       writeScopePolicy: { mode: 'default', scope: 'work' },
@@ -2914,7 +3111,7 @@ describe('write-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
     expect(parsed.writeScopePolicy).toEqual({ mode: 'default', scope: 'work' })
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
   })
@@ -2982,6 +3179,8 @@ describe('retrieval-scope policy wiring', () => {
 
   it('describe_environment reports the active policy', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       writeScopePolicy: { mode: 'off', scope: null },
@@ -2995,7 +3194,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 

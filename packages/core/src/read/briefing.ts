@@ -159,7 +159,8 @@ export interface BriefingQuery {
   now: Date
 }
 
-/** A commitment line in the briefing (ids/topic/status/timestamps — no content). */
+/** A commitment line in the briefing (ids/topic/status/timestamps/filing — no
+ * content). `owner` is null when none was recorded; it is never inferred. */
 export interface BriefingCommitment {
   id: string
   memoryId: string
@@ -167,6 +168,9 @@ export interface BriefingCommitment {
   status: string
   dueAt: string | null
   overdue: boolean
+  owner: string | null
+  scope: string
+  project: string | null
 }
 
 /** A memory line in a briefing section (topic only in brief; content stays out of brief). */
@@ -316,6 +320,9 @@ function toCommitment(row: BriefingCommitmentRow, now: Date): BriefingCommitment
     dueAt: row.dueAt?.toISOString() ?? null,
     // Overdue == a due instant strictly in the past relative to the injected now.
     overdue: row.dueAt !== null && row.dueAt.getTime() < now.getTime(),
+    owner: row.owner,
+    scope: row.scope,
+    project: row.project,
   }
 }
 

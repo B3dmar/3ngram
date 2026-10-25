@@ -66,12 +66,24 @@ async function seedMemory(
 async function seedCommitment(
   userId: string,
   memoryId: string,
-  opts: { status?: string; dueAt?: string | null; nextSurfacingAt?: string | null } = {},
+  opts: {
+    status?: string
+    dueAt?: string | null
+    nextSurfacingAt?: string | null
+    owner?: string | null
+  } = {},
 ): Promise<string> {
   const r = await ownerPool.query(
-    `INSERT INTO commitments (user_id, memory_id, status, due_at, next_surfacing_at)
-     VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz) RETURNING id`,
-    [userId, memoryId, opts.status ?? 'open', opts.dueAt ?? null, opts.nextSurfacingAt ?? null],
+    `INSERT INTO commitments (user_id, memory_id, status, due_at, next_surfacing_at, owner)
+     VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, $6) RETURNING id`,
+    [
+      userId,
+      memoryId,
+      opts.status ?? 'open',
+      opts.dueAt ?? null,
+      opts.nextSurfacingAt ?? null,
+      opts.owner ?? null,
+    ],
   )
   return r.rows[0].id
 }
@@ -246,6 +258,111 @@ describe('overdueCommitments (runtime role)', () => {
     const page = await withTenant(userB, (tx) => overdueCommitments(tx, userB, ALL, NOW, 25))
     expect(page.items).toHaveLength(0)
     expect(page.totalCount).toBe(0)
+  })
+})
+
+// Issue #261: each commitment row carries its owner and its riding memory's
+// filing from the SAME join, so a reader never reads the memories back per row.
+describe('commitment owner and filing (runtime role, issue #261)', () => {
+  const NOW = new Date('2026-06-15T12:00:00Z')
+  const PAST = '2026-06-01T00:00:00Z'
+
+  async function seed() {
+    const owned = await seedMemory(userA, 'commitment', { scope: 'work', project: 'p1' })
+    const unscoped = await seedMemory(userA, 'commitment', { scope: 'work', project: null })
+    const otherScope = await seedMemory(userA, 'commitment', { scope: 'personal', project: 'p1' })
+    const otherUnscoped = await seedMemory(userA, 'commitment', {
+      scope: 'personal',
+      project: null,
+    })
+    const resolved = await seedMemory(userA, 'commitment', { scope: 'work', project: 'p1' })
+    await seedCommitment(userA, owned, { owner: 'release-captain', dueAt: PAST })
+    await seedCommitment(userA, unscoped, { dueAt: PAST })
+    await seedCommitment(userA, otherScope, { owner: 'someone', dueAt: PAST })
+    await seedCommitment(userA, otherUnscoped, { dueAt: PAST })
+    await seedCommitment(userA, resolved, { status: 'resolved', owner: 'x', dueAt: PAST })
+    return { owned, unscoped, otherScope, otherUnscoped, resolved }
+  }
+
+  const byMemory = (items: { memoryId: string }[], id: string) =>
+    items.find((r) => r.memoryId === id)
+
+  it('returns owner (null when unrecorded), scope and nullable project on open and overdue rows', async () => {
+    const { owned, unscoped, otherScope } = await seed()
+
+    const [open, overdue] = await withTenant(userA, async (tx) => [
+      await openCommitments(tx, userA, ALL, 25),
+      await overdueCommitments(tx, userA, ALL, NOW, 25),
+    ])
+
+    for (const page of [open, overdue]) {
+      expect(byMemory(page.items, owned)).toMatchObject({
+        owner: 'release-captain',
+        scope: 'work',
+        project: 'p1',
+      })
+      expect(byMemory(page.items, unscoped)).toMatchObject({
+        owner: null,
+        scope: 'work',
+        project: null,
+      })
+      expect(byMemory(page.items, otherScope)).toMatchObject({ scope: 'personal', project: 'p1' })
+      expect(page.totalCount).toBe(4)
+    }
+  })
+
+  it("scope_project is a strict intersection; includeUnscoped adds only that scope's NULL-project rows", async () => {
+    const { owned, unscoped, otherScope, otherUnscoped, resolved } = await seed()
+    const strict = {
+      kind: 'scope_project',
+      scope: 'work',
+      project: 'p1',
+      includeUnscoped: false,
+    } as const
+    const widened = { ...strict, includeUnscoped: true }
+
+    const [strictPage, widenedPage, overdueWidened] = await withTenant(userA, async (tx) => [
+      await openCommitments(tx, userA, strict, 25),
+      await openCommitments(tx, userA, widened, 25),
+      await overdueCommitments(tx, userA, widened, NOW, 25),
+    ])
+
+    expect(strictPage.items.map((r) => r.memoryId)).toEqual([owned])
+    expect(strictPage.totalCount).toBe(1)
+    expect(widenedPage.items.map((r) => r.memoryId).sort()).toEqual([owned, unscoped].sort())
+    expect(byMemory(widenedPage.items, unscoped)?.project).toBeNull()
+    expect(widenedPage.totalCount).toBe(2)
+    expect(overdueWidened.totalCount).toBe(2)
+    for (const page of [strictPage, widenedPage, overdueWidened]) {
+      const ids = page.items.map((r) => r.memoryId)
+      expect(ids).not.toContain(otherScope)
+      expect(ids).not.toContain(otherUnscoped)
+      expect(ids).not.toContain(resolved)
+    }
+  })
+
+  it("a scope selector keeps that scope's rows with and without a project; hasMore-style counts stay exact", async () => {
+    const { owned, unscoped } = await seed()
+
+    const page = await withTenant(userA, (tx) =>
+      openCommitments(tx, userA, { kind: 'scope', scope: 'work' }, 1),
+    )
+
+    expect(page.items).toHaveLength(1)
+    expect(page.totalCount).toBe(2)
+    expect([owned, unscoped]).toContain(page.items[0]?.memoryId)
+  })
+
+  it("never exposes another tenant's owner or filing", async () => {
+    await seed()
+
+    const [open, overdue] = await withTenant(userB, async (tx) => [
+      await openCommitments(tx, userB, ALL, 25),
+      await overdueCommitments(tx, userB, ALL, NOW, 25),
+    ])
+
+    expect(open).toEqual({ items: [], totalCount: 0 })
+    expect(overdue).toEqual({ items: [], totalCount: 0 })
   })
 })
 

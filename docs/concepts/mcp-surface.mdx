@@ -182,6 +182,7 @@ would have done reaches the model without one.
 | Thread index resource | Threads' read path | Ships with threads |
 | ~~`review` prompt + raise the prompt cap~~ | Consolidation loop | **Done** for the cap — the `review` prompt is still open, and now needs only a JTBD |
 | ~~Re-set the tool cap~~ | — | **Done** — replaced by a gated eval, not re-set to another number |
+| ~~Scope/project inventory resource~~ | Agents learn live scope and project names without a tool | **Done** — `threengram://facets`, the one entry on `resources/list`, also inlined in `describe_environment` (issue #168); no `list_projects` tool |
 
 <Note>
 **Resolved 2026-08-12: both caps are removed, and the eval slice replaced them.** This row
@@ -206,7 +207,8 @@ the slice had run report-only long enough to baseline from.
 - **`subscriptions/listen`** — held-open streams defeat the stateless deploy model. See
   the catalog-staleness note in [MCP design](/concepts/mcp-design).
 - **`resources/list`** for memories — corpus enumeration; the memory template returns
-  nothing by design.
+  nothing by design. The one listed resource is the fixed `threengram://facets` label
+  inventory, which carries no memory content.
 - **Completion for the memory `{id}`** — suggesting memory ids is the same enumeration
   through a different door.
 - **Roots and Sampling** — client capabilities a server cannot use, and Sampling is

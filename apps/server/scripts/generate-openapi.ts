@@ -56,10 +56,10 @@ import {
   meResponseSchema,
   nativeReviseDispositionBodySchema,
   nativeReviseMoveBodySchema,
-  proposalRecordSchema,
   proposalRejectBodySchema,
   proposalStatusSchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   rememberToolInputV2Schema,
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
@@ -141,10 +141,6 @@ const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }
 const archiveResult = z
   .object({ id: z.uuid(), status: memoryStatusSchema.extract(['archived']) })
   .strict()
-/** GET /api/v1/proposals envelope — the bounded list + count-consistent count. */
-const proposalsList = z
-  .object({ proposals: z.array(proposalRecordSchema), count: z.number().int().min(0) })
-  .strict()
 /** GET /api/v1/scopes envelope — registered scope registry rows + count. */
 const scopeRow = z
   .object({
@@ -157,8 +153,8 @@ const scopeRow = z
 const scopesList = z.object({ scopes: z.array(scopeRow), count: z.number().int().min(0) }).strict()
 
 // GET /api/v1/export envelope — the complete portable dataset. Composed here
-// from the route's output shape (like scopesList /
-// proposalsList above); content-bearing because the archive is the owner's JTBD.
+// from the route's output shape (like scopesList above); content-bearing
+// because the archive is the owner's JTBD.
 const exportAccount = z
   .object({
     id: z.uuid(),
@@ -455,7 +451,7 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor, refile it in place with kind: move, or archive it with kind: archive (mirrors the MCP revise tool)', body: z.union([nativeReviseDispositionBodySchema, nativeReviseMoveBodySchema, reviseToolInputSchema.omit({ predecessorId: true })]), status: 200, response: reviseToolOutputV2Schema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
   { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory of any type (operator form; the guarded agent form is revise kind: archive)', body: archiveMemoryBodySchema, optionalBody: true, status: 200, response: archiveResult },
-  { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded)', query: proposalsListQuerySchema, status: 200, response: proposalsList },
+  { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded, cursor-paginated)', query: proposalsListQuerySchema, status: 200, response: proposalsListResponseSchema },
   { method: 'post', path: '/api/v1/proposals/:id/apply', operationId: 'applyProposal', summary: 'Accept a consolidation proposal', status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/proposals/:id/reject', operationId: 'rejectProposal', summary: 'Reject a consolidation proposal', body: proposalRejectBodySchema, optionalBody: true, status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/agent-sessions/open', operationId: 'openAgentSession', summary: 'Open or re-activate an agent session by its natural key (SessionStart). Idempotent: startup inserts, resume reuses the row and advances activation_epoch, and neither restamps the briefing.', body: agentSessionOpenBodySchema, status: 200, response: agentSessionOpenResponseSchema, errors: [{ status: 409, description: 'A startup open reused a natural key already opened with different project, scope or selector', reasons: ['conflict'] }, { status: 410, description: 'The account was erased while the request was in flight', reasons: ['account_deleted'] }] },
