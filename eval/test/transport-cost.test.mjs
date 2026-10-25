@@ -177,7 +177,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // threengram://facets resource rides resources/list, which surfaceTokens
       // does not count. Tool description unchanged; REST and CLI unchanged.
       // MEASURED, not summed.
-      mcp: [27968, 225560, 56354],
+      // MCP +72/+576/+140 (issue #168 review): the inline facets arrays gain
+      // maxItems (MAX_INLINE_FACET_LABELS) and a required `truncated:
+      // { scopes, projects }` object with its description. Tool description
+      // unchanged; REST and CLI unchanged. MEASURED, not summed.
+      mcp: [28040, 226136, 56494],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },

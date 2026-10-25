@@ -197,6 +197,7 @@ export {
   describeEnvironmentOutputV3Schema,
   describeEnvironmentOutputV4Schema,
   environmentFacetsSchema,
+  MAX_INLINE_FACET_LABELS,
 } from './describe-environment.js'
 // --- get_facts range read: time-series reads over bi-temporal facts ---
 export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'

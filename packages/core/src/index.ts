@@ -63,6 +63,7 @@ export {
   type GcClientsRepo,
   type GcClientsResult,
   garbageCollectClients,
+  type InlineFacets,
   isCloserEligible,
   LEGACY_SURFACING_POLICY,
   listAllProposals,

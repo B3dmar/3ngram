@@ -142,7 +142,7 @@ export {
   type WrittenCommitment,
 } from './commitments.js'
 // --- credential-resurrection guard ---
-export { AccountDeletedError } from './credential-guard.js'
+export { AccountDeletedError, getLiveAccountId } from './credential-guard.js'
 // --- full-account data export (GDPR portability) — appended block ---
 export {
   type ExportAccountRow,
@@ -242,6 +242,7 @@ export {
   type MemoryBatchRow,
   type MemoryDetailRow,
   type MemoryFacets,
+  type MemoryFacetsOptions,
   type MemoryListRow,
 } from './memory-read.js'
 export {
@@ -398,4 +399,4 @@ export {
   upsertUserProfileAttributes,
 } from './user-profile-attributes.js'
 // --- /me identity read: keyed id+email lookup, no credential ---
-export { getLiveAccountId, getUserIdentityById, type UserIdentityRow } from './users-read.js'
+export { getUserIdentityById, type UserIdentityRow } from './users-read.js'

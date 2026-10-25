@@ -2326,7 +2326,7 @@ describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
       account: { id: UID },
-      facets: { scopes: [], projects: [] },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
@@ -2356,13 +2356,21 @@ describe('describe_environment tool', () => {
     // The authenticated account (issue #321): core's users.id, verbatim.
     expect(parsed.account).toEqual({ id: UID })
     // The inlined inventory (issue #168): empty arrays, never omitted.
-    expect(parsed.facets).toEqual({ scopes: [], projects: [] })
+    expect(parsed.facets).toEqual({
+      scopes: [],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    })
   })
 
   it('inlines the live scope/project inventory core reported (#168)', async () => {
     describeEnvironment.mockResolvedValue({
       account: { id: UID },
-      facets: { scopes: ['personal', 'work'], projects: ['3ngram', 'garden'] },
+      facets: {
+        scopes: ['personal', 'work'],
+        projects: ['3ngram', 'garden'],
+        truncated: { scopes: false, projects: false },
+      },
       scopes: [scopeRecord('work'), scopeRecord('personal'), scopeRecord('client-acme')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
@@ -2377,7 +2385,11 @@ describe('describe_environment tool', () => {
     const parsed = describeEnvironmentOutputV4Schema.parse(result.structuredContent)
     // The inventory is the LIVE-memory facets, distinct from the registry list:
     // `client-acme` is registered but holds nothing, so it is not a facet.
-    expect(parsed.facets).toEqual({ scopes: ['personal', 'work'], projects: ['3ngram', 'garden'] })
+    expect(parsed.facets).toEqual({
+      scopes: ['personal', 'work'],
+      projects: ['3ngram', 'garden'],
+      truncated: { scopes: false, projects: false },
+    })
     expect(parsed.scopes.map((s) => s.name)).toContain('client-acme')
   })
 
@@ -2387,7 +2399,7 @@ describe('describe_environment tool', () => {
     const coreId = crypto.randomUUID()
     describeEnvironment.mockResolvedValue({
       account: { id: coreId },
-      facets: { scopes: [], projects: [] },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work'), scopeRecord('personal')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       stats: {
@@ -2425,7 +2437,7 @@ describe('describe_environment tool', () => {
     try {
       describeEnvironment.mockResolvedValue({
         account: { id: UID },
-        facets: { scopes: [], projects: [] },
+        facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
         stats: {
@@ -2819,7 +2831,7 @@ describe('retrieval-scope policy wiring', () => {
   it('describe_environment reports the active policy', async () => {
     describeEnvironment.mockResolvedValue({
       account: { id: UID },
-      facets: { scopes: [], projects: [] },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       stats: {

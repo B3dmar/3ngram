@@ -11,6 +11,7 @@ import {
   describeEnvironmentOutputV2Schema,
   describeEnvironmentOutputV3Schema,
   describeEnvironmentOutputV4Schema,
+  MAX_INLINE_FACET_LABELS,
   memoriesFacetsResponseSchema,
 } from '../src/index.js'
 
@@ -95,27 +96,79 @@ describe('describeEnvironmentOutputV4Schema (inlined facets inventory, issue #16
     expect(describeEnvironmentOutputV4Schema.safeParse(V3_REPORT).success).toBe(false)
     const parsed = describeEnvironmentOutputV4Schema.parse({
       ...V3_REPORT,
-      facets: { scopes: [], projects: [] },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
     })
-    expect(parsed.facets).toEqual({ scopes: [], projects: [] })
+    expect(parsed.facets).toEqual({
+      scopes: [],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    })
   })
 
-  it('carries the SAME payload the REST facets response does', () => {
-    const facets = { scopes: ['personal', 'work'], projects: ['3ngram'] }
-    const parsed = describeEnvironmentOutputV4Schema.parse({ ...V3_REPORT, facets })
-    expect(memoriesFacetsResponseSchema.parse(parsed.facets)).toEqual(facets)
+  it('carries the REST facets labels, plus the per-array truncation flags', () => {
+    const labels = { scopes: ['personal', 'work'], projects: ['3ngram'] }
+    const parsed = describeEnvironmentOutputV4Schema.parse({
+      ...V3_REPORT,
+      facets: { ...labels, truncated: { scopes: false, projects: false } },
+    })
+    const { truncated: _truncated, ...inlineLabels } = parsed.facets
+    expect(memoriesFacetsResponseSchema.parse(inlineLabels)).toEqual(labels)
+    // truncated is required: a report that forgets it fails output validation.
+    expect(
+      describeEnvironmentOutputV4Schema.safeParse({ ...V3_REPORT, facets: labels }).success,
+    ).toBe(false)
     // Same element constraints as REST: a non-kebab scope is rejected by both.
-    const bad = { scopes: ['Not A Scope'], projects: [] }
-    expect(memoriesFacetsResponseSchema.safeParse(bad).success).toBe(false)
+    const bad = {
+      scopes: ['Not A Scope'],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    }
+    expect(
+      memoriesFacetsResponseSchema.safeParse({ scopes: bad.scopes, projects: [] }).success,
+    ).toBe(false)
     expect(describeEnvironmentOutputV4Schema.safeParse({ ...V3_REPORT, facets: bad }).success).toBe(
       false,
     )
   })
 
+  it('bounds each inline array at MAX_INLINE_FACET_LABELS (the resource is the full list)', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `p-${i}`)
+    const at = describeEnvironmentOutputV4Schema.safeParse({
+      ...V3_REPORT,
+      facets: {
+        scopes: [],
+        projects: many(MAX_INLINE_FACET_LABELS),
+        truncated: { scopes: false, projects: true },
+      },
+    })
+    expect(at.success).toBe(true)
+    const over = describeEnvironmentOutputV4Schema.safeParse({
+      ...V3_REPORT,
+      facets: {
+        scopes: [],
+        projects: many(MAX_INLINE_FACET_LABELS + 1),
+        truncated: { scopes: false, projects: true },
+      },
+    })
+    expect(over.success).toBe(false)
+    // The REST response schema is NOT capped (on-demand read).
+    expect(
+      memoriesFacetsResponseSchema.safeParse({
+        scopes: [],
+        projects: many(MAX_INLINE_FACET_LABELS + 1),
+      }).success,
+    ).toBe(true)
+  })
+
   it('the facets object is labels only: an extra key is rejected at parse', () => {
     const r = describeEnvironmentOutputV4Schema.safeParse({
       ...V3_REPORT,
-      facets: { scopes: [], projects: [], content: 'x' },
+      facets: {
+        scopes: [],
+        projects: [],
+        truncated: { scopes: false, projects: false },
+        content: 'x',
+      },
     })
     expect(r.success).toBe(false)
   })
@@ -124,16 +177,27 @@ describe('describeEnvironmentOutputV4Schema (inlined facets inventory, issue #16
     expect(
       describeEnvironmentOutputV3Schema.safeParse({
         ...V3_REPORT,
-        facets: { scopes: [], projects: [] },
+        facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       }).success,
     ).toBe(false)
     const json = z.toJSONSchema(describeEnvironmentOutputV4Schema, { io: 'output' }) as {
       additionalProperties?: unknown
       required?: string[]
-      properties: { facets: { additionalProperties?: unknown } }
+      properties: {
+        facets: {
+          additionalProperties?: unknown
+          properties: {
+            projects: { maxItems?: number }
+            truncated: { additionalProperties?: unknown; description?: string }
+          }
+        }
+      }
     }
     expect(json.additionalProperties).toBe(true)
     expect(json.required).toEqual(expect.arrayContaining(['account', 'facets']))
     expect(json.properties.facets.additionalProperties).toBe(true)
+    expect(json.properties.facets.properties.projects.maxItems).toBe(MAX_INLINE_FACET_LABELS)
+    expect(json.properties.facets.properties.truncated.additionalProperties).toBe(true)
+    expect(json.properties.facets.properties.truncated.description).toContain('threengram://facets')
   })
 })

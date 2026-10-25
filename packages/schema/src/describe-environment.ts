@@ -47,31 +47,57 @@ export const describeEnvironmentOutputV3Schema = describeEnvironmentOutputV2Sche
 export type DescribeEnvironmentOutputV3 = z.infer<typeof describeEnvironmentOutputV3Schema>
 
 /**
+ * Per-array cap on the facets describe_environment INLINES (review of #168).
+ * The tool runs at session start and its output lands in model context, and
+ * distinct projects can approach the live-memory count, so the inline copy is
+ * bounded like the rest of the report. The `threengram://facets` resource and
+ * REST `GET /api/v1/memories/facets` stay unbounded: they are on-demand reads.
+ */
+export const MAX_INLINE_FACET_LABELS = 50
+
+/**
  * The tenant's scope/project inventory as describe_environment inlines it
- * (issue #168): the SAME `{ scopes, projects }` payload REST
+ * (issue #168): the `{ scopes, projects }` labels REST
  * `GET /api/v1/memories/facets` and the `threengram://facets` resource serve,
- * built from the same element schemas, so a host that never surfaces resources
- * to the model still sees it. `scopes` are scopes holding LIVE memories — a
- * registered scope with none appears in the report's `scopes` registry list,
- * not here. Labels only, never memory content; empty arrays for an empty
- * account. A scope name is a filing label: it never identifies an account.
+ * built from the same element schemas, capped at
+ * {@link MAX_INLINE_FACET_LABELS} per array (ASC order — the first labels),
+ * so a host that never surfaces resources to the model still sees it.
+ * `truncated` says, PER ARRAY, whether the cap cut it — per array rather than
+ * one flag because the two lists grow very differently (a handful of scopes,
+ * possibly hundreds of projects), so a client can trust a complete `scopes`
+ * list while knowing to read `threengram://facets` for every project.
+ * `scopes` are scopes holding LIVE memories — a registered scope with none
+ * appears in the report's `scopes` registry list, not here. Labels only, never
+ * memory content; empty arrays for an empty account. A scope name is a filing
+ * label: it never identifies an account.
  */
 export const environmentFacetsSchema = z
   .object({
-    scopes: memoriesFacetsResponseSchema.shape.scopes.describe(
-      'Scope names your live memories are filed under.',
-    ),
-    projects: memoriesFacetsResponseSchema.shape.projects.describe(
-      'Project names on your live memories.',
-    ),
+    scopes: memoriesFacetsResponseSchema.shape.scopes
+      .max(MAX_INLINE_FACET_LABELS)
+      .describe('Scope names your live memories are filed under.'),
+    projects: memoriesFacetsResponseSchema.shape.projects
+      .max(MAX_INLINE_FACET_LABELS)
+      .describe('Project names on your live memories.'),
+    truncated: z
+      .object({
+        scopes: z.boolean(),
+        projects: z.boolean(),
+      })
+      .strict()
+      .meta({
+        ...OPEN_OUTPUT_META,
+        description: 'True where the list was capped; read threengram://facets for all of it.',
+      }),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
 export type EnvironmentFacets = z.infer<typeof environmentFacetsSchema>
 
 /**
- * `describe_environment` output V4: V3 (account identity) plus the inlined
- * `facets` inventory. ALWAYS present (empty arrays when there is nothing).
+ * `describe_environment` output V4: V3 (account identity) plus the inlined,
+ * capped `facets` inventory. ALWAYS present (empty arrays when there is
+ * nothing). A later field (issue #235) composes a V5 from this one.
  */
 export const describeEnvironmentOutputV4Schema = describeEnvironmentOutputV3Schema
   .safeExtend({

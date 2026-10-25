@@ -15,6 +15,7 @@ export {
   describeEnvironment,
   type EnvironmentReport,
   type EnvironmentStats,
+  type InlineFacets,
 } from './environment.js'
 export {
   dbGcClientsRepo,

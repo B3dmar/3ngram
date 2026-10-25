@@ -19,6 +19,7 @@ import type { Server } from 'node:http'
 import { resetEnvCache } from '@3ngram/config'
 import { createUser, login } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
+import { MAX_INLINE_FACET_LABELS } from '@3ngram/schema'
 import { Client as McpClient, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 // Aliased to McpClient so `new McpClient(...)` does not trip the db-access gate's
 // `new (pg\.)?Client\(` regex (this is the MCP SDK client, not a Postgres client).
@@ -65,6 +66,7 @@ let tokenAFull: string
 let tokenAWrite: string
 let tokenBRead: string
 let tokenEmpty: string
+let tokenMany: string
 
 async function newUser(label: string): Promise<{ id: string; session: string }> {
   const email = `facets-${label}-${crypto.randomUUID()}@test.local`
@@ -151,6 +153,12 @@ beforeAll(async () => {
   tokenAWrite = await mintAccessToken(ownerPool, clientId, userA, 'memory:write')
   tokenBRead = await mintAccessToken(ownerPool, clientId, userB, 'memory:read')
   tokenEmpty = await mintAccessToken(ownerPool, clientId, userEmpty)
+  const many = await newUser('many')
+  tokenMany = await mintAccessToken(ownerPool, clientId, many.id, 'memory:read')
+  // One more distinct live project than describe_environment inlines.
+  for (let i = 0; i <= MAX_INLINE_FACET_LABELS; i += 1) {
+    await seed(many.id, 'work', `many-${tag}-${String(i).padStart(3, '0')}`)
+  }
 
   await seed(userA, scopeA, projectA)
   await seed(userA, 'work', null)
@@ -217,7 +225,11 @@ describe('threengram://facets resource (issue #168, real transport)', () => {
 
     expect(await readFacets(token)).toEqual({ scopes: [], projects: [] })
     const report = env.structuredContent as { facets: Facets; scopes: Array<{ name: string }> }
-    expect(report.facets).toEqual({ scopes: [], projects: [] })
+    expect(report.facets).toEqual({
+      scopes: [],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    })
     expect(report.scopes.map((s) => s.name)).toContain(registeredOnly)
   })
 
@@ -228,8 +240,30 @@ describe('threengram://facets resource (issue #168, real transport)', () => {
     await client.close()
     expect(env.isError).toBeFalsy()
     const report = env.structuredContent as { facets: Facets; account: { id: string } }
-    expect(report.facets).toEqual(await readFacets(token))
+    // Under the cap: the same labels as the resource, nothing truncated.
+    expect(report.facets).toEqual({
+      ...(await readFacets(token)),
+      truncated: { scopes: false, projects: false },
+    })
     expect(report.account.id).toBe(userA)
+  })
+
+  it('caps the INLINE copy at MAX_INLINE_FACET_LABELS and flags it; the resource stays complete', async () => {
+    const client = await connect(tokenMany)
+    const env = await client.callTool({ name: 'describe_environment', arguments: {} })
+    await client.close()
+    expect(env.isError).toBeFalsy()
+    const inline = (
+      env.structuredContent as {
+        facets: Facets & { truncated: { scopes: boolean; projects: boolean } }
+      }
+    ).facets
+    const full = await readFacets(tokenMany)
+    expect(full.projects).toHaveLength(MAX_INLINE_FACET_LABELS + 1)
+    // The first labels in ASC order, and the flag says the list was cut.
+    expect(inline.projects).toEqual(full.projects.slice(0, MAX_INLINE_FACET_LABELS))
+    expect(inline.truncated).toEqual({ scopes: false, projects: true })
+    expect(inline.scopes).toEqual(full.scopes)
   })
 
   it('refuses a write-only token (same scope gate as the memory resource)', async () => {

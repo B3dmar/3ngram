@@ -3055,6 +3055,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
       "type": "object",
       "properties": {
         "scopes": {
+          "maxItems": 50,
           "type": "array",
           "items": {
             "type": "string",
@@ -3065,6 +3066,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
           "description": "Scope names your live memories are filed under."
         },
         "projects": {
+          "maxItems": 50,
           "type": "array",
           "items": {
             "type": "string",
@@ -3072,11 +3074,29 @@ Report server capabilities (tool names, count, version), your registered scopes,
             "maxLength": 256
           },
           "description": "Project names on your live memories."
+        },
+        "truncated": {
+          "type": "object",
+          "properties": {
+            "scopes": {
+              "type": "boolean"
+            },
+            "projects": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "scopes",
+            "projects"
+          ],
+          "additionalProperties": true,
+          "description": "True where the list was capped; read threengram://facets for all of it."
         }
       },
       "required": [
         "scopes",
-        "projects"
+        "projects",
+        "truncated"
       ],
       "additionalProperties": true
     }

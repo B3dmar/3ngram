@@ -1142,6 +1142,7 @@
               "type": "object",
               "properties": {
                 "scopes": {
+                  "maxItems": 50,
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -1152,6 +1153,7 @@
                   "description": "Scope names your live memories are filed under."
                 },
                 "projects": {
+                  "maxItems": 50,
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -1159,9 +1161,23 @@
                     "maxLength": 256
                   },
                   "description": "Project names on your live memories."
+                },
+                "truncated": {
+                  "type": "object",
+                  "properties": {
+                    "scopes": {
+                      "type": "boolean"
+                    },
+                    "projects": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["scopes", "projects"],
+                  "additionalProperties": true,
+                  "description": "True where the list was capped; read threengram://facets for all of it."
                 }
               },
-              "required": ["scopes", "projects"],
+              "required": ["scopes", "projects", "truncated"],
               "additionalProperties": true
             }
           },

@@ -367,8 +367,13 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
         capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
         scopes: report.scopes.map(toScopeOutput),
         // The live scope/project inventory (issue #168), inlined for hosts that
-        // never surface the threengram://facets resource to the model.
-        facets: { scopes: report.facets.scopes, projects: report.facets.projects },
+        // never surface the threengram://facets resource to the model. Core
+        // already capped it per array and flagged what it cut.
+        facets: {
+          scopes: report.facets.scopes,
+          projects: report.facets.projects,
+          truncated: report.facets.truncated,
+        },
         // The active retrieval-scope policy (issue #47): a bounded mode enum +
         // a registered scope NAME — the redaction posture is unchanged.
         retrievalScopePolicy: report.retrievalScopePolicy,

@@ -25,10 +25,10 @@ import {
   getRetrievalPolicy,
   listMemoryFacets,
   listScopes,
-  type MemoryFacets,
   type ScopeRow,
   withTenant,
 } from '@3ngram/db'
+import { MAX_INLINE_FACET_LABELS } from '@3ngram/schema'
 import type { RetrievalPolicySetting } from '../scope/retrieval-settings.js'
 
 export type { EnvironmentStats } from '@3ngram/db'
@@ -38,14 +38,30 @@ export interface AccountIdentity {
   id: string
 }
 
+/** The inline (capped) facets copy describe_environment reports (issue #168). */
+export interface InlineFacets {
+  scopes: string[]
+  projects: string[]
+  truncated: { scopes: boolean; projects: boolean }
+}
+
+/**
+ * Cap a label list probed with LIMIT cap+1: keep the first `cap` (ASC order
+ * preserved) and report whether the probe found more.
+ */
+function capLabels(labels: string[], cap: number): { kept: string[]; truncated: boolean } {
+  return { kept: labels.slice(0, cap), truncated: labels.length > cap }
+}
+
 /** The tenant-scoped half of a describe_environment report (account identity +
  * scopes + stats + the active retrieval-scope policy, issue #47). */
 export interface EnvironmentReport {
   /** The authenticated account (issue #321). Not a scope, not a secret. */
   account: AccountIdentity
-  /** DISTINCT scope/project labels on live memories (issue #168) — the same
-   * inventory REST facets and `threengram://facets` serve. */
-  facets: MemoryFacets
+  /** DISTINCT scope/project labels on live memories (issue #168), CAPPED at
+   * MAX_INLINE_FACET_LABELS per array; `truncated` flags a capped array. The
+   * full inventory is REST facets / `threengram://facets` (unbounded). */
+  facets: InlineFacets
   scopes: ScopeRow[]
   stats: EnvironmentStats
   /** The active retrieval-scope policy (issue #47): no stored row reports the
@@ -72,7 +88,15 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
     const scopes = await listScopes(tx, userId)
     const stats = await getEnvironmentStats(tx, userId)
     const policy = await getRetrievalPolicy(tx, userId)
-    const facets = await listMemoryFacets(tx, userId)
+    // LIMIT cap+1 probe: one extra row per array tells a full list from a cut one.
+    const probed = await listMemoryFacets(tx, userId, { limit: MAX_INLINE_FACET_LABELS + 1 })
+    const scopeLabels = capLabels(probed.scopes, MAX_INLINE_FACET_LABELS)
+    const projectLabels = capLabels(probed.projects, MAX_INLINE_FACET_LABELS)
+    const facets: InlineFacets = {
+      scopes: scopeLabels.kept,
+      projects: projectLabels.kept,
+      truncated: { scopes: scopeLabels.truncated, projects: projectLabels.truncated },
+    }
     return {
       account: { id: accountId },
       scopes,

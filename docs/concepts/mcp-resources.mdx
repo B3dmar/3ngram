@@ -158,7 +158,13 @@ and project labels on the tenant's **live** memories (active, validity open), so
 - **One payload, three doors.** It is the same inventory REST
   `GET /api/v1/memories/facets` serves (same core `listMemoryFacets`, parsed through the
   same response schema), and `describe_environment` inlines it as `facets` so a host that
-  never surfaces resources to the model still gets it. There is no `list_projects` tool:
+  never surfaces resources to the model still gets it. The inline copy is **capped** at
+  `MAX_INLINE_FACET_LABELS` (50) labels per array, in ascending order, with
+  `truncated: { scopes, projects }` saying which list was cut — that tool runs at session
+  start and lands in model context, and distinct projects can grow toward the memory
+  count. The flag is per array because the two lists grow very differently. The resource
+  and the REST route are **not** capped: they are on-demand reads, so a client that sees
+  `truncated` reads `threengram://facets` for the full list. There is no `list_projects` tool:
   the inventory is addressable, so it is a resource, and adding a tool description for it
   would compete in `tools/list` for nothing.
 - **Listed.** Unlike the memory template, this URI appears on `resources/list` — that is

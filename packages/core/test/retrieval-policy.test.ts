@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Unit coverage for retrieval-scope policy enforcement across core read surfaces.
 import { EMBEDDING_DIMENSIONS } from '@3ngram/llm'
+import { MAX_INLINE_FACET_LABELS } from '@3ngram/schema'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type {
   DashboardPageOptions,
@@ -24,7 +25,7 @@ const listScopes = vi.fn()
 const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const getEnvironmentStats = vi.fn()
 const getLiveAccountId = vi.fn()
-const listMemoryFacets = vi.fn(async (_tx: unknown, _userId: string) => ({
+const listMemoryFacets = vi.fn(async (_tx: unknown, _userId: string, _opts?: unknown) => ({
   scopes: [] as string[],
   projects: [] as string[],
 }))
@@ -69,7 +70,8 @@ vi.mock('@3ngram/db', () => ({
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
   getLiveAccountId: (...a: unknown[]) => getLiveAccountId(...a),
-  listMemoryFacets: (tx: unknown, userId: string) => listMemoryFacets(tx, userId),
+  listMemoryFacets: (tx: unknown, userId: string, opts?: unknown) =>
+    listMemoryFacets(tx, userId, opts),
   AccountDeletedError,
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
@@ -534,9 +536,32 @@ describe('describeEnvironment report mapping', () => {
     getRetrievalPolicy.mockResolvedValue(null)
     listMemoryFacets.mockResolvedValueOnce({ scopes: ['work'], projects: ['3ngram'] })
     const report = await describeEnvironment(USER)
-    expect(report.facets).toEqual({ scopes: ['work'], projects: ['3ngram'] })
-    expect(listMemoryFacets).toHaveBeenCalledWith(expect.anything(), USER)
+    expect(report.facets).toEqual({
+      scopes: ['work'],
+      projects: ['3ngram'],
+      truncated: { scopes: false, projects: false },
+    })
+    // The LIMIT cap+1 probe runs in SQL, not in the transport.
+    expect(listMemoryFacets).toHaveBeenCalledWith(expect.anything(), USER, {
+      limit: MAX_INLINE_FACET_LABELS + 1,
+    })
     expect(withTenant).toHaveBeenCalledTimes(1)
+  })
+
+  it('caps the inline inventory per array and flags what the probe cut (#168 review)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    // The probe returns cap+1 projects (more exist) and exactly cap scopes (complete).
+    const label = (prefix: string, i: number) => `${prefix}-${String(i).padStart(3, '0')}`
+    const projects = Array.from({ length: MAX_INLINE_FACET_LABELS + 1 }, (_, i) => label('p', i))
+    const scopes = Array.from({ length: MAX_INLINE_FACET_LABELS }, (_, i) => label('s', i))
+    listMemoryFacets.mockResolvedValueOnce({ scopes, projects })
+    const report = await describeEnvironment(USER)
+    expect(report.facets.projects).toEqual(projects.slice(0, MAX_INLINE_FACET_LABELS))
+    expect(report.facets.scopes).toEqual(scopes)
+    expect(report.facets.truncated).toEqual({ scopes: false, projects: true })
   })
 
   it('FAILS rather than reporting an identity for an erased or missing account (#321)', async () => {

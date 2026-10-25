@@ -251,7 +251,7 @@ its row here even when its name and kind are unchanged.
 | `EdgeConflictError` | class | `1edf03d6924b` |
 | `EmbeddingSource` | type | `4d033ba4bef9` |
 | `EmptySectionsError` | class | `951ee5599e42` |
-| `EnvironmentReport` | interface | `2d333f16e674` |
+| `EnvironmentReport` | interface | `0d68d74cd3b2` |
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
@@ -288,6 +288,7 @@ its row here even when its name and kind are unchanged.
 | `IllegalCommitmentTransitionError` | class | `f0d748c08600` |
 | `ImportTargetNotFoundError` | class | `dd4231ee3dc0` |
 | `ImportWriteOptions` | interface | `70555ec58158` |
+| `InlineFacets` | interface | `c7254b1afd05` |
 | `InvalidCommitmentTransitionError` | class | `35bdd3c53d32` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
 | `LEGACY_SURFACING_POLICY` | const | `ec760cc39997` |
@@ -640,6 +641,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryEventWrite` | interface | `998f63354986` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
+| `MemoryFacetsOptions` | interface | `0104b5dd61bd` |
 | `MemoryFactWrite` | type | `1ed668a7262e` |
 | `MemoryHistoryEdgeRow` | interface | `0b72fde39b8f` |
 | `MemoryHistoryEventRow` | interface | `b9a04ed0d51c` |
@@ -784,7 +786,7 @@ its row here even when its name and kind are unchanged.
 | `listFactProposals` | function | `31620c7eb568` |
 | `listGarbageCollectableClients` | function | `a1e35c46687b` |
 | `listMemories` | function | `ed8866dcdc75` |
-| `listMemoryFacets` | function | `4d9d7a2bb1ae` |
+| `listMemoryFacets` | function | `0511d249e150` |
 | `listProposals` | function | `ca00070826cc` |
 | `listScopes` | function | `38d9a9aee782` |
 | `listSessionEvents` | function | `38bf91400471` |
@@ -1070,6 +1072,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_HANDOFF_SECTION_CEILING` | const | `1721c2e5474b` |
 | `MAX_IMPORT_CONTENT_LENGTH` | const | `25fd3d1a6cde` |
 | `MAX_IMPORT_PAYLOAD_LENGTH` | const | `fd10a65137ce` |
+| `MAX_INLINE_FACET_LABELS` | const | `bb30e1eba74d` |
 | `MAX_MEMORIES_LIMIT` | const | `fda0ccbd7f7b` |
 | `MAX_MEMORY_TYPES_FILTER` | const | `4c921eb7acd5` |
 | `MAX_PROPOSALS_LIMIT` | const | `d40baef12d46` |
@@ -1269,11 +1272,11 @@ its row here even when its name and kind are unchanged.
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |
 | `describeEnvironmentOutputV3Schema` | const | `70334227f056` |
-| `describeEnvironmentOutputV4Schema` | const | `a3b76695aed0` |
+| `describeEnvironmentOutputV4Schema` | const | `31a3f41e6646` |
 | `edgeInputSchema` | const | `56912f6f68d8` |
 | `edgeTypeSchema` | const | `86414d0a3335` |
 | `embedStatusSchema` | const | `ac5117a08996` |
-| `environmentFacetsSchema` | const | `44ceb71e3cb0` |
+| `environmentFacetsSchema` | const | `90117e9b57d1` |
 | `eventKindSchema` | const | `baeea743e9c9` |
 | `exceedsRecordedBoundPrecision` | function | `b6ca070a8ac1` |
 | `factProposalRecordSchema` | const | `78ec1dbc2134` |
