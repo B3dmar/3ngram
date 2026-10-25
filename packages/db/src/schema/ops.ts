@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Operational tables (docs/concepts/data-model.mdx). llm_usage is user-owned (RLS); eval_runs
-// and audit_log are system tables (audit_log gets INSERT-only grants).
+// Operational tables (docs/concepts/data-model.mdx). llm_usage is user-owned (RLS); eval_runs,
+// audit_log and rate_limits are system tables (audit_log gets INSERT-only grants).
 
 import { actorKindSchema } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   check,
   index,
   integer,
@@ -16,6 +17,7 @@ import {
   text,
   timestamp,
   uuid,
+  varchar,
 } from 'drizzle-orm/pg-core'
 import { enumCheckSql, tenantPolicy } from './helpers.js'
 import { users } from './identity.js'
@@ -91,3 +93,17 @@ export const auditLog = pgTable(
     }),
   ],
 )
+
+/**
+ * rate-limiter-flexible counters (#315), read and written by rate-limit-store.ts.
+ * Column order and types are fixed by the library's column-list-free
+ * `INSERT INTO t VALUES ($1,$2,$3)`, so never add columns. `expire` is epoch ms.
+ * No user_id and no RLS: rows are transient per-IP/per-user/per-key counters
+ * keyed `${keyPrefix}:${key}`, never user content. No index on `expire`: it
+ * would defeat HOT updates on the hot upsert path.
+ */
+export const rateLimits = pgTable('rate_limits', {
+  key: varchar('key', { length: 255 }).primaryKey(),
+  points: integer('points').notNull().default(0),
+  expire: bigint('expire', { mode: 'number' }),
+})
