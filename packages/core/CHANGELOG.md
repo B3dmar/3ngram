@@ -1,5 +1,13 @@
 # @3ngram/core
 
+## 0.14.1
+
+### Patch Changes
+
+- Updated dependencies [48b8972]
+  - @3ngram/schema@0.12.1
+  - @3ngram/db@0.13.1
+
 ## 0.14.0
 
 ### Minor Changes

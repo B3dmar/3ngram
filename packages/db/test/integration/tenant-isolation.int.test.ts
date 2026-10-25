@@ -238,7 +238,7 @@ describe('assertRlsInForce runtime guard', () => {
     }
     // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy;
     // 0031 adds fact_proposals; 0032 adds agent_sessions; 0039 adds
-    // user_write_scope_policy; 0042 adds user_judgment_policy; 0043 adds
+    // user_write_scope_policy; 0043 adds user_judgment_policy; 0044 adds
     // resolution_proposals. The names are asserted individually because a
     // count alone would let a swap (one table gained, another dropped) pass.
     expect(forced.length).toBe(18)

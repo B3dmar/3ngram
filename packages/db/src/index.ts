@@ -316,6 +316,12 @@ export {
   rejectProposal,
 } from './proposals-read.js'
 export { insertProposals, type ProposalWrite } from './proposals-write.js'
+// --- Postgres rate-limit store (#315) — rate_limits system table ---
+export {
+  createPostgresRateLimiter,
+  type PostgresRateLimiterOptions,
+  RATE_LIMIT_TABLE,
+} from './rate-limit-store.js'
 // --- resolution proposals: the closer's mid band (issue #229) ---
 export {
   countResolutionProposals,

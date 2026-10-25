@@ -336,7 +336,7 @@ export const userWriteScopePolicy = pgTable(
 /**
  * Per-user judgment opt-in (issue #225): whether this tenant's derived text may
  * be sent to the judgment provider (`Gateway.decide()`). One optional row per
- * user; NO ROW means `off`, the default. RLS + FORCE (0042); account erasure
+ * user; NO ROW means `off`, the default. RLS + FORCE (0043); account erasure
  * resets it to `off`.
  */
 export const userJudgmentPolicy = pgTable(

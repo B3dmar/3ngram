@@ -235,7 +235,7 @@ already has. Compatible with 2026-06-11: intentional context, not a scrape.
 
 A new user-owned table. This is a migration. The "no migration" claim is withdrawn.
 
-Physical table count is **27** ([data model](/concepts/data-model); Drizzle 25).
+Physical table count became **27** at migration 0032 ([data model](/concepts/data-model); Drizzle 25).
 Justification: the JTBD "worth-keeping work is written without
 a human typing `/debrief`" cannot be expressed on `memory_events` without a `memory_id`
 and a lifecycle kind, and it cannot be a side-file on disk.
@@ -1101,6 +1101,16 @@ three resurrect writers (the write-time attach's `resurrect`, `openSession`'s
 just the first: a backoff earned by one activation must not gate the next one's
 fresh close. The mechanism stays self-healing at any failure count: bounded churn,
 never a permanently ineligible row.
+
+**One-shot mode (`node dist/once.js session-sweep`, issue #315) has no queue.** The
+sweep's `enqueueCloser` port collects requests into a Map keyed by
+`sessionCloserJobId`, the same (run, epoch) dedup the BullMQ job id gives. After
+the sweep resolves, closers drain one at a time in the same execution, each with
+`isLastAttempt=true`: there is no in-process retry, so every failure stamps
+`closer_next_attempt_at` exactly once and the next sweep tick is the retry. This
+replaces BullMQ's 3 attempts 30s/60s apart. A failed closer leaves the others
+running and makes the execution exit `1`; a sweep that throws drains nothing.
+Correctness still rests on the epoch-fenced claim, not on the dedup.
 
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That
