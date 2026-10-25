@@ -2,8 +2,9 @@
 // Postgres store for rate-limiter-flexible (#315): counters in the
 // migration-owned `rate_limits` system table (schema/ops.ts), so limits hold
 // across replicas without Redis. The pool never leaves this package.
+import { sql } from 'drizzle-orm'
 import { type RateLimiterAbstract, RateLimiterPostgres } from 'rate-limiter-flexible'
-import { getPool } from './client.js'
+import { getAdminDb, getPool } from './client.js'
 
 export const RATE_LIMIT_TABLE = 'rate_limits'
 
@@ -61,4 +62,57 @@ export function createPostgresRateLimiter(opts: PostgresRateLimiterOptions): Rat
 /** @internal test seam: let the next limiter claim the sweeper again. */
 export function resetRateLimitSweeperClaim(): void {
   sweeperClaimed = false
+}
+
+// --- Sliding-window counter (#315) ---
+// These share rate_limits with rate-limiter-flexible. Callers must use a key
+// prefix no rlflx limiter uses (oauth-token uses 'oauth:exchange-failure:').
+// The rlflx clear-expired sweeper removes expired counter rows too. Unlike the
+// rlflx upsert (a fixed window), every increment slides `expire` forward,
+// matching Redis INCR + EXPIRE. `expire` is epoch ms, as rlflx stores it.
+
+const MAX_KEY_LENGTH = 255
+
+function assertKey(key: string): void {
+  if (key.length > MAX_KEY_LENGTH) {
+    throw new RangeError(`rate_limits key exceeds ${MAX_KEY_LENGTH} chars`)
+  }
+}
+
+/**
+ * Atomically add one to `key` and slide its expiry to nowMs + ttlMs. A missing
+ * or expired row restarts at 1. Returns the new count.
+ */
+export async function incrementWindowCounter(
+  key: string,
+  ttlMs: number,
+  nowMs: number = Date.now(),
+): Promise<number> {
+  assertKey(key)
+  const expire = nowMs + ttlMs
+  const result = await getAdminDb().execute<{ points: number | string }>(
+    sql`INSERT INTO rate_limits (key, points, expire) VALUES (${key}, 1, ${expire})
+        ON CONFLICT (key) DO UPDATE SET
+          points = CASE WHEN rate_limits.expire IS NULL OR rate_limits.expire <= ${nowMs}
+                        THEN 1 ELSE rate_limits.points + 1 END,
+          expire = ${expire}
+        RETURNING points`,
+  )
+  return Number(result.rows[0]?.points)
+}
+
+/** The live count for `key`; 0 when the row is missing or expired. */
+export async function readWindowCounter(key: string, nowMs: number = Date.now()): Promise<number> {
+  assertKey(key)
+  const result = await getAdminDb().execute<{ points: number | string }>(
+    sql`SELECT points FROM rate_limits WHERE key = ${key} AND expire > ${nowMs}`,
+  )
+  const row = result.rows[0]
+  return row ? Number(row.points) : 0
+}
+
+/** Remove the counter row for `key` (a no-op when absent). */
+export async function deleteWindowCounter(key: string): Promise<void> {
+  assertKey(key)
+  await getAdminDb().execute(sql`DELETE FROM rate_limits WHERE key = ${key}`)
 }
