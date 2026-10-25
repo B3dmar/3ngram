@@ -5,8 +5,11 @@
 // never selects memory content, tags, content hashes, embeddings, raw event
 // payloads, or arbitrary payload keys. The ONLY payload key projected is
 // `sessionRunId` (issue #262), with `payload->>'sessionRunId'`; the mapper
-// re-parses it through sessionProvenancePayloadSchema. Runs inside withTenant();
-// RLS scopes rows.
+// re-parses it through sessionProvenancePayloadSchema. ONE content column is
+// read on purpose: `commitments.last_resolution_reason` (issue #234), joined
+// onto the inspected memory's own row — the owner's evidence text for the latest
+// transition, returned only through this authenticated, tenant-scoped read.
+// Runs inside withTenant(); RLS scopes rows.
 import { sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 
@@ -26,6 +29,11 @@ export interface RawIdentityRow {
   valid_to: Date | null
   recorded_at: Date
   created_at: Date
+}
+
+/** The inspected memory: identity + its commitment's latest reason (issue #234). */
+export interface RawInspectedRow extends RawIdentityRow {
+  last_resolution_reason: string | null
 }
 
 export interface RawLineageNodeRow extends RawIdentityRow {
@@ -99,15 +107,22 @@ export async function withSavepoint<T>(
 export async function readInspectedMemory(
   tx: TenantTx,
   memoryId: string,
-): Promise<RawIdentityRow | undefined> {
+): Promise<RawInspectedRow | undefined> {
+  // The commitment rides the memory through the UNIQUE (user_id, memory_id)
+  // index, so the LEFT JOIN adds at most one row and no extra round-trip; the
+  // join is tenant-bound on user_id (RLS scopes both tables as well).
   const result = await tx.execute(sql`
-    SELECT id, memory_type, topic, project, scope, status,
-           valid_from, valid_to, recorded_at, created_at
-    FROM memories
-    WHERE id = ${memoryId}::uuid
+    SELECT m.id, m.memory_type, m.topic, m.project, m.scope, m.status,
+           m.valid_from, m.valid_to, m.recorded_at, m.created_at,
+           c.last_resolution_reason
+    FROM memories m
+    LEFT JOIN commitments c
+      ON c.user_id = m.user_id
+     AND c.memory_id = m.id
+    WHERE m.id = ${memoryId}::uuid
     LIMIT 1
   `)
-  return rowsOf<RawIdentityRow>(result)[0]
+  return rowsOf<RawInspectedRow>(result)[0]
 }
 
 export async function readDirectRelationships(

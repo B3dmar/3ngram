@@ -25,7 +25,7 @@
 // a guaranteed cosine hit. Assertions carry NO memory content beyond test-local
 // random tags (hard rule 6).
 import type { Server } from 'node:http'
-import { resetEnvCache } from '@3ngram/config'
+import { resetEnvCache, setLogDestination } from '@3ngram/config'
 import { getFacts as coreGetFacts, search as coreSearch } from '@3ngram/core'
 import { createUser, login } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
@@ -820,6 +820,121 @@ describe('A4 resolve parity (FSM status output)', () => {
     // Same FSM output shape + value on both transports.
     expect(mcpOut.commitmentId).toEqual(expect.any(String))
     expect(mcpOut.status).toBe(restOut.status)
+  })
+})
+
+// --- RESOLVE REASON parity (issue #234) -------------------------------------
+
+describe('resolve reason parity (#234): REST ≡ MCP, read back via history, never logged', () => {
+  // Capture EVERY structured line the process-global log() emits while the
+  // resolves below run (the oauth-token-outcome-log precedent): hard rule 6
+  // says the reason is content, so no line may carry its text — only lengths.
+  const lines: string[] = []
+  beforeAll(() => {
+    setLogDestination({ write: (chunk: string) => void lines.push(chunk) })
+  })
+  afterAll(() => {
+    setLogDestination()
+  })
+
+  async function remember(client: McpClient, memoryType: string): Promise<string> {
+    const written = await client.callTool({
+      name: 'remember',
+      arguments: { memoryType, topic: 'reason', content: `reason-${crypto.randomUUID()}` },
+    })
+    return (written.structuredContent as { memory: { id: string } }).memory.id
+  }
+
+  async function lastReason(memoryId: string): Promise<string | null> {
+    const res = await rest(`/api/v1/memories/${memoryId}/history`, { key: keyA })
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { lastResolutionReason: string | null }).lastResolutionReason
+  }
+
+  it('stores the same trimmed reason from either transport and rejects it identically', async () => {
+    const restSecret = `rest-reason-${crypto.randomUUID()}`
+    const mcpSecret = `mcp-reason-${crypto.randomUUID()}`
+    const blockerSecret = `blocker-reason-${crypto.randomUUID()}`
+    const client = await connect(tokenA)
+    const restMemId = await remember(client, 'commitment')
+    const mcpMemId = await remember(client, 'commitment')
+    const blockerId = await remember(client, 'blocker')
+
+    // Success on both transports.
+    const restRes = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved', reason: ` ${restSecret} ` },
+    })
+    expect(restRes.status).toBe(200)
+    const mcpRes = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'resolved', reason: ` ${mcpSecret} ` },
+    })
+    expect(mcpRes.isError).toBeFalsy()
+    expect((mcpRes.structuredContent as { status: string }).status).toBe(
+      ((await restRes.json()) as { status: string }).status,
+    )
+    expect(await lastReason(restMemId)).toBe(restSecret)
+    expect(await lastReason(mcpMemId)).toBe(mcpSecret)
+
+    // A blocker cannot carry a reason: invalid input on both, nothing archived.
+    const restBlocker = await rest(`/api/v1/memories/${blockerId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved', reason: blockerSecret },
+    })
+    expect(restBlocker.status).toBe(400)
+    expect(((await restBlocker.json()) as { error: string }).error).toBe('invalid_input')
+    const mcpBlocker = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: blockerId, status: 'resolved', reason: blockerSecret },
+    })
+    expect(mcpBlocker.isError).toBe(true)
+    expect(toolText(mcpBlocker)).toContain('invalid input')
+    expect(toolText(mcpBlocker)).not.toContain(blockerSecret)
+
+    // Oversize on both: the shared schema bound.
+    const oversize = `${restSecret}${'x'.repeat(500)}`
+    const restBig = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'open', reason: oversize },
+    })
+    expect(restBig.status).toBe(400)
+    const mcpBig = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'open', reason: oversize },
+    })
+    expect(mcpBig.isError).toBe(true)
+
+    // Cross-tenant: B's resolve of A's commitment is not_found on both.
+    const restForeign = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyB,
+      body: { status: 'open', reason: restSecret },
+    })
+    expect(restForeign.status).toBe(404)
+    await client.close()
+    const clientB = await connect(tokenB)
+    const mcpForeign = await clientB.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'open', reason: mcpSecret },
+    })
+    await clientB.close()
+    expect(mcpForeign.isError).toBe(true)
+    expect(toolText(mcpForeign)).toContain('not_found')
+    // None of the failures moved or rewrote A's stored reasons.
+    expect(await lastReason(restMemId)).toBe(restSecret)
+    expect(await lastReason(mcpMemId)).toBe(mcpSecret)
+
+    // The capture saw the failure paths (so it is live) ...
+    const captured = lines.join('')
+    expect(captured).toContain('resolve reason rejected for a blocker')
+    // ... and no line, success or failure, carries any reason text.
+    for (const secret of [restSecret, mcpSecret, blockerSecret]) {
+      expect(captured).not.toContain(secret)
+    }
   })
 })
 

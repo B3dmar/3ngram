@@ -773,6 +773,9 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                     "type": "string"
                   },
+                  "defensive": {
+                    "type": "boolean"
+                  },
                   "sessionId": {
                     "maxLength": 256,
                     "minLength": 1,
@@ -882,7 +885,7 @@
             "description": "The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row"
           }
         },
-        "summary": "Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark."
+        "summary": "Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark. defensive: true (no debrief was shown) lands expired and keeps the begin watermark."
       }
     },
     "/api/v1/agent-sessions/{sessionRunId}": {
@@ -2834,6 +2837,12 @@
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                             "type": "string"
                           },
+                          "lastResolutionReason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "memoryId": {
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -2888,6 +2897,7 @@
                           "recurrence",
                           "nextSurfacingAt",
                           "resolvedAt",
+                          "lastResolutionReason",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -5196,6 +5206,18 @@
                     "eventsTruncated": {
                       "type": "boolean"
                     },
+                    "lastResolutionReason": {
+                      "anyOf": [
+                        {
+                          "maxLength": 500,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "lineage": {
                       "additionalProperties": false,
                       "properties": {
@@ -5511,7 +5533,8 @@
                     "directRelationships",
                     "auditEvents",
                     "eventsTruncated",
-                    "createdBySessionRunId"
+                    "createdBySessionRunId",
+                    "lastResolutionReason"
                   ],
                   "type": "object"
                 }
@@ -5544,6 +5567,12 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "reason": {
+                    "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sessionRunId": {
                     "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.",
                     "format": "uuid",

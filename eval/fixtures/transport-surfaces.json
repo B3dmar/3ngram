@@ -2355,6 +2355,12 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "reason": {
+              "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
             }
           },
           "required": ["memoryId", "status"],
@@ -4356,6 +4362,12 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "reason": {
+              "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
             }
           },
           "required": ["memoryId", "status"],

@@ -347,6 +347,15 @@ export interface CommitmentTransition {
   expectedFrom?: CommitmentStatus | undefined
   sessionRunId?: string | undefined
   /**
+   * Optional evidence for THIS transition (issue #234), already validated by
+   * `resolutionReasonSchema`. Written to `last_resolution_reason` in the same
+   * UPDATE as the status: the reason when given, NULL when omitted, so a stored
+   * reason always explains the latest transition and never carries onto a later
+   * one. Memory content — never logged, never put in the event payload (the
+   * field name is in REDACTED_FIELDS as a backstop).
+   */
+  resolutionReason?: string | undefined
+  /**
    * Provenance the caller has ALREADY resolved: stamp exactly this run id and do
    * NOT run the attach decision. Mutually exclusive with `sessionRunId`.
    *
@@ -395,8 +404,12 @@ const TRANSITION_EVENT_KIND = {
 /**
  * Transition a commitment to `to`, in one tenant-scoped transaction. Sets
  * `resolved_at` when entering 'resolved' (and clears it on any other target so a
- * revived commitment does not carry a stale resolution time), bumps `updated_at`,
- * and appends a lifecycle audit event to the commitment's memory.
+ * revived commitment does not carry a stale resolution time), writes
+ * `last_resolution_reason` (the given reason, or NULL — issue #234: a reason
+ * explains one transition), bumps `updated_at`, and appends a lifecycle audit
+ * event to the commitment's memory. The event payload carries provenance only;
+ * the reason is never copied into it (memory_events is append-only, so payload
+ * text could not be redacted by account erasure).
  *
  * The status UPDATE fires the FSM trigger; an illegal pair (reached only when
  * core's canTransition guard is bypassed) raises a check-violation mapped to
@@ -541,7 +554,12 @@ export async function transitionCommitment(
       // before this file ever added a lock here.
       const [row] = await tx
         .update(commitments)
-        .set({ status: input.to, resolvedAt, updatedAt: sql`now()` })
+        .set({
+          status: input.to,
+          resolvedAt,
+          lastResolutionReason: input.resolutionReason ?? null,
+          updatedAt: sql`now()`,
+        })
         .where(
           and(
             eq(commitments.userId, input.userId),
@@ -653,7 +671,9 @@ export async function sweepCommitments(
 ): Promise<SurfacingSweepResult> {
   const overdue = await tx
     .update(commitments)
-    .set({ status: 'expired', updatedAt: sql`now()` })
+    // A sweep expiry is a transition with no reason: clear any earlier one so
+    // it is not read as the evidence for this expiry (issue #234).
+    .set({ status: 'expired', lastResolutionReason: null, updatedAt: sql`now()` })
     .where(
       and(
         eq(commitments.userId, userId),

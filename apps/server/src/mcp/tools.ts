@@ -476,6 +476,7 @@ const resolveTool: ToolDefinition = {
       input.status,
       'user_mcp',
       input.sessionRunId,
+      input.reason,
     )
     const output = parseOutput('resolve', resolveToolOutputSchema, {
       commitmentId: result.id,

@@ -40,7 +40,7 @@ its row here even when its name and kind are unchanged.
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
 | `REDACTED` | const | `4a6e93923c89` |
-| `REDACTED_FIELDS` | const | `48e36111cfc1` |
+| `REDACTED_FIELDS` | const | `cc90498724f8` |
 | `RequestContext` | interface | `7b9320e0e681` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
@@ -170,7 +170,7 @@ its row here even when its name and kind are unchanged.
 | Export | Kind | Signature |
 |---|---|---|
 | `REDACTED` | const | `4a6e93923c89` |
-| `REDACTED_FIELDS` | const | `48e36111cfc1` |
+| `REDACTED_FIELDS` | const | `cc90498724f8` |
 | `contentDigest` | function | `b3354c4bd5b1` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -258,7 +258,7 @@ its row here even when its name and kind are unchanged.
 | `ExportAccountRow` | interface | `371759da5226` |
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
-| `ExportCommitmentRow` | interface | `b81b94928334` |
+| `ExportCommitmentRow` | interface | `268fcee3c080` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
@@ -308,7 +308,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryBatchItem` | interface | `0b8a8abf044f` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
-| `MemoryHistoryRead` | interface | `7bcd95df97dc` |
+| `MemoryHistoryRead` | interface | `1d5c97e4feac` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryNotFoundError` | class | `91f7c6ef54ac` |
 | `MergedPage` | interface | `31f7539775c9` |
@@ -325,6 +325,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalsPageQuery` | interface | `443bc668abd5` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
 | `RememberResult` | interface | `9cca2f28c36c` |
+| `ResolveReasonNotSupportedError` | class | `d28ecb2bd083` |
 | `ResolveStatus` | type | `7accd0c80ed5` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `ResourceLimitKind` | type | `38affb7e6a60` |
@@ -435,7 +436,7 @@ its row here even when its name and kind are unchanged.
 | `renderDebriefPrompt` | function | `1ee4c92ee5d0` |
 | `requireSelector` | function | `9939360dd211` |
 | `reserveBudgetSlot` | function | `f23fa3966c48` |
-| `resolveByMemoryId` | function | `161dbd9b5527` |
+| `resolveByMemoryId` | function | `c8ee3a099707` |
 | `resolveResourceLimits` | function | `a4a0b13ca9fa` |
 | `resolveRetrievalPolicy` | function | `8d2d78bd62d8` |
 | `resolveWriteScope` | function | `7e57a9b22d9f` |
@@ -604,9 +605,9 @@ its row here even when its name and kind are unchanged.
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
-| `CommitmentTransition` | interface | `1697152a1177` |
+| `CommitmentTransition` | interface | `92eff33ae648` |
 | `CommitmentWrite` | interface | `dd9c21233475` |
-| `CompleteTriageOptions` | interface | `8f2c4d86eeda` |
+| `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
@@ -625,7 +626,7 @@ its row here even when its name and kind are unchanged.
 | `ExportAccountRow` | interface | `371759da5226` |
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
-| `ExportCommitmentRow` | interface | `b81b94928334` |
+| `ExportCommitmentRow` | interface | `268fcee3c080` |
 | `ExportEdgeRow` | interface | `ab29ae277330` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
@@ -673,7 +674,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistoryIdentityRow` | interface | `ced9be5713ea` |
 | `MemoryHistoryLifecycleState` | type | `f5cbe15b0f8d` |
 | `MemoryHistoryPayloadMetadataRow` | interface | `89c224a9fb77` |
-| `MemoryHistoryRead` | interface | `7bcd95df97dc` |
+| `MemoryHistoryRead` | interface | `1d5c97e4feac` |
 | `MemoryHistoryRelationshipRow` | interface | `b7b05240aed2` |
 | `MemoryHistorySectionStatus` | type | `8637fbf356e5` |
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
@@ -752,7 +753,7 @@ its row here even when its name and kind are unchanged.
 | `closeDb` | function | `07b382de379c` |
 | `closeSession` | function | `0f12d1991868` |
 | `closerBackoffDelayMs` | function | `a90ec2357606` |
-| `commitments` | const | `a414b2f62ba1` |
+| `commitments` | const | `eb38994078d2` |
 | `completeSessionTriage` | function | `3a3467b20029` |
 | `consolidationProposals` | const | `c87ade1c93dc` |
 | `consumeOauthCode` | function | `60c538284d80` |
@@ -1121,6 +1122,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_MEMORY_TYPES_FILTER` | const | `4c921eb7acd5` |
 | `MAX_PROPOSALS_LIMIT` | const | `d40baef12d46` |
 | `MAX_RECORDED_BOUND_FRACTION_DIGITS` | const | `ed5f7f6cc966` |
+| `MAX_RESOLUTION_REASON_LENGTH` | const | `ccbdcfae6619` |
 | `MAX_REST_ERROR_DETAIL_LENGTH` | const | `c6a35723ead3` |
 | `MAX_REST_PROPOSALS_LIMIT` | const | `f1509546a975` |
 | `MAX_REVISE_DISPOSITION_IDS` | const | `87fc9796fe9a` |
@@ -1279,7 +1281,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageBeginBodySchema` | const | `7747702f51cb` |
 | `agentSessionTriageBeginResponseSchema` | const | `f65b36887b5a` |
-| `agentSessionTriageCompleteBodySchema` | const | `b137f7cac20c` |
+| `agentSessionTriageCompleteBodySchema` | const | `37bd94cfb2df` |
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
@@ -1393,7 +1395,7 @@ its row here even when its name and kind are unchanged.
 | `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
 | `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
-| `memoryHistoryResponseSchema` | const | `fd6607935ca1` |
+| `memoryHistoryResponseSchema` | const | `4f9d703051a9` |
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
@@ -1431,8 +1433,9 @@ its row here even when its name and kind are unchanged.
 | `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |
 | `resendVerificationInputSchema` | const | `258740cf44b0` |
 | `resetPasswordInputSchema` | const | `33f21153f1c1` |
+| `resolutionReasonSchema` | const | `88e35aabe373` |
 | `resolveOutcomeStatusSchema` | const | `ea02c06327dd` |
-| `resolveToolInputSchema` | const | `931fa65ef6e0` |
+| `resolveToolInputSchema` | const | `b5efdf38f74f` |
 | `resolveToolOutputSchema` | const | `e7808ed62ded` |
 | `resourceLimitKindSchema` | const | `ba462cc09a99` |
 | `resourceLimitsSchema` | const | `db1d186cc9a5` |

@@ -230,3 +230,120 @@ describe('GET /api/v1/memories/:id/history session provenance (#262)', () => {
     expect((await history(id)).createdBySessionRunId).toBe(run)
   })
 })
+
+// Issue #234: the optional resolve `reason` lands on the commitment row and is
+// read back ONLY through this authenticated, tenant-scoped history read.
+describe('GET /api/v1/memories/:id/history lastResolutionReason (#234)', () => {
+  async function writeTyped(memoryType: 'commitment' | 'blocker', project?: string) {
+    const res = await api('/api/v1/memories', {
+      method: 'POST',
+      body: {
+        memoryType,
+        topic: 't234',
+        content: `r234-${memoryType}-${crypto.randomUUID()}`,
+        ...(project === undefined ? {} : { project }),
+      },
+    })
+    expect(res.status).toBe(201)
+    return ((await res.json()) as { memory: { id: string } }).memory.id
+  }
+
+  function resolve(id: string, body: Record<string, unknown>, as?: string) {
+    return api(`/api/v1/memories/${id}/resolve`, {
+      method: 'POST',
+      body,
+      ...(as === undefined ? {} : { as }),
+    })
+  }
+
+  it('round-trips a trimmed reason, attributes the event to the run only, clears on reopen', async () => {
+    const project = `hist-234-${crypto.randomUUID().slice(0, 8)}`
+    const run = await openRun(project)
+    const id = await writeTyped('commitment', project)
+
+    const resolved = await resolve(id, {
+      status: 'resolved',
+      reason: '  shipped in PR #234  ',
+      sessionRunId: run,
+    })
+    expect(resolved.status).toBe(200)
+    const afterResolve = await history(id)
+    expect(afterResolve.lastResolutionReason).toBe('shipped in PR #234')
+    const resolveEvent = afterResolve.auditEvents.find((e) => e.eventKind === 'resolve')
+    expect(resolveEvent?.sessionRunId).toBe(run)
+    // The stored event payload is provenance only — the reason is not in it.
+    const payload = await ownerPool.query(
+      `SELECT payload FROM memory_events WHERE memory_id = $1 AND event_kind = 'resolve'`,
+      [id],
+    )
+    expect(payload.rows.map((r) => r.payload)).toEqual([{ sessionRunId: run }])
+
+    const reopened = await resolve(id, { status: 'open' })
+    expect(reopened.status).toBe(200)
+    expect((await history(id)).lastResolutionReason).toBeNull()
+  })
+
+  it('stores nothing for a reason on a same-state no-op', async () => {
+    const id = await writeTyped('commitment')
+    expect((await resolve(id, { status: 'resolved', reason: 'first evidence' })).status).toBe(200)
+    const eventsBefore = (await history(id)).auditEvents.length
+
+    const again = await resolve(id, { status: 'resolved', reason: 'second evidence' })
+    expect(again.status).toBe(200)
+
+    const after = await history(id)
+    expect(after.lastResolutionReason).toBe('first evidence')
+    expect(after.auditEvents).toHaveLength(eventsBefore)
+  })
+
+  it('rejects a reason on a blocker with invalid_input and leaves the blocker active', async () => {
+    const id = await writeTyped('blocker')
+
+    const res = await resolve(id, { status: 'resolved', reason: 'blocker-evidence-234' })
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body).toEqual({
+      error: 'invalid_input',
+      detail: 'a resolve reason is stored only on a commitment; omit reason to resolve a blocker',
+    })
+    const inspected = await api(`/api/v1/memories/${id}`)
+    expect(((await inspected.json()) as { status: string }).status).toBe('active')
+    expect((await history(id)).lastResolutionReason).toBeNull()
+
+    // Without the reason the same blocker resolves (archives) as before.
+    expect((await resolve(id, { status: 'resolved' })).status).toBe(200)
+  })
+
+  it('rejects empty and oversize reasons at the boundary, writing nothing', async () => {
+    const id = await writeTyped('commitment')
+    for (const reason of ['', '   ', 'x'.repeat(501)]) {
+      const res = await resolve(id, { status: 'resolved', reason })
+      expect(res.status).toBe(400)
+    }
+    const after = await history(id)
+    expect(after.memory.id).toBe(id)
+    expect(after.lastResolutionReason).toBeNull()
+    expect(after.auditEvents.map((e) => e.eventKind)).toEqual(['create'])
+  })
+
+  it("never lets another tenant write or read A's reason", async () => {
+    const id = await writeTyped('commitment')
+    expect((await resolve(id, { status: 'resolved', reason: 'owner evidence' })).status).toBe(200)
+
+    const foreignResolve = await resolve(id, { status: 'open', reason: 'forged' }, otherKey)
+    expect(foreignResolve.status).toBe(404)
+    const foreignRead = await api(`/api/v1/memories/${id}/history`, { as: otherKey })
+    expect(foreignRead.status).toBe(404)
+    expect(JSON.stringify(await foreignRead.json())).not.toContain('owner evidence')
+    expect((await history(id)).lastResolutionReason).toBe('owner evidence')
+  })
+
+  it('reports null for a memory that carries no commitment', async () => {
+    const created = await api('/api/v1/memories', {
+      method: 'POST',
+      body: { memoryType: 'note', topic: 't234', content: `r234-note-${crypto.randomUUID()}` },
+    })
+    const id = ((await created.json()) as { memory: { id: string } }).memory.id
+    expect((await history(id)).lastResolutionReason).toBeNull()
+  })
+})

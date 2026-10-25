@@ -451,7 +451,10 @@ export function restRouter(options: RestRouterOptions): Router {
   // sibling fields — today only `sessionRunId` (issue #262), projected and
   // re-parsed in packages/db the same way the agent-sessions events route
   // narrows it, plus `createdBySessionRunId` (the run on this memory's own
-  // native `create` event). Both are ids, not content.
+  // native `create` event). Both are ids, not content. The one content field is
+  // `lastResolutionReason` (issue #234): the owner's reason for the latest
+  // transition of the commitment riding this memory, returned only on this
+  // authenticated, tenant-scoped read and never logged.
   router.get('/api/v1/memories/:id/history', (req, res) => {
     void guard('memories.history', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -500,6 +503,7 @@ export function restRouter(options: RestRouterOptions): Router {
         })),
         eventsTruncated: history.eventsTruncated,
         createdBySessionRunId: history.createdBySessionRunId,
+        lastResolutionReason: history.lastResolutionReason,
         sections: history.sections,
       })
     })
@@ -713,7 +717,8 @@ export function restRouter(options: RestRouterOptions): Router {
   // POST /api/v1/memories/:id/resolve — resolve (mirrors the MCP resolve tool,
   // keyed on the MEMORY id from D1). :id -> memoryId merged with body -> status,
   // THEN validated against resolveToolInputSchema (single boundary). Serves
-  // resolve AND unresolve (resolved -> open) — the FSM owns legality.
+  // resolve AND unresolve (resolved -> open) — the FSM owns legality. The
+  // optional `reason` (issue #234) passes straight through to core.
   router.post('/api/v1/memories/:id/resolve', (req, res) => {
     void guard('resolve', res, async () => {
       const merged = { ...(req.body as Record<string, unknown>), memoryId: req.params.id }
@@ -727,6 +732,7 @@ export function restRouter(options: RestRouterOptions): Router {
         input.status,
         'user_api',
         input.sessionRunId,
+        input.reason,
       )
       res.status(200).json({ commitmentId: result.id, status: result.status })
     })
@@ -999,6 +1005,7 @@ export function restRouter(options: RestRouterOptions): Router {
           recurrence: commitment.recurrence ?? null,
           nextSurfacingAt: commitment.nextSurfacingAt?.toISOString() ?? null,
           resolvedAt: commitment.resolvedAt?.toISOString() ?? null,
+          lastResolutionReason: commitment.lastResolutionReason ?? null,
           createdAt: commitment.createdAt.toISOString(),
           updatedAt: commitment.updatedAt.toISOString(),
         })),

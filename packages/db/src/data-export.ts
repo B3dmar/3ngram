@@ -119,6 +119,8 @@ export interface ExportCommitmentRow {
   recurrence: unknown
   nextSurfacingAt: Date | null
   resolvedAt: Date | null
+  /** Reason given with the latest transition (issue #234); user content. */
+  lastResolutionReason: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -380,6 +382,7 @@ export async function readUserDataExport(
       recurrence: commitments.recurrence,
       nextSurfacingAt: commitments.nextSurfacingAt,
       resolvedAt: commitments.resolvedAt,
+      lastResolutionReason: commitments.lastResolutionReason,
       createdAt: commitments.createdAt,
       updatedAt: commitments.updatedAt,
     })

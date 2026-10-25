@@ -120,11 +120,16 @@ export class ThreengramClient {
     return this.#send<ReviseToolOutputV2>('POST', path, { ...input, predecessorId })
   }
 
-  /** POST /api/v1/memories/:id/resolve — transition the commitment riding a memory. */
+  /**
+   * POST /api/v1/memories/:id/resolve — transition the commitment riding a memory.
+   * `opts.reason` (issue #234) is optional evidence for this transition, e.g.
+   * "PR #123" (trimmed, 1-500 chars); it is stored on the commitment, replaced
+   * by the next transition, and rejected (400 invalid_input) for a blocker.
+   */
   resolve(
     memoryId: string,
     status: CommitmentStatus,
-    opts?: { sessionRunId?: string },
+    opts?: { sessionRunId?: string; reason?: string },
   ): Promise<ResolveToolOutput> {
     const path = `/api/v1/memories/${encodeURIComponent(memoryId)}/resolve`
     return this.#send<ResolveToolOutput>('POST', path, { status, ...opts })
