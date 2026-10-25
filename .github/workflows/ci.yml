@@ -637,6 +637,7 @@ jobs:
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts
               test/integration/retrieval-policy.int.test.ts
+              test/integration/write-scope-policy.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

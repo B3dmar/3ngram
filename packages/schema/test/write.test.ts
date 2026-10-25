@@ -370,6 +370,49 @@ describe('factWrite', () => {
 })
 
 describe('nativeRememberInputSchema', () => {
+  describe('scope omission survives the parse (write-scope policy, issue #235)', () => {
+    it('leaves an omitted scope undefined: no eager default', () => {
+      const parsed = nativeRememberInputSchema.parse(validRemember)
+      expect(parsed.scope).toBeUndefined()
+      expect('scope' in parsed).toBe(false)
+    })
+
+    it("keeps an explicit 'personal' distinguishable from omission", () => {
+      expect(nativeRememberInputSchema.parse({ ...validRemember, scope: 'personal' }).scope).toBe(
+        'personal',
+      )
+    })
+
+    it('still validates an explicit scope (kebab-case, bounded)', () => {
+      expect(nativeRememberInputSchema.safeParse({ ...validRemember, scope: 'Work' }).success).toBe(
+        false,
+      )
+      expect(nativeRememberInputSchema.safeParse({ ...validRemember, scope: '' }).success).toBe(
+        false,
+      )
+    })
+
+    it('re-parsing a parsed payload keeps the omission (transport parse, then core parse)', () => {
+      const once = nativeRememberInputSchema.parse(validRemember)
+      expect(nativeRememberInputSchema.parse(once).scope).toBeUndefined()
+    })
+
+    it("the base remember schema keeps its 'personal' default (import, V1 alias)", () => {
+      expect(rememberInputSchema.parse(validRemember).scope).toBe('personal')
+      expect(rememberWithFactsInputSchema.parse(validRemember).scope).toBe('personal')
+    })
+
+    it('publishes no default for scope in the JSON Schema an MCP client sees', () => {
+      const json = z.toJSONSchema(nativeRememberInputSchema, { io: 'input' }) as {
+        properties: Record<string, { default?: unknown }>
+        required?: string[]
+      }
+      expect(json.properties.scope).toBeDefined()
+      expect(json.properties.scope?.default).toBeUndefined()
+      expect(json.required ?? []).not.toContain('scope')
+    })
+  })
+
   it('accepts optional sessionRunId beside facts', () => {
     const parsed = nativeRememberInputSchema.parse({
       ...validRemember,

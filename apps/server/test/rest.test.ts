@@ -106,6 +106,14 @@ function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): str
   const omitted = registeredScopes.length - shown.length
   return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
 }
+class UnscopedWriteError extends Error {
+  constructor() {
+    super(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
+    )
+    this.name = 'UnscopedWriteError'
+  }
+}
 class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
   constructor(registeredScopes: readonly string[]) {
@@ -271,6 +279,7 @@ vi.mock('@3ngram/core', async () => ({
   resolveRetrievalPolicy,
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
+  UnscopedWriteError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -464,6 +473,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
 describe('POST /api/v1/memories (remember)', () => {
   it('happy path: validates, calls core under the key tenant, echoes the normalized write', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: NEW_ID,
       embed: { settled: Promise.resolve(true) },
     })
@@ -487,7 +497,12 @@ describe('POST /api/v1/memories (remember)', () => {
 
   it('echoes factIds when the body carries facts, and omits the key otherwise', async () => {
     const factIds = [crypto.randomUUID()]
-    remember.mockResolvedValue({ id: NEW_ID, factIds, embed: { settled: Promise.resolve(true) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: NEW_ID,
+      factIds,
+      embed: { settled: Promise.resolve(true) },
+    })
     const withFacts = await call('/api/v1/memories', {
       method: 'POST',
       key: VALID_KEY,
@@ -503,7 +518,11 @@ describe('POST /api/v1/memories (remember)', () => {
 
     // No facts -> the key is absent entirely, so the shipped response shape is
     // byte-identical for every existing caller.
-    remember.mockResolvedValue({ id: NEW_ID, embed: { settled: Promise.resolve(true) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: NEW_ID,
+      embed: { settled: Promise.resolve(true) },
+    })
     const without = await call('/api/v1/memories', {
       method: 'POST',
       key: VALID_KEY,
@@ -561,8 +580,41 @@ describe('POST /api/v1/memories (remember)', () => {
     expect(await res.json()).toEqual({ error: 'resource_limit_exceeded' })
   })
 
+  it('echoes the scope core WROTE for an omitted scope, not a schema default (#235)', async () => {
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: NEW_ID,
+      embed: { settled: Promise.resolve(true) },
+    })
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'rest', content: 'policy filled' },
+    })
+    expect(res.status).toBe(201)
+    expect(((await res.json()) as { memory: { scope: string } }).memory.scope).toBe('work')
+    // Omission reaches core intact: the policy, not the transport, fills it.
+    const coreInput = remember.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('scope' in coreInput).toBe(false)
+  })
+
+  it('400s an unscoped write rejected by the write-scope policy, with recovery detail (#235)', async () => {
+    remember.mockRejectedValue(new UnscopedWriteError())
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'secret topic', content: 'secret content' },
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string; detail?: string }
+    expect(body.error).toBe('invalid_input')
+    expect(body.detail).toMatch(/pass scope; registered scopes: personal, work$/)
+    expect(JSON.stringify(body)).not.toContain('secret')
+  })
+
   it('surfaces the commitmentId for a commitment-type write', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: NEW_ID,
       commitmentId: COMMIT_ID,
       embed: { settled: Promise.resolve(true) },
@@ -2251,6 +2303,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-02T00:00:00.000Z'),
     },
+    writeScopePolicy: {
+      mode: 'require',
+      defaultScope: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-04T00:00:00.000Z'),
+    },
   })
 
   it('returns the caller dataset, calls core under the key tenant, sets a download header', async () => {
@@ -2276,6 +2334,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
       retrievalPolicy: {
+        mode: string
+        defaultScope: string | null
+        updatedAt: string
+      } | null
+      writeScopePolicy: {
         mode: string
         defaultScope: string | null
         updatedAt: string
@@ -2323,6 +2386,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       mode: 'default',
       defaultScope: 'work',
       updatedAt: '2026-01-02T00:00:00.000Z',
+    })
+    // The write-scope policy is user configuration too (issue #235).
+    expect(body.writeScopePolicy).toEqual({
+      mode: 'require',
+      defaultScope: null,
+      updatedAt: '2026-01-04T00:00:00.000Z',
     })
     expect(body.counts).toEqual({
       memories: 1,
@@ -2415,6 +2484,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     const schema =
       spec.paths['/api/v1/export'].get.responses['200'].content['application/json'].schema
     expect(schema.required).toContain('retrievalPolicy')
+    expect(schema.required).toContain('writeScopePolicy')
     expect(schema.required).toContain('agentSessions')
     const policy = schema.properties.retrievalPolicy
     const objectBranch = policy?.anyOf?.find((branch) => branch.type === 'object')
