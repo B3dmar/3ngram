@@ -62,3 +62,6 @@ allowBuilds:
   sharp: false # prebuilt @img/sharp-<platform> binaries; no build needed on supported platforms
   msgpackr-extract: false # prebuilt @msgpackr-extract/<platform> binary; pure-JS msgpackr fallback exists
   '@sentry/cli': false # postinstall downloads a prebuilt native binary; @sentry/nextjs source-map upload runs through the bundler plugin's own API uploader (auth-token gated), so the CLI binary is not needed at build
+minimumReleaseAgeExclude:
+  # Renovate security update: zod@4.6.6
+  - zod@4.6.6
