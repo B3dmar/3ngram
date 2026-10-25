@@ -2519,6 +2519,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-04T00:00:00.000Z'),
     },
+    resolutionProposals: [],
+    judgmentPolicy: {
+      mode: 'on',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-05T00:00:00.000Z'),
+    },
   })
 
   it('returns the caller dataset, calls core under the key tenant, sets a download header', async () => {
@@ -2553,6 +2559,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
         defaultScope: string | null
         updatedAt: string
       } | null
+      judgmentPolicy: { mode: string; updatedAt: string } | null
       counts: {
         memories: number
         facts: number
@@ -2603,6 +2610,8 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       defaultScope: null,
       updatedAt: '2026-01-04T00:00:00.000Z',
     })
+    // The judgment opt-in is a consent setting the owner can take with them (#225).
+    expect(body.judgmentPolicy).toEqual({ mode: 'on', updatedAt: '2026-01-05T00:00:00.000Z' })
     expect(body.counts).toEqual({
       memories: 1,
       facts: 1,
@@ -2612,6 +2621,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       memoryEvents: 1,
       proposals: 1,
       factProposals: 1,
+      resolutionProposals: 0,
       agentSessions: 1,
       userBudgets: 1,
       llmUsage: 1,
@@ -2695,6 +2705,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       spec.paths['/api/v1/export'].get.responses['200'].content['application/json'].schema
     expect(schema.required).toContain('retrievalPolicy')
     expect(schema.required).toContain('writeScopePolicy')
+    expect(schema.required).toContain('judgmentPolicy')
     expect(schema.required).toContain('agentSessions')
     const policy = schema.properties.retrievalPolicy
     const objectBranch = policy?.anyOf?.find((branch) => branch.type === 'object')

@@ -13,16 +13,20 @@ import {
   type AppliedProposalRow,
   applyFactProposal as applyFactProposalDb,
   applyProposal as applyProposalDb,
+  decideResolutionProposal,
   type FactProposalRow,
   listFactProposals as listFactProposalsDb,
   listProposals as listProposalsDb,
   ProposalNotFoundError,
   type ProposalRow,
+  type ResolutionProposalRow,
   rejectFactProposal as rejectFactProposalDb,
   rejectProposal as rejectProposalDb,
+  reopenResolutionProposal,
   withTenant,
 } from '@3ngram/db'
-import type { ActorKind } from '@3ngram/schema'
+import type { ActorKind, CommitmentStatus } from '@3ngram/schema'
+import { resolveCommitmentByMemoryId } from '../write/commitments.js'
 
 export {
   type AppliedProposalRow,
@@ -36,6 +40,9 @@ export type ProposalRecord = ProposalRow
 
 /** An extracted-fact proposal record returned to a transport. */
 export type FactProposalRecord = FactProposalRow
+
+/** A resolution proposal record (the closer's mid band, issue #229) returned to a transport. */
+export type ResolutionProposalRecord = ResolutionProposalRow
 
 /**
  * List-mode query: optional status filter + a bounded window (caller defaults
@@ -138,10 +145,17 @@ export type DecidedProposal =
   | { kind: 'edge_applied'; proposal: AppliedProposalRow }
   | { kind: 'fact'; proposal: FactProposalRecord }
   | { kind: 'fact_applied'; proposal: FactProposalRecord; factId: string }
+  | { kind: 'resolution'; proposal: ResolutionProposalRecord }
+  | {
+      kind: 'resolution_applied'
+      proposal: ResolutionProposalRecord
+      commitmentId: string
+      commitmentStatus: CommitmentStatus
+    }
 
 /**
- * Probe the edge table first, then the fact table, and report not-found only
- * after BOTH miss.
+ * Probe the edge table, then the fact table, then the resolution table, and
+ * report not-found only after EVERY probe misses.
  *
  * The id alone is enough to disambiguate: both tables key on uuidv7, so an id
  * that exists in one cannot collide with the other and a hit is unambiguous.
@@ -153,18 +167,60 @@ export type DecidedProposal =
  * A ProposalNotFoundError from the FIRST probe is a "not this kind" signal, not
  * a failure — only the second one propagates.
  */
-async function decideAnyKind<T>(onEdge: () => Promise<T>, onFact: () => Promise<T>): Promise<T> {
+async function decideAnyKind<T>(...probes: readonly (() => Promise<T>)[]): Promise<T> {
+  let missed: ProposalNotFoundError | undefined
+  for (const probe of probes) {
+    try {
+      return await probe()
+    } catch (error) {
+      if (!(error instanceof ProposalNotFoundError)) throw error
+      missed = error
+    }
+  }
+  // Every probe missed; the last miss carries the caller's id.
+  throw missed ?? new Error('decideAnyKind needs at least one probe')
+}
+
+/**
+ * Accept a resolution proposal (issue #229): CLAIM the proposal first
+ * (proposed -> applied, a compare-and-set), then resolve its commitment as the
+ * reviewer through the shipped FSM-checked transition — commitment-only, so a
+ * memory without a commitment is refused, never archived. Claiming first is what
+ * makes accept and reject race cleanly: exactly one of them wins the CAS, and the
+ * loser gets ProposalNotFoundError having written nothing. If the transition then
+ * fails (the commitment expired meanwhile, or it is gone), the claim is undone
+ * (applied -> proposed) and the error propagates, so the proposal stays open for
+ * a reviewer to reject. A crash between the claim and the transition leaves an
+ * `applied` proposal over an unresolved commitment, which the audit trail shows
+ * as a decision with no `resolve` event. Not atomic, because the transition owns
+ * its own transaction and lock order (packages/db commitments.ts).
+ */
+async function acceptResolutionProposal(
+  userId: string,
+  proposalId: string,
+  actorKind: ActorKind,
+): Promise<DecidedProposal> {
+  const proposal = await withTenant(userId, (tx) =>
+    decideResolutionProposal(tx, userId, proposalId, 'applied'),
+  )
+  let resolved: { id: string; status: CommitmentStatus }
   try {
-    return await onEdge()
+    resolved = await resolveCommitmentByMemoryId(userId, proposal.memoryId, actorKind)
   } catch (error) {
-    if (!(error instanceof ProposalNotFoundError)) throw error
-    return onFact()
+    await withTenant(userId, (tx) => reopenResolutionProposal(tx, userId, proposalId))
+    throw error
+  }
+  return {
+    kind: 'resolution_applied',
+    proposal,
+    commitmentId: resolved.id,
+    commitmentStatus: resolved.status,
   }
 }
 
 /**
- * Reject an open proposal of EITHER kind (proposed -> rejected). Missing or
- * already-decided in both tables -> ProposalNotFoundError. Runs under
+ * Reject an open proposal of ANY kind (proposed -> rejected). Missing or
+ * already-decided in every table -> ProposalNotFoundError. Runs under
  * withTenant/RLS, which is also what makes a cross-tenant id indistinguishable
  * from a missing one.
  */
@@ -181,14 +237,21 @@ export function rejectProposalAnyKind(
       kind: 'fact',
       proposal: await withTenant(userId, (tx) => rejectFactProposalDb(tx, userId, proposalId)),
     }),
+    async () => ({
+      kind: 'resolution',
+      proposal: await withTenant(userId, (tx) =>
+        decideResolutionProposal(tx, userId, proposalId, 'rejected'),
+      ),
+    }),
   )
 }
 
 /**
- * Accept an open proposal of EITHER kind. An edge proposal materializes its
+ * Accept an open proposal of ANY kind. An edge proposal materializes its
  * typed edge (and closes the predecessor for a supersedes/updates edge); a fact
- * proposal writes the fact it proposed and returns its id. Missing or
- * already-decided in both tables -> ProposalNotFoundError.
+ * proposal writes the fact it proposed and returns its id; a resolution proposal
+ * resolves its commitment as the reviewer. Missing or already-decided in every
+ * table -> ProposalNotFoundError.
  */
 export function acceptProposalAnyKind(
   userId: string,
@@ -208,5 +271,6 @@ export function acceptProposalAnyKind(
       )
       return { kind: 'fact_applied', proposal: applied.proposal, factId: applied.factId }
     },
+    () => acceptResolutionProposal(userId, proposalId, actorKind),
   )
 }

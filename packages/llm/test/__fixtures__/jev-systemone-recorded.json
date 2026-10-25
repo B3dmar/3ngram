@@ -1,0 +1,79 @@
+{
+  "_meta": {
+    "provenance": "RECORDED live response from POST https://api.typesafe.ai/v1/systemone on 2026-10-25 (issue #225). Response BODY only, verbatim: no headers, no x-typesafe-request-id, no cookies. The request is the synthetic contract-fixture request (jev-systemone.json) with the pinned model added; no tenant or personal data was sent.",
+    "recordedAt": "2026-10-25",
+    "requestedModel": "jev-1.14.0",
+    "unknownModelStatus": 400,
+    "unknownModelBody": {
+      "detail": {
+        "error_type": "api_usage_error",
+        "message": "Unknown model: jev-0.0.1"
+      }
+    }
+  },
+  "request": {
+    "state": "<<<BEGIN UNTRUSTED USER TEXT>>>\nShipped the retry fix and wrote the release note.\n<<<END UNTRUSTED USER TEXT>>>",
+    "questions": {
+      "c1": {
+        "type": "noul",
+        "instructions": "Does the text report completing: ship the retry fix?",
+        "criteria": {
+          "true": "The text reports the work as done.",
+          "false": "An assertion of completion alone is not evidence."
+        }
+      },
+      "kind": {
+        "type": "choice",
+        "instructions": "What kind of work is described?",
+        "criteria": {
+          "code": "Code change",
+          "docs": "Documentation",
+          "other": null
+        }
+      },
+      "effort": {
+        "type": "score",
+        "instructions": "How much work is described?",
+        "criteria": ["None", "Some", "A lot"]
+      }
+    }
+  },
+  "response": {
+    "model": "jev-1.14.0",
+    "answers": {
+      "c1": {
+        "type": "noul",
+        "noul": 0.75
+      },
+      "kind": {
+        "type": "choice",
+        "choice": "code",
+        "confidence": 0.45,
+        "probabilities": {
+          "code": 0.63,
+          "docs": 0.17,
+          "other": 0.2
+        }
+      },
+      "effort": {
+        "type": "score",
+        "score": 0.99,
+        "confidence": 0.98,
+        "legend": {
+          "0": "None",
+          "1": "Some",
+          "2": "A lot"
+        },
+        "probabilities": {
+          "0": 0.01,
+          "1": 0.99,
+          "2": 0.0
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 433,
+      "output_tokens": 70
+    }
+  }
+}

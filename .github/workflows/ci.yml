@@ -619,6 +619,7 @@ jobs:
               test/integration/auth-oauth-consent.int.test.ts
               test/integration/resource-limits.int.test.ts
               test/integration/gc-clients.int.test.ts
+              test/integration/rate-limit-store.int.test.ts
               test/integration/account-delete.int.test.ts
           - shard: db-memory
             package: '@3ngram/db'
@@ -641,6 +642,8 @@ jobs:
               test/integration/resolution-reason.int.test.ts
               test/integration/retrieval-policy.int.test.ts
               test/integration/write-scope-policy.int.test.ts
+              test/integration/judgment-policy.int.test.ts
+              test/integration/resolution-proposals.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

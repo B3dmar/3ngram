@@ -242,6 +242,8 @@ async function main() {
   const toolVectors = await embed(toolNames.map((name) => descriptions[name]))
   const toolScenarios = await embedScenarios(scenarios.toolScenarios)
   const surfaceScenarios = await embedScenarios(scenarios.surfaceScenarios)
+  const capabilityList = scenarios.capabilityScenarios ?? []
+  const capabilityScenarios = capabilityList.length ? await embedScenarios(capabilityList) : {}
 
   // Reached only when EVERY vector validated: the write is the last thing that
   // happens, so a malformed batch aborts with the previous fixture untouched.
@@ -261,10 +263,11 @@ async function main() {
       ),
       toolScenarios,
       surfaceScenarios,
+      capabilityScenarios,
     }),
   )
   process.stdout.write(
-    `\n${model}: ${toolNames.length} tool + ${scenarios.toolScenarios.length} tool-scenario + ${scenarios.surfaceScenarios.length} surface-scenario vectors, ${DIMS}d (all validated)\n`,
+    `\n${model}: ${toolNames.length} tool + ${scenarios.toolScenarios.length} tool-scenario + ${scenarios.surfaceScenarios.length} surface-scenario + ${capabilityList.length} capability-scenario vectors, ${DIMS}d (all validated)\n`,
   )
 }
 

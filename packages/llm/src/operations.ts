@@ -33,10 +33,25 @@ export const METERED_GENERATION_OPERATIONS = ['session.closer'] as const
 export type MeteredGenerationOperation = (typeof METERED_GENERATION_OPERATIONS)[number]
 
 /**
+ * Canonical metered JUDGMENT-operation keys — `gateway.decide()` callers
+ * (issue #225). Kept apart from the generation keys because the provider, and
+ * therefore the price, differs: an `llm_usage` row must say which path billed.
+ *   - `session.closer.decide` → the closer's typed pass for tenants that opted
+ *     into judgment (issue #229; packages/core/src/admin/session-closer.ts).
+ * Pinned by the same drift-guard unit test as the other two lists.
+ */
+export const METERED_JUDGMENT_OPERATIONS = ['session.closer.decide'] as const
+export type MeteredJudgmentOperation = (typeof METERED_JUDGMENT_OPERATIONS)[number]
+
+/**
  * The cost/tier surface an operation belongs to.
  *   - `embed`      — embedding-powered (memory/search). The FREE surface.
- *   - `generation` — `gateway.complete()`-powered (entity extraction, digests,
- *                    reasoning bots, RAG answers). The PAID surface.
+ *   - `generation` — `gateway.complete()`- or `gateway.decide()`-powered (entity
+ *                    extraction, digests, reasoning bots, RAG answers, typed
+ *                    judgments). The PAID surface. Judgment rides this class on
+ *                    purpose (issue #225): it is model inference billed per
+ *                    call, exactly what `llm_generation` gates, so a second
+ *                    plan-tier key would only split one capability in two.
  * Maps 1:1 to the `plan_tiers.capabilities.llm_generation`
  * (`embed → false`, `generation → true`). The cost model and
  * 004's future capability gate read this single source — no divergence.
@@ -74,6 +89,13 @@ const MAX_EMBED_CALL_COST_USD = MAX_EMBED_INPUT_TOKENS * MOST_EXPENSIVE_EMBED_RA
 // plausibly exceed a third of a cent.
 const MAX_CLOSER_CALL_COST_USD = 0.003
 
+// Basis for the closer's JUDGMENT ceiling: the same bounded state (~16K input
+// tokens at most); the provider bills input only. No vendor list price is pinned
+// in this repo, so the ceiling assumes $0.15/1M input — over three times the
+// ~$0.042/1M observed in the 2026-09-19 spike — and rounds up to the
+// generation ceiling. Re-derive it when a list price is published.
+const MAX_CLOSER_DECIDE_CALL_COST_USD = 0.003
+
 /**
  * Operation → cost ceiling. All embed operations are a single `gateway.embed()`
  * round-trip, so they share the same worst-case bound; they are listed
@@ -85,6 +107,10 @@ export const llmOperations: Readonly<Record<string, LlmOperation>> = {
   'import.embed': { maxCostUsd: MAX_EMBED_CALL_COST_USD, capabilityClass: 'embed' },
   search: { maxCostUsd: MAX_EMBED_CALL_COST_USD, capabilityClass: 'embed' },
   'session.closer': { maxCostUsd: MAX_CLOSER_CALL_COST_USD, capabilityClass: 'generation' },
+  'session.closer.decide': {
+    maxCostUsd: MAX_CLOSER_DECIDE_CALL_COST_USD,
+    capabilityClass: 'generation',
+  },
 }
 
 /** Thrown when an operation has no registered `maxCost` — a config error. */
@@ -136,7 +162,11 @@ export function maxRegisteredCostUsd(): number {
  * runtime surprise on the first metered op.
  */
 export function assertMeteredOperationsRegistered(): void {
-  const metered: readonly string[] = [...METERED_EMBED_OPERATIONS, ...METERED_GENERATION_OPERATIONS]
+  const metered: readonly string[] = [
+    ...METERED_EMBED_OPERATIONS,
+    ...METERED_GENERATION_OPERATIONS,
+    ...METERED_JUDGMENT_OPERATIONS,
+  ]
   for (const operation of metered) {
     const entry = llmOperations[operation]
     if (entry === undefined) {

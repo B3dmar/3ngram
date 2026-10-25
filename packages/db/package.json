@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/db",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Drizzle schema, withTenant() access discipline, migrations. The ONLY package that touches Postgres.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",
@@ -49,7 +49,8 @@
   "dependencies": {
     "@3ngram/schema": "workspace:*",
     "drizzle-orm": "0.45.4",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "rate-limiter-flexible": "11.2.1"
   },
   "devDependencies": {
     "@types/node": "25.9.1",

@@ -149,6 +149,9 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
        VALUES ($1, 'default', 'private-writes')`,
       [userA],
     )
+    await ownerPool.query(`INSERT INTO user_judgment_policy (user_id, mode) VALUES ($1, 'on')`, [
+      userA,
+    ])
     // Credentials: a session (deletable) + an api key + an oauth client/token.
     // Unique hashes per run — an erased user orphans (its email is rewritten), so
     // a fixed hash would collide on the unique constraint across runs.
@@ -309,6 +312,12 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
       [userA],
     )
     expect(writePolicy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
+    // An erased account stops opting in to the judgment provider (issue #225).
+    const judgment = await ownerPool.query(
+      'SELECT mode FROM user_judgment_policy WHERE user_id = $1',
+      [userA],
+    )
+    expect(judgment.rows[0]).toMatchObject({ mode: 'off' })
 
     await ownerPool.query('DELETE FROM oauth_codes WHERE client_id = $1', [clientId])
     await ownerPool.query('DELETE FROM oauth_tokens WHERE client_id = $1', [clientId])

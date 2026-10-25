@@ -103,6 +103,7 @@ function fakeGateway(
   const prompts: string[] = []
   const options: (CompleteOptions | undefined)[] = []
   return {
+    decide: () => Promise.reject(new Error('decide is not exercised here')),
     prompts,
     options,
     embed: () => Promise.reject(new Error('the closer never embeds')),
@@ -158,6 +159,8 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
     recordFailure: async (_userId, failure) => {
       failures.push(failure)
     },
+    isJudgmentEnabled: async () => false,
+    propose: async () => 0,
   }
   const repo = { ...base, ...overrides }
   return {
@@ -645,6 +648,7 @@ describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184
   it('stamps the backoff and RE-THROWS when the generation call fails', async () => {
     const repo = fakeRepo()
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('gateway is down')),
     }
@@ -671,6 +675,7 @@ describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184
     // field — there is nothing here to go stale.
     const repo = fakeRepo()
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('still down')),
     }
@@ -693,6 +698,7 @@ describe('closeSessionRun — the backoff stamp on a genuine FAILURE (issue #184
       },
     })
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('the original error')),
     }
@@ -740,6 +746,7 @@ describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issu
     // sweep tick" — see CloserOptions.isLastAttempt.
     const repo = fakeRepo()
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('gateway is down')),
     }
@@ -758,6 +765,7 @@ describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issu
   it('stamps on the LAST attempt — the only case that should ever grow the row-level count', async () => {
     const repo = fakeRepo()
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('gateway is down')),
     }
@@ -781,6 +789,7 @@ describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issu
       },
     })
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('the original error')),
     }
@@ -807,6 +816,7 @@ describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issu
       },
     })
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('the original error')),
     }
@@ -829,6 +839,7 @@ describe('closeSessionRun — isLastAttempt gates the stamp, not the throw (issu
   it('never calls onRecordFailureError when recordFailure succeeds', async () => {
     const repo = fakeRepo()
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.reject(new Error('gateway is down')),
     }
@@ -1193,6 +1204,7 @@ describe('closer accounting when the gateway omits usage', () => {
   /** A gateway that returns no `usage` object at all, as some OpenAI-compatible ones do. */
   function usagelessGateway(reply: string): Gateway {
     return {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: () => Promise.reject(new Error('the closer never embeds')),
       complete: () => Promise.resolve({ text: reply, model: 'gpt-4o-mini' }),
     }

@@ -1,5 +1,17 @@
 # @3ngram/llm
 
+## 0.4.0
+
+### Minor Changes
+
+- dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
+  
+  Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
+
+### Patch Changes
+
+- 537811a: Document `jev-1.14.0` as the last Jev model pin verified wire-compatible and test the `decide()` wire guards against a recorded live `/v1/systemone` response. The provider stays off by default.
+
 ## 0.3.0
 
 ### Minor Changes

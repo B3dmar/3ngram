@@ -35,6 +35,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON oauth_codes, user_sessions, password_res
 GRANT SELECT, INSERT, UPDATE ON user_profile_attributes TO app_user; -- onboarding profiling, RLS-enforced; upsert, no DELETE
 GRANT SELECT, INSERT, UPDATE ON user_retrieval_policy TO app_user; -- retrieval-scope policy (issue #47), RLS-enforced; upsert, no DELETE
 GRANT SELECT, INSERT, UPDATE ON user_write_scope_policy TO app_user; -- write-scope policy (issue #235), RLS-enforced; upsert, no DELETE
+GRANT SELECT, INSERT, UPDATE ON user_judgment_policy TO app_user; -- judgment opt-in (issue #225), RLS-enforced; upsert, no DELETE
+GRANT SELECT, INSERT, UPDATE ON resolution_proposals TO app_user; -- closer mid-band proposals (issue #229), RLS-enforced; decide = UPDATE, no DELETE
 GRANT EXECUTE ON FUNCTION auth_resolve_session(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_api_key(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_oauth_token(text) TO app_user;
@@ -100,3 +102,5 @@ GRANT SELECT ON plan_tiers TO app_user;
 -- gate INSERTs a reservation before a metered call and DELETEs it after, so this
 -- table is MUTABLE — unlike the append-only llm_usage cost ledger.
 GRANT SELECT, INSERT, DELETE ON budget_reservations TO app_user;
+-- rate_limits: system table (no user_id/RLS) for rate-limiter-flexible counters; app_user upserts, reads, and DELETEs expired rows (#315).
+GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limits TO app_user;

@@ -38,6 +38,7 @@ export {
   ProposalNotFoundError,
   type ProposalRecord,
   type ProposalsListQuery,
+  type ResolutionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   SuccessorNotLiveError,

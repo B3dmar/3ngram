@@ -167,6 +167,7 @@ describe('retryFailedEmbeds (#232 repair path, runtime role)', () => {
     // 1) Write with a FAILING gateway: the row lands embed_failed, NULL vector
     //    — exactly the state the 7 P2a migration rows were left in.
     const failing: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: async () => {
         throw Object.assign(new Error('transient'), { name: 'GatewayRequestError', status: 429 })
       },

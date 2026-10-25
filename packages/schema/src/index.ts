@@ -260,6 +260,17 @@ export {
 // --- ISO 8601 datetime: the one datetime grammar, pinned to zod 4.4.3's ---
 export type { IsoDateTimeOptions } from './iso-datetime.js'
 export { isoDateTime } from './iso-datetime.js'
+// --- judgment opt-in (issue #225) — appended block ---
+export type {
+  JudgmentMode,
+  JudgmentPolicyBody,
+  JudgmentPolicyResponse,
+} from './judgment-policy.js'
+export {
+  judgmentModeSchema,
+  judgmentPolicyBodySchema,
+  judgmentPolicyResponseSchema,
+} from './judgment-policy.js'
 // --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,
@@ -513,6 +524,18 @@ export {
   reviewProposalsOutputV2Schema,
   reviewProposalsRegisterOutputShapeV2,
 } from './review-fact-proposals.js'
+// --- resolution proposals in review_proposals (issue #229) — appended block ---
+export type {
+  ProposalKindCountsV3,
+  ResolutionProposalRecordOutput,
+  ReviewProposalsOutputV3,
+} from './review-resolution-proposals.js'
+export {
+  PROBABILITY_BOUNDS,
+  proposalKindCountsV3Schema,
+  resolutionProposalRecordSchema,
+  reviewProposalsOutputV3Schema,
+} from './review-resolution-proposals.js'
 // --- revise dispositions (issue #216 umbrella) — appended block ---
 export {
   type ArchiveEventPayload,

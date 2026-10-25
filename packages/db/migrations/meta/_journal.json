@@ -295,6 +295,27 @@
       "when": 1792944081570,
       "tag": "0041_memory_last_reviewed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792951307903,
+      "tag": "0042_rate_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792952840164,
+      "tag": "0043_user_judgment_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792953413378,
+      "tag": "0044_resolution_proposals",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import {
   LlmOperationNotRegisteredError,
   llmOperations,
   METERED_EMBED_OPERATIONS,
+  METERED_JUDGMENT_OPERATIONS,
   maxCostUsdForOperation,
   maxRegisteredCostUsd,
 } from '../src/operations.js'
@@ -14,6 +15,13 @@ describe('operation registry', () => {
   it('registers every metered embed operation (boot drift guard)', () => {
     for (const operation of METERED_EMBED_OPERATIONS) {
       expect(llmOperations[operation], `missing registry entry for ${operation}`).toBeDefined()
+    }
+  })
+
+  it('registers every metered judgment operation as a paid (generation) surface', () => {
+    for (const operation of METERED_JUDGMENT_OPERATIONS) {
+      expect(llmOperations[operation]?.capabilityClass).toBe('generation')
+      expect(llmOperations[operation]?.maxCostUsd).toBeGreaterThan(0)
     }
   })
 

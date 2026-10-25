@@ -153,10 +153,12 @@ export {
   type ExportEnricher,
   type ExportFactProposalRow,
   type ExportFactRow,
+  type ExportJudgmentPolicyRow,
   type ExportLlmUsageRow,
   type ExportMemoryEventRow,
   type ExportMemoryRow,
   type ExportProposalRow,
+  type ExportResolutionProposalRow,
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
@@ -194,6 +196,12 @@ export {
   insertFacts,
   type MemoryFactWrite,
 } from './facts-write.js'
+// --- judgment opt-in store (issue #225) ---
+export {
+  getJudgmentPolicy,
+  type JudgmentPolicyRow,
+  upsertJudgmentPolicy,
+} from './judgment-policy.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
 export {
@@ -294,6 +302,7 @@ export {
   type KeyedProposal,
   listFactProposalsAfter,
   listProposalsAfter,
+  listResolutionProposalsAfter,
   type ProposalKeyset,
   type ProposalPageQuery,
 } from './proposals-page.js'
@@ -307,6 +316,26 @@ export {
   rejectProposal,
 } from './proposals-read.js'
 export { insertProposals, type ProposalWrite } from './proposals-write.js'
+// --- Postgres rate-limit store (#315) — rate_limits system table ---
+export {
+  createPostgresRateLimiter,
+  deleteWindowCounter,
+  incrementWindowCounter,
+  type PostgresRateLimiterOptions,
+  RATE_LIMIT_TABLE,
+  readWindowCounter,
+} from './rate-limit-store.js'
+// --- resolution proposals: the closer's mid band (issue #229) ---
+export {
+  countResolutionProposals,
+  decideResolutionProposal,
+  getOpenResolutionProposal,
+  insertResolutionProposals,
+  RESOLUTION_PROPOSAL_COLUMNS,
+  type ResolutionProposalRow,
+  type ResolutionProposalWrite,
+  reopenResolutionProposal,
+} from './resolution-proposals.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {

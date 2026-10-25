@@ -24,7 +24,7 @@ import {
   rememberToolOutputSchema,
   rememberToolOutputV2Schema,
   resolveToolOutputSchema,
-  reviewProposalsOutputV2Schema,
+  reviewProposalsOutputV3Schema,
   reviseToolOutputSchema,
   reviseToolOutputV2Schema,
   searchQueryV3Schema,
@@ -2294,11 +2294,17 @@ function proposalsPage(
   proposals: unknown[],
   factProposals: unknown[] = [],
   extra: { hasMore?: boolean; next?: { createdAt: string; id: string } } = {},
+  resolutionProposals: unknown[] = [],
 ) {
   return {
     proposals,
     factProposals,
-    totals: { edge: proposals.length, fact: factProposals.length },
+    resolutionProposals,
+    totals: {
+      edge: proposals.length,
+      fact: factProposals.length,
+      resolution: resolutionProposals.length,
+    },
     hasMore: extra.hasMore ?? false,
     next: extra.next,
   }
@@ -2425,7 +2431,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.factProposals?.[0]?.subject).toBe('lift.back_squat')
@@ -2449,7 +2455,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     // A DISTINCT literal: a client matching on `rejected` keeps getting the
     // edge payload it was written against.
     expect(parsed.action).toBe('rejected_fact')
@@ -2473,7 +2479,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('applied_fact')
     if (parsed.action === 'applied_fact') {
       // The reviewer learns what was written without a second call.
@@ -2711,7 +2717,7 @@ describe('review_proposals tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -2734,7 +2740,12 @@ describe('review_proposals tool', () => {
   describe('list pagination (issue #320)', () => {
     const POSITION = { createdAt: '2026-01-01T00:00:00.123456Z', id: PROPOSAL_ID }
     const mcpFp = (status?: string, tenant = UID) =>
-      proposalsFingerprint({ surface: 'mcp', kinds: ['edge', 'fact'], status, tenant })
+      proposalsFingerprint({
+        surface: 'mcp',
+        kinds: ['edge', 'fact', 'resolution'],
+        status,
+        tenant,
+      })
     const readCtx = () => ctx({ scopes: ['memory:read'] })
     const errorText = (result: Awaited<ReturnType<typeof call>>) =>
       (result.content[0] as { text: string }).text
@@ -2745,15 +2756,15 @@ describe('review_proposals tool', () => {
           hasMore: true,
           next: POSITION,
         }),
-        totals: { edge: 140, fact: 120 },
+        totals: { edge: 140, fact: 120, resolution: 3 },
       })
       const result = await call('review_proposals', { action: 'list', limit: 2 }, readCtx())
-      const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+      const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
       if (parsed.action !== 'list') throw new Error('expected list')
       // `count` keeps its shipped meaning: EDGE rows on this page, not a total.
       expect(parsed.count).toBe(1)
-      expect(parsed.counts).toEqual({ edge: 1, fact: 1 })
-      expect(parsed.totals).toEqual({ edge: 140, fact: 120 })
+      expect(parsed.counts).toEqual({ edge: 1, fact: 1, resolution: 0 })
+      expect(parsed.totals).toEqual({ edge: 140, fact: 120, resolution: 3 })
       expect(parsed.hasMore).toBe(true)
       expect(parsed.nextCursor).toBe(encodeProposalsCursor(POSITION, mcpFp()))
     })
@@ -2830,7 +2841,7 @@ describe('review_proposals tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('rejected')
     if (parsed.action === 'rejected') expect(parsed.proposal.status).toBe('rejected')
     expect(rejectProposalAnyKind).toHaveBeenCalledWith(UID, PROPOSAL_ID)
@@ -2847,7 +2858,7 @@ describe('review_proposals tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('applied')
     if (parsed.action === 'applied') expect(parsed.proposal.status).toBe('applied')
     // The MCP transport stamps its actor class on the apply.

@@ -83,6 +83,6 @@ A `401` from `/mcp` with an `X-API-Key` header is by design, not a misconfigurat
 rate-limit: store unavailable
 ```
 
-**Cause:** the rate limiter's Redis store is unreachable. By default limiters *fail open*: every request passes unthrottled so the service keeps serving, which means brute-force protection (for example on login) silently lapses while Redis is down — with no `429`s to alert on. A limiter explicitly configured to fail closed returns `503 service_unavailable` on its routes instead.
+**Cause:** the rate limiter's store (Redis or Postgres, per `RATE_LIMIT_STORE`) is unreachable. By default limiters *fail open*: every request passes unthrottled so the service keeps serving, which means brute-force protection (for example on login) silently lapses while the store is down — with no `429`s to alert on. A limiter explicitly configured to fail closed returns `503 service_unavailable` on its routes instead.
 
-**Fix:** restore Redis connectivity (`REDIS_URL`), then confirm the warnings stop. Treat repeated occurrences as a degraded-protection incident, not noise — the warning and its failure counter metric are the only signals that throttling is off. See [Operate](/operate#rate-limits) for the limit dimensions.
+**Fix:** restore `REDIS_URL` or `DATABASE_URL` connectivity for the configured `RATE_LIMIT_STORE`, then confirm the warnings stop. Treat repeated occurrences as a degraded-protection incident, not noise — the warning and its failure counter metric are the only signals that throttling is off. See [Operate](/operate#rate-limits) for the limit dimensions.

@@ -1,5 +1,39 @@
 # @3ngram/server
 
+## 1.10.0
+
+### Minor Changes
+
+- 48dcb4a: Add a per-tenant judgment opt-in (issue #225). The new table `user_judgment_policy` (migration 0043) has RLS and FORCE RLS, and its runtime grant is SELECT/INSERT/UPDATE. Core adds `isJudgmentEnabled`, `getJudgmentPolicy` and `setJudgmentPolicy`, and REST adds `GET` and `PUT /api/v1/settings/judgment`. The default is `off`, and there is no MCP surface. Account erasure resets the opt-in to `off`, and the account export includes it as `judgmentPolicy`. Nothing reads the opt-in yet. Each change appends a content-free `audit_log` row (`settings.judgment.set`, mode only) as a consent record.
+  
+  Self-hosters need the usual migration step. It creates the table and re-runs `provision-roles.sql`, which grants `app_user` access to it.
+- b7175c4: The `/oauth/token` progressive-delay failure counter now follows `RATE_LIMIT_STORE` (#315): Redis keeps its MULTI INCR+EXPIRE counter, Postgres uses the sliding-window counter on `rate_limits`, and the per-process Map is used only for the memory store. Threshold, backoff cap and the 900 s sliding window are unchanged, and store errors still fail open with a warning. `oauthTokenRouter` takes `rateLimitStore` in place of `redis`, and `setExchangeFailureStore` replaces `setExchangeFailureRedis`. Closes #315.
+- 2d36f37: `RATE_LIMIT_STORE=redis|postgres|memory` selects the server's rate-limiter store (#315). `postgres` backs every limiter with the `rate_limits` table on `DATABASE_URL`, and production then accepts a missing `REDIS_URL`. `redis` requires `REDIS_URL` and `postgres` requires `DATABASE_URL` in every environment. Unset keeps today's behaviour: Redis when `REDIS_URL` is set, in-memory outside production, a validation error in production. `memory` in production is an explicit single-replica opt-in that logs a boot warning; the server also refuses an implicit memory store in production at boot. `createRateLimiter` takes `store` in place of `redis`. Refs #315.
+- 7dec400: Add resolution proposals, the session closer's mid band (issue #229). On the typed-judgment path, a briefed commitment judged plausibly completed (0.5 ≤ p < 0.9) is staged in the new `resolution_proposals` table instead of being resolved. The table (migration 0044) has RLS and FORCE RLS, holds one open proposal per commitment, has tenant-composite foreign keys to the memory and the session run, and is included in the export. `review_proposals` lists the new kind (output V3): `resolutionProposals` appears only when it is non-empty, `counts`/`totals` gain a `resolution` key, and accept/reject return `applied_resolution`/`rejected_resolution`. Accepting claims the proposal and then resolves the commitment through the shipped FSM-checked transition, recorded as the reviewer. A refused transition reopens the proposal. Only still-open commitments are staged, at most once per run. The input and the tool description are unchanged. Self-hosters need the usual migration step.
+  
+  Compatibility notes. MCP `review_proposals` cursors issued before this release are rejected as invalid input once, because the walk now binds the third kind. Restart such a walk from page 1. A client that strict-parses the V2 output, or switches exhaustively on `action`, has to admit the new `resolution` count key and the two new action literals.
+
+### Patch Changes
+
+- dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
+  
+  Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
+- e141f6a: Security: nodemailer 10.1.4 (GHSA-85x2-q946-cp5h). Its address parser ended an angle-addr at the first `>` even inside a quoted local part, so a value like `<"a@evil.com>"@good.com>` could be delivered to a domain the header does not name. The server's mailer passes recipient strings straight to nodemailer (password reset, email verification, and `sendTransactionalEmail`, which a private surface reuses for its own notifications), so the fix applies. No API or behaviour change.
+- Updated dependencies [0888ff0]
+- Updated dependencies [1c874bf]
+- Updated dependencies [dc5dd43]
+- Updated dependencies [537811a]
+- Updated dependencies [48dcb4a]
+- Updated dependencies [6a3adf5]
+- Updated dependencies [5ceaec4]
+- Updated dependencies [2d36f37]
+- Updated dependencies [7dec400]
+- Updated dependencies [eee7fe3]
+  - @3ngram/core@0.15.0
+  - @3ngram/config@0.6.0
+  - @3ngram/llm@0.4.0
+  - @3ngram/schema@0.13.0
+
 ## 1.9.1
 
 ### Patch Changes

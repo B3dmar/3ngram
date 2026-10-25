@@ -17,6 +17,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   assertFixtureMatchesRegistry,
+  capabilityRouting,
   computeToolSelection,
   cosine,
   descriptionOverlap,
@@ -292,6 +293,73 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   assert.equal(scenarios.toolScenarios.length, registered.size * PER_TOOL)
   for (const s of scenarios.surfaceScenarios) {
     assert.match(s.expected_surface, /^(resource|prompt):/)
+  }
+})
+
+test('the capability slice is scored per tool#capability and never moves the gated metrics', () => {
+  const capability = [
+    { id: 'c1', utterance: 'a', expected_tool: 'alpha', capability: 'batch' },
+    { id: 'c2', utterance: 'b', expected_tool: 'alpha', capability: 'batch' },
+  ]
+  const vectors = { c1: [1, 0], c2: [0, 1] }
+  assert.deepEqual(capabilityRouting(capability, vectors, TOOL_VECTORS)['alpha#batch'], {
+    n: 2,
+    accuracy_at_1: 0.5,
+    margin: +(1 - HALF_ROOT_TWO).toFixed(4),
+  })
+  const base = {
+    scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
+    registryDescriptions: DESCRIPTIONS,
+  }
+  const without = computeToolSelection({ ...base, fixture: fixtureFor() })
+  const withCaps = computeToolSelection({
+    ...base,
+    scenarios: { ...base.scenarios, capabilityScenarios: capability },
+    fixture: fixtureFor({ capabilityScenarios: scenarioEntries(capability, vectors) }),
+  })
+  // Everything but the report-only key is identical, misroutes included.
+  const { capability_slice: added, ...gated } = withCaps
+  const { capability_slice: none, ...baseline } = without
+  assert.deepEqual(gated, baseline)
+  assert.deepEqual(none, {})
+  assert.equal(added['alpha#batch'].n, 2)
+  // Same integrity tripwires as the tool scenarios: a missing vector or an
+  // utterance edited without regenerating must fail, never score stale.
+  assert.throws(
+    () =>
+      computeToolSelection({
+        ...base,
+        scenarios: { ...base.scenarios, capabilityScenarios: capability },
+        fixture: fixtureFor(),
+      }),
+    /capability scenarios have no cached embedding: c1, c2/,
+  )
+  assert.throws(
+    () =>
+      computeToolSelection({
+        ...base,
+        scenarios: {
+          ...base.scenarios,
+          capabilityScenarios: [{ ...capability[0], utterance: 'edited' }, capability[1]],
+        },
+        fixture: fixtureFor({ capabilityScenarios: scenarioEntries(capability, vectors) }),
+      }),
+    /capability utterance changed since the embeddings were generated: c1/,
+  )
+})
+
+test('the committed capability scenarios are tagged, synthetic-shaped and id-unique', () => {
+  const scenarios = JSON.parse(readFileSync(join(fixturesDir, 'tool-selection.json'), 'utf8'))
+  const surfaces = JSON.parse(readFileSync(join(fixturesDir, 'transport-surfaces.json'), 'utf8'))
+  const registered = new Set(surfaces.mcp.tools.map((t) => t.name))
+  const ids = new Set([...scenarios.toolScenarios, ...scenarios.surfaceScenarios].map((s) => s.id))
+  assert.ok(Array.isArray(scenarios.capabilityScenarios), 'capabilityScenarios is an array')
+  for (const s of scenarios.capabilityScenarios) {
+    assert.ok(registered.has(s.expected_tool), `${s.id} targets unregistered ${s.expected_tool}`)
+    assert.ok(!ids.has(s.id), `duplicate scenario id ${s.id}`)
+    ids.add(s.id)
+    assert.match(s.capability, /^[a-z][a-z-]*$/, `${s.id} capability`)
+    assert.ok(!s.utterance.includes(s.expected_tool), `${s.id} names its tool`)
   }
 })
 

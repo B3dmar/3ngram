@@ -8,10 +8,12 @@ import {
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
+  judgmentModeSchema,
   MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
+  PROBABILITY_BOUNDS,
   proposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
@@ -103,6 +105,16 @@ const writeScopePolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
   'utf8',
 )
+// 0043 adds the judgment opt-in (issue #225).
+const judgmentPolicySql = readFileSync(
+  join(import.meta.dirname, '../migrations/0043_user_judgment_policy.sql'),
+  'utf8',
+)
+// 0044 adds the closer's resolution proposals (issue #229).
+const resolutionProposalsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0044_resolution_proposals.sql'),
+  'utf8',
+)
 // 0040 adds the commitment's latest-transition reason (issue #234).
 const resolutionReasonSql = readFileSync(
   join(import.meta.dirname, '../migrations/0040_commitment_resolution_reason.sql'),
@@ -111,6 +123,11 @@ const resolutionReasonSql = readFileSync(
 // 0041 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
 const reviewStampSql = readFileSync(
   join(import.meta.dirname, '../migrations/0041_memory_last_reviewed_at.sql'),
+  'utf8',
+)
+// 0042 adds the rate-limiter-flexible counter table (#315).
+const rateLimitsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0042_rate_limits.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -775,6 +792,23 @@ describe('session closer candidate index (0033, issue #166 step 6)', () => {
   })
 })
 
+describe('rate_limits table (0042, issue #315)', () => {
+  it('columns are key, points, expire in the order rlflx INSERTs positionally', () => {
+    expect(rateLimitsSql).toMatch(
+      /CREATE TABLE "rate_limits" \(\s*"key" varchar\(255\) PRIMARY KEY NOT NULL,\s*"points" integer DEFAULT 0 NOT NULL,\s*"expire" bigint\s*\);/,
+    )
+  })
+
+  it('is a system table: no RLS anywhere, no GRANT in the migration', () => {
+    expect(tablesWith('ENABLE').has('rate_limits')).toBe(false)
+    expect(rateLimitsSql).not.toMatch(/GRANT/i)
+  })
+
+  it('runtime grant covers the upsert, read and expired-row DELETE', () => {
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limits TO app_user;')
+  })
+})
+
 describe('provision-roles.sql append-and-supersede grants', () => {
   it('memory_events and audit_log are INSERT-only for the runtime role', () => {
     expect(rolesSql).toMatch(/GRANT SELECT, INSERT ON memory_events, audit_log/)
@@ -790,5 +824,82 @@ describe('provision-roles.sql append-and-supersede grants', () => {
 
   it('runtime role is NOBYPASSRLS', () => {
     expect(rolesSql).toContain('NOBYPASSRLS')
+  })
+})
+
+describe('judgment opt-in table (0043, issue #225)', () => {
+  it('derives the mode CHECK from the schema and defaults to off', () => {
+    expect(judgmentPolicySql).toContain(
+      `CHECK ("user_judgment_policy"."mode" IN (${judgmentModeSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    expect(judgmentPolicySql).toContain('"user_id" uuid PRIMARY KEY NOT NULL')
+    expect(judgmentPolicySql).toContain(`"mode" text DEFAULT 'off' NOT NULL`)
+    expect(judgmentPolicySql).toContain(
+      'FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade',
+    )
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE', () => {
+    expect(judgmentPolicySql).toContain(
+      'ALTER TABLE "user_judgment_policy" ENABLE ROW LEVEL SECURITY',
+    )
+    expect(judgmentPolicySql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "user_judgment_policy"',
+    )
+    expect(judgmentPolicySql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(judgmentPolicySql).toContain(
+      'ALTER TABLE "user_judgment_policy" FORCE ROW LEVEL SECURITY',
+    )
+    expect(judgmentPolicySql).not.toMatch(/DROP (TABLE|POLICY)/)
+  })
+
+  it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON user_judgment_policy TO app_user;')
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*user_judgment_policy/)
+  })
+})
+
+describe('resolution proposals table (0044, issue #229)', () => {
+  it('derives the status and probability CHECKs from the schema', () => {
+    expect(resolutionProposalsSql).toContain(
+      `CHECK ("resolution_proposals"."status" IN (${proposalStatusSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      `"resolution_proposals"."probability" >= ${PROBABILITY_BOUNDS.min} AND "resolution_proposals"."probability" <= ${PROBABILITY_BOUNDS.max}`,
+    )
+  })
+
+  it('keys tenant-composite FKs to the memory and the session run, cascading', () => {
+    expect(resolutionProposalsSql).toContain(
+      'FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade',
+    )
+    expect(resolutionProposalsSql).toContain(
+      'FOREIGN KEY ("user_id","session_run_id") REFERENCES "public"."agent_sessions"("user_id","id") ON DELETE cascade',
+    )
+  })
+
+  it('allows one OPEN proposal per commitment and one proposal per (run, commitment)', () => {
+    expect(resolutionProposalsSql).toContain(
+      `CREATE UNIQUE INDEX "resolution_proposals_open_idx" ON "resolution_proposals" USING btree ("user_id","memory_id") WHERE status = 'proposed'`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      'CREATE UNIQUE INDEX "resolution_proposals_run_memory_uq" ON "resolution_proposals" USING btree ("user_id","session_run_id","memory_id")',
+    )
+    expect(resolutionProposalsSql).toContain('"probability" double precision NOT NULL')
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE and a no-DELETE grant', () => {
+    expect(resolutionProposalsSql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "resolution_proposals"',
+    )
+    expect(resolutionProposalsSql).toContain(
+      `NULLIF(current_setting('app.user_id', true), '')::uuid`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      'ALTER TABLE "resolution_proposals" FORCE ROW LEVEL SECURITY',
+    )
+    expect(resolutionProposalsSql).not.toMatch(/DROP (TABLE|POLICY)/)
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON resolution_proposals TO app_user;')
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*resolution_proposals/)
   })
 })

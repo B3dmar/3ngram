@@ -57,11 +57,75 @@ export interface CompleteOptions {
   jsonObject?: boolean | undefined
 }
 
+/**
+ * One typed judgment question (issue #225). The three kinds are the judgment
+ * provider's primitives, kept wire-shaped so the provider maps them 1:1:
+ *   - `noul`   — yes/no; answered with P(yes).
+ *   - `choice` — pick one label; `criteria` maps each label to its description.
+ *   - `score`  — an ordered rubric, index 0 upward; at least two levels.
+ * Every string here may carry tenant-derived text: never logged.
+ */
+export type DecideQuestion =
+  | {
+      type: 'noul'
+      instructions: string
+      criteria?: { true?: string | undefined; false?: string | undefined } | undefined
+    }
+  | { type: 'choice'; instructions: string; criteria: Readonly<Record<string, string | null>> }
+  | { type: 'score'; instructions: string; criteria: readonly string[] }
+
+/**
+ * A judgment request: one bounded `state` every question is answered against,
+ * plus the questions keyed by the name their answer comes back under. The
+ * question names ARE the answer id space, so an answer for anything not asked is
+ * unrepresentable once the provider has validated the response.
+ */
+export interface DecideRequest {
+  /** The text the questions are judged against. Tenant-derived: never logged. */
+  state: string
+  questions: Readonly<Record<string, DecideQuestion>>
+}
+
+/** A typed answer. Every probability and confidence is in [0, 1]. */
+export type DecideAnswer =
+  | { type: 'noul'; probability: number }
+  | {
+      type: 'choice'
+      choice: string
+      confidence: number
+      probabilities: Readonly<Record<string, number>>
+    }
+  | {
+      type: 'score'
+      /** Expected score; may fall between integer rubric levels. */
+      score: number
+      confidence: number
+      probabilities: Readonly<Record<string, number>>
+    }
+
+/**
+ * Result of one decide() round-trip: an answer per asked question, plus the
+ * accounting the caller needs for exactly one `llm_usage` row. `usage` is
+ * optional for the reason {@link CompletionResult.usage} is: a provider that
+ * reports no input count must leave the row UNPRICED, never price it at $0.
+ */
+export interface DecideResult {
+  answers: Readonly<Record<string, DecideAnswer>>
+  usage?: CompletionUsage | undefined
+  model: string
+}
+
 /** Gateway client surface. Layers 1–4 of the test pyramid only
  * ever see this interface — never a real provider (docs/concepts/testing.mdx LLM policy). */
 export interface Gateway {
   embed(texts: readonly string[], operation: string): Promise<EmbedResult>
   complete(prompt: string, operation: string, options?: CompleteOptions): Promise<CompletionResult>
+  /**
+   * Typed judgments over bounded state (issue #225). A provider without the
+   * capability throws `NotImplementedError`; that typed rejection, not a crash,
+   * is what "no judgment provider configured" looks like to a caller.
+   */
+  decide(request: DecideRequest, operation: string): Promise<DecideResult>
 }
 
 export const EMBEDDING_DIMENSIONS = 1536

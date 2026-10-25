@@ -43,15 +43,18 @@
 import type {
   BriefedMemory,
   BriefingSelectorV2Input,
+  JudgmentMode,
   RetrievalScopeMode,
   TriageAttemptLogEntry,
   WriteScopeMode,
 } from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { RESOLUTION_PROPOSAL_COLUMNS, type ResolutionProposalRow } from './resolution-proposals.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
 import {
+  userJudgmentPolicy,
   userProfileAttributes,
   userRetrievalPolicy,
   users,
@@ -65,6 +68,7 @@ import {
   memories,
   memoryEdges,
   memoryEvents,
+  resolutionProposals,
   scopes,
 } from './schema/memory.js'
 import { llmUsage } from './schema/ops.js'
@@ -247,6 +251,16 @@ export interface ExportWriteScopePolicyRow {
   updatedAt: Date
 }
 
+/** A resolution proposal (issue #229) for a portability export (minus tenant id). */
+export type ExportResolutionProposalRow = ResolutionProposalRow
+
+/** A stored judgment opt-in row for a portability export (issue #225). */
+export interface ExportJudgmentPolicyRow {
+  mode: JudgmentMode
+  createdAt: Date
+  updatedAt: Date
+}
+
 /** An agent_sessions row for a portability export (minus tenant id). */
 export interface ExportAgentSessionRow {
   id: string
@@ -285,6 +299,7 @@ export interface UserDataExport {
   memoryEvents: ExportMemoryEventRow[]
   proposals: ExportProposalRow[]
   factProposals: ExportFactProposalRow[]
+  resolutionProposals: ExportResolutionProposalRow[]
   agentSessions: ExportAgentSessionRow[]
   userBudgets: ExportBudgetRow[]
   llmUsage: ExportLlmUsageRow[]
@@ -294,6 +309,8 @@ export interface UserDataExport {
   retrievalPolicy: ExportRetrievalPolicyRow | null
   /** Stored write-scope policy; null if the user never configured one. */
   writeScopePolicy: ExportWriteScopePolicyRow | null
+  /** Stored judgment opt-in; null if the user never set one (= off). */
+  judgmentPolicy: ExportJudgmentPolicyRow | null
 }
 
 /**
@@ -467,6 +484,12 @@ export async function readUserDataExport(
     .where(eq(factProposals.userId, userId))
     .orderBy(asc(factProposals.createdAt), asc(factProposals.id))
 
+  const resolutionProposalRows = await tx
+    .select(RESOLUTION_PROPOSAL_COLUMNS)
+    .from(resolutionProposals)
+    .where(eq(resolutionProposals.userId, userId))
+    .orderBy(asc(resolutionProposals.createdAt), asc(resolutionProposals.id))
+
   const agentSessionRows = await tx
     .select({
       id: agentSessions.id,
@@ -558,6 +581,16 @@ export async function readUserDataExport(
     .where(eq(userWriteScopePolicy.userId, userId))
     .limit(1)
 
+  const [judgmentPolicyRow] = await tx
+    .select({
+      mode: userJudgmentPolicy.mode,
+      createdAt: userJudgmentPolicy.createdAt,
+      updatedAt: userJudgmentPolicy.updatedAt,
+    })
+    .from(userJudgmentPolicy)
+    .where(eq(userJudgmentPolicy.userId, userId))
+    .limit(1)
+
   const base: UserDataExport = {
     account,
     memories: memoryRows,
@@ -568,12 +601,14 @@ export async function readUserDataExport(
     memoryEvents: eventRows,
     proposals: proposalRows,
     factProposals: factProposalRows,
+    resolutionProposals: resolutionProposalRows,
     agentSessions: agentSessionRows,
     userBudgets: budgetRows,
     llmUsage: usageRows,
     profile: profileRow ?? null,
     retrievalPolicy: retrievalPolicyRow ?? null,
     writeScopePolicy: writeScopePolicyRow ?? null,
+    judgmentPolicy: judgmentPolicyRow ?? null,
   }
   if (enrich === undefined) return base
   // Merge the platform hook's extra user-owned rows over the base archive in the

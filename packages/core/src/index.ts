@@ -4,7 +4,21 @@
 // block below.
 // --- account lifecycle: self-serve deletion ---
 
-export { assertRlsInForce, ResourceLimitExceededError, RlsGuardError } from '@3ngram/db'
+// closeDb: pool teardown for one-shot entrypoints (apps reach db through core).
+// createPostgresRateLimiter: Postgres-backed rate limits without Redis (#315).
+// *WindowCounter: the sliding-window failure counter on rate_limits (#315).
+export {
+  assertRlsInForce,
+  closeDb,
+  createPostgresRateLimiter,
+  deleteWindowCounter,
+  incrementWindowCounter,
+  type PostgresRateLimiterOptions,
+  RATE_LIMIT_TABLE,
+  ResourceLimitExceededError,
+  RlsGuardError,
+  readWindowCounter,
+} from '@3ngram/db'
 // --- budget: access gate port + Apache budget gate ---
 export type {
   ResourceLimitKind,
@@ -79,6 +93,7 @@ export {
   type ProposalsListQuery,
   type ProposalsPage,
   type ProposalsPageQuery,
+  type ResolutionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   renderCloserPrompt,
@@ -273,6 +288,14 @@ export {
   type TriageDebounceThresholds,
   type TriageEntryDecision,
 } from './session/index.js'
+// --- tenant settings: judgment opt-in (issue #225) ---
+export {
+  getJudgmentPolicy,
+  isJudgmentEnabled,
+  JUDGMENT_POLICY_AUDIT_ACTION,
+  type JudgmentPolicySetting,
+  setJudgmentPolicy,
+} from './settings/judgment.js'
 export {
   archiveMemory,
   BlockerNotFoundError,

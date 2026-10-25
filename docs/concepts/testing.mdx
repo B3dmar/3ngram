@@ -47,7 +47,7 @@ Playwright against the staging deployment after `staging` merges: login → reme
 
 ## LLM policy in tests
 
-- **Layers 1–4 never call a real model.** `packages/llm` ships a `FakeGateway` (deterministic embeddings via seeded hash → vector; canned completions per operation key). Tests assert on *our* logic, not model behavior.
+- **Layers 1–4 never call a real model.** `packages/llm` ships a `FakeGateway` (deterministic embeddings via seeded hash → vector; canned completions per operation key; canned `decide()` answers per operation, with a fixed low default probability so a test that forgets one fails closed). Tests assert on *our* logic, not model behavior.
 - **Model behavior is the eval harness's job** — that's the separation: tests prove the machine is wired right; evals prove the memory is good. A PR can't compensate for a golden-set regression with passing unit tests, and vice versa.
 - Recorded-fixture mode (capture a real gateway response once, replay) is allowed for extraction-shaped logic, stored under `__fixtures__/`, refreshed deliberately — never auto-recorded in CI.
 

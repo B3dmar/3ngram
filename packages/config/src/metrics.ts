@@ -123,7 +123,7 @@ export const mcpHeaderRequests = lazyCounter(metricName('mcp.header_requests'), 
  * over-limit 429s to alert on — this counter is the ONLY metric that fires.
  */
 export const rateLimitStoreFailure = lazyCounter(metricName('rate_limit.store_failure'), {
-  description: 'Rate-limit store (Redis) failures, by key_prefix and fail_open posture',
+  description: 'Rate-limit store (Redis or Postgres) failures, by key_prefix and fail_open posture',
 })
 
 /**

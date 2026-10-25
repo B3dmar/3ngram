@@ -73,6 +73,7 @@ describe('remember (ack-before-embed)', () => {
       release = r
     })
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: async (texts) => {
         await gate
         return {
@@ -158,6 +159,7 @@ describe('remember (ack-before-embed)', () => {
       status: 429,
     })
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: async () => {
         throw gatewayError
       },
@@ -208,6 +210,7 @@ describe('remember (ack-before-embed)', () => {
     writeMemory.mockResolvedValue({ id: 'm5' })
     recordEmbedFailure.mockResolvedValue(undefined)
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: async () => ({ embeddings: [], usage: { inputTokens: 0 }, model: 'm' }),
       complete: async () => ({
         text: 'x',

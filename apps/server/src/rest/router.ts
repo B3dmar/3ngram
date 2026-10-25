@@ -76,6 +76,7 @@ import { SERVER_VERSION } from '../version.js'
 import { defined, guard, mergeReviseTarget, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 import { sessionRouter } from './session-router.js'
+import { settingsRouter } from './settings-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
 // malformed id the same as an unknown id (404) instead of letting Postgres raise
@@ -190,6 +191,8 @@ export function restRouter(options: RestRouterOptions): Router {
   // module for the same reason search has one: these routes share a concern
   // with each other, not with the memory mirror.
   router.use(sessionRouter(options))
+  // Tenant settings (the judgment opt-in, issue #225).
+  router.use(settingsRouter())
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
@@ -1059,6 +1062,15 @@ export function restRouter(options: RestRouterOptions): Router {
           decidedAt: proposal.decidedAt?.toISOString() ?? null,
           createdAt: proposal.createdAt.toISOString(),
         })),
+        resolutionProposals: data.resolutionProposals.map((proposal) => ({
+          id: proposal.id,
+          memoryId: proposal.memoryId,
+          sessionRunId: proposal.sessionRunId,
+          probability: proposal.probability,
+          status: proposal.status,
+          decidedAt: proposal.decidedAt?.toISOString() ?? null,
+          createdAt: proposal.createdAt.toISOString(),
+        })),
         agentSessions: data.agentSessions.map((session) => ({
           id: session.id,
           agent: session.agent,
@@ -1124,6 +1136,12 @@ export function restRouter(options: RestRouterOptions): Router {
               updatedAt: data.writeScopePolicy.updatedAt.toISOString(),
             }
           : null,
+        judgmentPolicy: data.judgmentPolicy
+          ? {
+              mode: data.judgmentPolicy.mode,
+              updatedAt: data.judgmentPolicy.updatedAt.toISOString(),
+            }
+          : null,
         counts: {
           memories: data.memories.length,
           facts: data.facts.length,
@@ -1133,6 +1151,7 @@ export function restRouter(options: RestRouterOptions): Router {
           memoryEvents: data.memoryEvents.length,
           proposals: data.proposals.length,
           factProposals: data.factProposals.length,
+          resolutionProposals: data.resolutionProposals.length,
           agentSessions: data.agentSessions.length,
           userBudgets: data.userBudgets.length,
           llmUsage: data.llmUsage.length,

@@ -235,7 +235,7 @@ already has. Compatible with 2026-06-11: intentional context, not a scrape.
 
 A new user-owned table. This is a migration. The "no migration" claim is withdrawn.
 
-Physical table count is **27** ([data model](/concepts/data-model); Drizzle 25).
+Physical table count became **27** at migration 0032 ([data model](/concepts/data-model); Drizzle 25).
 Justification: the JTBD "worth-keeping work is written without
 a human typing `/debrief`" cannot be expressed on `memory_events` without a `memory_id`
 and a lifecycle kind, and it cannot be a side-file on disk.
@@ -875,6 +875,42 @@ before the call, records one `llm_usage` row after it, and releases the
 reservation — the same seam every embed call site uses. Over cap, the pass is
 rejected rather than billed. Output tokens are bounded per call.
 
+**Typed judgment for opted-in tenants (issue #229).** After the claim, the pass
+reads the tenant's judgment opt-in (`user_judgment_policy`, default off,
+architecture § LLM gateway). For an opted-in tenant the pass calls
+`gateway.decide()` instead of `complete()`. It sends one shared state and
+**one Noul per briefed commitment**. The state holds the excerpt in the same
+backtick fence, labelled untrusted data, plus the write kinds. Each question
+carries the commitment topic as JSON-quoted data. The criteria state that an
+assertion of completion alone is not evidence; this is the "framed" arm of the
+2026-09-19 spike, the one with 0/21 adversarial flips. A commitment resolves
+through the same `resolveForClosedRun` path only when P(completed) is at least
+`CLOSER_RESOLVE_PROBABILITY` (0.9, a constant). In the mid band, at or above
+`CLOSER_PROPOSE_PROBABILITY` (0.5) but below 0.9, the pass stages a
+**resolution proposal** (`resolution_proposals`, issue #229) after its
+resolves, behind the same epoch pre-check. A reviewer accepts or rejects it in
+`review_proposals`. Accept resolves through the shipped resolve path, recorded
+as the reviewer, and reject leaves the commitment open. Only a commitment that
+is still open or waiting at staging time gets a proposal. A commitment has at most one open proposal, and a
+run proposes a commitment at most once, so a retried pass cannot re-stage one a
+reviewer already decided. Below 0.5 nothing is written.
+The answer id space is the briefed set, so `CloserVerdictError` and the
+`rejected` count cannot occur on this path; both remain for the `complete()`
+path. The call is metered as `session.closer.decide`, with its own reservation.
+Its `llm_usage` row is recorded unpriced because no judgment list price is
+pinned, so the budget gate charges the max registered cost. Opted-out tenants
+keep the `complete()` path unchanged. The opt-in is read again as the last
+step before the send, after the reservation and the epoch re-check, because the
+reservation can block on a per-user lock. A tenant who opts out during that wait
+gets the `complete()` path. When the deployment has no judgment gateway,
+`decide()` rejects with the typed `NotImplementedError` before any network call.
+That rejection is caught only around the `decide()` await, the judgment
+reservation is released unbilled, and the pass takes the `complete()` path. The
+judgment ceiling is registered at or below the completion ceiling, so the
+fallback never fails a cap check that the judgment reservation passed. The threshold is deliberately high: the spike's fixtures
+were bimodal, so the real-corpus replay owed by #166 sets it before any
+default-on.
+
 Three implementation decisions the page left open:
 
 - **Actor is `worker`.** `system` was the alternative; `capture_hook` remains
@@ -919,7 +955,10 @@ enqueue into a void and never run the closer.
 and this-run events support it. `resolve` is reversible (`unresolve`). Do **not**
 `remember` new atoms in v1 — that is how a retried LLM pass becomes an
 append-only duplicate, which hard rule 1 cannot delete. No `(attempt_id, ordinal)`
-batch table. No third proposal kind. New decisions/notes stay on the Stop nudge
+batch table. The one proposal kind the closer may stage is a resolution proposal
+on the typed-judgment path (issue #229, above); that revises this page's original
+"no third proposal kind", because a calibrated probability gives a principled
+band that is neither safe to auto-resolve nor right to drop. New decisions/notes stay on the Stop nudge
 and on `/debrief`. Direct `remember` from the closer is a later promotion.
 
 **Live re-read before resolve.** `briefed_memories` is a startup stamp. Another
@@ -1062,6 +1101,16 @@ three resurrect writers (the write-time attach's `resurrect`, `openSession`'s
 just the first: a backoff earned by one activation must not gate the next one's
 fresh close. The mechanism stays self-healing at any failure count: bounded churn,
 never a permanently ineligible row.
+
+**One-shot mode (`node dist/once.js session-sweep`, issue #315) has no queue.** The
+sweep's `enqueueCloser` port collects requests into a Map keyed by
+`sessionCloserJobId`, the same (run, epoch) dedup the BullMQ job id gives. After
+the sweep resolves, closers drain one at a time in the same execution, each with
+`isLastAttempt=true`: there is no in-process retry, so every failure stamps
+`closer_next_attempt_at` exactly once and the next sweep tick is the retry. This
+replaces BullMQ's 3 attempts 30s/60s apart. A failed closer leaves the others
+running and makes the execution exit `1`; a sweep that throws drains nothing.
+Correctness still rests on the epoch-fenced claim, not on the dedup.
 
 This is also the natural home of the fourth misreporting row: a between-sessions
 pass over *curated* atoms that re-checks externally gated items. That

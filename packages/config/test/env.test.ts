@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isAllowedMcpOrigin,
+  loadEnv,
   loadMcpAllowedOrigins,
+  loadRateLimitStoreConfig,
   loadSmtpConfig,
   parseEnv,
   resetEnvCache,
@@ -482,5 +484,126 @@ describe('COMMITMENT_EXPIRY_GRACE_DAYS (issue #221)', () => {
     expect(parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '0' }).COMMITMENT_EXPIRY_GRACE_DAYS).toBe(0)
     expect(() => parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '366' })).toThrow()
     expect(() => parseEnv({ COMMITMENT_EXPIRY_GRACE_DAYS: '-1' })).toThrow()
+  })
+})
+
+describe('role (issues #204, #315: the worker skips server-only prod rules)', () => {
+  const originalEnv = { ...process.env }
+  const { OAUTH_JWKS: _jwks, ...noJwks } = PROD_ENV
+  const { REDIS_URL: _redis, ...noRedis } = PROD_ENV
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    resetEnvCache()
+  })
+
+  it('accepts a production worker env without OAUTH_JWKS or REDIS_URL', () => {
+    expect(parseEnv(noJwks, { role: 'worker' }).OAUTH_JWKS).toBeUndefined()
+    expect(parseEnv(noRedis, { role: 'worker' }).REDIS_URL).toBeUndefined()
+  })
+
+  it('still requires both for the server role, explicit or default', () => {
+    expect(() => parseEnv(noJwks, { role: 'server' })).toThrow(/OAUTH_JWKS/)
+    expect(() => parseEnv(noJwks)).toThrow(/OAUTH_JWKS/)
+    expect(() => parseEnv(noRedis, { role: 'server' })).toThrow(/REDIS_URL/)
+  })
+
+  it('accumulates shared and server-only issues in one error', () => {
+    expect(() => parseEnv({ ...noJwks, LOG_HASH_SALT: '' })).toThrow(
+      /LOG_HASH_SALT[\s\S]*OAUTH_JWKS|OAUTH_JWKS[\s\S]*LOG_HASH_SALT/,
+    )
+  })
+
+  it('keeps the shared production rules for the worker', () => {
+    expect(() => parseEnv({ ...noJwks, OAUTH_JWKS: 'not-json' }, { role: 'worker' })).toThrow(
+      /OAUTH_JWKS/,
+    )
+    expect(() => parseEnv({ ...noJwks, LOG_HASH_SALT: '' }, { role: 'worker' })).toThrow(
+      /LOG_HASH_SALT/,
+    )
+    const { BASE_URL: _base, ...noBase } = noJwks
+    expect(() => parseEnv(noBase, { role: 'worker' })).toThrow(/BASE_URL/)
+    expect(() =>
+      parseEnv(
+        { ...noJwks, DATABASE_URL: 'postgresql://neondb_owner:pw@host/db' },
+        { role: 'worker' },
+      ),
+    ).toThrow(/DATABASE_URL/)
+  })
+
+  it('memoises the first role and refuses to re-resolve as another', () => {
+    process.env = { ...noJwks }
+    const env = loadEnv({ role: 'worker' })
+    expect(loadEnv()).toBe(env)
+    expect(loadEnv({ role: 'worker' })).toBe(env)
+    expect(() => loadEnv({ role: 'server' })).toThrow(
+      "loadEnv: env already resolved for role 'worker', cannot re-resolve as 'server'",
+    )
+  })
+
+  it('resolves as the server role when called with no argument', () => {
+    process.env = { ...noJwks }
+    expect(() => loadEnv()).toThrow(/OAUTH_JWKS/)
+  })
+
+  it('does not let the import-time root logger fix the role', async () => {
+    process.env = { ...noJwks }
+    vi.resetModules()
+    await import('../src/logger.js')
+    const fresh = await import('../src/env.js')
+    expect(fresh.loadEnv({ role: 'worker' }).NODE_ENV).toBe('production')
+    fresh.resetEnvCache()
+  })
+})
+
+describe('RATE_LIMIT_STORE (#315)', () => {
+  const { REDIS_URL: _omit, ...noRedis } = PROD_ENV
+  const originalEnv = { ...process.env }
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    resetEnvCache()
+  })
+
+  it('makes REDIS_URL optional in production only with postgres or explicit memory', () => {
+    expect(parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'postgres' }).RATE_LIMIT_STORE).toBe('postgres')
+    expect(parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'memory' }).RATE_LIMIT_STORE).toBe('memory')
+    expect(() => parseEnv(noRedis)).toThrow(/REDIS_URL/)
+    expect(() => parseEnv({ ...noRedis, RATE_LIMIT_STORE: '' })).toThrow(/REDIS_URL/)
+  })
+
+  it('refuses redis without REDIS_URL and postgres without DATABASE_URL', () => {
+    expect(() => parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'redis' })).toThrow(/RATE_LIMIT_STORE/)
+    expect(() => parseEnv({ NODE_ENV: 'development', RATE_LIMIT_STORE: 'redis' })).toThrow(
+      /RATE_LIMIT_STORE=redis requires REDIS_URL/,
+    )
+    expect(() => parseEnv({ NODE_ENV: 'development', RATE_LIMIT_STORE: 'postgres' })).toThrow(
+      /RATE_LIMIT_STORE=postgres requires DATABASE_URL/,
+    )
+  })
+
+  it('treats empty as unset and rejects an unknown store', () => {
+    expect(parseEnv({ RATE_LIMIT_STORE: '' }).RATE_LIMIT_STORE).toBeUndefined()
+    expect(() => parseEnv({ RATE_LIMIT_STORE: 'dynamo' })).toThrow()
+  })
+
+  it('resolves the store: explicit value, else redis when REDIS_URL is set, else memory', () => {
+    const cases: Array<[Record<string, string>, unknown]> = [
+      [{ REDIS_URL: 'redis://h:6379' }, { kind: 'redis', explicit: false }],
+      [{}, { kind: 'memory', explicit: false }],
+      [
+        { RATE_LIMIT_STORE: 'memory', REDIS_URL: 'redis://h:6379' },
+        { kind: 'memory', explicit: true },
+      ],
+      [
+        { RATE_LIMIT_STORE: 'postgres', DATABASE_URL: PROD_ENV.DATABASE_URL },
+        { kind: 'postgres', explicit: true },
+      ],
+    ]
+    for (const [source, expected] of cases) {
+      process.env = { NODE_ENV: 'test', ...source }
+      resetEnvCache()
+      expect(loadRateLimitStoreConfig()).toEqual(expected)
+    }
   })
 })
