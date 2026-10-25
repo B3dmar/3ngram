@@ -184,13 +184,35 @@ export {
 } from './commitment.js'
 export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
-export type { CursorPayload, CursorPayloadV2, CursorPayloadV3 } from './cursor.js'
+export type {
+  CursorPayload,
+  CursorPayloadV2,
+  CursorPayloadV3,
+  ProposalsCursorPayload,
+} from './cursor.js'
 export {
   cursorPayloadSchema,
   cursorPayloadV2Schema,
   cursorPayloadV3Schema,
   legacyCursorPayloadSchema,
+  proposalsCursorPayloadSchema,
 } from './cursor.js'
+// --- describe_environment successors: account identity (#321), facets inventory (#168), write policy (#235) ---
+export type {
+  AccountIdentity,
+  DescribeEnvironmentOutputV3,
+  DescribeEnvironmentOutputV4,
+  DescribeEnvironmentOutputV5,
+  EnvironmentFacets,
+} from './describe-environment.js'
+export {
+  accountIdentitySchema,
+  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
+  describeEnvironmentOutputV5Schema,
+  environmentFacetsSchema,
+  MAX_INLINE_FACET_LABELS,
+} from './describe-environment.js'
 // --- get_facts range read: time-series reads over bi-temporal facts ---
 export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'
 export { factsQueryInputV2Schema, factsRangeSchema } from './facts-range.js'
@@ -367,6 +389,13 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+// --- proposal review pagination (issue #320) ---
+export type { ProposalEdgeTotals, ProposalKindCounts } from './proposals-page.js'
+export {
+  proposalEdgeTotalsSchema,
+  proposalKindCountsSchema,
+  proposalsCursorSchema,
+} from './proposals-page.js'
 // --- shared recorded_at range rules (issue #58) ---
 export type { RecordedRangeIssue } from './recorded-range.js'
 export {
@@ -405,6 +434,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  ProposalsListResponse,
   RestErrorResponse,
   StatsResponse,
   VersionResponse,
@@ -438,6 +468,7 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   restErrorResponseSchema,
   statsResponseSchema,
   versionResponseSchema,

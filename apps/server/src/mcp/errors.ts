@@ -125,9 +125,9 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
   if (err instanceof CursorQueryMismatchError) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: cursor query mismatch')
-    return fail(
-      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
-    )
+    // The message is a fixed per-codec constant (search or proposals) — it
+    // never carries query text, the token, or a tenant id.
+    return fail(`invalid input: ${err.message}`)
   }
   // Over the per-user budget cap. A documented domain denial,
   // not a server fault: a class-named isError result counted under budget_exceeded.

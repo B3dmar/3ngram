@@ -15,6 +15,7 @@ export {
   describeEnvironment,
   type EnvironmentReport,
   type EnvironmentStats,
+  type InlineFacets,
 } from './environment.js'
 export {
   dbGcClientsRepo,
@@ -41,6 +42,16 @@ export {
   rejectProposalAnyKind,
   SuccessorNotLiveError,
 } from './proposals.js'
+export {
+  type EdgeProposalsPage,
+  listEdgeProposalsPage,
+  listProposalsPage,
+  type MergedPage,
+  mergeProposalStreams,
+  type ProposalPosition,
+  type ProposalsPage,
+  type ProposalsPageQuery,
+} from './proposals-page.js'
 export {
   CLOSER_ACTOR_KIND,
   CLOSER_EVENTS_PAGE_SIZE,

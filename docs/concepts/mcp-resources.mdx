@@ -1,12 +1,14 @@
 ---
 title: "MCP Resources"
-description: "Design for 3ngram://memory/{id} — why the resource addresses the id, what its body may carry, and why resources cannot replace a tool."
+description: "Design for threengram://memory/{id} and the threengram://facets inventory — why the memory resource addresses the id, what each body may carry, and why resources cannot replace a tool."
 icon: "link"
 ---
 
 **Status: shipped.** `threengram://memory/{id}` is registered (`apps/server/src/mcp/resources.ts`)
-and served on `resources/read` with a 24-hour private cache hint. `resources/list` is
-intentionally empty (`list: undefined`) so the catalog cannot enumerate the corpus.
+and served on `resources/read` with a 24-hour private cache hint. The memory template is
+not listable (`list: undefined`), so the catalog cannot enumerate the corpus; the one entry
+`resources/list` returns is the fixed [`threengram://facets`](#facets-inventory)
+scope/project inventory, which names labels, not memories.
 This page is the design that the implementation follows — not a backlog item.
 
 <Note>
@@ -146,12 +148,52 @@ Resources are not a side door. `resources/read` must:
 `cacheScope` is not access control. Authorization runs on every read regardless of
 what any cache holds.
 
+## Facets inventory
+
+An agent that is asked to file or filter by project should not have to guess the
+names, and should not need a tool to find them. `threengram://facets` answers that job
+with a fixed URI that returns `{ "scopes": [...], "projects": [...] }` — the distinct scope
+and project labels on the tenant's **live** memories (active, validity open), sorted.
+
+- **One payload, three doors.** It is the same inventory REST
+  `GET /api/v1/memories/facets` serves (same core `listMemoryFacets`, parsed through the
+  same response schema), and `describe_environment` inlines it as `facets` so a host that
+  never surfaces resources to the model still gets it. The inline copy is **capped** at
+  `MAX_INLINE_FACET_LABELS` (50) labels per array, in ascending order, with
+  `truncated: { scopes, projects }` saying which list was cut — that tool runs at session
+  start and lands in model context, and distinct projects can grow toward the memory
+  count. The flag is per array because the two lists grow very differently. The resource
+  and the REST route are **not** capped: they are on-demand reads, so a client that sees
+  `truncated` reads `threengram://facets` for the full list. There is no `list_projects` tool:
+  the inventory is addressable, so it is a resource, and adding a tool description for it
+  would compete in `tools/list` for nothing.
+- **Listed.** Unlike the memory template, this URI appears on `resources/list` — that is
+  what lets an agent discover it without already knowing a name. Listing it does not
+  enumerate the corpus: it names labels, and its body carries no memory content.
+- **Live scopes, not the registry.** A scope that is registered but holds no live memory
+  is not a facet. `configure_scope list` (and `describe_environment`'s `scopes`) report the
+  registry; facets report where memories actually are. An account with no live memories
+  reads `{ "scopes": [], "projects": [] }`.
+- **Short private cache.** `cacheScope: "private"` — the labels are tenant data, so the
+  reasoning in the next section applies unchanged. The TTL is **60 seconds**, the opposite
+  of the memory body: every `remember` into a new scope or project, every `revise` move,
+  and every supersede or archive of the last memory under a label changes the inventory.
+  The `resources/list` catalog entry itself is tenant-independent metadata and caches
+  `public` with the other catalogs.
+- **Same guards.** Tenant from the verified `authInfo`, `memory:read` fail-closed (a
+  read-only token may read it), and the access gate before the read.
+- **A scope is a filing label, not an account.** A `work` scope in the facets of two
+  connectors says nothing about whether they reach the same account; compare
+  `describe_environment`'s `account.id` for that (see
+  [Scopes](/concepts/scopes#which-account-is-this-connector-on)).
+
 ## Scope
 
-**In:** `resources/templates/list` advertising one template, and `resources/read` for
-a single memory.
+**In:** `resources/templates/list` advertising one template, `resources/read` for a
+single memory, and the fixed `threengram://facets` inventory — the only entry on
+`resources/list`.
 
-**Out — `resources/list`.** Enumerating a tenant's corpus is the firehose the
+**Out — `resources/list` for memories.** Enumerating a tenant's corpus is the firehose the
 [no-firehose rule](/concepts/mcp-design) exists to prevent. It would also need
 pagination, with `cacheScope` identical across every page.
 

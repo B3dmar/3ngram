@@ -20,7 +20,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // reaches the mapper as a throw FROM core, and only the real class matches the
 // `instanceof` ladder in rest/errors.ts.
 import { ZodError } from 'zod'
-import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import {
+  decodeCursor,
+  encodeCursor,
+  encodeProposalsCursor,
+  proposalsFingerprint,
+  searchFingerprint,
+} from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 // --- core memory tools (the thin adapter's target) ---
@@ -37,7 +43,7 @@ const listMemories = vi.fn()
 const listMemoryFacets = vi.fn()
 const getMemoryById = vi.fn()
 const getMemoryHistory = vi.fn()
-const listProposals = vi.fn()
+const listEdgeProposalsPage = vi.fn()
 const applyProposal = vi.fn()
 const rejectProposal = vi.fn()
 const listScopes = vi.fn()
@@ -253,7 +259,7 @@ vi.mock('@3ngram/core', async () => ({
   listMemoryFacets,
   getMemoryById,
   getMemoryHistory,
-  listProposals,
+  listEdgeProposalsPage,
   applyProposal,
   rejectProposal,
   listScopes,
@@ -2066,35 +2072,107 @@ describe('GET /api/v1/memories/:id (inspect)', () => {
 })
 
 describe('GET /api/v1/proposals (list)', () => {
+  const edgeRow = {
+    id: NEW_ID,
+    fromId: NEW_ID,
+    toId: COMMIT_ID,
+    edgeType: 'supersedes',
+    memoryType: 'note',
+    similarity: 0.91,
+    rationale: null,
+    status: 'proposed',
+    decidedAt: null,
+    createdAt: new Date('2026-06-01T00:00:00Z'),
+  }
+  const POSITION = { createdAt: '2026-06-01T00:00:00.000001Z', id: NEW_ID }
+  const restFp = (status?: string, tenant = TENANT) =>
+    proposalsFingerprint({ surface: 'rest', kinds: ['edge'], status, tenant })
+
   it('happy path: passes status/limit, returns the proposal envelope', async () => {
-    listProposals.mockResolvedValue([
-      {
-        id: NEW_ID,
-        fromId: NEW_ID,
-        toId: COMMIT_ID,
-        edgeType: 'supersedes',
-        memoryType: 'note',
-        similarity: 0.91,
-        rationale: null,
-        status: 'proposed',
-        decidedAt: null,
-        createdAt: new Date('2026-06-01T00:00:00Z'),
-      },
-    ])
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [edgeRow],
+      totals: { edge: 1 },
+      hasMore: false,
+      next: undefined,
+    })
     const res = await call('/api/v1/proposals?status=proposed&limit=10', { key: VALID_KEY })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { proposals: unknown[]; count: number }
-    expect(body.count).toBe(body.proposals.length)
-    expect(listProposals).toHaveBeenCalledWith(
-      TENANT,
-      expect.objectContaining({ status: 'proposed', limit: 10 }),
-    )
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toEqual({
+      proposals: [expect.objectContaining({ id: NEW_ID, createdAt: '2026-06-01T00:00:00.000Z' })],
+      count: 1,
+      totals: { edge: 1 },
+      hasMore: false,
+    })
+    expect(listEdgeProposalsPage).toHaveBeenCalledWith(TENANT, {
+      status: 'proposed',
+      limit: 10,
+      after: undefined,
+    })
+  })
+
+  it('a page with more rows returns hasMore + nextCursor; count stays the page size (#320)', async () => {
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [edgeRow],
+      totals: { edge: 250 },
+      hasMore: true,
+      next: POSITION,
+    })
+    const res = await call('/api/v1/proposals?limit=1', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.count).toBe(1)
+    expect(body.totals).toEqual({ edge: 250 })
+    expect(body.hasMore).toBe(true)
+    expect(body.nextCursor).toBe(encodeProposalsCursor(POSITION, restFp()))
+  })
+
+  it('a continuation cursor resumes after its position (#320)', async () => {
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [],
+      totals: { edge: 0 },
+      hasMore: false,
+      next: undefined,
+    })
+    const cursor = encodeProposalsCursor(POSITION, restFp('proposed'))
+    const res = await call(`/api/v1/proposals?status=proposed&cursor=${cursor}`, {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    expect(listEdgeProposalsPage).toHaveBeenCalledWith(TENANT, {
+      status: 'proposed',
+      limit: 25,
+      after: POSITION,
+    })
+  })
+
+  it.each([
+    ['garbled', 'not-a-cursor'],
+    ['minted for another status', encodeProposalsCursor(POSITION, restFp('rejected'))],
+    ['minted for another tenant', encodeProposalsCursor(POSITION, restFp(undefined, NEW_ID))],
+    [
+      'minted by the MCP edge+fact walk',
+      encodeProposalsCursor(
+        POSITION,
+        proposalsFingerprint({
+          surface: 'mcp',
+          kinds: ['edge', 'fact'],
+          status: undefined,
+          tenant: TENANT,
+        }),
+      ),
+    ],
+  ])('400s a cursor that is %s, never reaching core (#320)', async (_label, cursor) => {
+    const res = await call(`/api/v1/proposals?cursor=${cursor}`, { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_input' })
+    expect(listEdgeProposalsPage).not.toHaveBeenCalled()
   })
 
   it('400s an invalid status enum (schema boundary)', async () => {
     const res = await call('/api/v1/proposals?status=bogus', { key: VALID_KEY })
     expect(res.status).toBe(400)
-    expect(listProposals).not.toHaveBeenCalled()
+    expect(listEdgeProposalsPage).not.toHaveBeenCalled()
   })
 })
 
@@ -3795,7 +3873,7 @@ describe('access gate enforcement (#429)', () => {
     ],
     ['facts (read)', 'GET', '/api/v1/facts', undefined, getFacts],
     ['briefing (read)', 'GET', '/api/v1/briefing?kind=all', undefined, briefing],
-    ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listProposals],
+    ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listEdgeProposalsPage],
     ['stats (read)', 'GET', '/api/v1/stats', undefined, describeEnvironment],
     ['export (read)', 'GET', '/api/v1/export', undefined, exportUserData],
     [
