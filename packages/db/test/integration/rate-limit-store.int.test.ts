@@ -9,6 +9,9 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { closeDb } from '../../src/client.js'
 import {
   createPostgresRateLimiter,
+  deleteWindowCounter,
+  incrementWindowCounter,
+  readWindowCounter,
   resetRateLimitSweeperClaim,
 } from '../../src/rate-limit-store.js'
 import { closePools, ownerPool } from './helpers.js'
@@ -71,5 +74,50 @@ describe('createPostgresRateLimiter (rate_limits)', () => {
     expect(r.rows).toHaveLength(1)
     expect(r.rows[0].points).toBe(1)
     expect(Number(r.rows[0].expire)).toBeGreaterThan(Date.now())
+  })
+})
+
+describe('window counter', () => {
+  const t0 = 1_000_000_000_000
+
+  it('increments 1, 2, 3 within the window', async () => {
+    const k = prefix()
+    expect(await incrementWindowCounter(k, 1000, t0)).toBe(1)
+    expect(await incrementWindowCounter(k, 1000, t0)).toBe(2)
+    expect(await incrementWindowCounter(k, 1000, t0)).toBe(3)
+  })
+
+  it('slides the expiry forward on every increment', async () => {
+    const k = prefix()
+    await incrementWindowCounter(k, 1000, t0)
+    expect(await incrementWindowCounter(k, 1000, t0 + 900)).toBe(2)
+    expect(await readWindowCounter(k, t0 + 1500)).toBe(2)
+  })
+
+  it('reads 0 once expired and restarts at 1', async () => {
+    const k = prefix()
+    await incrementWindowCounter(k, 1000, t0)
+    await incrementWindowCounter(k, 1000, t0 + 900)
+    expect(await readWindowCounter(k, t0 + 2000)).toBe(0)
+    expect(await incrementWindowCounter(k, 1000, t0 + 2000)).toBe(1)
+  })
+
+  it('reads 0 after delete', async () => {
+    const k = prefix()
+    await incrementWindowCounter(k, 1000, t0)
+    await deleteWindowCounter(k)
+    expect(await readWindowCounter(k, t0)).toBe(0)
+  })
+
+  it('counts concurrent increments atomically', async () => {
+    const k = prefix()
+    await Promise.all(Array.from({ length: 20 }, () => incrementWindowCounter(k, 60_000, t0)))
+    expect(await readWindowCounter(k, t0)).toBe(20)
+  })
+
+  it('rejects a key over 255 chars', async () => {
+    await expect(incrementWindowCounter(`t-${'x'.repeat(254)}`, 1000)).rejects.toBeInstanceOf(
+      RangeError,
+    )
   })
 })
