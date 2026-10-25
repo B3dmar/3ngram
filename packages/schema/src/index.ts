@@ -519,6 +519,7 @@ export type {
   Tag,
 } from './write.js'
 export {
+  commitmentOwnerSchema,
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,

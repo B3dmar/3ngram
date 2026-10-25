@@ -137,6 +137,43 @@ describe('remember (validation boundary)', () => {
     expect(result.commitmentId).toBe('commit-1')
   })
 
+  it('converts an explicit commitment deadline to a Date and forwards the owner (issue #165)', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-5', commitmentId: 'commit-5' })
+
+    await remember(
+      USER,
+      {
+        ...validInput(),
+        memoryType: 'commitment',
+        dueAt: '2026-11-30T17:00:00.000Z',
+        owner: 'sebastian',
+      },
+      ACTOR,
+    )
+
+    const call = mockWrite.mock.calls[0]?.[0]
+    expect(call.commitment.dueAt).toEqual(new Date('2026-11-30T17:00:00.000Z'))
+    expect(call.commitment.owner).toBe('sebastian')
+  })
+
+  it('writes an undated commitment with no deadline, never an inferred one', async () => {
+    mockWrite.mockResolvedValue({ id: 'mem-6', commitmentId: 'commit-6' })
+    const input = { ...validInput(), memoryType: 'commitment', content: 'ship it by next Friday' }
+
+    await remember(USER, input, ACTOR)
+
+    const call = mockWrite.mock.calls[0]?.[0]
+    expect(call.commitment.dueAt).toBeUndefined()
+    expect(call.commitment.owner).toBeUndefined()
+  })
+
+  it('rejects a deadline on a non-commitment before any DB call', async () => {
+    await expectZodRejection(
+      remember(USER, { ...validInput(), dueAt: '2026-11-30T17:00:00Z' }, ACTOR),
+    )
+    expect(mockWrite).not.toHaveBeenCalled()
+  })
+
   it('leaves commitmentId undefined for a non-commitment memory', async () => {
     mockWrite.mockResolvedValue({ id: 'mem-4' })
 

@@ -55,7 +55,8 @@ export const CLI_COMMAND_NAMES = ['remember', 'search', 'facts'] as const
 export const CLI_COMMANDS: readonly CliCommandReference[] = [
   {
     name: 'remember',
-    usage: 'remember  --type <t> --topic <t> --content <c> [--scope --project --tags]',
+    usage:
+      'remember  --type <t> --topic <t> --content <c> [--scope --project --tags --due --owner]',
     summary: 'Append a typed memory through the REST-backed SDK client.',
     sdkCall: 'client.remember(input)',
     requestSchema: 'remember',
@@ -96,10 +97,22 @@ export const CLI_COMMANDS: readonly CliCommandReference[] = [
         repeatable: true,
         description: 'Repeatable; comma-separated values are flattened and trimmed.',
       },
+      {
+        name: '--due',
+        value: '<iso-instant>',
+        description:
+          'Commitments only: explicit deadline as an ISO-8601 instant (at most millisecond precision). Past it, briefing reports the commitment overdue.',
+      },
+      {
+        name: '--owner',
+        value: '<owner>',
+        description: 'Commitments only: who owns the commitment.',
+      },
     ],
     examples: [
       '3ngram remember --type decision --topic "search backend" --content "Use Postgres full-text search for v1." --scope work --project 3ngram',
       '3ngram remember --type note --topic "follow-up" --content "Check docs freshness gate." --tags docs,ci --json',
+      '3ngram remember --type commitment --topic "ship v1.9" --content "Cut the v1.9 release." --project 3ngram --due 2026-11-30T17:00:00Z --owner sebastian',
     ],
   },
   {

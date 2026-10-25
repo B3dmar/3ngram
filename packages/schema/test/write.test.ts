@@ -377,6 +377,60 @@ describe('nativeRememberInputSchema', () => {
     expect(parsed.sessionRunId).toBe(UUID_A)
   })
 
+  describe('commitment dueAt/owner (issue #165)', () => {
+    const commitment = { ...validRemember, memoryType: 'commitment' }
+
+    it('accepts an explicit deadline and owner on a commitment', () => {
+      const parsed = nativeRememberInputSchema.parse({
+        ...commitment,
+        dueAt: '2026-11-30T17:00:00.000Z',
+        owner: '  sebastian  ',
+      })
+      expect(parsed.dueAt).toBe('2026-11-30T17:00:00.000Z')
+      expect(parsed.owner).toBe('sebastian')
+    })
+
+    it('keeps an undated commitment undated: omitted and null both mean absent', () => {
+      expect(nativeRememberInputSchema.parse(commitment).dueAt).toBeUndefined()
+      expect(nativeRememberInputSchema.parse({ ...commitment, dueAt: null }).dueAt).toBeUndefined()
+    })
+
+    it('rejects a deadline that is not an ISO-8601 instant (no prose parsing)', () => {
+      for (const dueAt of ['next friday', '2026-11-30', '2026-13-01T00:00:00Z', 1767225600000]) {
+        expect(nativeRememberInputSchema.safeParse({ ...commitment, dueAt }).success).toBe(false)
+      }
+    })
+
+    it('rejects sub-millisecond precision rather than truncating it', () => {
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, dueAt: '2026-11-30T17:00:00.1234Z' })
+          .success,
+      ).toBe(false)
+    })
+
+    it('bounds owner like the import contract', () => {
+      expect(nativeRememberInputSchema.safeParse({ ...commitment, owner: '   ' }).success).toBe(
+        false,
+      )
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, owner: 'x'.repeat(257) }).success,
+      ).toBe(false)
+    })
+
+    it('rejects dueAt or owner on a non-commitment instead of dropping it', () => {
+      const dated = { ...validRemember, dueAt: '2026-11-30T17:00:00Z' }
+      const owned = { ...validRemember, owner: 'sebastian' }
+      expect(nativeRememberInputSchema.safeParse(dated).success).toBe(false)
+      expect(nativeRememberInputSchema.safeParse(owned).success).toBe(false)
+    })
+
+    it('keeps the fields off the base contract that revise and import extend', () => {
+      const dated = { ...commitment, dueAt: '2026-11-30T17:00:00Z' }
+      expect(rememberInputSchema.safeParse(dated).success).toBe(false)
+      expect(rememberWithFactsInputSchema.safeParse(dated).success).toBe(false)
+    })
+  })
+
   it('rememberWithFactsInputSchema still rejects sessionRunId (import must not take it)', () => {
     expect(
       rememberWithFactsInputSchema.safeParse({

@@ -210,13 +210,50 @@ const sessionRunIdField = sessionRunIdSchema
   )
 
 /**
- * Canonical native remember input (ADR-0011): facts-capable remember PLUS
- * optional sessionRunId. Core's single parse must accept this shape so
- * session provenance does not regress structured fact writes.
+ * Who a commitment is owed by or assigned to: a short free-text label, never
+ * inferred from the content (issue #165). Shared with the import contract so a
+ * native and an imported owner obey one bound.
  */
-export const nativeRememberInputSchema = rememberWithFactsInputSchema.safeExtend({
-  sessionRunId: sessionRunIdField,
-})
+export const commitmentOwnerSchema = z.string().trim().min(1).max(256)
+
+/**
+ * Native-only commitment lifecycle fields (issue #165). Explicit values only:
+ * no parser guesses a deadline from prose, so an undated commitment stays
+ * undated. NOT on {@link rememberInputSchema}: `revise` and import extend that
+ * base, and a revise carries the predecessor's commitment row (deadline, owner,
+ * identity) across supersession instead of re-stating it.
+ *
+ * `dueAt` reuses the fact-instant contract: an ISO-8601 string (JSON has no
+ * date type), at most millisecond precision because core converts it with
+ * `new Date()`, and `null` meaning the same as omitting it.
+ */
+const commitmentDueAtField = factTimestampSchema.describe(
+  `Commitments only: the explicit deadline, as an ISO-8601 instant with at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.`,
+)
+const commitmentOwnerField = commitmentOwnerSchema
+  .optional()
+  .describe('Commitments only: who owns the commitment, as a short label. Omit when unknown.')
+
+/**
+ * Canonical native remember input (ADR-0011): facts-capable remember PLUS
+ * optional sessionRunId and, for a commitment, its explicit deadline and owner.
+ * Core's single parse must accept this shape so session provenance does not
+ * regress structured fact writes.
+ *
+ * `dueAt`/`owner` on a non-commitment is rejected rather than ignored: a
+ * silently dropped deadline would look accepted to the caller.
+ */
+export const nativeRememberInputSchema = rememberWithFactsInputSchema
+  .safeExtend({
+    sessionRunId: sessionRunIdField,
+    dueAt: commitmentDueAtField,
+    owner: commitmentOwnerField,
+  })
+  .refine(
+    (input) =>
+      input.memoryType === 'commitment' || (input.dueAt === undefined && input.owner === undefined),
+    { message: 'dueAt and owner apply to commitment memories only', path: ['memoryType'] },
+  )
 export type NativeRememberInput = z.infer<typeof nativeRememberInputSchema>
 
 /**

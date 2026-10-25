@@ -135,6 +135,12 @@ export async function remember(
       contentHash: contentHash(parsed.content),
       actorKind,
       sessionRunId: parsed.sessionRunId,
+      // Explicit only (issue #165): the schema rejects these on non-commitments,
+      // and absent stays absent (a NULL due date, never an inferred one).
+      commitment: {
+        dueAt: parsed.dueAt === undefined ? undefined : new Date(parsed.dueAt),
+        owner: parsed.owner,
+      },
     },
     maxLiveMemories,
     // Same transaction as the memory (packages/db): a fact whose source memory
