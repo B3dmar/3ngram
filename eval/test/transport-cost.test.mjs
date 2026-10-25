@@ -171,7 +171,13 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // description) that MCP pays on tools/list per turn. The tool description
       // is unchanged (no embeddings regen); REST and CLI are unchanged.
       // MEASURED, not summed.
-      mcp: [27856, 224664, 56135],
+      // MCP +112/+896/+219 (issue #168): describe_environment's output schema
+      // gains the required `facets: { scopes, projects }` inventory (the REST
+      // facets element schemas plus two field descriptions). The new
+      // threengram://facets resource rides resources/list, which surfaceTokens
+      // does not count. Tool description unchanged; REST and CLI unchanged.
+      // MEASURED, not summed.
+      mcp: [27968, 225560, 56354],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },
@@ -341,6 +347,15 @@ test('the MCP surface fixture covers resource templates and completions (additiv
   assert.equal(memoryTemplate.name, 'memory')
   assert.equal(memoryTemplate.uriTemplate, 'threengram://memory/{id}')
   assert.deepEqual(memoryTemplate.cacheHint, { ttlMs: 24 * 60 * 60_000, cacheScope: 'private' })
+
+  // resources/list: exactly ONE fixed-uri resource, the threengram://facets
+  // scope/project inventory (issue #168), cached private on a short TTL. The
+  // memory template stays unlisted (no corpus enumeration).
+  assert.deepEqual(
+    surfaces.mcp.resources.map((r) => [r.name, r.uri]),
+    [['facets', 'threengram://facets']],
+  )
+  assert.deepEqual(surfaces.mcp.resources[0].cacheHint, { ttlMs: 60_000, cacheScope: 'private' })
 
   // Completions coverage: which prompt args and resource-template URI variables
   // are wired to completable() (apps/server/src/mcp/completions.ts, resources.ts).

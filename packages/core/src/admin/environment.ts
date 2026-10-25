@@ -23,7 +23,9 @@ import {
   getEnvironmentStats,
   getLiveAccountId,
   getRetrievalPolicy,
+  listMemoryFacets,
   listScopes,
+  type MemoryFacets,
   type ScopeRow,
   withTenant,
 } from '@3ngram/db'
@@ -41,6 +43,9 @@ export interface AccountIdentity {
 export interface EnvironmentReport {
   /** The authenticated account (issue #321). Not a scope, not a secret. */
   account: AccountIdentity
+  /** DISTINCT scope/project labels on live memories (issue #168) — the same
+   * inventory REST facets and `threengram://facets` serve. */
+  facets: MemoryFacets
   scopes: ScopeRow[]
   stats: EnvironmentStats
   /** The active retrieval-scope policy (issue #47): no stored row reports the
@@ -51,8 +56,8 @@ export interface EnvironmentReport {
 
 /**
  * Assemble the tenant-scoped environment report: the account identity, the
- * registered scopes, the bounded count stats, and the active retrieval-scope
- * policy, in ONE withTenant transaction (a consistent snapshot). Carries no
+ * registered scopes, the live scope/project inventory, the bounded count
+ * stats, and the active retrieval-scope policy, in ONE withTenant transaction (a consistent snapshot). Carries no
  * config — capabilities are layered on by the transport.
  *
  * @throws AccountDeletedError when the authenticated account no longer exists
@@ -67,9 +72,11 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
     const scopes = await listScopes(tx, userId)
     const stats = await getEnvironmentStats(tx, userId)
     const policy = await getRetrievalPolicy(tx, userId)
+    const facets = await listMemoryFacets(tx, userId)
     return {
       account: { id: accountId },
       scopes,
+      facets,
       stats,
       retrievalScopePolicy:
         policy === null

@@ -185,11 +185,18 @@ export {
   cursorPayloadV3Schema,
   legacyCursorPayloadSchema,
 } from './cursor.js'
-// --- describe_environment successors: authenticated account identity (issue #321) ---
-export type { AccountIdentity, DescribeEnvironmentOutputV3 } from './describe-environment.js'
+// --- describe_environment successors: account identity (#321), facets inventory (#168) ---
+export type {
+  AccountIdentity,
+  DescribeEnvironmentOutputV3,
+  DescribeEnvironmentOutputV4,
+  EnvironmentFacets,
+} from './describe-environment.js'
 export {
   accountIdentitySchema,
   describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
+  environmentFacetsSchema,
 } from './describe-environment.js'
 // --- get_facts range read: time-series reads over bi-temporal facts ---
 export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'

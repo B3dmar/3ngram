@@ -251,7 +251,7 @@ its row here even when its name and kind are unchanged.
 | `EdgeConflictError` | class | `1edf03d6924b` |
 | `EmbeddingSource` | type | `4d033ba4bef9` |
 | `EmptySectionsError` | class | `951ee5599e42` |
-| `EnvironmentReport` | interface | `8affe0ef5733` |
+| `EnvironmentReport` | interface | `2d333f16e674` |
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
@@ -1010,11 +1010,13 @@ its row here even when its name and kind are unchanged.
 | `DescribeEnvironmentOutput` | type | `0b7acee1f097` |
 | `DescribeEnvironmentOutputV2` | type | `a84de5a9077c` |
 | `DescribeEnvironmentOutputV3` | type | `083fcacc5c9d` |
+| `DescribeEnvironmentOutputV4` | type | `2eed1098b77e` |
 | `EDGE_TYPES` | const | `2123ce5046a8` |
 | `EXCERPT_MARKER` | const | `c94c597ad8df` |
 | `EdgeInput` | type | `148a30e60bcc` |
 | `EdgeType` | type | `99757b68f729` |
 | `EmbedStatus` | type | `31d18b329a14` |
+| `EnvironmentFacets` | type | `f2453b92dd43` |
 | `EventKind` | type | `a4929c3215e8` |
 | `FactOutput` | type | `ad7be0e14e4f` |
 | `FactProposalRecordOutput` | type | `f160a87a7f23` |
@@ -1267,9 +1269,11 @@ its row here even when its name and kind are unchanged.
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |
 | `describeEnvironmentOutputV3Schema` | const | `70334227f056` |
+| `describeEnvironmentOutputV4Schema` | const | `a3b76695aed0` |
 | `edgeInputSchema` | const | `56912f6f68d8` |
 | `edgeTypeSchema` | const | `86414d0a3335` |
 | `embedStatusSchema` | const | `ac5117a08996` |
+| `environmentFacetsSchema` | const | `44ceb71e3cb0` |
 | `eventKindSchema` | const | `baeea743e9c9` |
 | `exceedsRecordedBoundPrecision` | function | `b6ca070a8ac1` |
 | `factProposalRecordSchema` | const | `78ec1dbc2134` |

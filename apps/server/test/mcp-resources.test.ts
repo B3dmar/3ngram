@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// MCP resources: threengram://memory/{id} (issue #105).
+// MCP resources: threengram://memory/{id} (issue #105) and threengram://facets
+// (issue #168).
 //
 // Driven through the REAL client SDK and the real dual-era handler rather than
 // by calling the callback directly. That is deliberate: the first version of
@@ -54,15 +55,22 @@ const getMemoryById = vi.fn((_userId: string, memoryId: string) => {
   return Promise.resolve(STORED)
 })
 
+const FACETS = { scopes: ['personal', 'work'], projects: ['3ngram', 'garden'] }
+const listMemoryFacets = vi.fn(async (_userId: string) => FACETS)
+
 vi.mock('@3ngram/core', () => ({
   getMemoryById,
+  listMemoryFacets,
   MemoryNotFoundError,
   resolveRetrievalPolicy: vi.fn(),
 }))
 
-const { MEMORY_RESOURCE_CACHE_TTL_MS, MEMORY_RESOURCE_TEMPLATE } = await import(
-  '../src/mcp/resources.js'
-)
+const {
+  FACETS_RESOURCE_CACHE_TTL_MS,
+  FACETS_RESOURCE_URI,
+  MEMORY_RESOURCE_CACHE_TTL_MS,
+  MEMORY_RESOURCE_TEMPLATE,
+} = await import('../src/mcp/resources.js')
 const { createMcpProtocolHandler } = await import('../src/routes/mcp.js')
 
 const clients: McpClient[] = []
@@ -79,8 +87,12 @@ function authInfo(scopes: string[]): AuthInfo {
   }
 }
 
-async function connect(scopes = ['memory:read'], options?: ClientOptions): Promise<McpClient> {
-  const handler = createMcpProtocolHandler({ gateway: undefined })
+async function connect(
+  scopes = ['memory:read'],
+  options?: ClientOptions,
+  access?: Parameters<typeof createMcpProtocolHandler>[0]['access'],
+): Promise<McpClient> {
+  const handler = createMcpProtocolHandler({ gateway: undefined, access })
   handlers.push(handler)
   const transport = new StreamableHTTPClientTransport(new URL('http://test.local/mcp'), {
     fetch: (url, init) => handler.fetch(new Request(url, init), { authInfo: authInfo(scopes) }),
@@ -115,12 +127,16 @@ describe('memory resource addressing', () => {
     expect(listed.resourceTemplates.map((t) => t.uriTemplate)).toContain(MEMORY_RESOURCE_TEMPLATE)
   })
 
-  it('does NOT enumerate the corpus through resources/list', async () => {
+  it('does NOT enumerate the corpus through resources/list — only the facets inventory is listed', async () => {
     // `list: undefined` on the template: enumerating a tenant's memories is the
-    // firehose the no-firehose rule exists to prevent.
+    // firehose the no-firehose rule exists to prevent. The one listed entry is
+    // the fixed facets uri (issue #168), which names labels, not memories.
     const client = await connect()
     const listed = await client.listResources()
-    expect(listed.resources).toHaveLength(0)
+    expect(listed.resources.map((r) => r.uri)).toEqual([FACETS_RESOURCE_URI])
+    expect(listed.resources.some((r) => r.uri.startsWith('threengram://memory/'))).toBe(false)
+    // Listing is tenant-independent metadata: it never reads the tenant's facets.
+    expect(listMemoryFacets).not.toHaveBeenCalled()
   })
 })
 
@@ -196,5 +212,75 @@ describe('memory resource read', () => {
     const client = await connect([])
     await expect(client.readResource({ uri: `threengram://memory/${MEMORY_ID}` })).rejects.toThrow()
     expect(getMemoryById).not.toHaveBeenCalled()
+  })
+})
+
+describe('facets resource (issue #168)', () => {
+  it('lists threengram://facets with a parseable uri and a JSON mime type', async () => {
+    expect(() => new URL(FACETS_RESOURCE_URI)).not.toThrow()
+    const client = await connect()
+    const listed = await client.listResources()
+    expect(listed.resources).toEqual([
+      expect.objectContaining({
+        uri: FACETS_RESOURCE_URI,
+        name: 'facets',
+        mimeType: 'application/json',
+      }),
+    ])
+  })
+
+  it('reads { scopes, projects } for the authenticated tenant only', async () => {
+    const client = await connect()
+    const read = await client.readResource({ uri: FACETS_RESOURCE_URI })
+    expect(read.contents[0]?.uri).toBe(FACETS_RESOURCE_URI)
+    expect(read.contents[0]?.mimeType).toBe('application/json')
+    expect(JSON.parse(read.contents[0]?.text as string)).toEqual(FACETS)
+    // The tenant comes from the verified authInfo, never from the uri.
+    expect(listMemoryFacets).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111')
+  })
+
+  it('returns empty arrays for an account with no live memories (meaningful empty state)', async () => {
+    listMemoryFacets.mockResolvedValueOnce({ scopes: [], projects: [] })
+    const client = await connect()
+    const read = await client.readResource({ uri: FACETS_RESOURCE_URI })
+    expect(JSON.parse(read.contents[0]?.text as string)).toEqual({ scopes: [], projects: [] })
+  })
+
+  it('caches privately on a SHORT ttl — the inventory mutates, unlike a memory body', async () => {
+    const client = await connect()
+    const read = await client.readResource({ uri: FACETS_RESOURCE_URI })
+    expect(read).toMatchObject({ cacheScope: 'private', ttlMs: FACETS_RESOURCE_CACHE_TTL_MS })
+    expect(FACETS_RESOURCE_CACHE_TTL_MS).toBeLessThanOrEqual(60_000)
+    expect(FACETS_RESOURCE_CACHE_TTL_MS).toBeLessThan(MEMORY_RESOURCE_CACHE_TTL_MS)
+  })
+
+  it('the resources/list catalog itself is tenant-independent and caches public', async () => {
+    const client = await connect()
+    const listed = await client.listResources()
+    expect(listed).toMatchObject({ cacheScope: 'public' })
+  })
+
+  it('a read-only token may read it; write-only and scopeless tokens may not', async () => {
+    const readOnly = await connect(['memory:read'])
+    await expect(readOnly.readResource({ uri: FACETS_RESOURCE_URI })).resolves.toBeDefined()
+    vi.clearAllMocks()
+    const writeOnly = await connect(['memory:write'])
+    await expect(writeOnly.readResource({ uri: FACETS_RESOURCE_URI })).rejects.toThrow()
+    const scopeless = await connect([])
+    await expect(scopeless.readResource({ uri: FACETS_RESOURCE_URI })).rejects.toThrow()
+    expect(listMemoryFacets).not.toHaveBeenCalled()
+  })
+
+  it('asserts read access BEFORE reading the facets', async () => {
+    const assertRead = vi.fn(async () => {
+      throw new Error('read access is forbidden')
+    })
+    const client = await connect(['memory:read'], undefined, {
+      assertRead,
+      assertWrite: vi.fn(),
+    } as unknown as Parameters<typeof createMcpProtocolHandler>[0]['access'])
+    await expect(client.readResource({ uri: FACETS_RESOURCE_URI })).rejects.toThrow()
+    expect(assertRead).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111')
+    expect(listMemoryFacets).not.toHaveBeenCalled()
   })
 })

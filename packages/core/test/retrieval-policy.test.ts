@@ -24,6 +24,10 @@ const listScopes = vi.fn()
 const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const getEnvironmentStats = vi.fn()
 const getLiveAccountId = vi.fn()
+const listMemoryFacets = vi.fn(async (_tx: unknown, _userId: string) => ({
+  scopes: [] as string[],
+  projects: [] as string[],
+}))
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
 )
@@ -65,6 +69,7 @@ vi.mock('@3ngram/db', () => ({
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
   getLiveAccountId: (...a: unknown[]) => getLiveAccountId(...a),
+  listMemoryFacets: (tx: unknown, userId: string) => listMemoryFacets(tx, userId),
   AccountDeletedError,
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
@@ -519,6 +524,18 @@ describe('describeEnvironment report mapping', () => {
     const report = await describeEnvironment(USER)
     expect(report.account).toEqual({ id: USER })
     expect(getLiveAccountId).toHaveBeenCalledWith(expect.anything(), USER)
+    expect(withTenant).toHaveBeenCalledTimes(1)
+  })
+
+  it('inlines the live scope/project inventory from the same tenant tx (#168)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    listMemoryFacets.mockResolvedValueOnce({ scopes: ['work'], projects: ['3ngram'] })
+    const report = await describeEnvironment(USER)
+    expect(report.facets).toEqual({ scopes: ['work'], projects: ['3ngram'] })
+    expect(listMemoryFacets).toHaveBeenCalledWith(expect.anything(), USER)
     expect(withTenant).toHaveBeenCalledTimes(1)
   })
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit — describe_environment output successors (issue #321 onward). Pins that
+// Unit — describe_environment output successors (issues #321, #168). Pins that
 // the V3 report REQUIRES the authenticated account identity as a uuid (a server
 // that forgets it, or reports a non-uuid such as a scope name, fails output
 // validation), that the identity carries nothing but the id, that V2 stays
@@ -10,6 +10,8 @@ import {
   accountIdentitySchema,
   describeEnvironmentOutputV2Schema,
   describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
+  memoriesFacetsResponseSchema,
 } from '../src/index.js'
 
 const ACCOUNT_ID = '0197f3a1-3b7c-7c9a-9f2e-0000000000aa'
@@ -83,5 +85,55 @@ describe('describeEnvironmentOutputV3Schema (account identity, issue #321)', () 
     expect(json.required).toContain('account')
     expect(json.properties.account.additionalProperties).toBe(true)
     expect(json.properties.account.required).toEqual(['id'])
+  })
+})
+
+describe('describeEnvironmentOutputV4Schema (inlined facets inventory, issue #168)', () => {
+  const V3_REPORT = { ...V2_REPORT, account: { id: ACCOUNT_ID } }
+
+  it('requires facets, and an empty account reports empty arrays rather than omitting it', () => {
+    expect(describeEnvironmentOutputV4Schema.safeParse(V3_REPORT).success).toBe(false)
+    const parsed = describeEnvironmentOutputV4Schema.parse({
+      ...V3_REPORT,
+      facets: { scopes: [], projects: [] },
+    })
+    expect(parsed.facets).toEqual({ scopes: [], projects: [] })
+  })
+
+  it('carries the SAME payload the REST facets response does', () => {
+    const facets = { scopes: ['personal', 'work'], projects: ['3ngram'] }
+    const parsed = describeEnvironmentOutputV4Schema.parse({ ...V3_REPORT, facets })
+    expect(memoriesFacetsResponseSchema.parse(parsed.facets)).toEqual(facets)
+    // Same element constraints as REST: a non-kebab scope is rejected by both.
+    const bad = { scopes: ['Not A Scope'], projects: [] }
+    expect(memoriesFacetsResponseSchema.safeParse(bad).success).toBe(false)
+    expect(describeEnvironmentOutputV4Schema.safeParse({ ...V3_REPORT, facets: bad }).success).toBe(
+      false,
+    )
+  })
+
+  it('the facets object is labels only: an extra key is rejected at parse', () => {
+    const r = describeEnvironmentOutputV4Schema.safeParse({
+      ...V3_REPORT,
+      facets: { scopes: [], projects: [], content: 'x' },
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('V3 stays byte-identical (no facets) and V4 advertises the facets node open', () => {
+    expect(
+      describeEnvironmentOutputV3Schema.safeParse({
+        ...V3_REPORT,
+        facets: { scopes: [], projects: [] },
+      }).success,
+    ).toBe(false)
+    const json = z.toJSONSchema(describeEnvironmentOutputV4Schema, { io: 'output' }) as {
+      additionalProperties?: unknown
+      required?: string[]
+      properties: { facets: { additionalProperties?: unknown } }
+    }
+    expect(json.additionalProperties).toBe(true)
+    expect(json.required).toEqual(expect.arrayContaining(['account', 'facets']))
+    expect(json.properties.facets.additionalProperties).toBe(true)
   })
 })

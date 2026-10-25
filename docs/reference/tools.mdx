@@ -3050,6 +3050,35 @@ Report server capabilities (tool names, count, version), your registered scopes,
         "id"
       ],
       "additionalProperties": true
+    },
+    "facets": {
+      "type": "object",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "description": "Scope names your live memories are filed under."
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "description": "Project names on your live memories."
+        }
+      },
+      "required": [
+        "scopes",
+        "projects"
+      ],
+      "additionalProperties": true
     }
   },
   "required": [
@@ -3057,7 +3086,8 @@ Report server capabilities (tool names, count, version), your registered scopes,
     "scopes",
     "stats",
     "retrievalScopePolicy",
-    "account"
+    "account",
+    "facets"
   ],
   "additionalProperties": true
 }

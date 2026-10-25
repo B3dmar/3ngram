@@ -16,7 +16,7 @@ import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
   configureScopeOutputV2Schema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -2326,6 +2326,7 @@ describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
       account: { id: UID },
+      facets: { scopes: [], projects: [] },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
@@ -2338,7 +2339,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV4Schema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2354,6 +2355,30 @@ describe('describe_environment tool', () => {
     expect(parsed.stats.commitmentsByStatus.resolved).toBe(4)
     // The authenticated account (issue #321): core's users.id, verbatim.
     expect(parsed.account).toEqual({ id: UID })
+    // The inlined inventory (issue #168): empty arrays, never omitted.
+    expect(parsed.facets).toEqual({ scopes: [], projects: [] })
+  })
+
+  it('inlines the live scope/project inventory core reported (#168)', async () => {
+    describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: ['personal', 'work'], projects: ['3ngram', 'garden'] },
+      scopes: [scopeRecord('work'), scopeRecord('personal'), scopeRecord('client-acme')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 2,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV4Schema.parse(result.structuredContent)
+    // The inventory is the LIVE-memory facets, distinct from the registry list:
+    // `client-acme` is registered but holds nothing, so it is not a facet.
+    expect(parsed.facets).toEqual({ scopes: ['personal', 'work'], projects: ['3ngram', 'garden'] })
+    expect(parsed.scopes.map((s) => s.name)).toContain('client-acme')
   })
 
   it('reports the account id core read, not one derived from a scope name (#321)', async () => {
@@ -2362,6 +2387,7 @@ describe('describe_environment tool', () => {
     const coreId = crypto.randomUUID()
     describeEnvironment.mockResolvedValue({
       account: { id: coreId },
+      facets: { scopes: [], projects: [] },
       scopes: [scopeRecord('work'), scopeRecord('personal')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       stats: {
@@ -2373,7 +2399,7 @@ describe('describe_environment tool', () => {
       },
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV4Schema.parse(result.structuredContent)
     expect(parsed.account.id).toBe(coreId)
     expect(describeEnvironment).toHaveBeenCalledWith(UID)
     // Identity only: no email, label, or OAuth client id rides on the account.
@@ -2399,6 +2425,7 @@ describe('describe_environment tool', () => {
     try {
       describeEnvironment.mockResolvedValue({
         account: { id: UID },
+        facets: { scopes: [], projects: [] },
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
         stats: {
@@ -2792,6 +2819,7 @@ describe('retrieval-scope policy wiring', () => {
   it('describe_environment reports the active policy', async () => {
     describeEnvironment.mockResolvedValue({
       account: { id: UID },
+      facets: { scopes: [], projects: [] },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       stats: {
@@ -2804,7 +2832,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV4Schema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 

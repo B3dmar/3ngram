@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// describe_environment output successors (issue #321 onward).
+// describe_environment output successors (issues #321, #168 onward).
 //
 // Each additive field gets its own versioned schema composed from the previous
 // one with `.safeExtend()`, and the openness marker is REAPPLIED at every level
@@ -7,6 +7,7 @@
 // (issue #235's `writeScopePolicy`) extends the newest schema here the same way.
 import { z } from 'zod'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { memoriesFacetsResponseSchema } from './rest.js'
 import { describeEnvironmentOutputV2Schema } from './retrieval-scope.js'
 
 /**
@@ -44,3 +45,37 @@ export const describeEnvironmentOutputV3Schema = describeEnvironmentOutputV2Sche
   })
   .meta(OPEN_OUTPUT_META)
 export type DescribeEnvironmentOutputV3 = z.infer<typeof describeEnvironmentOutputV3Schema>
+
+/**
+ * The tenant's scope/project inventory as describe_environment inlines it
+ * (issue #168): the SAME `{ scopes, projects }` payload REST
+ * `GET /api/v1/memories/facets` and the `threengram://facets` resource serve,
+ * built from the same element schemas, so a host that never surfaces resources
+ * to the model still sees it. `scopes` are scopes holding LIVE memories — a
+ * registered scope with none appears in the report's `scopes` registry list,
+ * not here. Labels only, never memory content; empty arrays for an empty
+ * account. A scope name is a filing label: it never identifies an account.
+ */
+export const environmentFacetsSchema = z
+  .object({
+    scopes: memoriesFacetsResponseSchema.shape.scopes.describe(
+      'Scope names your live memories are filed under.',
+    ),
+    projects: memoriesFacetsResponseSchema.shape.projects.describe(
+      'Project names on your live memories.',
+    ),
+  })
+  .strict()
+  .meta(OPEN_OUTPUT_META)
+export type EnvironmentFacets = z.infer<typeof environmentFacetsSchema>
+
+/**
+ * `describe_environment` output V4: V3 (account identity) plus the inlined
+ * `facets` inventory. ALWAYS present (empty arrays when there is nothing).
+ */
+export const describeEnvironmentOutputV4Schema = describeEnvironmentOutputV3Schema
+  .safeExtend({
+    facets: environmentFacetsSchema,
+  })
+  .meta(OPEN_OUTPUT_META)
+export type DescribeEnvironmentOutputV4 = z.infer<typeof describeEnvironmentOutputV4Schema>

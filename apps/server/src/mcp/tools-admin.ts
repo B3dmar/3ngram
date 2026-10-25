@@ -49,7 +49,7 @@ import {
   configureScopeInputV2Schema,
   configureScopeOutputV2Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
@@ -348,7 +348,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      outputSchema: describeEnvironmentOutputV3Schema,
+      outputSchema: describeEnvironmentOutputV4Schema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -360,12 +360,15 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput('describe_environment', describeEnvironmentOutputV3Schema, {
+      const output = parseOutput('describe_environment', describeEnvironmentOutputV4Schema, {
         // The authenticated account (issue #321): its users.id, read by core from
         // the live users row — identity, distinct from scopes and the policies.
         account: { id: report.account.id },
         capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
         scopes: report.scopes.map(toScopeOutput),
+        // The live scope/project inventory (issue #168), inlined for hosts that
+        // never surface the threengram://facets resource to the model.
+        facets: { scopes: report.facets.scopes, projects: report.facets.projects },
         // The active retrieval-scope policy (issue #47): a bounded mode enum +
         // a registered scope NAME — the redaction posture is unchanged.
         retrievalScopePolicy: report.retrievalScopePolicy,
