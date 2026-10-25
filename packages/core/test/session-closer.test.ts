@@ -159,6 +159,7 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
     recordFailure: async (_userId, failure) => {
       failures.push(failure)
     },
+    isJudgmentEnabled: async () => false,
   }
   const repo = { ...base, ...overrides }
   return {

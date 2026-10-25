@@ -20,6 +20,12 @@
 // this at all. A wrong resolve is a mistake a human undoes; a wrong `remember`
 // is a corpus row that outlives the mistake.
 //
+// TWO CLASSIFIERS, ONE WRITE PATH. Tenants that opted in to judgment (issue
+// #225) are classified by `gateway.decide()`, one typed Noul per briefed
+// commitment (session-closer-judgment.ts, issue #229); everyone else, and any
+// deployment without a judgment gateway, by the single `complete()` pass below.
+// Either way the only write is the same `resolve`.
+//
 // DEFAULT-OFF. The worker only schedules this behind a config flag. The
 // validation bar for turning it on — a positive commitment-recall improvement
 // against the 0% baseline, measured by a dogfood audit, not by CI — is a later,
@@ -38,7 +44,12 @@ import {
   recordCloserFailure,
   withTenant,
 } from '@3ngram/db'
-import type { CompletionResult, Gateway } from '@3ngram/llm'
+import {
+  type CompletionResult,
+  type DecideResult,
+  type Gateway,
+  NotImplementedError,
+} from '@3ngram/llm'
 import {
   type BriefedMemory,
   closerVerdictSchema,
@@ -52,7 +63,13 @@ import {
   reserveBudgetSlot,
 } from '../budget/index.js'
 import { renderDebriefPrompt } from '../prompts/index.js'
+import { isJudgmentEnabled } from '../settings/judgment.js'
 import { type ClosedRunResolveOutcome, resolveForClosedRun } from '../write/commitments.js'
+import {
+  CLOSER_DECIDE_OPERATION,
+  renderCloserJudgment,
+  selectByJudgment,
+} from './session-closer-judgment.js'
 
 /**
  * Actor recorded on every event the closer emits.
@@ -155,6 +172,11 @@ export interface SessionCloserRepo {
    * row's value at write time, not a value this caller observed earlier.
    */
   recordFailure(userId: string, failure: CloserFailureInput): Promise<void>
+  /**
+   * Did this tenant opt in to typed judgments (issue #225)? Read once per pass,
+   * after the claim. Only `true` routes the pass to `gateway.decide()`.
+   */
+  isJudgmentEnabled(userId: string): Promise<boolean>
 }
 
 /** Content-free accounting for one closer generation call. */
@@ -399,7 +421,7 @@ export function renderCloserPrompt(input: {
  * newlines (and U+2028/U+2029) that would otherwise let a payload line start a
  * fence of its own.
  */
-function fenceExcerpt(excerpt: string | null): string {
+export function fenceExcerpt(excerpt: string | null): string {
   const payload = JSON.stringify(excerpt ?? '')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
@@ -743,97 +765,18 @@ async function runClosePass(
   })
   if (!claimed) return skip('claim-lost')
 
-  const prompt = renderCloserPrompt({
-    briefed: session.briefedMemories,
-    eventKinds: [...new Set(events.items.map((event) => event.eventKind))].sort(),
-    excerpt: session.lastMessageExcerpt,
-    project: session.project,
-    scope: session.scope,
-  })
-  // METERED. `session.closer` is a registered generation operation, so it rides
-  // the same reserve -> call -> record -> release seam every embed call site
-  // uses. Reserving BEFORE the round-trip is what makes a per-tenant cap
-  // enforceable at all: a read-only pre-check races, and an unmetered background
-  // job is spend that never appears in `llm_usage` and can never be rejected.
-  // Over cap, reserveBudgetSlot throws BudgetExceededError, which propagates and
-  // fails the job — correct, because no work was done and BullMQ should retry
-  // once the window rolls.
-  let reservation: BudgetReservationHandle | undefined
-  let completion: CompletionResult
-  try {
-    if (options.budget) {
-      reservation = await reserveBudgetSlot(options.budget, userId, CLOSER_OPERATION)
-    }
-
-    // EPOCH RE-CHECK AT THE GATEWAY BOUNDARY (issue #185), placed AFTER the
-    // reservation above rather than before it. `reserveBudgetSlot` takes a
-    // per-user advisory tx lock (packages/core/src/budget) and can block behind
-    // another in-flight metered call for the same user for an UNBOUNDED time;
-    // checking the epoch before reserving would leave the residual window "the
-    // gateway's timeout PLUS however long that lock wait was" rather than just
-    // the gateway's timeout. Checking here — the last statement before dispatch
-    // — is what keeps the residual bounded by the gateway's timeout ALONE
-    // rather than by that unbounded lock wait too. It does NOT make the
-    // residual an absolute "≤ timeout" guarantee: this check is a READ, not a
-    // lock, so a dispatch that starts a moment after it resolves can still
-    // race an erasure commit under adversarial scheduling — see the ordering
-    // note in this function's doc comment (step 3b) for the honest shape of
-    // that residual and the rejected serialized alternative. A fenced return
-    // here still hits the `finally` below, so the reservation is released,
-    // never billed.
-    //
-    // A bare epoch comparison is enough proof of freshness for THE ERASURE
-    // CASE specifically — no need to re-read the excerpt/topics themselves.
-    // Erasure (packages/db/src/account-delete.ts) bumps the epoch in the SAME
-    // statement as the redaction, so "the epoch I observed still holds" implies
-    // "this row has not been erased since". It does NOT mean every possible
-    // staleness is covered: `expireStaleExcerpts` (packages/db/src/session-closer.ts,
-    // TTL sweep) and `finishSessionTriage`'s `clearExcerpt` branch (a prior
-    // pass's own write-back) can both null `last_message_excerpt` on a closed
-    // row WITHOUT bumping the epoch — that is the accepted "RETENTION WINS"
-    // trade already documented at packages/db/src/session-closer.ts's
-    // `expireStaleExcerpts`.
-    // The worst case from those two is a stale send of content retention just
-    // deleted (an excerpt from a still-erasable, not-yet-erased account) —
-    // never an un-redacted send after an actual erasure, which is the one this
-    // check exists to prevent. Reuses `currentEpoch`, the same seam the
-    // per-resolve check in the loop below already calls, so no new
-    // SessionCloserRepo member is needed.
-    const gatewayEpoch = await repo.currentEpoch(userId, request.sessionRunId)
-    if (gatewayEpoch !== session.activationEpoch) return skip('fenced')
-
-    completion = await options.gateway.complete(prompt, CLOSER_OPERATION, {
-      maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
-      jsonObject: true,
-    })
-    // The spend was incurred the moment the call returned, so record it before
-    // anything downstream can throw. Best-effort by contract: a failure to write
-    // the accounting row must not lose the resolves the pass is about to make.
-    // UNPRICED when the gateway reported no usage. Recording zero tokens at
-    // $0 would leave the tenant's consumption flat, and since the reservation is
-    // released once the call settles, every later pass would pass the cap check
-    // no matter how much was really spent — a cap that looks enforced and is
-    // not. A NULL `cost_usd` is the existing signal for "unpriced", which the
-    // budget gate charges at the max registered operation cost instead.
-    const usage = completion.usage
-    await repo
-      .recordUsage(userId, {
-        operation: CLOSER_OPERATION,
-        model: completion.model,
-        inputTokens: usage?.inputTokens ?? 0,
-        outputTokens: usage?.outputTokens ?? 0,
-        costUsd:
-          usage === undefined
-            ? null
-            : completionCostUsd(completion.model, usage.inputTokens, usage.outputTokens),
-      })
-      .catch(() => undefined)
-  } finally {
-    // Release once the call settles; the real cost, if any, is now in llm_usage.
-    if (reservation) await releaseBudgetReservation(userId, reservation)
-  }
-
-  const { candidates, rejected } = selectResolvable(completion.text, session.briefedMemories)
+  const eventKinds = [...new Set(events.items.map((event) => event.eventKind))].sort()
+  const verdict = await classify(
+    repo,
+    userId,
+    request,
+    options.gateway,
+    options,
+    session,
+    eventKinds,
+  )
+  if (verdict === 'fenced') return skip('fenced')
+  const { candidates, rejected } = verdict
 
   let resolved = 0
   let skippedCandidates = 0
@@ -915,6 +858,140 @@ async function runClosePass(
   }
 }
 
+/** Candidates to resolve, or `fenced` when the epoch moved before dispatch. */
+type CloserVerdict = { candidates: string[]; rejected: number } | 'fenced'
+
+/**
+ * Step 4, GENERATE, for one pass. Opted-in tenants (issue #225) go through the
+ * typed judgment pass; a deployment without a judgment gateway answers decide()
+ * with the typed NotImplementedError before any network call, and the pass then
+ * takes the complete() path exactly as an opted-out tenant does. Each path
+ * reserves, re-checks the epoch, calls, records usage and releases on its own,
+ * so a fallback never bills the judgment operation.
+ */
+async function classify(
+  repo: SessionCloserRepo,
+  userId: string,
+  request: { sessionRunId: string; activationEpoch: number },
+  gateway: Gateway,
+  options: CloserOptions,
+  session: CloserSessionInput,
+  eventKinds: readonly string[],
+): Promise<CloserVerdict> {
+  const call = { repo, userId, request, gateway, budget: options.budget, session, eventKinds }
+  if (await repo.isJudgmentEnabled(userId)) {
+    try {
+      return await classifyByJudgment(call)
+    } catch (err) {
+      if (!(err instanceof NotImplementedError)) throw err
+    }
+  }
+  return classifyByCompletion(call)
+}
+
+interface ClassifyCall {
+  repo: SessionCloserRepo
+  userId: string
+  request: { sessionRunId: string; activationEpoch: number }
+  gateway: Gateway
+  budget: BudgetEnforcement | undefined
+  session: CloserSessionInput
+  eventKinds: readonly string[]
+}
+
+/**
+ * Reserve -> epoch re-check -> call -> release, the metered seam both paths
+ * share (see step 3b in {@link closeSessionRun}'s doc for why the re-check sits
+ * AFTER the reservation and immediately before dispatch). `send` performs the
+ * gateway call and records its usage; it runs only while the epoch still holds.
+ */
+async function meteredCall<T>(
+  call: ClassifyCall,
+  operation: string,
+  send: () => Promise<T>,
+): Promise<T | 'fenced'> {
+  let reservation: BudgetReservationHandle | undefined
+  try {
+    if (call.budget) reservation = await reserveBudgetSlot(call.budget, call.userId, operation)
+    const gatewayEpoch = await call.repo.currentEpoch(call.userId, call.request.sessionRunId)
+    if (gatewayEpoch !== call.session.activationEpoch) return 'fenced'
+    return await send()
+  } finally {
+    // Release once the call settles; the real cost, if any, is now in llm_usage.
+    if (reservation) await releaseBudgetReservation(call.userId, reservation)
+  }
+}
+
+/** The complete() path: unchanged behaviour for opted-out tenants. */
+async function classifyByCompletion(call: ClassifyCall): Promise<CloserVerdict> {
+  const { session } = call
+  const prompt = renderCloserPrompt({
+    briefed: session.briefedMemories,
+    eventKinds: call.eventKinds,
+    excerpt: session.lastMessageExcerpt,
+    project: session.project,
+    scope: session.scope,
+  })
+  const completion = await meteredCall(call, CLOSER_OPERATION, async () => {
+    const result: CompletionResult = await call.gateway.complete(prompt, CLOSER_OPERATION, {
+      maxOutputTokens: CLOSER_MAX_OUTPUT_TOKENS,
+      jsonObject: true,
+    })
+    // Recorded before anything downstream can throw; UNPRICED (null cost) when
+    // the gateway reported no usage, so the budget gate charges the max
+    // registered cost instead of $0.
+    const usage = result.usage
+    await call.repo
+      .recordUsage(call.userId, {
+        operation: CLOSER_OPERATION,
+        model: result.model,
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+        costUsd:
+          usage === undefined
+            ? null
+            : completionCostUsd(result.model, usage.inputTokens, usage.outputTokens),
+      })
+      .catch(() => undefined)
+    return result
+  })
+  if (completion === 'fenced') return 'fenced'
+  return selectResolvable(completion.text, session.briefedMemories)
+}
+
+/**
+ * The typed judgment path (issue #229): one Noul per briefed commitment, resolve
+ * at or above CLOSER_RESOLVE_PROBABILITY. `rejected` is always 0 — the answer id
+ * space is the briefed set. Usage is recorded UNPRICED: no judgment list price is
+ * pinned in this repo, so the budget gate charges the max registered cost.
+ */
+async function classifyByJudgment(call: ClassifyCall): Promise<CloserVerdict> {
+  const { session } = call
+  const judgment = renderCloserJudgment({
+    briefed: session.briefedMemories,
+    eventKinds: call.eventKinds,
+    fencedExcerpt: fenceExcerpt(session.lastMessageExcerpt),
+  })
+  const decided = await meteredCall(call, CLOSER_DECIDE_OPERATION, async () => {
+    const result: DecideResult = await call.gateway.decide(judgment, CLOSER_DECIDE_OPERATION)
+    await call.repo
+      .recordUsage(call.userId, {
+        operation: CLOSER_DECIDE_OPERATION,
+        model: result.model,
+        inputTokens: result.usage?.inputTokens ?? 0,
+        outputTokens: result.usage?.outputTokens ?? 0,
+        costUsd: null,
+      })
+      .catch(() => undefined)
+    return result
+  })
+  if (decided === 'fenced') return 'fenced'
+  return {
+    candidates: selectByJudgment(decided.answers, session.briefedMemories).resolve,
+    rejected: 0,
+  }
+}
+
 /**
  * The production {@link SessionCloserRepo}: @3ngram/db helpers wrapped in
  * withTenant() (hard rule 3). Each member opens its own transaction on purpose —
@@ -968,4 +1045,5 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
   },
   recordFailure: (userId, failure) =>
     withTenant(userId, (tx) => recordCloserFailure(tx, userId, failure)),
+  isJudgmentEnabled: (userId) => isJudgmentEnabled(userId),
 }
