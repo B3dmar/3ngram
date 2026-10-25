@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Redis-backed rate limiting (per-IP on the OAuth/login endpoints).
+// Cross-instance rate limiting (per-IP on the OAuth/login endpoints).
 //
-// REUSABLE FACTORY: createRateLimiter({ points, duration, keyPrefix, ... })
-// returns Express middleware backed by rate-limiter-flexible — RateLimiterRedis
-// when an ioredis client is injected (cross-instance: Railway runs N replicas,
-// so the bucket MUST live in Redis, not per-process), else RateLimiterMemory
-// (local/CI parity, and the test seam — NO real Redis in CI).
+// REUSABLE FACTORY: createRateLimiter({ points, duration, keyPrefix, store })
+// returns Express middleware backed by rate-limiter-flexible over the resolved
+// store (rate-limit-store.ts, #315): RateLimiterRedis, the Postgres
+// `rate_limits` table, or RateLimiterMemory (local/CI and the unit-test seam).
+// N replicas need a shared store; memory is per process.
 //
 // KEYING DIMENSIONS (docs/concepts/mcp-design.mdx "per-user + per-key"):
 //   - /mcp  -> per-AUTHENTICATED-USER (req.userId, bound by oauthBearerAuth).
@@ -19,8 +19,8 @@
 //     also plumbs req.apiKeyId through api-key.ts). Building the seam now keeps
 //     that follow-up additive.
 //
-// FAIL-OPEN on Redis-down (DECISION): rate limiting is protective, not
-// correctness — a Redis outage must NOT take down the API. On a store error
+// FAIL-OPEN on store-down (DECISION): rate limiting is protective, not
+// correctness — a store outage must NOT take down the API. On a store error
 // (distinct from a real over-limit rejection, which carries msBeforeNext) we log
 // a REDACTED warning (never REDIS_URL, never a key) and call next(). The tradeoff
 // is documented in the changeset; flip `failOpen: false` per-limiter if a future
@@ -29,6 +29,7 @@
 // On limit exceeded: 429 with Retry-After (seconds) + a structured body
 // { error: 'rate_limited' } and no further content (hard rule 5: thin transport).
 import { log, rateLimitStoreFailure } from '@3ngram/config'
+import { createPostgresRateLimiter } from '@3ngram/core'
 import type { NextFunction, Request, Response } from 'express'
 import type { Redis } from 'ioredis'
 import {
@@ -38,6 +39,12 @@ import {
   RateLimiterRedis,
   type RateLimiterRes,
 } from 'rate-limiter-flexible'
+
+/** The limiter backing store, resolved once at boot by resolveRateLimitStore. */
+export type RateLimitStore =
+  | { kind: 'memory' }
+  | { kind: 'redis'; client: Redis }
+  | { kind: 'postgres' }
 
 /** Resolve the bucket key for a request, or undefined to SKIP limiting it. */
 export type KeyResolver = (req: Request) => string | undefined
@@ -87,7 +94,7 @@ export interface RateLimiterOptions {
   /** Window length in seconds. */
   duration: number
   /**
-   * Namespace for the Redis keys (e.g. 'mcp:user', 'oauth:ip'). Composes with the
+   * Namespace for the store keys (e.g. 'mcp:user', 'oauth:ip'). Composes with the
    * resolved key as `<keyPrefix>:<key>` so independent buckets never collide.
    */
   keyPrefix: string
@@ -98,12 +105,12 @@ export interface RateLimiterOptions {
    */
   keyResolver?: KeyResolver
   /**
-   * Redis client for a cross-instance store. When omitted the limiter uses an
-   * in-process RateLimiterMemory (local dev + CI; tests inject nothing).
+   * Backing store. The `{ kind: 'memory' }` default exists for unit tests only:
+   * createApp always passes the store resolveRateLimitStore resolved.
    */
-  redis?: Redis | undefined
+  store?: RateLimitStore
   /**
-   * On a STORE failure (Redis unreachable), allow the request through (true,
+   * On a STORE failure (Redis/Postgres unreachable), allow the request through (true,
    * default) or reject it 503-style via next(err) (false). Default fail-open:
    * availability over protection for a protective control.
    */
@@ -125,17 +132,23 @@ function isOverLimit(rejection: unknown): rejection is RateLimiterRes {
   )
 }
 
-/** Build the underlying limiter: Redis-backed when a client is present, else memory. */
+/** Build the underlying limiter over the selected store. */
 function buildLimiter(options: RateLimiterOptions): RateLimiterAbstract {
-  const base: IRateLimiterOptions = {
+  const base = {
     points: options.points,
     duration: options.duration,
     keyPrefix: options.keyPrefix,
+  } satisfies IRateLimiterOptions
+  const store = options.store ?? { kind: 'memory' }
+  switch (store.kind) {
+    case 'redis':
+      return new RateLimiterRedis({ ...base, storeClient: store.client })
+    case 'postgres':
+      // A pg error rejects with a plain Error: a store failure, not an over-limit.
+      return createPostgresRateLimiter(base)
+    case 'memory':
+      return new RateLimiterMemory(base)
   }
-  if (options.redis !== undefined) {
-    return new RateLimiterRedis({ ...base, storeClient: options.redis })
-  }
-  return new RateLimiterMemory(base)
 }
 
 /**
@@ -165,12 +178,12 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiterMiddl
           res.status(429).json({ error: 'rate_limited' })
           return
         }
-        // Store failure (Redis-down): the key/IP is identifying material and the
+        // Store failure (store down): the key/IP is identifying material and the
         // connection string is a credential — neither enters the log line or the
         // metric. key_prefix (the limiter/route class) is the only label.
         //
         // TRADEOFF (DECISION, see header): fail-open trades protection for
-        // availability — a Redis outage with failOpen:true lets EVERY request
+        // availability — a store outage with failOpen:true lets EVERY request
         // through, so brute-force throttling on /auth/login
         // silently lapses with no over-limit 429s to alert on. The counter below
         // is the alert signal that makes the outage observable: an operator can

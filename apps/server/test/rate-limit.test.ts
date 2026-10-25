@@ -2,7 +2,7 @@
 // createRateLimiter — the reusable limiter factory. Drives
 // the in-memory store (RateLimiterMemory) by injecting NO redis client, so the
 // suite proves the per-user / per-IP / 429+Retry-After / fail-open contract with
-// NO real Redis (CI parity). A fake limiter (injected via the redis seam) covers
+// NO real Redis (CI parity). A fake client (injected via the store seam) covers
 // the store-failure fail-open path deterministically.
 import type { NextFunction, Request, Response } from 'express'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,11 @@ const storeFailureAdd = vi.fn()
 vi.mock('@3ngram/config', () => ({
   log: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }),
   rateLimitStoreFailure: { add: (...args: unknown[]) => storeFailureAdd(...args) },
+}))
+const pgConsume = vi.fn()
+const createPostgresRateLimiter = vi.fn((_opts: unknown) => ({ consume: pgConsume }))
+vi.mock('@3ngram/core', () => ({
+  createPostgresRateLimiter: (opts: unknown) => createPostgresRateLimiter(opts),
 }))
 
 function mockRes() {
@@ -175,7 +180,7 @@ describe('createRateLimiter — store failure (Redis-down)', () => {
       duration: 60,
       keyPrefix: 'mcp:user',
       keyResolver: userIdKey,
-      redis: failingRedis(),
+      store: { kind: 'redis', client: failingRedis() },
     })
     const { res, next } = await invoke(limiter, reqWith({ userId: 'user-a' }))
     expect(next).toHaveBeenCalledTimes(1)
@@ -188,7 +193,7 @@ describe('createRateLimiter — store failure (Redis-down)', () => {
       duration: 60,
       keyPrefix: 'auth:ip',
       keyResolver: ipKey,
-      redis: failingRedis(),
+      store: { kind: 'redis', client: failingRedis() },
     })
     const { next } = await invoke(limiter, reqWith({ ip: '203.0.113.7' }))
     // fail-open still lets the request through...
@@ -218,7 +223,7 @@ describe('createRateLimiter — store failure (Redis-down)', () => {
       duration: 60,
       keyPrefix: 'mcp:user',
       keyResolver: userIdKey,
-      redis: failingRedis(),
+      store: { kind: 'redis', client: failingRedis() },
       failOpen: false,
     })
     const { res, next } = await invoke(limiter, reqWith({ userId: 'user-a' }))
@@ -227,5 +232,28 @@ describe('createRateLimiter — store failure (Redis-down)', () => {
     expect(res.body).toEqual({ error: 'service_unavailable' })
     // The outage is still observable even when failing closed.
     expect(storeFailureAdd).toHaveBeenCalledWith(1, { key_prefix: 'mcp:user', fail_open: false })
+  })
+})
+
+describe('createRateLimiter — postgres store (#315)', () => {
+  it('builds the core Postgres limiter and fails open on a pg error', async () => {
+    pgConsume.mockRejectedValueOnce(new Error('connection refused'))
+    const limiter = createRateLimiter({
+      points: 5,
+      duration: 60,
+      keyPrefix: 'edge:ip',
+      keyResolver: ipKey,
+      store: { kind: 'postgres' },
+    })
+    expect(createPostgresRateLimiter).toHaveBeenCalledWith({
+      points: 5,
+      duration: 60,
+      keyPrefix: 'edge:ip',
+    })
+    const { res, next } = await invoke(limiter, reqWith({ ip: '203.0.113.8' }))
+    expect(pgConsume).toHaveBeenCalledWith('203.0.113.8')
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(0)
+    expect(storeFailureAdd).toHaveBeenCalledWith(1, { key_prefix: 'edge:ip', fail_open: true })
   })
 })

@@ -3,6 +3,7 @@ import {
   budgetGateLookupFailure,
   loadBudgetConfig,
   loadLlmGatewayConfig,
+  loadRateLimitStoreConfig,
   log,
 } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
@@ -18,9 +19,11 @@ import {
   createRateLimiter,
   ipKey,
   type RateLimiterMiddleware,
+  type RateLimitStore,
   userIdKey,
 } from './middleware/rate-limit.js'
 import { requestContext } from './middleware/request-context.js'
+import { resolveRateLimitStore } from './rate-limit-store.js'
 import { resolveRedis } from './redis.js'
 import { restRouter } from './rest/router.js'
 import { apiKeysRouter } from './routes/api-keys.js'
@@ -58,14 +61,14 @@ export interface AppOptions {
    */
   gateway?: Gateway
   /**
-   * Rate-limiter seam. When omitted, boot builds Redis-backed limiters
-   * iff REDIS_URL is set (else in-memory). Tests inject limiters directly so NO
+   * Rate-limiter seam. When omitted, boot builds limiters over the store
+   * RATE_LIMIT_STORE selects (#315). Tests inject limiters directly so NO
    * real Redis is required in CI:
    * - `mcpLimiter`  — per-user bucket on /mcp (req.userId, set by oauthBearerAuth).
    * - `authLimiter` — per-IP bucket on /auth/login (req.ip is the
    *   real client because trust proxy is set).
-   * Provide `redis` instead to let boot construct the default limiters over an
-   * explicit client (or omit both for the env-derived client).
+   * Provide `rateLimitStore` instead to let boot construct the default
+   * limiters over an explicit store (or omit both for the env-derived one).
    */
   mcpLimiter?: RateLimiterMiddleware
   authLimiter?: RateLimiterMiddleware
@@ -115,6 +118,9 @@ export interface AppOptions {
    * Default: 300 req / 60s per key.
    */
   apiKeyLimiter?: RateLimiterMiddleware
+  /** Limiter store seam; when omitted, resolveRateLimitStore picks it from env (#315). */
+  rateLimitStore?: RateLimitStore
+  /** Redis client injection seam; resolveRateLimitStore builds the redis store from it. */
   redis?: Redis | undefined
   /**
    * Composition seam. When omitted, resolves to `noOpExtension` — the self-host
@@ -161,12 +167,11 @@ function resolveGateway(override: Gateway | undefined): Gateway | undefined {
 
 /**
  * Resolve the rate limiters: explicit overrides win (the test seam), else build
- * the defaults over the injected/env Redis client. Mirrors resolveGateway: a
- * missing Redis client makes createRateLimiter fall back to RateLimiterMemory.
+ * the defaults over the store resolved once in createApp.
  */
 function resolveLimiters(
   options: AppOptions,
-  redis: Redis | undefined,
+  store: RateLimitStore,
 ): {
   mcpLimiter: RateLimiterMiddleware
   authLimiter: RateLimiterMiddleware
@@ -188,7 +193,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'edge:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     mcpLimiter:
       options.mcpLimiter ??
@@ -197,7 +202,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'mcp:user',
         keyResolver: userIdKey,
-        redis,
+        store,
       }),
     authLimiter:
       options.authLimiter ??
@@ -206,7 +211,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     signupLimiter:
       options.signupLimiter ??
@@ -215,7 +220,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:signup:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     resendVerificationLimiter:
       options.resendVerificationLimiter ??
@@ -224,7 +229,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:resend-verification:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     verifyEmailLimiter:
       options.verifyEmailLimiter ??
@@ -233,7 +238,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:verify-email:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     forgotPasswordLimiter:
       options.forgotPasswordLimiter ??
@@ -242,7 +247,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:forgot-password:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     resetPasswordLimiter:
       options.resetPasswordLimiter ??
@@ -251,7 +256,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'auth:reset-password:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     registerLimiter:
       options.registerLimiter ??
@@ -260,7 +265,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'oauth:register:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     oauthLimiter:
       options.oauthLimiter ??
@@ -269,7 +274,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'oauth:as:ip',
         keyResolver: ipKey,
-        redis,
+        store,
       }),
     apiKeyLimiter:
       options.apiKeyLimiter ??
@@ -278,7 +283,7 @@ function resolveLimiters(
         duration: RATE_WINDOW_SECONDS,
         keyPrefix: 'api:key',
         keyResolver: apiKeyIdKey,
-        redis,
+        store,
       }),
   }
 }
@@ -341,11 +346,13 @@ export function createApp(options: AppOptions = {}): Express {
   // Access gate, threaded into BOTH metered transports alongside the budget. The
   // private repo injects a real access policy; self-host keeps allowAllAccess.
   const access = extension.access ?? allowAllAccess
-  // Resolve the shared ioredis client ONCE: the rate limiters and the
-  // progressive-delay failure tracker both ride it, so dialing twice
-  // would open a redundant connection. An explicit override wins (the test
-  // seam); else the env-derived client (undefined ⇒ in-memory fallbacks).
-  const redis = options.redis ?? resolveRedis()
+  // Resolve the limiter store and the shared ioredis client ONCE (#315). Redis is
+  // dialled only for the redis store and is used only to build it; the
+  // /oauth/token failure tracker follows the resolved store. An explicit
+  // override wins (the test seam).
+  const redis =
+    options.redis ?? (loadRateLimitStoreConfig().kind === 'redis' ? resolveRedis() : undefined)
+  const rateLimitStore = options.rateLimitStore ?? resolveRateLimitStore(redis)
   const clientMetadataResolver = options.clientMetadataResolver ?? new ClientMetadataResolver()
   const {
     edgeLimiter,
@@ -359,7 +366,7 @@ export function createApp(options: AppOptions = {}): Express {
     registerLimiter,
     oauthLimiter,
     apiKeyLimiter,
-  } = resolveLimiters(options, redis)
+  } = resolveLimiters(options, rateLimitStore)
   // Railway terminates TLS at a proxy; without this, req.ip (and the SDK auth
   // router's rate limiter) see the proxy address.
   app.set('trust proxy', 1)
@@ -440,10 +447,11 @@ export function createApp(options: AppOptions = {}): Express {
   // unauthenticated and sit behind the shared injected per-IP limiter seam
   // (real bucket by default).
   app.use(oauthAuthorizeRouter({ limiter: oauthLimiter, clientMetadataResolver }))
-  // The same shared ioredis client backs the progressive-delay failure counter
-  // so the budget is shared across Railway replicas; a missing client
-  // makes the tracker fall back to a per-process Map.
-  app.use(oauthTokenRouter({ limiter: oauthLimiter, redis, limits, clientMetadataResolver }))
+  // The progressive-delay failure counter follows the resolved limiter store
+  // (Redis or Postgres share the budget across replicas; memory is per-process).
+  app.use(
+    oauthTokenRouter({ limiter: oauthLimiter, rateLimitStore, limits, clientMetadataResolver }),
+  )
 
   // Composition seam: the injected extension attaches its hosted-only
   // routes/handlers here, at the composition root, AFTER every Apache router and

@@ -151,6 +151,10 @@ export interface OAuthConfig {
  *   red line: memory content never enters logs outside local dev).
  * - `LOG_HASH_SALT` is required in production and the public self-host example
  *   placeholder is rejected (hashed user_id correlation, §1).
+ *
+ * This is the role-agnostic base: the server-only production rules
+ * (OAUTH_JWKS, REDIS_URL) are applied by parseEnv/loadEnv for the server role
+ * only, so validate through those rather than parsing envSchema directly.
  */
 export const envSchema = z
   .object({
@@ -275,6 +279,13 @@ export const envSchema = z
         value === undefined || !/^rediss?:\/\//.test(value) ? undefined : value,
       )
       .pipe(z.url().optional()),
+    // Rate-limiter store (#315). Unset: redis when REDIS_URL is set, in-memory
+    // outside production, refused in production. postgres uses the rate_limits
+    // table on DATABASE_URL; memory in production is an explicit opt-in.
+    RATE_LIMIT_STORE: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.enum(['redis', 'postgres', 'memory']).optional(),
+    ),
     // Forgotten-password reset: when true, POST /auth/forgot-password
     // surfaces the freshly minted plaintext reset token IN THE 200 RESPONSE BODY
     // so a developer with no email channel can complete the flow. This is a
@@ -460,26 +471,25 @@ export const envSchema = z
         message: 'BASE_URL must use https in production (OAuth issuer requirement)',
       })
     }
-    if (env.NODE_ENV === 'production' && env.OAUTH_JWKS === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['OAUTH_JWKS'],
-        message: 'OAUTH_JWKS is required in production (RS256 signing keys)',
-      })
-    }
-    if (env.NODE_ENV === 'production' && env.REDIS_URL === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['REDIS_URL'],
-        message:
-          'REDIS_URL is required in production (cross-instance rate limiting; an in-memory bucket per replica is no limit)',
-      })
-    }
     if (env.NODE_ENV === 'production' && env.DATABASE_URL === undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['DATABASE_URL'],
         message: 'DATABASE_URL is required in production (runtime Postgres app_user URL)',
+      })
+    }
+    if (env.RATE_LIMIT_STORE === 'redis' && env.REDIS_URL === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RATE_LIMIT_STORE'],
+        message: 'RATE_LIMIT_STORE=redis requires REDIS_URL',
+      })
+    }
+    if (env.RATE_LIMIT_STORE === 'postgres' && env.DATABASE_URL === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RATE_LIMIT_STORE'],
+        message: 'RATE_LIMIT_STORE=postgres requires DATABASE_URL',
       })
     }
     if (env.DATABASE_URL !== undefined) {
@@ -575,16 +585,70 @@ export const envSchema = z
 
 export type Env = z.infer<typeof envSchema>
 
-export function parseEnv(source: Record<string, string | undefined> = process.env): Env {
-  return envSchema.parse(source)
+/**
+ * The process an env is validated for. `'server'` (the default) enforces every
+ * production requirement. `'worker'` skips the server-only ones: OAUTH_JWKS
+ * (the worker signs no tokens) and REDIS_URL (only the server's rate limiter
+ * needs it; the resident BullMQ worker still fails fast in createRedis).
+ * Everything else, including BASE_URL, LOG_HASH_SALT and the DATABASE_URL
+ * role/password checks, applies to both. Refs #204, #315.
+ */
+export type EnvRole = 'server' | 'worker'
+
+export interface LoadEnvOptions {
+  role?: EnvRole
 }
 
-let cached: Env | undefined
+/** Production requirements only the server process has. */
+function serverOnlyRules(env: Env, ctx: z.RefinementCtx): void {
+  if (env.NODE_ENV !== 'production') return
+  if (env.OAUTH_JWKS === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['OAUTH_JWKS'],
+      message: 'OAUTH_JWKS is required in production (RS256 signing keys)',
+    })
+  }
+  const store = env.RATE_LIMIT_STORE
+  if (env.REDIS_URL === undefined && store !== 'postgres' && store !== 'memory') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['REDIS_URL'],
+      message:
+        'REDIS_URL is required in production (cross-instance rate limiting; an in-memory bucket per replica is no limit) unless RATE_LIMIT_STORE=postgres',
+    })
+  }
+}
 
-/** Parse-once accessor; all runtime code reads env through this. */
-export function loadEnv(): Env {
-  cached ??= parseEnv()
-  return cached
+const workerEnvSchema = envSchema
+const serverEnvSchema = envSchema.superRefine(serverOnlyRules)
+
+export function parseEnv(
+  source: Record<string, string | undefined> = process.env,
+  options: LoadEnvOptions = {},
+): Env {
+  const schema = (options.role ?? 'server') === 'worker' ? workerEnvSchema : serverEnvSchema
+  return schema.parse(source)
+}
+
+let cached: { role: EnvRole; env: Env } | undefined
+
+/**
+ * Parse-once accessor; all runtime code reads env through this. The entrypoint
+ * resolves it first with its role; later no-argument callers (logger,
+ * redaction, the sub-loaders) get that same env. Asking for a different role
+ * once resolved is a programming error and throws.
+ */
+export function loadEnv(options?: LoadEnvOptions): Env {
+  if (cached) {
+    if (options?.role === undefined || options.role === cached.role) return cached.env
+    throw new Error(
+      `loadEnv: env already resolved for role '${cached.role}', cannot re-resolve as '${options.role}'`,
+    )
+  }
+  const role = options?.role ?? 'server'
+  cached = { role, env: parseEnv(process.env, { role }) }
+  return cached.env
 }
 
 /** Test seam — drops the memoized env so the next loadEnv() re-parses. */
@@ -752,6 +816,19 @@ export function loadLlmGatewayConfig(): LlmGatewayConfig | undefined {
     return undefined
   }
   return { baseUrl: env.LLM_GATEWAY_URL, apiKey: env.LLM_GATEWAY_API_KEY }
+}
+
+export type RateLimitStoreKind = 'redis' | 'postgres' | 'memory'
+
+/**
+ * Resolve the rate-limiter store (#315). `explicit` says RATE_LIMIT_STORE was
+ * set; an implicit memory store is never valid in production (env validation
+ * refuses it, and the server's resolveRateLimitStore refuses it again).
+ */
+export function loadRateLimitStoreConfig(): { kind: RateLimitStoreKind; explicit: boolean } {
+  const env = loadEnv()
+  if (env.RATE_LIMIT_STORE !== undefined) return { kind: env.RATE_LIMIT_STORE, explicit: true }
+  return { kind: env.REDIS_URL !== undefined ? 'redis' : 'memory', explicit: false }
 }
 
 /** Resolved session-closer config (docs/concepts/session-continuity.mdx layer 5). */
