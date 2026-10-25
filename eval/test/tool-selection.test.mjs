@@ -282,10 +282,16 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   // disposition), and each such (tool, capability) pair also needs exactly 5,
   // on top of the tool's untagged 5 for its core job.
   const PER_TOOL = 5
+  // Every capability a description names is seeded here, so deleting its
+  // scenarios (or misspelling the tag) fails as a count of 0 instead of passing.
+  const CAPABILITIES = ['revise#disposition']
   const key = (s) =>
     s.capability === undefined ? s.expected_tool : `${s.expected_tool}#${s.capability}`
-  const counts = new Map([...registered].map((name) => [name, 0]))
-  for (const s of scenarios.toolScenarios) counts.set(key(s), (counts.get(key(s)) ?? 0) + 1)
+  const counts = new Map([...registered, ...CAPABILITIES].map((name) => [name, 0]))
+  for (const s of scenarios.toolScenarios) {
+    assert.ok(counts.has(key(s)), `${s.id} tags unknown capability ${key(s)}`)
+    counts.set(key(s), counts.get(key(s)) + 1)
+  }
   const offenders = [...counts.entries()].filter(([, n]) => n !== PER_TOOL)
   assert.deepEqual(
     offenders,
