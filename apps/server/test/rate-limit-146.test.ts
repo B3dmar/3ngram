@@ -10,8 +10,9 @@
 // (d) Successful exchange clears the counter via clearExchangeFailures.
 //
 // The failure tracker is exercised against an injected in-memory FakeRedis
-// (./fake-redis.ts, via setExchangeFailureRedis) so the Redis path is covered
+// (./fake-redis.ts, via setExchangeFailureStore) so the Redis path is covered
 // with NO real Redis, matching the rate-limiter's "no real Redis in CI" contract.
+// The Postgres path is covered against mocked @3ngram/core window-counter calls.
 import type { Server } from 'node:http'
 import { contentDigest, runWithContext } from '@3ngram/config'
 import express, { type NextFunction, type Request, type Response } from 'express'
@@ -27,11 +28,20 @@ import { FakeRedis } from './fake-redis.js'
 
 // Hoisted: rate-limit.js imports @3ngram/core, which loads core/auth before the
 // module body runs, so the mock factory must not read uninitialised bindings.
-const { authenticateApiKey, touchApiKeyLastUsed } = vi.hoisted(() => ({
+const { authenticateApiKey, touchApiKeyLastUsed, windowCounter } = vi.hoisted(() => ({
   authenticateApiKey: vi.fn<(key: string) => Promise<string | undefined>>(),
   touchApiKeyLastUsed: vi.fn<(userId: string, key: string) => Promise<void>>(),
+  windowCounter: {
+    incrementWindowCounter: vi.fn<(key: string, ttlMs: number) => Promise<number>>(),
+    readWindowCounter: vi.fn<(key: string) => Promise<number>>(),
+    deleteWindowCounter: vi.fn<(key: string) => Promise<void>>(),
+  },
 }))
 vi.mock('@3ngram/core/auth', () => ({ authenticateApiKey, touchApiKeyLastUsed }))
+vi.mock('@3ngram/core', async (importActual) => ({
+  ...(await importActual<typeof import('@3ngram/core')>()),
+  ...windowCounter,
+}))
 
 const { apiKeyAuth } = await import('../src/middleware/api-key.js')
 
@@ -41,9 +51,12 @@ const {
   recordExchangeFailure,
   clearExchangeFailures,
   applyProgressiveDelay,
-  setExchangeFailureRedis,
+  setExchangeFailureStore,
   _exchangeFailures,
 } = await import('../src/routes/oauth-token.js')
+
+const setExchangeFailureRedis = (client: Redis): void =>
+  setExchangeFailureStore({ kind: 'redis', client })
 
 // The Redis key prefix the tracker uses; the tests inspect the fake directly.
 const FAILURE_KEY_PREFIX = 'oauth:exchange-failure:'
@@ -83,9 +96,9 @@ async function runApiKeyAuth(req: Request, res: Response): Promise<ReturnType<ty
 
 afterEach(() => {
   vi.clearAllMocks()
-  // Detach any injected failure-tracker Redis client left by a test so a stray
-  // module-level binding cannot leak into another describe block.
-  setExchangeFailureRedis(undefined)
+  // Reset the failure tracker to the memory store so a stray module-level
+  // binding cannot leak into another describe block.
+  setExchangeFailureStore({ kind: 'memory' })
 })
 
 // ---------------------------------------------------------------------------
@@ -215,7 +228,7 @@ describe('/api/v1 per-key rate limiter wiring (Part A, #146)', () => {
 // The tracker now keeps its counter in Redis (INCR + EXPIRE keyed
 // `oauth:exchange-failure:{client_id}`) so the failure budget is shared across
 // Railway replicas. Every test injects a fresh FakeRedis client via
-// setExchangeFailureRedis and inspects the fake's keyspace directly — no real
+// setExchangeFailureStore and inspects the fake's keyspace directly — no real
 // Redis is required (mirroring rate-limit.ts's "no real Redis in CI" contract).
 // ---------------------------------------------------------------------------
 
@@ -410,10 +423,10 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
     expect(Date.now() - start).toBeLessThan(100)
   })
 
-  it('falls back to a per-process counter when no Redis client is injected', async () => {
-    // Single-instance / CI parity: with no client the tracker uses the in-process
-    // Map and the same INCR/clear/delay semantics still hold.
-    setExchangeFailureRedis(undefined)
+  it('uses the per-process counter for the memory store', async () => {
+    // Single-instance / CI parity: the memory store uses the in-process Map and
+    // the same INCR/clear/delay semantics still hold.
+    setExchangeFailureStore({ kind: 'memory' })
     await recordExchangeFailure('cl_mem')
     await recordExchangeFailure('cl_mem')
     await recordExchangeFailure('cl_mem')
@@ -437,27 +450,70 @@ describe('progressive-delay failure tracker (Part B, #146; Redis-backed #246)', 
     expect(Date.now() - start).toBeLessThan(100)
   })
 
-  it('caps the in-process Map fallback at EXCHANGE_FAILURES_MAX with FIFO eviction', async () => {
-    // No-Redis DoS bound: the Map has no TTL, so an attacker enumerating
+  it('caps the in-process Map at EXCHANGE_FAILURES_MAX with FIFO eviction', async () => {
+    // Memory-store DoS bound: the Map has no TTL, so an attacker enumerating
     // schema-valid client_ids must not grow it without bound. At the 10k cap a
     // new client_id evicts the oldest insertion; the Map size stays pinned.
-    setExchangeFailureRedis(undefined)
+    setExchangeFailureStore({ kind: 'memory' })
     _exchangeFailures.clear()
     const max = 10_000
     for (let i = 0; i < max; i++) {
       await recordExchangeFailure(`cl_cap_${i}`)
     }
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.has(contentDigest('cl_cap_0'))).toBe(true)
+    expect(_exchangeFailures.has(failureKey('cl_cap_0'))).toBe(true)
     // One more distinct client_id evicts the oldest (cl_cap_0) and stays at cap.
     await recordExchangeFailure('cl_cap_overflow')
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.has(contentDigest('cl_cap_0'))).toBe(false)
-    expect(_exchangeFailures.has(contentDigest('cl_cap_overflow'))).toBe(true)
+    expect(_exchangeFailures.has(failureKey('cl_cap_0'))).toBe(false)
+    expect(_exchangeFailures.has(failureKey('cl_cap_overflow'))).toBe(true)
     // An EXISTING client_id only increments — no eviction, no size change.
     await recordExchangeFailure('cl_cap_overflow')
     expect(_exchangeFailures.size).toBe(max)
-    expect(_exchangeFailures.get(contentDigest('cl_cap_overflow'))).toBe(2)
+    expect(_exchangeFailures.get(failureKey('cl_cap_overflow'))).toBe(2)
     _exchangeFailures.clear()
+  })
+})
+
+describe('progressive-delay failure tracker (Postgres store, #315)', () => {
+  beforeEach(() => {
+    setExchangeFailureStore({ kind: 'postgres' })
+  })
+
+  it('increments, reads and clears through the rate_limits window counter', async () => {
+    windowCounter.incrementWindowCounter.mockResolvedValue(3)
+    windowCounter.readWindowCounter.mockResolvedValue(3)
+    windowCounter.deleteWindowCounter.mockResolvedValue()
+    await recordExchangeFailure('cl_pg')
+    expect(windowCounter.incrementWindowCounter).toHaveBeenCalledWith(failureKey('cl_pg'), 900_000)
+    vi.useFakeTimers()
+    try {
+      let resolved = false
+      const p = applyProgressiveDelay('cl_pg').then(() => {
+        resolved = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(resolved).toBe(false)
+      await vi.advanceTimersByTimeAsync(1000)
+      await p
+      expect(resolved).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(windowCounter.readWindowCounter).toHaveBeenCalledWith(failureKey('cl_pg'))
+    await clearExchangeFailures('cl_pg')
+    expect(windowCounter.deleteWindowCounter).toHaveBeenCalledWith(failureKey('cl_pg'))
+  })
+
+  it('fails open when the Postgres counter rejects (delay lapses, never throws)', async () => {
+    const down = new Error('ECONNREFUSED')
+    windowCounter.incrementWindowCounter.mockRejectedValue(down)
+    windowCounter.readWindowCounter.mockRejectedValue(down)
+    windowCounter.deleteWindowCounter.mockRejectedValue(down)
+    await expect(recordExchangeFailure('cl_pg_down')).resolves.toBeUndefined()
+    await expect(clearExchangeFailures('cl_pg_down')).resolves.toBeUndefined()
+    const start = Date.now()
+    await applyProgressiveDelay('cl_pg_down')
+    expect(Date.now() - start).toBeLessThan(100)
   })
 })

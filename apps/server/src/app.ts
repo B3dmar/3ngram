@@ -120,7 +120,7 @@ export interface AppOptions {
   apiKeyLimiter?: RateLimiterMiddleware
   /** Limiter store seam; when omitted, resolveRateLimitStore picks it from env (#315). */
   rateLimitStore?: RateLimitStore
-  /** Redis client for the /oauth/token failure counter and a redis limiter store. */
+  /** Redis client injection seam; resolveRateLimitStore builds the redis store from it. */
   redis?: Redis | undefined
   /**
    * Composition seam. When omitted, resolves to `noOpExtension` — the self-host
@@ -347,8 +347,9 @@ export function createApp(options: AppOptions = {}): Express {
   // private repo injects a real access policy; self-host keeps allowAllAccess.
   const access = extension.access ?? allowAllAccess
   // Resolve the limiter store and the shared ioredis client ONCE (#315). Redis is
-  // dialled only for the redis store; the /oauth/token failure tracker rides the
-  // same client. An explicit override wins (the test seam).
+  // dialled only for the redis store and is used only to build it; the
+  // /oauth/token failure tracker follows the resolved store. An explicit
+  // override wins (the test seam).
   const redis =
     options.redis ?? (loadRateLimitStoreConfig().kind === 'redis' ? resolveRedis() : undefined)
   const rateLimitStore = options.rateLimitStore ?? resolveRateLimitStore(redis)
@@ -446,10 +447,11 @@ export function createApp(options: AppOptions = {}): Express {
   // unauthenticated and sit behind the shared injected per-IP limiter seam
   // (real bucket by default).
   app.use(oauthAuthorizeRouter({ limiter: oauthLimiter, clientMetadataResolver }))
-  // The same shared ioredis client backs the progressive-delay failure counter
-  // so the budget is shared across Railway replicas; a missing client
-  // makes the tracker fall back to a per-process Map.
-  app.use(oauthTokenRouter({ limiter: oauthLimiter, redis, limits, clientMetadataResolver }))
+  // The progressive-delay failure counter follows the resolved limiter store
+  // (Redis or Postgres share the budget across replicas; memory is per-process).
+  app.use(
+    oauthTokenRouter({ limiter: oauthLimiter, rateLimitStore, limits, clientMetadataResolver }),
+  )
 
   // Composition seam: the injected extension attaches its hosted-only
   // routes/handlers here, at the composition root, AFTER every Apache router and

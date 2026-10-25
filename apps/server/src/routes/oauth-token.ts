@@ -19,7 +19,12 @@
 // and secret material never enter a log line or an error body.
 import { contentDigest, loadOAuthConfig, log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
-import type { LimitsResolver } from '@3ngram/core'
+import {
+  deleteWindowCounter,
+  incrementWindowCounter,
+  type LimitsResolver,
+  readWindowCounter,
+} from '@3ngram/core'
 import {
   authenticateClientCredentials,
   type ClientMetadataResolver,
@@ -33,19 +38,18 @@ import { type TokenEndpointAuthMethod, tokenRequestSchema } from '@3ngram/schema
 import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
 import { type NextFunction, type Request, type Response, Router, urlencoded } from 'express'
 import type { Redis } from 'ioredis'
-import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
+import type { RateLimiterMiddleware, RateLimitStore } from '../middleware/rate-limit.js'
 
 /**
  * Options the boot wiring injects:
  * - `limiter` — the per-IP rate limiter seam.
- * - `redis`  — the shared ioredis client. When present the
- *   progressive-delay failure counter lives in Redis so the budget is shared
- *   across Railway replicas; when absent it falls back to a per-process Map
- *   (single-instance / CI parity, mirroring the rate-limiter's memory fallback).
+ * - `rateLimitStore` — the resolved limiter store (#315). The progressive-delay
+ *   failure counter follows it: Redis or Postgres share the budget across
+ *   replicas; the per-process Map is used only for the memory store.
  */
 export interface OAuthTokenRouterOptions {
   limiter: RateLimiterMiddleware
-  redis?: Redis | undefined
+  rateLimitStore: RateLimitStore
   /** Billing-neutral active-client limit resolver. */
   limits?: LimitsResolver | undefined
   clientMetadataResolver: ClientMetadataResolver
@@ -162,17 +166,16 @@ function shimBasicAuth(req: Request, _res: Response, next: NextFunction): void {
 }
 
 // ---------------------------------------------------------------------------
-// Progressive delay on repeated failed token exchanges (Redis-backed).
+// Progressive delay on repeated failed token exchanges.
 //
-// The failure counter is keyed `oauth:exchange-failure:{client_id}` and lives in
-// Redis (INCR + EXPIRE) so the budget is SHARED across Railway replicas — the
-// per-process Map gave each replica its own budget, defeatable by
-// rotating exchanges across replicas. When no Redis client is injected
-// (single-instance / CI) the tracker falls back to an in-process Map, mirroring
-// the rate-limiter's RateLimiterMemory fallback.
+// The failure counter is keyed `oauth:exchange-failure:{digest(client_id)}` and
+// follows RATE_LIMIT_STORE (#315): Redis (INCR + EXPIRE) or Postgres (one
+// sliding-window upsert on rate_limits) share the budget across replicas — a
+// per-process Map gives each replica its own budget, defeatable by rotating
+// exchanges across replicas, so the Map is used only for the memory store.
 //
-// FAIL-OPEN on Redis-down (DECISION, mirrors rate-limit.ts): the progressive
-// delay is a protective control, not correctness — a Redis outage must NOT take
+// FAIL-OPEN on store-down (DECISION, mirrors rate-limit.ts): the progressive
+// delay is a protective control, not correctness — a store outage must NOT take
 // down the token endpoint. recordExchangeFailure swallows store errors (the
 // counter simply does not advance) and applyProgressiveDelay treats a store
 // failure as "no recorded failures" (count 0, no delay). The connection string
@@ -187,8 +190,8 @@ function shimBasicAuth(req: Request, _res: Response, next: NextFunction): void {
 // path the INCR + EXPIRE run in ONE MULTI/EXEC, so the EXPIRE always lands with
 // the INCR (a crash between them can never leave a TTL-less key) and growth stays
 // bounded: Redis reclaims idle keys on expiry, so attacker-enumerated client_ids
-// cannot accumulate unbounded. The no-Redis Map
-// fallback has no TTL, so it retains the 10k-entry FIFO eviction cap
+// cannot accumulate unbounded. Postgres rows carry the same sliding expiry and
+// the limiter's expired-row sweep reclaims them. The memory-store Map has no TTL, so it retains the 10k-entry FIFO eviction cap
 // (EXCHANGE_FAILURES_MAX) to keep the same DoS bound on single-instance deploys.
 // ---------------------------------------------------------------------------
 
@@ -198,113 +201,130 @@ const MAX_DELAY_MS = 8000
 // expires, forgiving the client. Refreshed on every recorded failure.
 const FAILURE_RESET_TTL_SECONDS = 900
 const EXCHANGE_FAILURE_KEY_PREFIX = 'oauth:exchange-failure:'
-// Hard cap on tracked client_ids in the in-process Map fallback (no-Redis
-// path). The Redis path is bounded by the sliding EXPIRE, but the Map has no
+// Hard cap on tracked client_ids in the in-process Map (memory store). The
+// Redis and Postgres paths are bounded by the sliding expiry, but the Map has no
 // TTL, so an attacker enumerating schema-valid client_ids could otherwise drive
 // unbounded heap growth. Evict the oldest insertion at the cap (Map
-// preserves insertion order). The Redis path keeps the EXPIRE-based bound.
+// preserves insertion order).
 const EXCHANGE_FAILURES_MAX = 10_000
 
-/** Redis key for a client_id's failure counter (client_id is never logged). */
+/** Store key for a client_id's failure counter (client_id is never logged). */
 function exchangeFailureKey(clientId: string): string {
   return `${EXCHANGE_FAILURE_KEY_PREFIX}${contentDigest(clientId)}`
 }
 
-function exchangeFailureId(clientId: string): string {
-  return contentDigest(clientId)
+/** The failure-counter backend; every method may throw (callers fail open). */
+interface ExchangeFailureCounter {
+  increment(key: string): Promise<void>
+  read(key: string): Promise<number>
+  clear(key: string): Promise<void>
 }
 
 /**
- * The per-process fallback counter used when no Redis client is injected
- * (single-instance / CI). Exported for test inspection of the fallback path
- * only — the Redis path is exercised via an injected in-memory fake client.
+ * The in-process counter, used only when the resolved store is memory (and as
+ * the unit-test default). Exported for test inspection of the Map path only.
  */
 export const _exchangeFailures = new Map<string, number>()
 
-/**
- * The injected failure-tracker Redis client, or undefined for the in-process
- * fallback. Set once by oauthTokenRouter at boot; the tracker functions read it
- * so the wiring stays a single injection seam (testable with an in-memory fake).
- */
-let exchangeFailureRedis: Redis | undefined
+const mapCounter: ExchangeFailureCounter = {
+  async increment(key) {
+    // Enforce the cap before inserting a NEW key: drop the oldest insertion so
+    // attacker-enumerated client_ids cannot grow the Map without bound. An
+    // existing key just increments (no size change).
+    if (!_exchangeFailures.has(key) && _exchangeFailures.size >= EXCHANGE_FAILURES_MAX) {
+      const oldest = _exchangeFailures.keys().next().value
+      if (oldest !== undefined) _exchangeFailures.delete(oldest)
+    }
+    _exchangeFailures.set(key, (_exchangeFailures.get(key) ?? 0) + 1)
+  },
+  async read(key) {
+    return _exchangeFailures.get(key) ?? 0
+  },
+  async clear(key) {
+    _exchangeFailures.delete(key)
+  },
+}
 
-/** Wire the failure-tracker Redis client (or clear it for the Map fallback). */
-export function setExchangeFailureRedis(redis: Redis | undefined): void {
-  exchangeFailureRedis = redis
+function redisCounter(client: Redis): ExchangeFailureCounter {
+  return {
+    async increment(key) {
+      // INCR then EXPIRE in ONE MULTI/EXEC: MULTI queues both commands and EXEC
+      // runs them atomically server-side, so the key ALWAYS gets its TTL even if
+      // the connection drops mid-sequence. This preserves the bounded-growth
+      // guarantee — a crash between INCR and EXPIRE can no longer leave a key with
+      // no TTL (otherwise an attacker enumerating client_ids grows the keyspace
+      // unbounded). The EXPIRE is re-set on every failure so the window slides.
+      const results = await client.multi().incr(key).expire(key, FAILURE_RESET_TTL_SECONDS).exec()
+      // exec() resolves to null only when the transaction was discarded (e.g. a
+      // WATCH conflict — none here), and otherwise an array of [err, reply] tuples.
+      // Surface a per-command error so the caller swallows it as a record failure
+      // (fail-open) rather than silently advancing without the TTL.
+      const commandError = results?.find(([err]) => err !== null)?.[0]
+      if (commandError) throw commandError
+    },
+    async read(key) {
+      const raw = await client.get(key)
+      if (raw === null) return 0
+      const count = Number.parseInt(raw, 10)
+      return Number.isNaN(count) ? 0 : count
+    },
+    async clear(key) {
+      await client.del(key)
+    },
+  }
+}
+
+// One atomic upsert on rate_limits that slides the expiry on every failure,
+// so the Postgres store keeps the same sliding-window semantics as Redis.
+const postgresCounter: ExchangeFailureCounter = {
+  async increment(key) {
+    await incrementWindowCounter(key, FAILURE_RESET_TTL_SECONDS * 1000)
+  },
+  read: (key) => readWindowCounter(key),
+  clear: (key) => deleteWindowCounter(key),
+}
+
+/** The selected counter; the Map until oauthTokenRouter wires the resolved store. */
+let exchangeFailureCounter: ExchangeFailureCounter = mapCounter
+
+/** Select the failure counter that matches the resolved limiter store (#315). */
+export function setExchangeFailureStore(store: RateLimitStore): void {
+  if (store.kind === 'redis') exchangeFailureCounter = redisCounter(store.client)
+  else if (store.kind === 'postgres') exchangeFailureCounter = postgresCounter
+  else exchangeFailureCounter = mapCounter
+}
+
+function warnCounterFailure(op: string, err: unknown): void {
+  log().warn(
+    { err: err instanceof Error ? err.name : 'unknown' },
+    `oauth: exchange-failure ${op} failed`,
+  )
 }
 
 /** Increment the failure counter for a client_id and refresh its reset TTL. */
 export async function recordExchangeFailure(clientId: string): Promise<void> {
-  if (exchangeFailureRedis === undefined) {
-    const id = exchangeFailureId(clientId)
-    // Enforce the cap before inserting a NEW key: drop the oldest insertion so
-    // attacker-enumerated client_ids cannot grow the Map without bound. An
-    // existing key just increments (no size change).
-    if (!_exchangeFailures.has(id) && _exchangeFailures.size >= EXCHANGE_FAILURES_MAX) {
-      const oldest = _exchangeFailures.keys().next().value
-      if (oldest !== undefined) _exchangeFailures.delete(oldest)
-    }
-    _exchangeFailures.set(id, (_exchangeFailures.get(id) ?? 0) + 1)
-    return
-  }
   try {
-    const key = exchangeFailureKey(clientId)
-    // INCR then EXPIRE in ONE MULTI/EXEC: MULTI queues both commands and EXEC
-    // runs them atomically server-side, so the key ALWAYS gets its TTL even if
-    // the connection drops mid-sequence. This preserves the bounded-growth
-    // guarantee — a crash between INCR and EXPIRE can no longer leave a key with
-    // no TTL (otherwise an attacker enumerating client_ids grows the keyspace
-    // unbounded). The EXPIRE is re-set on every failure so the window slides.
-    const results = await exchangeFailureRedis
-      .multi()
-      .incr(key)
-      .expire(key, FAILURE_RESET_TTL_SECONDS)
-      .exec()
-    // exec() resolves to null only when the transaction was discarded (e.g. a
-    // WATCH conflict — none here), and otherwise an array of [err, reply] tuples.
-    // Surface a per-command error so the catch swallows it as a record failure
-    // (fail-open) rather than silently advancing without the TTL.
-    const commandError = results?.find(([err]) => err !== null)?.[0]
-    if (commandError) throw commandError
+    await exchangeFailureCounter.increment(exchangeFailureKey(clientId))
   } catch (err: unknown) {
-    log().warn(
-      { err: err instanceof Error ? err.name : 'unknown' },
-      'oauth: exchange-failure record failed',
-    )
+    warnCounterFailure('record', err)
   }
 }
 
 /** Clear the failure counter for a client_id (a successful exchange forgives it). */
 export async function clearExchangeFailures(clientId: string): Promise<void> {
-  if (exchangeFailureRedis === undefined) {
-    _exchangeFailures.delete(exchangeFailureId(clientId))
-    return
-  }
   try {
-    await exchangeFailureRedis.del(exchangeFailureKey(clientId))
+    await exchangeFailureCounter.clear(exchangeFailureKey(clientId))
   } catch (err: unknown) {
-    log().warn(
-      { err: err instanceof Error ? err.name : 'unknown' },
-      'oauth: exchange-failure clear failed',
-    )
+    warnCounterFailure('clear', err)
   }
 }
 
 /** Read the current failure count for a client_id (0 on store failure — fail-open). */
 async function readExchangeFailureCount(clientId: string): Promise<number> {
-  if (exchangeFailureRedis === undefined) {
-    return _exchangeFailures.get(exchangeFailureId(clientId)) ?? 0
-  }
   try {
-    const raw = await exchangeFailureRedis.get(exchangeFailureKey(clientId))
-    if (raw === null) return 0
-    const count = Number.parseInt(raw, 10)
-    return Number.isNaN(count) ? 0 : count
+    return await exchangeFailureCounter.read(exchangeFailureKey(clientId))
   } catch (err: unknown) {
-    log().warn(
-      { err: err instanceof Error ? err.name : 'unknown' },
-      'oauth: exchange-failure read failed',
-    )
+    warnCounterFailure('read', err)
     return 0
   }
 }
@@ -446,7 +466,7 @@ async function handleTokenRequest(
   const input = parsed.data
   // Apply progressive delay before the grant exchange. The delay is keyed on
   // client_id (never logged) and ramps after DELAY_THRESHOLD
-  // repeated failures tracked in Redis, so the budget is shared across replicas.
+  // repeated failures tracked in the resolved limiter store.
   await applyProgressiveDelay(input.client_id)
   const client = await authenticateClientCredentials(
     input.client_id,
@@ -505,9 +525,8 @@ async function handleTokenRequest(
 
 /** Build the /oauth/token router behind the injected per-IP limiter. */
 export function oauthTokenRouter(options: OAuthTokenRouterOptions): Router {
-  // Wire the failure-tracker store: the shared ioredis client (cross-replica
-  // budget) when injected, else the in-process Map fallback.
-  setExchangeFailureRedis(options.redis)
+  // The failure tracker follows the resolved limiter store (#315).
+  setExchangeFailureStore(options.rateLimitStore)
   const router = Router()
   router.post(
     '/oauth/token',
