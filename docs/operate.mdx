@@ -30,29 +30,24 @@ server with one command.
 
 ## Worker modes
 
-The worker image runs in one of two modes. Pick one per database: running both
-against the same database at once double-runs every pass.
+Run one worker mode per database; both at once double-runs every pass.
 
 - **Resident** (default, `node dist/index.js`): BullMQ on Redis schedules and
   retries every job. `REDIS_URL` is required.
-- **One-shot** (`node dist/once.js <job>`): runs one pass with no Redis, closes
-  the database pool, and exits `0` on success, `1` on failure, or `2` for an
-  unknown or missing job. Use it with a cron-style scheduler, such as Azure
-  Container Apps jobs or Kubernetes CronJobs.
+- **One-shot** (`node dist/once.js <job>`): one pass with no Redis, then the
+  pool is closed and it exits `0` (success), `1` (failure) or `2` (unknown or
+  missing job). For cron-style schedulers such as Azure Container Apps jobs.
 
-One-shot schedules, in 5-field cron, UTC:
-
-| Job | Schedule |
+| One-shot job | Schedule (5-field cron, UTC) |
 |---|---|
 | `surfacing` | `*/15 * * * *` |
 | `consolidation` | `0 * * * *` |
 | `gc-clients` | `10 3 * * *` |
 | `session-sweep` | `5,25,45 * * * *` (coming in a follow-up, only while `SESSION_CLOSER_ENABLED=true`) |
 
-The scheduler's retry limit replaces BullMQ's attempts: set it to 3. Set each
-job's execution timeout below its cadence to guard against overlapping runs;
-advisory locks are not safe on a transaction-mode pooler such as Neon's. Every
-pass is idempotent, so a retried or late run is harmless.
+Set the scheduler's retry limit to 3 (it replaces BullMQ's attempts) and each
+execution timeout below the job's cadence as the overlap guard: advisory locks
+are not safe on a transaction-mode pooler such as Neon's. Passes are idempotent.
 
 ## Deploy verification
 

@@ -78,9 +78,8 @@ published artifact.
 docker pull ghcr.io/b3dmar/3ngram-worker:latest
 ```
 
-The default command runs the resident BullMQ worker. To run a single pass
-without Redis, override the command with `node dist/once.js <job>`; see
-[Worker modes](/operate#worker-modes).
+Override the command with `node dist/once.js <job>` to run one pass without
+Redis ([Worker modes](/operate#worker-modes)).
 
 The worker has no HTTP surface: no `EXPOSE`, no `PORT`, and its `HEALTHCHECK`
 is a process-liveness probe (`node -e "process.exit(0)"`) rather than an

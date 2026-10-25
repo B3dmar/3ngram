@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// One-shot worker entrypoint: `node dist/once.js <job>` runs one pass and exits
-// (0 success, 1 failure, 2 usage error), for cron-style schedulers. Additive to
-// the resident BullMQ worker (index.ts); it never loads bullmq or ioredis.
-// Load order is a contract (config/otel.ts, mirrors index.ts): Sentry's OTel
-// auto-instrumentation must initialize BEFORE the modules it instruments load,
-// so the job modules and the pg graph behind them are DYNAMIC imports.
+// One-shot entrypoint (`node dist/once.js <job>`, exit 0/1/2); never loads
+// bullmq or ioredis. Load order is a contract (config/otel.ts, as index.ts):
+// Sentry's OTel must initialize BEFORE the modules it instruments load, so the
+// job modules and the pg graph behind them are DYNAMIC imports.
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { loadEnv, log } from '@3ngram/config'
