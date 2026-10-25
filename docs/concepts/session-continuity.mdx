@@ -532,7 +532,8 @@ event the transaction inserts (`create`, `supersede`, and any implicit
 
 [REST history](/concepts/data-model) redacts event payloads on purpose
 (`packages/schema/src/rest.ts`): *never raw payload values or arbitrary payload keys.*
-The history endpoint does **not** start returning payload.
+The history endpoint does **not** start returning payload; it projects only
+allowlisted keys as sibling fields (see "On the memory history read" below).
 
 This is a **narrowing of that rule**, not an exception:
 
@@ -548,8 +549,25 @@ ceiling. A truncated run is **terminal `overflowed`**: the closer must not
 re-claim and re-spend an LLM pass on the same run; emit a metric. Chunked
 progress across ceilings is out — that is a pathological case, not a product
 path. `jsonb` operators for `sessionRunId` only, parsed through
-`sessionProvenancePayloadSchema`, never `payload` as a blob. History DTO stays
-metadata-only (`present` / `jsonType` / `byteLength`).
+`sessionProvenancePayloadSchema`, never `payload` as a blob.
+
+**On the memory history read** (issue #262). `GET /api/v1/memories/{id}/history`
+applies the same narrowing per memory. `payloadMetadata` (`present` / `jsonType` /
+`byteLength`) still describes the whole stored payload; beside it, each audit
+event carries `sessionRunId: uuid | null`, projected with
+`payload->>'sessionRunId'` and re-parsed through `sessionProvenancePayloadSchema`.
+A stored value that fails the parse reads as `null`; it is not thrown and not
+passed through. The envelope adds `createdBySessionRunId: uuid | null`: the run
+on this memory's own native `create` event, read by its own query so a truncated
+events window cannot hide it. In a revision chain each version reports its own
+creating run. The predecessor's `supersede` event carries the run that revised
+it, and nothing is inherited or inferred from neighbouring events. An imported
+memory, a create written without provenance, and an `unavailable` events section
+all read `null`. The id is returned as recorded and not re-validated against
+`agent_sessions`, so it survives the session row being deleted or redacted. It
+also survives account erasure, which cannot reach `memory_events.payload`. It is
+an id, not content. Tenant isolation is RLS on the read, plus the write path
+refusing another tenant's run id. Harness and model labels are **not** projected.
 
 ## Layer 4 — Stop is a nudge
 

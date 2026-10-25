@@ -4679,6 +4679,18 @@
                               "byteLength"
                             ],
                             "type": "object"
+                          },
+                          "sessionRunId": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -4686,11 +4698,24 @@
                           "eventKind",
                           "actorKind",
                           "createdAt",
-                          "payloadMetadata"
+                          "payloadMetadata",
+                          "sessionRunId"
                         ],
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "createdBySessionRunId": {
+                      "anyOf": [
+                        {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "directRelationships": {
                       "additionalProperties": false,
@@ -5367,7 +5392,8 @@
                     "lineage",
                     "directRelationships",
                     "auditEvents",
-                    "eventsTruncated"
+                    "eventsTruncated",
+                    "createdBySessionRunId"
                   ],
                   "type": "object"
                 }
