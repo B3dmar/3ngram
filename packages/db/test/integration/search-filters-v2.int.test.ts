@@ -7,15 +7,18 @@
 // (--fileParallelism=false), so per-file resetDomainTables cannot interleave.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
-import { searchFused } from '../../src/search.js'
-import { closePools, resetDomainTables, seedUser } from './helpers.js'
+import { fetchHitsByIds, type SearchHit, searchFts, searchFused } from '../../src/search.js'
+import { searchList } from '../../src/search-list.js'
+import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 import {
   BIG,
   FTS_ONLY,
   fakeEmbedding,
   keysOf as keysOfWith,
   SEED,
+  type SeedRow,
   seedMatrix,
+  seedRow,
 } from './search-filters-fixture.js'
 
 let uid: string
@@ -163,5 +166,99 @@ describe('searchFused filters V2 — memoryTypes OR-set + recorded_at range (#48
         Date.parse('2026-01-04T00:00:00Z'),
       )
     }
+  })
+})
+
+describe('search hit metadata — filing + commitment lifecycle (#319)', () => {
+  // A SECOND tenant holds commitments in every live lifecycle state plus a
+  // plain note, so the assertions also prove tenant isolation against `uid`.
+  const row = (
+    key: string,
+    memoryType: string,
+    scope: string,
+    project: string | null,
+    day: number,
+  ) =>
+    ({
+      key,
+      memoryType,
+      scope,
+      project,
+      status: 'active',
+      validFrom: `2026-02-0${day}`,
+      validTo: null,
+      recordedAt: `2026-02-0${day}`,
+    }) satisfies SeedRow
+  const ROWS = [
+    { seed: row('c_open', 'commitment', 'work', 'p1', 1), commitment: 'open' },
+    { seed: row('c_waiting', 'commitment', 'work', null, 2), commitment: 'waiting' },
+    { seed: row('c_resolved', 'commitment', 'personal', 'p2', 3), commitment: 'resolved' },
+    { seed: row('n_plain', 'note', 'work', null, 4), commitment: undefined },
+  ]
+  let other: string
+  const otherIds = new Map<string, string>()
+
+  beforeAll(async () => {
+    other = await seedUser('search-hit-metadata@test.local')
+    for (const r of ROWS) {
+      const id = await seedRow(other, r.seed)
+      otherIds.set(r.seed.key, id)
+      if (r.commitment === undefined) continue
+      await ownerPool.query(
+        'INSERT INTO commitments (user_id, memory_id, status) VALUES ($1, $2, $3)',
+        [other, id, r.commitment],
+      )
+    }
+  })
+
+  /** Expected per-key metadata; a non-commitment carries NO commitmentStatus key. */
+  function expectMetadata(hits: SearchHit[]): void {
+    const keyById = new Map([...otherIds.entries()].map(([k, v]) => [v, k] as const))
+    expect(hits.map((h) => keyById.get(h.id)).sort()).toEqual(ROWS.map((r) => r.seed.key).sort())
+    for (const hit of hits) {
+      const r = ROWS.find((x) => x.seed.key === keyById.get(hit.id))
+      expect(hit.scope).toBe(r?.seed.scope)
+      expect(hit.project).toBe(r?.seed.project)
+      if (r?.commitment === undefined) expect(hit).not.toHaveProperty('commitmentStatus')
+      else expect(hit.commitmentStatus).toBe(r.commitment)
+    }
+  }
+
+  it('ranked, page-continuation and chronological reads carry the same metadata', async () => {
+    const [fused, byIds, list] = await withTenant(other, async (tx) => {
+      const ranked = await searchFused(tx, other, 'alpha', BIG, FTS_ONLY)
+      return [
+        ranked,
+        await fetchHitsByIds(tx, other, [...otherIds.values()]),
+        await searchList(tx, other, BIG),
+      ] as const
+    })
+    expectMetadata(fused)
+    expectMetadata(byIds)
+    expectMetadata(list.hits)
+    // The join labels, never reorders: chronological stays recorded_at DESC.
+    expect(list.hits.map((h) => h.id)).toEqual(
+      ['n_plain', 'c_resolved', 'c_waiting', 'c_open'].map((k) => otherIds.get(k)),
+    )
+  })
+
+  it('the standalone legs select the filing too', async () => {
+    const hits = await withTenant(other, (tx) => searchFts(tx, other, 'alpha', BIG))
+    expect(hits.find((h) => h.id === otherIds.get('c_resolved'))).toMatchObject({
+      scope: 'personal',
+      project: 'p2',
+    })
+  })
+
+  it("stays tenant-isolated: neither tenant sees the other's rows or labels", async () => {
+    const mine = await withTenant(uid, async (tx) => [
+      ...(await searchFused(tx, uid, 'alpha', BIG, FTS_ONLY)),
+      ...(await searchList(tx, uid, BIG)).hits,
+      ...(await fetchHitsByIds(tx, uid, [...otherIds.values()])),
+    ])
+    const foreign = new Set(otherIds.values())
+    expect(mine.length).toBeGreaterThan(0)
+    expect(mine.filter((h) => foreign.has(h.id))).toEqual([])
+    expect(mine.filter((h) => h.commitmentStatus !== undefined)).toEqual([])
   })
 })

@@ -91,10 +91,11 @@ export type RememberToolInput = z.infer<typeof rememberToolInputSchema>
 export type RememberToolArgs = z.input<typeof rememberToolInputSchema>
 
 /**
- * The created-memory view a write tool returns (structured output). The id is
- * the only field core remember() returns directly; the rest echo the NORMALIZED
- * write input (scope default applied, project null when absent) so the caller
- * gets the canonical stored shape without a follow-up read.
+ * The created-memory view a write tool returns (structured output). `id` and
+ * `scope` come from core remember() (the scope the row was WRITTEN to, after
+ * the write-scope policy resolved an omitted one, issue #235); the rest echo the
+ * normalized write input (project null when absent) so the caller gets the
+ * canonical stored shape without a follow-up read.
  */
 export const writtenMemorySchema = z
   .object({
@@ -296,7 +297,9 @@ export type SearchInput = z.infer<typeof searchInputSchema>
  * can fetch the full memory by id when it needs the body. `superseded` marks a
  * demoted predecessor row (docs/concepts/memory-model.mdx: ranked below its
  * successor, never filtered) so a caller can label it rather than receive it
- * unmarked.
+ * unmarked. `scope`/`project` are the hit's filing. `commitmentStatus` is the
+ * commitment lifecycle, a separate axis from memory status: present only when a
+ * commitment row rides the memory, so a resolved commitment reads as history.
  */
 export const searchHitSchema = z
   .object({
@@ -308,6 +311,9 @@ export const searchHitSchema = z
     truncated: z.boolean(),
     score: z.number(),
     superseded: z.boolean(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+    commitmentStatus: commitmentStatusSchema.optional(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -824,7 +830,13 @@ export const briefingToolInputSchema = z
   .strict()
 export type BriefingToolInput = z.infer<typeof briefingToolInputSchema>
 
-/** A commitment line in the briefing (ids/topic/status/due + the overdue flag). */
+/**
+ * A commitment line in the briefing (ids/topic/status/due + the overdue flag),
+ * plus its owner and filing (issue #261): `owner` is the recorded owner label or
+ * null (never inferred from content); `scope`/`project` are the riding memory's
+ * filing, so a reader can label a row (including an unscoped `project: null` one)
+ * without reading each memory back.
+ */
 export const briefingCommitmentSchema = z
   .object({
     id: z.uuid(),
@@ -833,6 +845,9 @@ export const briefingCommitmentSchema = z
     status: commitmentStatusSchema,
     dueAt: isoDateTime().nullable(),
     overdue: z.boolean(),
+    owner: z.string().nullable(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

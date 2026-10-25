@@ -235,10 +235,27 @@ const commitmentOwnerField = commitmentOwnerSchema
   .describe('Commitments only: who owns the commitment, as a short label. Omit when unknown.')
 
 /**
+ * Native-only optional scope: omission is preserved for the write-scope policy
+ * (see {@link nativeRememberInputSchema}).
+ */
+const writeScopeField = scopeSchema
+  .optional()
+  .describe(
+    "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
+  )
+
+/**
  * Canonical native remember input (ADR-0011): facts-capable remember PLUS
  * optional sessionRunId and, for a commitment, its explicit deadline and owner.
  * Core's single parse must accept this shape so session provenance does not
  * regress structured fact writes.
+ *
+ * `scope` carries NO default here (issue #235): an omitted scope must survive
+ * the parse so core can apply the tenant's write-scope policy (`off` fills
+ * `personal`, `default` the configured scope, `require` rejects). A schema
+ * default would make an omitted scope indistinguishable from an explicit
+ * `personal`. The base {@link rememberInputSchema} keeps its `personal`
+ * default for import and the V1 alias.
  *
  * A `dueAt` or `owner` VALUE on a non-commitment is rejected rather than
  * ignored: a silently dropped deadline would look accepted to the caller. An
@@ -248,7 +265,8 @@ const commitmentOwnerField = commitmentOwnerSchema
  * validation error sees which argument to remove.
  */
 export const nativeRememberInputSchema = rememberWithFactsInputSchema
-  .safeExtend({
+  .extend({
+    scope: writeScopeField,
     sessionRunId: sessionRunIdField,
     dueAt: commitmentDueAtField,
     owner: commitmentOwnerField,

@@ -16,16 +16,18 @@ import {
   type EnvironmentStats,
   getEnvironmentStats,
   getRetrievalPolicy,
+  getWriteScopePolicy,
   listScopes,
   type ScopeRow,
   withTenant,
 } from '@3ngram/db'
 import type { RetrievalPolicySetting } from '../scope/retrieval-settings.js'
+import { toWriteScopeSetting, type WriteScopePolicySetting } from '../scope/write-policy.js'
 
 export type { EnvironmentStats } from '@3ngram/db'
 
 /** The tenant-scoped half of a describe_environment report (scopes + stats +
- * the active retrieval-scope policy, issue #47). */
+ * the active retrieval-scope policy, issue #47, and write-scope policy, #235). */
 export interface EnvironmentReport {
   scopes: ScopeRow[]
   stats: EnvironmentStats
@@ -33,6 +35,9 @@ export interface EnvironmentReport {
    * `off` default, so a session can always rely on the field. A mode enum +
    * a registered scope name only — the redaction posture is unchanged. */
   retrievalScopePolicy: RetrievalPolicySetting
+  /** The effective write-scope policy (issue #235): where a `remember`
+   * without `scope` lands. No stored row reports the `off` default. */
+  writeScopePolicy: WriteScopePolicySetting
 }
 
 /**
@@ -46,6 +51,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
     const scopes = await listScopes(tx, userId)
     const stats = await getEnvironmentStats(tx, userId)
     const policy = await getRetrievalPolicy(tx, userId)
+    const writeScopePolicy = toWriteScopeSetting(await getWriteScopePolicy(tx, userId))
     return {
       scopes,
       stats,
@@ -53,6 +59,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
         policy === null
           ? { mode: 'off' as const, scope: null }
           : { mode: policy.mode, scope: policy.defaultScope },
+      writeScopePolicy,
     }
   })
 }

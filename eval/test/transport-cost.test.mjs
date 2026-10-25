@@ -173,9 +173,27 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // request surface once. The CLI surface is unchanged. The tool
       // description is unchanged (no embeddings regen). MEASURED on this PR's
       // actual base (staging b1731b7), not summed.
-      mcp: [28009, 225888, 56434],
+      // MCP +352/+2816/+686, REST +20/+20/+20 (issue #235, write-scope
+      // policy): the remember `scope` field drops its `personal` default for a
+      // one-line description (omission now follows the tenant's write policy),
+      // configure_scope gains the `set_write_default` input branch and the
+      // `write_default_set` output branch, and describe_environment's output
+      // gains `writeScopePolicy`. MCP pays all three on tools/list per turn;
+      // REST only carries the remember request surface. CLI unchanged. No tool
+      // description changed (no embeddings regen). MEASURED on this PR's actual
+      // base (feat/165-commitment-due-dates), not summed.
+      // MCP +170/+1360/+331 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
+      // MCP +154/+1232/+300 (issue #261, owner/scope/project on briefing
+      // commitment items): three output fields ride the briefing output
+      // schema, paid on tools/list per turn. REST and CLI request surfaces are
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging ab8b193, not summed.
+      mcp: [28685, 231296, 57752],
       cli: [333, 1236, 1236],
-      rest: [4125, 5142, 5142],
+      rest: [4145, 5162, 5162],
     },
   )
 })

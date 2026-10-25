@@ -22,7 +22,14 @@
 // valid_to IS NULL on top would silently exclude the very row asOf asked for.
 import { type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
-import { rowEligibility, type SearchFilters, type SearchHit, supersededExists } from './search.js'
+import {
+  mapHits,
+  type RawRow,
+  rowEligibility,
+  type SearchFilters,
+  type SearchHit,
+  supersededExists,
+} from './search.js'
 
 /**
  * Position within the chronological total order (`recorded_at DESC, id
@@ -62,15 +69,11 @@ export interface ChronologicalPage {
  */
 function buildChronologicalCursorPredicate(cursor: ChronologicalCursor | undefined): SQL {
   if (cursor === undefined) return sql`true`
-  return sql`(recorded_at < ${cursor.recordedAt}::timestamptz
-              OR (recorded_at = ${cursor.recordedAt}::timestamptz AND id < ${cursor.id}::uuid))`
+  return sql`(m.recorded_at < ${cursor.recordedAt}::timestamptz
+              OR (m.recorded_at = ${cursor.recordedAt}::timestamptz AND m.id < ${cursor.id}::uuid))`
 }
 
-interface ListRow {
-  id: string
-  memory_type: string
-  topic: string
-  content: string
+interface ListRow extends RawRow {
   /**
    * Full microsecond-precision ISO 8601 text (`to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
    * in the query below) — NEVER the raw driver-parsed column, which the
@@ -78,8 +81,6 @@ interface ListRow {
    * dropping the microsecond remainder before this code ever sees it).
    */
   recorded_at_iso: string
-  superseded: boolean
-  score: string | number
 }
 
 /**
@@ -109,7 +110,7 @@ export async function searchList(
   // against this query later growing a join.
   const eligibility = rowEligibility('m.', userId, filters)
   const hasTimeTravel = filters.asOf?.validAt !== undefined || filters.asOf?.asKnownAt !== undefined
-  const liveGate = hasTimeTravel ? sql`true` : sql`valid_to IS NULL`
+  const liveGate = hasTimeTravel ? sql`true` : sql`m.valid_to IS NULL`
   // FROM memories MUST be aliased — supersededExists's own WARNING doc comment
   // (search.ts) explains why an unaliased FROM silently binds the EXISTS
   // subquery's unqualified id/user_id to memory_edges' OWN columns instead of
@@ -126,15 +127,19 @@ export async function searchList(
   // zone-less wall-clock reading of the UTC instant — without it, to_char's
   // implicit timestamptz->timestamp conversion follows the SESSION's
   // `timezone` GUC, and a non-UTC session would silently mislabel a local
-  // time with the trailing "Z".
+  // time with the trailing "Z". The commitments LEFT JOIN (composite tenant key,
+  // at most one row per memory — commitments_memory_idx) only labels a hit's
+  // lifecycle; it never filters or reorders, and every column is m.-qualified.
   const rows = await tx.execute(sql`
-    SELECT id, memory_type, topic, content,
-           to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at_iso,
+    SELECT m.id, m.memory_type, m.topic, m.content, m.scope, m.project,
+           c.status AS commitment_status,
+           to_char(m.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at_iso,
            ${supersededExists('m')} AS superseded,
            0::float8 AS score
     FROM memories m
+    LEFT JOIN commitments c ON c.user_id = m.user_id AND c.memory_id = m.id
     WHERE ${eligibility} AND ${liveGate} AND ${buildChronologicalCursorPredicate(cursor)}
-    ORDER BY recorded_at DESC, id DESC
+    ORDER BY m.recorded_at DESC, m.id DESC
     LIMIT ${limit + 1}
   `)
   const allRows = rows.rows as unknown as ListRow[]
@@ -142,14 +147,7 @@ export async function searchList(
   const page = hasMore ? allRows.slice(0, limit) : allRows
   const last = page[page.length - 1]
   return {
-    hits: page.map((r) => ({
-      id: r.id,
-      memoryType: r.memory_type,
-      topic: r.topic,
-      content: r.content,
-      score: Number(r.score),
-      superseded: Boolean(r.superseded),
-    })),
+    hits: mapHits({ rows: page }),
     cursor: last === undefined ? undefined : { recordedAt: last.recorded_at_iso, id: last.id },
     hasMore,
   }

@@ -54,6 +54,8 @@ const HIT = {
   content: 'c',
   score: 0.9,
   superseded: false,
+  scope: 'work',
+  project: null,
 }
 const dim = (n = EMBEDDING_DIMENSIONS) => Array.from({ length: n }, () => 0.01)
 
@@ -355,6 +357,9 @@ describe('search — read-path content excerpting (issue #238)', () => {
         content: 'z'.repeat(245_428),
         score: 0.5,
         superseded: true,
+        scope: 'work',
+        project: 'engine',
+        commitmentStatus: 'resolved' as const,
       },
     ])
     const hits = await search('u1', 'q', { queryEmbedding: dim() })
@@ -362,5 +367,10 @@ describe('search — read-path content excerpting (issue #238)', () => {
     // The db-layer superseded flag rides straight through core's excerpting
     // shape untouched — it is neither dropped nor defaulted.
     expect(hits[0]?.superseded).toBe(true)
+    expect(hits[0]).toMatchObject({
+      scope: 'work',
+      project: 'engine',
+      commitmentStatus: 'resolved',
+    })
   })
 })

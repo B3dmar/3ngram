@@ -255,9 +255,40 @@
                       },
                       "overdue": {
                         "type": "boolean"
+                      },
+                      "owner": {
+                        "type": ["string", "null"]
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
-                    "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
+                    "required": [
+                      "id",
+                      "memoryId",
+                      "topic",
+                      "status",
+                      "dueAt",
+                      "overdue",
+                      "owner",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 },
@@ -313,9 +344,40 @@
                       },
                       "overdue": {
                         "type": "boolean"
+                      },
+                      "owner": {
+                        "type": ["string", "null"]
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
-                    "required": ["id", "memoryId", "topic", "status", "dueAt", "overdue"],
+                    "required": [
+                      "id",
+                      "memoryId",
+                      "topic",
+                      "status",
+                      "dueAt",
+                      "overdue",
+                      "owner",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 },
@@ -817,6 +879,36 @@
               },
               "required": ["action", "scope", "mode"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "const": "set_write_default"
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Registered scope that a remember without scope lands in (mode default), else null."
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "default", "require"],
+                  "description": "Write policy for remember without scope: off = personal, default = scope above, require = reject."
+                }
+              },
+              "required": ["action", "scope", "mode"],
+              "additionalProperties": false
             }
           ]
         },
@@ -943,6 +1035,41 @@
                 "action": {
                   "type": "string",
                   "const": "retrieval_default_set"
+                },
+                "policy": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["off", "default", "require"]
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["mode", "scope"],
+                  "additionalProperties": true
+                }
+              },
+              "required": ["action", "policy"],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "const": "write_default_set"
                 },
                 "policy": {
                   "type": "object",
@@ -1124,9 +1251,39 @@
               },
               "required": ["mode", "scope"],
               "additionalProperties": true
+            },
+            "writeScopePolicy": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "default", "require"]
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": ["mode", "scope"],
+              "additionalProperties": true
             }
           },
-          "required": ["capabilities", "scopes", "stats", "retrievalScopePolicy"],
+          "required": [
+            "capabilities",
+            "scopes",
+            "stats",
+            "retrievalScopePolicy",
+            "writeScopePolicy"
+          ],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": true
         },
@@ -1934,7 +2091,7 @@
               "maxLength": 2000
             },
             "scope": {
-              "default": "personal",
+              "description": "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
@@ -3328,6 +3485,28 @@
                       },
                       "superseded": {
                         "type": "boolean"
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "commitmentStatus": {
+                        "type": "string",
+                        "enum": ["open", "waiting", "resolved", "expired"]
                       }
                     },
                     "required": [
@@ -3338,7 +3517,9 @@
                       "contentLength",
                       "truncated",
                       "score",
-                      "superseded"
+                      "superseded",
+                      "scope",
+                      "project"
                     ],
                     "additionalProperties": true
                   },
@@ -3361,9 +3542,39 @@
                       },
                       "superseded": {
                         "type": "boolean"
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "project": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "commitmentStatus": {
+                        "type": "string",
+                        "enum": ["open", "waiting", "resolved", "expired"]
                       }
                     },
-                    "required": ["id", "memoryType", "topic", "score", "superseded"],
+                    "required": [
+                      "id",
+                      "memoryType",
+                      "topic",
+                      "score",
+                      "superseded",
+                      "scope",
+                      "project"
+                    ],
                     "additionalProperties": true
                   }
                 ]
@@ -3538,7 +3749,7 @@
               "maxLength": 2000
             },
             "scope": {
-              "default": "personal",
+              "description": "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
               "type": "string",
               "minLength": 1,
               "maxLength": 64,

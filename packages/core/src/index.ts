@@ -217,15 +217,23 @@ export {
 export {
   createScope,
   deleteScope,
+  formatUnscopedWriteDetail,
   listScopes,
   type RetrievalPolicySetting,
   renameScope,
   resolveRetrievalPolicy,
+  resolveWriteScope,
+  resolveWriteScopePolicy,
   ScopeNameConflictError,
   ScopeNotFoundError,
   type ScopeRecord,
   setRetrievalDefault,
   setScopeAliases,
+  setWriteDefault,
+  toWriteScopeSetting,
+  UNPOLICIED_WRITE_SCOPE,
+  UnscopedWriteError,
+  type WriteScopePolicySetting,
 } from './scope/index.js'
 // --- hook-facing agent-session bookkeeping: open / close / heartbeat / triage ---
 export {
@@ -272,6 +280,7 @@ export {
   NotCommitmentMemoryError,
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
+  type RememberResult,
   type ResolveStatus,
   type RetryFailedEmbedsOptions,
   type RetryFailedEmbedsResult,

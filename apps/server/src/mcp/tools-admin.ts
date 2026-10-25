@@ -42,14 +42,15 @@ import {
   type ScopeRecord,
   setRetrievalDefault,
   setScopeAliases,
+  setWriteDefault,
 } from '@3ngram/core'
 import { MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE, type MemoryScope } from '@3ngram/core/auth'
 import {
-  type ConfigureScopeInputV2,
-  configureScopeInputV2Schema,
-  configureScopeOutputV2Schema,
+  type ConfigureScopeInputV3,
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputV2Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
@@ -129,7 +130,7 @@ function toProposalOutput(p: ProposalRecord) {
  * before any core call: list → memory:read, mutations → memory:write.
  */
 async function runConfigureScope(
-  input: ConfigureScopeInputV2,
+  input: ConfigureScopeInputV3,
   ctx: ToolContext,
 ): Promise<ToolResult> {
   if (input.action === 'list') {
@@ -140,7 +141,7 @@ async function runConfigureScope(
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
     const scopes = await listScopes(ctx.userId)
     return ok(
-      parseOutput('configure_scope', configureScopeOutputV2Schema, {
+      parseOutput('configure_scope', configureScopeOutputV3Schema, {
         action: 'list',
         scopes: scopes.map(toScopeOutput),
         count: scopes.length,
@@ -150,8 +151,8 @@ async function runConfigureScope(
   const denied = requireScope('configure_scope', ctx, MEMORY_WRITE_SCOPE)
   if (denied !== undefined) return denied
   // ACCESS GUARD: every mutating scope action (create/rename/set_aliases/delete/
-  // set_retrieval_default) is a WRITE — write access is asserted BEFORE the db op
-  // (self-host allowAllAccess allows all).
+  // set_retrieval_default/set_write_default) is a WRITE — write access is
+  // asserted BEFORE the db op (self-host allowAllAccess allows all).
   if (ctx.access) await ctx.access.assertWrite(ctx.userId)
 
   switch (input.action) {
@@ -170,7 +171,7 @@ async function runConfigureScope(
     case 'delete': {
       await deleteScope(ctx.userId, input.name)
       return ok(
-        parseOutput('configure_scope', configureScopeOutputV2Schema, {
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
           action: 'deleted',
           name: input.name,
         }),
@@ -186,8 +187,20 @@ async function runConfigureScope(
         scope: input.scope,
       })
       return ok(
-        parseOutput('configure_scope', configureScopeOutputV2Schema, {
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
           action: 'retrieval_default_set',
+          policy,
+        }),
+      )
+    }
+    case 'set_write_default': {
+      // Same split as set_retrieval_default (issue #235): shape at the schema
+      // boundary, registry existence in core (ScopeNotFoundError for an
+      // unregistered name or an alias), stored policy echoed back.
+      const policy = await setWriteDefault(ctx.userId, { mode: input.mode, scope: input.scope })
+      return ok(
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
+          action: 'write_default_set',
           policy,
         }),
       )
@@ -201,7 +214,7 @@ async function runConfigureScope(
 
 function upserted(scope: ScopeRecord): ToolResult {
   return ok(
-    parseOutput('configure_scope', configureScopeOutputV2Schema, {
+    parseOutput('configure_scope', configureScopeOutputV3Schema, {
       action: 'upserted',
       scope: toScopeOutput(scope),
     }),
@@ -319,8 +332,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       title: 'Configure Scope',
       description:
         'Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). set_retrieval_default binds your READS to a scope: mode "default" narrows unscoped search/briefing/handoff calls to the given scope (results report appliedScope), "require" rejects unscoped reads until a scope is passed, "off" restores unrestricted reads (scope must be null for require/off). Mutating actions require the write scope.',
-      inputSchema: configureScopeInputV2Schema,
-      outputSchema: configureScopeOutputV2Schema,
+      inputSchema: configureScopeInputV3Schema,
+      outputSchema: configureScopeOutputV3Schema,
       // Per-action tool, so the hints describe the WORST action it can take —
       // that is how a client uses them (deciding whether to prompt). `delete`
       // removes a scope registry entry, hence destructiveHint: true. It does NOT
@@ -335,7 +348,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       },
     },
     async handler(args, ctx) {
-      const input = configureScopeInputV2Schema.parse(args)
+      const input = configureScopeInputV3Schema.parse(args)
       return runConfigureScope(input, ctx)
     },
   }
@@ -348,7 +361,10 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      outputSchema: describeEnvironmentOutputV2Schema,
+      // V2 + writeScopePolicy (issue #235). Once PR #335's account/facets
+      // successors land, this becomes
+      // describeEnvironmentOutputV4Schema.safeExtend(describeEnvironmentWritePolicyFields).
+      outputSchema: describeEnvironmentOutputWithWritePolicySchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -360,20 +376,26 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput('describe_environment', describeEnvironmentOutputV2Schema, {
-        capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
-        scopes: report.scopes.map(toScopeOutput),
-        // The active retrieval-scope policy (issue #47): a bounded mode enum +
-        // a registered scope NAME — the redaction posture is unchanged.
-        retrievalScopePolicy: report.retrievalScopePolicy,
-        stats: {
-          memoriesByType: report.stats.memoriesByType,
-          activeMemories: report.stats.activeMemories,
-          supersededMemories: report.stats.supersededMemories,
-          archivedMemories: report.stats.archivedMemories,
-          commitmentsByStatus: report.stats.commitmentsByStatus,
+      const output = parseOutput(
+        'describe_environment',
+        describeEnvironmentOutputWithWritePolicySchema,
+        {
+          capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
+          scopes: report.scopes.map(toScopeOutput),
+          // The active retrieval-scope policy (issue #47): a bounded mode enum +
+          // a registered scope NAME — the redaction posture is unchanged.
+          retrievalScopePolicy: report.retrievalScopePolicy,
+          // The effective write-scope policy (issue #235), same redaction posture.
+          writeScopePolicy: report.writeScopePolicy,
+          stats: {
+            memoriesByType: report.stats.memoriesByType,
+            activeMemories: report.stats.activeMemories,
+            supersededMemories: report.stats.supersededMemories,
+            archivedMemories: report.stats.archivedMemories,
+            commitmentsByStatus: report.stats.commitmentsByStatus,
+          },
         },
-      })
+      )
       return ok(output)
     },
   }

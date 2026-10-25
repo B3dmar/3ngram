@@ -189,8 +189,9 @@ export function restRouter(options: RestRouterOptions): Router {
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
-  // NORMALIZED write (scope default + null project) in the response, exactly as
-  // the MCP tool does. Embedding is ack-before-embed: never awaited.
+  // normalized write (null project) in the response, exactly as the MCP tool
+  // does. The echoed scope is the one core WROTE (write-scope policy, #235).
+  // Embedding is ack-before-embed: never awaited.
   router.post('/api/v1/memories', (req, res) => {
     void guard('memories', res, async () => {
       const input = rememberToolInputV2Schema.parse(req.body)
@@ -216,7 +217,7 @@ export function restRouter(options: RestRouterOptions): Router {
             id: written.id,
             memoryType: input.memoryType,
             topic: input.topic,
-            scope: input.scope,
+            scope: written.scope,
             project: input.project ?? null,
           },
           embedded,
@@ -442,7 +443,11 @@ export function restRouter(options: RestRouterOptions): Router {
   // GET /api/v1/memories/:id/history — identity-only lineage + audit trail for
   // dashboard detail. Registered before /:id for route clarity. Returns no
   // content and no raw audit payload values: only identity fields, typed edges,
-  // event kind/actor/time, and payload metadata.
+  // event kind/actor/time, payload metadata, and ALLOWLISTED payload keys as
+  // sibling fields — today only `sessionRunId` (issue #262), projected and
+  // re-parsed in packages/db the same way the agent-sessions events route
+  // narrows it, plus `createdBySessionRunId` (the run on this memory's own
+  // native `create` event). Both are ids, not content.
   router.get('/api/v1/memories/:id/history', (req, res) => {
     void guard('memories.history', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -487,8 +492,10 @@ export function restRouter(options: RestRouterOptions): Router {
           actorKind: event.actorKind,
           createdAt: event.createdAt.toISOString(),
           payloadMetadata: event.payloadMetadata,
+          sessionRunId: event.sessionRunId,
         })),
         eventsTruncated: history.eventsTruncated,
+        createdBySessionRunId: history.createdBySessionRunId,
         sections: history.sections,
       })
     })
@@ -1070,6 +1077,13 @@ export function restRouter(options: RestRouterOptions): Router {
               mode: data.retrievalPolicy.mode,
               defaultScope: data.retrievalPolicy.defaultScope,
               updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
+            }
+          : null,
+        writeScopePolicy: data.writeScopePolicy
+          ? {
+              mode: data.writeScopePolicy.mode,
+              defaultScope: data.writeScopePolicy.defaultScope,
+              updatedAt: data.writeScopePolicy.updatedAt.toISOString(),
             }
           : null,
         counts: {

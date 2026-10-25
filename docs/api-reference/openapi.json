@@ -1690,6 +1690,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1709,7 +1733,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -1776,6 +1803,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1795,7 +1846,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -3588,6 +3642,50 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "writeScopePolicy": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "defaultScope": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 64,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mode": {
+                              "enum": [
+                                "off",
+                                "default",
+                                "require"
+                              ],
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "defaultScope",
+                            "updatedAt"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -3607,6 +3705,7 @@
                     "llmUsage",
                     "profile",
                     "retrievalPolicy",
+                    "writeScopePolicy",
                     "counts"
                   ],
                   "type": "object"
@@ -4200,7 +4299,7 @@
                     "type": "string"
                   },
                   "scope": {
-                    "default": "personal",
+                    "description": "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
                     "maxLength": 64,
                     "minLength": 1,
                     "pattern": "^[a-z0-9][a-z0-9-]*$",
@@ -4701,6 +4800,18 @@
                               "byteLength"
                             ],
                             "type": "object"
+                          },
+                          "sessionRunId": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -4708,11 +4819,24 @@
                           "eventKind",
                           "actorKind",
                           "createdAt",
-                          "payloadMetadata"
+                          "payloadMetadata",
+                          "sessionRunId"
                         ],
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "createdBySessionRunId": {
+                      "anyOf": [
+                        {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "directRelationships": {
                       "additionalProperties": false,
@@ -5389,7 +5513,8 @@
                     "lineage",
                     "directRelationships",
                     "auditEvents",
-                    "eventsTruncated"
+                    "eventsTruncated",
+                    "createdBySessionRunId"
                   ],
                   "type": "object"
                 }
@@ -6239,6 +6364,15 @@
                       "items": {
                         "additionalProperties": true,
                         "properties": {
+                          "commitmentStatus": {
+                            "enum": [
+                              "open",
+                              "waiting",
+                              "resolved",
+                              "expired"
+                            ],
+                            "type": "string"
+                          },
                           "content": {
                             "maxLength": 600,
                             "type": "string"
@@ -6254,6 +6388,24 @@
                             "type": "string"
                           },
                           "memoryType": {
+                            "type": "string"
+                          },
+                          "project": {
+                            "anyOf": [
+                              {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "scope": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$",
                             "type": "string"
                           },
                           "score": {
@@ -6277,7 +6429,9 @@
                           "contentLength",
                           "truncated",
                           "score",
-                          "superseded"
+                          "superseded",
+                          "scope",
+                          "project"
                         ],
                         "type": "object"
                       },

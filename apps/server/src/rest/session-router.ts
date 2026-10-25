@@ -210,8 +210,10 @@ export function sessionRouter(options: SessionRouterOptions): Router {
       // (`cmd/3ngram-hook/briefing.go`). A caller that reconstructs the facet
       // from its own environment cannot know that narrowed name, so the prompt
       // would tell the model to file under a scope it was never briefed under —
-      // and an omitted `scope` on `remember` defaults to `personal`, which drops
-      // the debrief memories out of the very briefing that surfaced the work.
+      // and an omitted `scope` on `remember` follows the write-scope policy
+      // (`personal` unless the tenant configured otherwise, issue #235), which
+      // can drop the debrief memories out of the very briefing that surfaced
+      // the work.
       // Same argument for `project`: the row holds the facet resolved at open.
       //
       // An EXPLICIT query value still wins. This route is not hook-only, and a

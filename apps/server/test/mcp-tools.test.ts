@@ -15,8 +15,8 @@ import { fakeEmbedding } from '@3ngram/llm'
 import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
-  configureScopeOutputV2Schema,
-  describeEnvironmentOutputV2Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -52,6 +52,7 @@ const setScopeAliases = vi.fn()
 const deleteScope = vi.fn()
 const describeEnvironment = vi.fn()
 const setRetrievalDefault = vi.fn()
+const setWriteDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
@@ -214,6 +215,16 @@ function applyPolicyToScopeFilter(
   if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
   return { scope: undefined, appliedScope: null }
 }
+// Write-scope policy typed error (issue #235) — mirrors @3ngram/core: fixed,
+// content-free text naming the fix.
+class UnscopedWriteError extends Error {
+  constructor() {
+    super(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
+    )
+    this.name = 'UnscopedWriteError'
+  }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -299,9 +310,11 @@ vi.mock('@3ngram/core', () => ({
   MissingSelectorError,
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
+  UnscopedWriteError,
   // D3 admin tools
   listScopes,
   setRetrievalDefault,
+  setWriteDefault,
   createScope,
   renameScope,
   setScopeAliases,
@@ -528,6 +541,7 @@ describe('remember tool', () => {
     // A settle handle that NEVER resolves: if the handler awaited it the call
     // would hang. It returns immediately because ack-before-embed does not await.
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       embed: { settled: new Promise<boolean>(() => undefined) },
     })
@@ -547,12 +561,16 @@ describe('remember tool', () => {
       (result as { structuredContent: unknown }).structuredContent,
     )
     expect(parsed.memory.id).toBe(MEMO_ID)
-    expect(parsed.memory.scope).toBe('personal') // default applied
+    expect(parsed.memory.scope).toBe('personal') // the scope core wrote, echoed
     expect(parsed.embedded).toBe('pending') // gateway configured: embed in flight
   })
 
   it('reports `off` when no embedding gateway is configured', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'decision', topic: 'pin sdk', content: 'pin mcp sdk at 1.29.0' },
@@ -566,6 +584,7 @@ describe('remember tool', () => {
   it('surfaces the auto-created commitmentId for a commitment-type memory', async () => {
     const commitmentId = crypto.randomUUID()
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       commitmentId,
       embed: { settled: Promise.resolve(false) },
@@ -581,7 +600,11 @@ describe('remember tool', () => {
   })
 
   it('omits commitmentId for a non-commitment memory', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'note', topic: 'x', content: 'y' },
@@ -599,7 +622,12 @@ describe('remember tool', () => {
 
   it('threads facts to core and echoes the written factIds', async () => {
     const factIds = [crypto.randomUUID(), crypto.randomUUID()]
-    remember.mockResolvedValue({ id: MEMO_ID, factIds, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      factIds,
+      embed: { settled: Promise.resolve(false) },
+    })
     const facts = [
       { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' },
       { subject: 'lift.back_squat', predicate: 'top_set.reps', value: '3' },
@@ -621,6 +649,7 @@ describe('remember tool', () => {
 
   it('accepts an ISO validFrom on a fact (JSON carries no date type)', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       factIds: [crypto.randomUUID()],
       embed: { settled: Promise.resolve(false) },
@@ -648,7 +677,11 @@ describe('remember tool', () => {
   })
 
   it('omits factIds entirely when no facts were written (V1 response unchanged)', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'note', topic: 'x', content: 'y' },
@@ -685,7 +718,11 @@ describe('remember tool', () => {
     // it non-strict and strips supplied keys before the handler runs: an explicit
     // scope:'work'/project:'3ngram' reaches core and is echoed in the structured
     // output — NOT the scope:'personal'/project:null defaults of an omitted axis.
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       {
@@ -705,6 +742,38 @@ describe('remember tool', () => {
     const parsed = rememberToolOutputSchema.parse(result.structuredContent)
     expect(parsed.memory.scope).toBe('work')
     expect(parsed.memory.project).toBe('3ngram')
+  })
+
+  it('passes an omitted scope to core as omitted and echoes the scope core WROTE (#235)', async () => {
+    // The tenant's write policy filled 'work'; the echo must not be the request's
+    // (absent) scope nor a schema default.
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = remember.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('scope' in coreInput).toBe(false)
+    expect(rememberToolOutputSchema.parse(result.structuredContent).memory.scope).toBe('work')
+  })
+
+  it('maps UnscopedWriteError to invalid input naming the fix, never content (#235)', async () => {
+    remember.mockRejectedValue(new UnscopedWriteError())
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'secret topic', content: 'secret content' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content as { text: string }[])[0]?.text ?? ''
+    expect(text).toMatch(/^invalid input: .*pass scope; registered scopes: personal, work$/)
+    expect(text).not.toContain('secret')
   })
 
   it('still rejects an UNKNOWN key rather than silently dropping it (strict, #284)', async () => {
@@ -783,6 +852,8 @@ describe('search tool', () => {
     truncated: false,
     score: 0.9,
     superseded: false,
+    scope: 'work',
+    project: null,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -818,8 +889,41 @@ describe('search tool', () => {
       topic: 'pin',
       score: 0.9,
       superseded: false,
+      scope: 'work',
+      project: null,
     })
   })
+
+  // #319: commitment lifecycle is a separate axis from memory status — every
+  // projection x order labels a commitment hit, and never fabricates one.
+  const RESOLVED = {
+    ...HIT,
+    id: '22222222-2222-4222-8222-222222222222',
+    project: 'engine',
+    commitmentStatus: 'resolved' as const,
+  }
+  for (const order of ['relevance', 'chronological'] as const) {
+    for (const projection of ['full', 'compact'] as const) {
+      it(`labels filing + commitment lifecycle (${order}, ${projection}, #319)`, async () => {
+        const page = { ...pageOf([RESOLVED, HIT]), nextCursor: undefined, appliedScope: null }
+        searchDashboardPage.mockResolvedValue(page)
+        searchChronological.mockResolvedValue(page)
+        const args =
+          order === 'relevance' ? { query: 'sdk pin' } : { order, scope: 'work' as const }
+        const result = await call('search', { ...args, projection }, ctx())
+        expect(result.isError).toBeFalsy()
+        const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+        expect(parsed.hits[0]).toMatchObject({
+          scope: 'work',
+          project: 'engine',
+          commitmentStatus: 'resolved',
+        })
+        expect(parsed.hits[1]).toMatchObject({ scope: 'work', project: null })
+        expect(parsed.hits[1]).not.toHaveProperty('commitmentStatus')
+        expect('content' in (parsed.hits[0] ?? {})).toBe(projection === 'full')
+      })
+    }
+  }
 
   it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
@@ -2006,7 +2110,11 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
 
   it('a write-scoped token can do both', async () => {
     const full = ctx({ scopes: ['memory:read', 'memory:write'] })
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     searchDashboardPage.mockResolvedValue({
       hits: [],
       frozen: { ids: [], scores: [] },
@@ -2090,7 +2198,7 @@ describe('configure_scope tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -2107,7 +2215,7 @@ describe('configure_scope tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('upserted')
     if (parsed.action === 'upserted') expect(parsed.scope.name).toBe('research')
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
@@ -2130,7 +2238,7 @@ describe('configure_scope tool', () => {
 
     const deleted = await call('configure_scope', { action: 'delete', name: 'work' }, ctx())
     expect(deleteScope).toHaveBeenCalledWith(UID, 'work')
-    const parsed = configureScopeOutputV2Schema.parse(deleted.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(deleted.structuredContent)
     expect(parsed.action).toBe('deleted')
     if (parsed.action === 'deleted') expect(parsed.name).toBe('work')
   })
@@ -2327,6 +2435,7 @@ describe('describe_environment tool', () => {
     describeEnvironment.mockResolvedValue({
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: { decision: 3, fact: 5 },
         activeMemories: 8,
@@ -2337,7 +2446,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2364,6 +2473,7 @@ describe('describe_environment tool', () => {
       describeEnvironment.mockResolvedValue({
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
+        writeScopePolicy: { mode: 'off', scope: null },
         stats: {
           memoriesByType: {},
           activeMemories: 0,
@@ -2693,6 +2803,82 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Write-scope policy wiring (issue #235)
+// ---------------------------------------------------------------------------
+
+describe('write-scope policy wiring', () => {
+  it('configure_scope set_write_default stores the policy and echoes it', async () => {
+    setWriteDefault.mockResolvedValue({ mode: 'default', scope: 'work' })
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: 'work', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(configureScopeOutputV3Schema.parse(result.structuredContent)).toEqual({
+      action: 'write_default_set',
+      policy: { mode: 'default', scope: 'work' },
+    })
+    expect(setWriteDefault).toHaveBeenCalledWith(UID, { mode: 'default', scope: 'work' })
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('set_write_default is a WRITE action: a read-only token is rejected before core', async () => {
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: null, mode: 'require' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('memory:write')
+    expect(setWriteDefault).not.toHaveBeenCalled()
+  })
+
+  it('rejects a drifting mode/scope pair or a missing field at the boundary', async () => {
+    for (const args of [
+      { action: 'set_write_default', scope: null, mode: 'default' },
+      { action: 'set_write_default', scope: 'work', mode: 'require' },
+      { action: 'set_write_default', mode: 'off' },
+    ]) {
+      const result = await call('configure_scope', args, ctx())
+      expect(result.isError, JSON.stringify(args)).toBe(true)
+    }
+    expect(setWriteDefault).not.toHaveBeenCalled()
+  })
+
+  it('an unregistered scope or an alias maps to the typed not_found', async () => {
+    setWriteDefault.mockRejectedValue(new ScopeNotFoundError('job'))
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: 'job', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('describe_environment reports the write policy next to the retrieval policy', async () => {
+    describeEnvironment.mockResolvedValue({
+      scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'default', scope: 'work' },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBeFalsy()
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
+    expect(parsed.writeScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+    expect(parsed.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Retrieval-scope policy wiring (issue #47, layer 3)
 // ---------------------------------------------------------------------------
 
@@ -2710,7 +2896,7 @@ describe('retrieval-scope policy wiring', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed).toEqual({
       action: 'retrieval_default_set',
       policy: { mode: 'default', scope: 'work' },
@@ -2756,6 +2942,7 @@ describe('retrieval-scope policy wiring', () => {
     describeEnvironment.mockResolvedValue({
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      writeScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: {},
         activeMemories: 0,
@@ -2766,7 +2953,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 
