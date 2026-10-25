@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Jev decide() contract tests (issue #225). fetch is stubbed — no network. The
 // fixture is a CONTRACT fixture built from @typesafe-ai/sdk@0.7.0's published
-// types, not a recorded response (see its _meta). Every error path must carry
+// types, not a recorded response (see its _meta); jev-recorded.test.ts runs
+// the same guards on a recorded live response. Every error path must carry
 // counts/kinds only: never state, instructions, labels, the key or the body.
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
