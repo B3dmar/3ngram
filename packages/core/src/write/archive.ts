@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// archiveMemory(): the generic ARCHIVE lifecycle write path (adoption-gate
-// Decision D — REST-only: NO MCP tool mirrors this surface. Archiving is an
-// operator action, not an agent JTBD, so it never met hard rule 8's bar for a
-// tool description competing in `tools/list`).
+// archiveMemory(): the REST archive route's write path, the operator form of
+// the archive disposition. Adoption-gate Decision D kept archive REST-only on
+// the grounds that it was an operator action, not an agent JTBD; issue #217
+// revisited that: answering a stale candidate IS an agent job, so the
+// guarded form is `revise` with `kind: "archive"` (reviseDisposition), which
+// adds no tool and rejects blockers and live commitments. This route keeps its
+// unguarded operator contract.
 //
 // apps -> core -> db layering (hard rule 5): a THIN orchestration over the db
 // status flip (which runs withTenant internally, hard rule 3). The only policy

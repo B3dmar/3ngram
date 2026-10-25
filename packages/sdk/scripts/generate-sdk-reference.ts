@@ -8,13 +8,14 @@ import { fileURLToPath } from 'node:url'
 import {
   factsQueryInputSchema,
   factsToolOutputSchema,
+  nativeReviseDispositionBodySchema,
   nativeReviseMoveBodySchema,
   rememberToolInputV2Schema,
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   reviseToolInputSchema,
-  reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   searchQuerySchema,
   searchRestResponseV2Schema,
 } from '@3ngram/schema'
@@ -31,10 +32,11 @@ const SCHEMAS = {
   facts: { input: factsQueryInputSchema, output: factsToolOutputSchema },
   revise: {
     input: z.union([
+      nativeReviseDispositionBodySchema,
       nativeReviseMoveBodySchema,
       reviseToolInputSchema.omit({ predecessorId: true }),
     ]),
-    output: reviseToolOutputSchema,
+    output: reviseToolOutputV2Schema,
   },
   resolve: {
     input: resolveToolInputSchema.omit({ memoryId: true }),

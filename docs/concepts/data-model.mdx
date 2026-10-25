@@ -107,7 +107,7 @@ The table sketches above are conceptual. The schema PR (`packages/db`) is the bi
 
 ## Archived status in `GET /api/v1/stats`
 
-The `GET /api/v1/stats` endpoint surfaces `archivedMemories` — the count of memories where `status = 'archived' AND valid_to IS NULL`. This is distinct from `supersededMemories` (which counts any row with `valid_to` set, regardless of status). A revise of an archived memory closes its `valid_to` window, moving it into the superseded bucket and out of archived; the two counts are mutually exclusive.
+The `GET /api/v1/stats` endpoint surfaces `archivedMemories` — the count of memories where `status = 'archived' AND valid_to IS NULL`. This is distinct from `supersededMemories` (which counts any row with `valid_to` set, regardless of status). A revise of an archived memory closes its `valid_to` window, moving it into the superseded bucket and out of archived; the two counts are mutually exclusive. Every archive disposition — the `revise` tool's `kind: "archive"` (issue #217) and `POST /api/v1/memories/:id/archive` — flips `status` only and writes an `archive` memory event whose payload is exactly `{ disposition: "archive", sessionRunId? }`; blocker `resolve` and the commitment sweep also write `archive` events, without a `disposition`.
 
 ## Embeddings
 

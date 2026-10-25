@@ -196,6 +196,15 @@ export {
 } from './facts-write.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
+export {
+  ActiveMemoryNotFoundError,
+  type ArchiveOutcome,
+  type ArchivePolicy,
+  type ArchiveWrite,
+  archiveMemory,
+  archiveMemoryDisposition,
+  archiveMemoryIn,
+} from './memory-disposition.js'
 // Revise path + typed edges (slice 2) — appended as its own block.
 export { EdgeConflictError, type EdgeWrite, insertEdge } from './memory-edges.js'
 export {
@@ -246,9 +255,7 @@ export {
   type MemoryListRow,
 } from './memory-read.js'
 export {
-  ActiveMemoryNotFoundError,
   archiveBlockerMemory,
-  archiveMemory,
   BlockerNotFoundError,
   type MovedMemory,
   type MoveWrite,

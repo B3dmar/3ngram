@@ -2975,6 +2975,35 @@
             {
               "type": "object",
               "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["archive"],
+                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+                },
+                "memoryIds": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "description": "The memories to act on, 1-50 unique ids. Each id gets its own outcome; one bad id never fails the others."
+                },
+                "sessionRunId": {
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": ["kind", "memoryIds"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
                 "predecessorId": {
                   "type": "string",
                   "format": "uuid",
@@ -3091,61 +3120,102 @@
         },
         "outputSchema": {
           "type": "object",
-          "properties": {
-            "memory": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "memoryType": {
-                  "type": "string",
-                  "enum": [
-                    "decision",
-                    "commitment",
-                    "blocker",
-                    "fact",
-                    "preference",
-                    "pattern",
-                    "note",
-                    "event"
-                  ]
-                },
-                "topic": {
-                  "type": "string"
-                },
-                "scope": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "pattern": "^[a-z0-9][a-z0-9-]*$"
-                },
-                "project": {
-                  "anyOf": [
-                    {
+                "memory": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "memoryType": {
+                      "type": "string",
+                      "enum": [
+                        "decision",
+                        "commitment",
+                        "blocker",
+                        "fact",
+                        "preference",
+                        "pattern",
+                        "note",
+                        "event"
+                      ]
+                    },
+                    "topic": {
+                      "type": "string"
+                    },
+                    "scope": {
                       "type": "string",
                       "minLength": 1,
-                      "maxLength": 256
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
                     },
-                    {
-                      "type": "null"
+                    "project": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
-                  ]
+                  },
+                  "required": ["id", "memoryType", "topic", "scope", "project"],
+                  "additionalProperties": true
+                },
+                "embedded": {
+                  "type": "string",
+                  "enum": ["pending", "done", "failed", "off"]
                 }
               },
-              "required": ["id", "memoryType", "topic", "scope", "project"],
+              "required": ["memory", "embedded"],
               "additionalProperties": true
             },
-            "embedded": {
-              "type": "string",
-              "enum": ["pending", "done", "failed", "off"]
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["archive"]
+                },
+                "outcomes": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "memoryId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": ["archived", "already_archived", "rejected"]
+                      },
+                      "reason": {
+                        "description": "Present only when outcome is rejected.",
+                        "type": "string",
+                        "enum": ["not_found", "superseded", "open_commitment", "blocker"]
+                      }
+                    },
+                    "required": ["memoryId", "outcome"],
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "required": ["kind", "outcomes"],
+              "additionalProperties": true
             }
-          },
-          "required": ["memory", "embedded"],
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "additionalProperties": true
+          ]
         },
         "annotations": {
           "readOnlyHint": false,
@@ -3937,6 +4007,35 @@
           "type": "object",
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["archive"],
+                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+                },
+                "memoryIds": {
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "description": "The memories to act on, 1-50 unique ids. Each id gets its own outcome; one bad id never fails the others."
+                },
+                "sessionRunId": {
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              },
+              "required": ["kind", "memoryIds"],
+              "additionalProperties": false
+            },
             {
               "type": "object",
               "properties": {

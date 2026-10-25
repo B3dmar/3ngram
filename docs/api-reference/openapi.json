@@ -4644,7 +4644,7 @@
             "description": "Success"
           }
         },
-        "summary": "Archive an active memory (REST-only lifecycle operation; no MCP mirror)"
+        "summary": "Archive an active memory of any type (operator form; the guarded agent form is revise kind: archive)"
       }
     },
     "/api/v1/memories/{id}/history": {
@@ -5585,6 +5585,28 @@
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
+                        "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve.",
+                        "enum": [
+                          "archive"
+                        ],
+                        "type": "string"
+                      },
+                      "sessionRunId": {
+                        "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
                         "const": "move",
                         "description": "Refile in place: no successor, dates and content untouched.",
                         "type": "string"
@@ -5706,82 +5728,139 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "properties": {
-                    "embedded": {
-                      "enum": [
-                        "pending",
-                        "done",
-                        "failed",
-                        "off"
-                      ],
-                      "type": "string"
-                    },
-                    "memory": {
+                  "anyOf": [
+                    {
                       "additionalProperties": true,
                       "properties": {
-                        "id": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "memoryType": {
+                        "embedded": {
                           "enum": [
-                            "decision",
-                            "commitment",
-                            "blocker",
-                            "fact",
-                            "preference",
-                            "pattern",
-                            "note",
-                            "event"
+                            "pending",
+                            "done",
+                            "failed",
+                            "off"
                           ],
                           "type": "string"
                         },
-                        "project": {
-                          "anyOf": [
-                            {
-                              "maxLength": 256,
-                              "minLength": 1,
+                        "memory": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "id": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                               "type": "string"
                             },
-                            {
-                              "type": "null"
+                            "memoryType": {
+                              "enum": [
+                                "decision",
+                                "commitment",
+                                "blocker",
+                                "fact",
+                                "preference",
+                                "pattern",
+                                "note",
+                                "event"
+                              ],
+                              "type": "string"
+                            },
+                            "project": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "scope": {
+                              "maxLength": 64,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$",
+                              "type": "string"
+                            },
+                            "topic": {
+                              "type": "string"
                             }
-                          ]
-                        },
-                        "scope": {
-                          "maxLength": 64,
-                          "minLength": 1,
-                          "pattern": "^[a-z0-9][a-z0-9-]*$",
-                          "type": "string"
-                        },
-                        "topic": {
-                          "type": "string"
+                          },
+                          "required": [
+                            "id",
+                            "memoryType",
+                            "topic",
+                            "scope",
+                            "project"
+                          ],
+                          "type": "object"
                         }
                       },
                       "required": [
-                        "id",
-                        "memoryType",
-                        "topic",
-                        "scope",
-                        "project"
+                        "memory",
+                        "embedded"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "archive"
+                          ],
+                          "type": "string"
+                        },
+                        "outcomes": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "memoryId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "outcome": {
+                                "enum": [
+                                  "archived",
+                                  "already_archived",
+                                  "rejected"
+                                ],
+                                "type": "string"
+                              },
+                              "reason": {
+                                "description": "Present only when outcome is rejected.",
+                                "enum": [
+                                  "not_found",
+                                  "superseded",
+                                  "open_commitment",
+                                  "blocker"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "memoryId",
+                              "outcome"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "outcomes"
                       ],
                       "type": "object"
                     }
-                  },
-                  "required": [
-                    "memory",
-                    "embedded"
-                  ],
-                  "type": "object"
+                  ]
                 }
               }
             },
             "description": "Success"
           }
         },
-        "summary": "Supersede a memory with a corrected successor, or refile it in place with kind: move (mirrors the MCP revise tool)"
+        "summary": "Supersede a memory with a corrected successor, refile it in place with kind: move, or archive it with kind: archive (mirrors the MCP revise tool)"
       }
     },
     "/api/v1/prompts/debrief": {

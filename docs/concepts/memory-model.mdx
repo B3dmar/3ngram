@@ -4,7 +4,7 @@ description: "How 3ngram stores memories: append-and-supersede writes, typed mem
 icon: "database"
 ---
 
-3ngram's memory model is built on one rule: **the write path never destroys data**. Everything else — typed edges, bi-temporal validity, advisory consolidation — follows from it. Filing metadata (scope, project, tags) is the one thing that may change in place, through the revise tool's move disposition (hard rule 1's single carve-out, issue #233): the previous filing stays in the audit event, and an `asOf` read reports a moved memory under its current filing, not the one it had at that time.
+3ngram's memory model is built on one rule: **the write path never destroys data**. Everything else — typed edges, bi-temporal validity, advisory consolidation — follows from it. Hard rule 1 has two audited carve-outs. Filing metadata (scope, project, tags) may change in place, through the revise tool's move disposition (issue #233): the previous filing stays in the audit event, and an `asOf` read reports a moved memory under its current filing, not the one it had at that time. And `status` may move `active → archived` — through blocker `resolve`, the revise tool's archive disposition (issue #217) or the REST archive route — each recorded by an `archive` event. That transition is the whole licence: content, topic, tags and the bi-temporal columns of an archived memory are untouched, so it stays readable with `status: "archived"` and through `asOf`.
 
 ## Append-and-supersede
 
@@ -20,6 +20,8 @@ When a memory needs correction, `revise` creates a **typed edge** between the ne
 | `derives` | The new memory was derived from the old one |
 
 A superseded memory is marked invalid from that point — not deleted, not rewritten. Retrieval is supersession-aware: ranked `search` **demotes** superseded predecessors (it does not drop them). Chronological listing, briefing, and the dashboard list **default** to currently-valid rows (`status = active` AND `valid_to IS NULL`); an explicit `status = archived` filter still returns archived rows whose `valid_to` is NULL. `asOf` (`validAt` and/or `asKnownAt`) is time travel, so "what did I believe on date X" stays answerable.
+
+A memory that is over but was true has no successor to supersede it with. `revise` with `kind: "archive"` and up to 50 `memoryIds` takes each one out of the active set instead: its status becomes `archived`, nothing is appended, and each id reports its own outcome (`archived`, `already_archived`, or `rejected` with a reason — `not_found`, `superseded`, `open_commitment`, `blocker`). Open or waiting commitments and blockers are rejected because they leave through `resolve`. An archived memory leaves ranked search, briefing and stale candidates, keeps its `valid_to` NULL (the archived bucket, not the superseded one) and with it its content-hash slot, so re-remembering identical content is a duplicate until the archived row is superseded.
 
 Episodic memories (dated sessions, events) and semantic memories (facts, preferences, patterns) are distinct and never collapsed into each other.
 

@@ -26,6 +26,7 @@ import {
   resolveToolOutputSchema,
   reviewProposalsOutputV2Schema,
   reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   searchQueryV3Schema,
   searchToolOutputV2Schema,
 } from '@3ngram/schema'
@@ -39,6 +40,7 @@ const searchDashboardPage = vi.fn()
 const searchChronological = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
+const reviseDisposition = vi.fn()
 const resolveByMemoryId = vi.fn()
 const briefing = vi.fn()
 const handoff = vi.fn()
@@ -287,6 +289,7 @@ vi.mock('@3ngram/core', () => ({
   searchChronological,
   getFacts,
   revise,
+  reviseDisposition,
   resolveByMemoryId,
   briefing,
   handoff,
@@ -1589,6 +1592,45 @@ describe('revise tool', () => {
       project: 'rdg-npd',
     })
     expect(parsed.embedded).toBe('off')
+  })
+
+  it('archive disposition: routes to reviseDisposition, returns per-id outcomes (#217)', async () => {
+    const OTHER = crypto.randomUUID()
+    reviseDisposition.mockResolvedValue({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: MEMO_ID, outcome: 'archived' },
+        { memoryId: OTHER, outcome: 'rejected', reason: 'open_commitment' },
+      ],
+    })
+    const result = await call('revise', { kind: 'archive', memoryIds: [MEMO_ID, OTHER] }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(revise).not.toHaveBeenCalled()
+    expect(reviseDisposition.mock.calls[0]?.slice(0, 3)).toEqual([
+      UID,
+      { kind: 'archive', memoryIds: [MEMO_ID, OTHER] },
+      'user_mcp',
+    ])
+    expect(reviseToolOutputV2Schema.parse(result.structuredContent)).toEqual({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: MEMO_ID, outcome: 'archived' },
+        { memoryId: OTHER, outcome: 'rejected', reason: 'open_commitment' },
+      ],
+    })
+  })
+
+  it('rejects a malformed archive batch without calling core (#217)', async () => {
+    for (const args of [
+      { kind: 'archive', memoryIds: [] },
+      { kind: 'archive', memoryIds: [MEMO_ID, MEMO_ID] },
+      { kind: 'archive', predecessorId: MEMO_ID },
+    ]) {
+      const result = await call('revise', args, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(reviseDisposition).not.toHaveBeenCalled()
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it('rejects a move with nothing to change without calling core (#233)', async () => {

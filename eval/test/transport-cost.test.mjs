@@ -186,9 +186,18 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // scope, nullable project, and optional commitmentStatus in both
       // projections. Descriptions are unchanged (no embeddings regen); REST
       // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
-      mcp: [28531, 230064, 57451],
+      // MCP +622/+4976/+1213, REST +385/+385/+385 (issue #217, revise archive
+      // disposition): the revise input union gains a third branch
+      // (`kind: "archive"` + a bounded `memoryIds` batch, with field
+      // descriptions) and the registered output becomes a two-branch union
+      // that adds the per-id outcome list. MCP pays both on tools/list per
+      // turn; REST pays the request body (URL id, so no memoryIds) and the
+      // response once. CLI has no revise command. The tool description is
+      // unchanged (no embeddings regen). MEASURED on this PR's actual base
+      // (staging ab8b193), not summed.
+      mcp: [29153, 235040, 58664],
       cli: [333, 1236, 1236],
-      rest: [4145, 5162, 5162],
+      rest: [4530, 5547, 5547],
     },
   )
 })
