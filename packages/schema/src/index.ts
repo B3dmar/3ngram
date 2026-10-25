@@ -519,6 +519,7 @@ export type {
   Tag,
 } from './write.js'
 export {
+  commitmentOwnerSchema,
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,
@@ -546,3 +547,22 @@ export {
   reviseRequestSchema,
   tagSchema,
 } from './write.js'
+// --- write-scope policy (issue #235) — appended block ---
+export type {
+  ConfigureScopeInputV3,
+  ConfigureScopeOutputV3,
+  DescribeEnvironmentOutputWithWritePolicy,
+  SetWriteDefaultInput,
+  WriteScopeMode,
+  WriteScopePolicy,
+} from './write-scope.js'
+export {
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentWritePolicyFields,
+  setWriteDefaultInputSchema,
+  writeScopeModeSchema,
+  writeScopePolicySchema,
+  writeScopePolicyScopeRequirements,
+} from './write-scope.js'

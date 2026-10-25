@@ -54,6 +54,7 @@ import {
   SuccessorNotLiveError,
   UnknownSessionRunError,
   UnscopedRetrievalError,
+  UnscopedWriteError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
 import { CursorQueryMismatchError } from '../cursor.js'
@@ -103,6 +104,13 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
       reason: 'invalid_input',
       detail: formatUnscopedRetrievalDetail(err.registeredScopes),
     }
+  }
+  // A `remember` without scope rejected by the caller's own write-scope policy
+  // (mode 'require', issue #235): 400 invalid_input, with the fixed recovery
+  // text as detail (names the fix; no content). Mirrors MCP.
+  if (err instanceof UnscopedWriteError) {
+    log().warn({ route, err: err.name }, 'rest: unscoped write rejected by policy')
+    return { status: 400, reason: 'invalid_input', detail: err.message }
   }
   // Malformed CLIENT input — a ZodError from a boundary INPUT .parse() or a
   // typed core validation error — is a 400, not a server fault: only the error

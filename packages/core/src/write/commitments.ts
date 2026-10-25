@@ -58,8 +58,10 @@ export class InvalidCommitmentTransitionError extends Error {
   }
 }
 
-/** Optional metadata for a new commitment. remember() does NOT auto-create
- * one (no commitment metadata in rememberInputSchema) — this is the surface. */
+/** Optional metadata for a new commitment on an EXISTING commitment memory that
+ * has none. A native remember() of a commitment already auto-creates its row and
+ * takes an explicit dueAt/owner (issue #165); this standalone surface remains for
+ * programmatic callers. */
 export interface CreateCommitmentOptions {
   owner?: string | undefined
   dueAt?: Date | undefined

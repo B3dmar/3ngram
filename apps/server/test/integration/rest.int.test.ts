@@ -936,6 +936,27 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.retrievalPolicy?.defaultScope).toBe(aScope)
   })
 
+  it('exports the key tenant write-scope policy, never another tenant’s (#235)', async () => {
+    const seed = (userId: string, scope: string) =>
+      ownerPool.query(
+        `INSERT INTO user_write_scope_policy (user_id, mode, default_scope)
+         VALUES ($1, 'default', $2)
+         ON CONFLICT (user_id) DO UPDATE
+         SET mode = 'default', default_scope = EXCLUDED.default_scope, updated_at = now()`,
+        [userId, scope],
+      )
+    const aScope = `a-write-${crypto.randomUUID()}`
+    await seed(await userIdFor(emailA), aScope)
+    await seed(await userIdFor(emailB), `b-write-${crypto.randomUUID()}`)
+
+    const res = await api('/api/v1/export', { key: keyA })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      writeScopePolicy: { mode: string; defaultScope: string | null } | null
+    }
+    expect(body.writeScopePolicy).toMatchObject({ mode: 'default', defaultScope: aScope })
+  })
+
   it('TENANT ISOLATION: A export carries A profile only, never B (RLS, no explicit filter)', async () => {
     await seedProfile(await userIdFor(emailB), 'founder', 'twitter')
 

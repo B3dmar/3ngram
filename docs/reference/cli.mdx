@@ -29,7 +29,7 @@ Flags override environment variables. `--base-url` expects the REST origin witho
 
 Append a typed memory through the REST-backed SDK client.
 
-**Usage:** `3ngram remember  --type <t> --topic <t> --content <c> [--scope --project --tags]`  
+**Usage:** `3ngram remember  --type <t> --topic <t> --content <c> [--scope --project --tags --due --owner]`  
 **SDK call:** `client.remember(input)`
 
 ### Options
@@ -42,6 +42,8 @@ Append a typed memory through the REST-backed SDK client.
 | `--scope &lt;scope>` | no | no | Optional scope such as personal or work. |
 | `--project &lt;project>` | no | no | Optional project key for project briefings. |
 | `--tags &lt;tag[,tag]>` | no | yes | Repeatable; comma-separated values are flattened and trimmed. |
+| `--due &lt;iso-instant>` | no | no | Commitments only: explicit deadline as a UTC ISO-8601 instant ending in Z (at most millisecond precision). Past it, briefing reports the commitment overdue. |
+| `--owner &lt;owner>` | no | no | Commitments only: who owns the commitment. |
 
 ### Examples
 
@@ -51,6 +53,10 @@ Append a typed memory through the REST-backed SDK client.
 
 ```bash
 3ngram remember --type note --topic "follow-up" --content "Check docs freshness gate." --tags docs,ci --json
+```
+
+```bash
+3ngram remember --type commitment --topic "ship v1.9" --content "Cut the v1.9 release." --project 3ngram --due 2026-11-30T17:00:00Z --owner sebastian
 ```
 
 ### Input payload schema

@@ -142,6 +142,11 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
        VALUES ($1, 'default', 'private')`,
       [userA],
     )
+    await ownerPool.query(
+      `INSERT INTO user_write_scope_policy (user_id, mode, default_scope)
+       VALUES ($1, 'default', 'private-writes')`,
+      [userA],
+    )
     // Credentials: a session (deletable) + an api key + an oauth client/token.
     // Unique hashes per run — an erased user orphans (its email is rewritten), so
     // a fixed hash would collide on the unique constraint across runs.
@@ -296,6 +301,12 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
       [userA],
     )
     expect(policy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
+    // The write-scope policy's scope label is erased too (issue #235).
+    const writePolicy = await ownerPool.query(
+      'SELECT mode, default_scope FROM user_write_scope_policy WHERE user_id = $1',
+      [userA],
+    )
+    expect(writePolicy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
 
     await ownerPool.query('DELETE FROM oauth_codes WHERE client_id = $1', [clientId])
     await ownerPool.query('DELETE FROM oauth_tokens WHERE client_id = $1', [clientId])
