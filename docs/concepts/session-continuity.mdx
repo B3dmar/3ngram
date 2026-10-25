@@ -875,6 +875,34 @@ before the call, records one `llm_usage` row after it, and releases the
 reservation — the same seam every embed call site uses. Over cap, the pass is
 rejected rather than billed. Output tokens are bounded per call.
 
+**Typed judgment for opted-in tenants (issue #229).** After the claim, the pass
+reads the tenant's judgment opt-in (`user_judgment_policy`, default off,
+architecture § LLM gateway). For an opted-in tenant the pass calls
+`gateway.decide()` instead of `complete()`. It sends one shared state and
+**one Noul per briefed commitment**. The state holds the excerpt in the same
+backtick fence, labelled untrusted data, plus the write kinds. Each question
+carries the commitment topic as JSON-quoted data. The criteria state that an
+assertion of completion alone is not evidence; this is the "framed" arm of the
+2026-09-19 spike, the one with 0/21 adversarial flips. A commitment resolves
+through the same `resolveForClosedRun` path only when P(completed) is at least
+`CLOSER_RESOLVE_PROBABILITY` (0.9, a constant). Below that, nothing changes.
+The answer id space is the briefed set, so `CloserVerdictError` and the
+`rejected` count cannot occur on this path; both remain for the `complete()`
+path. The call is metered as `session.closer.decide`, with its own reservation.
+Its `llm_usage` row is recorded unpriced because no judgment list price is
+pinned, so the budget gate charges the max registered cost. Opted-out tenants
+keep the `complete()` path unchanged. The opt-in is read again as the last
+step before the send, after the reservation and the epoch re-check, because the
+reservation can block on a per-user lock. A tenant who opts out during that wait
+gets the `complete()` path. When the deployment has no judgment gateway,
+`decide()` rejects with the typed `NotImplementedError` before any network call.
+That rejection is caught only around the `decide()` await, the judgment
+reservation is released unbilled, and the pass takes the `complete()` path. The
+judgment ceiling is registered at or below the completion ceiling, so the
+fallback never fails a cap check that the judgment reservation passed. The threshold is deliberately high: the spike's fixtures
+were bimodal, so the real-corpus replay owed by #166 sets it before any
+default-on.
+
 Three implementation decisions the page left open:
 
 - **Actor is `worker`.** `system` was the alternative; `capture_hook` remains
