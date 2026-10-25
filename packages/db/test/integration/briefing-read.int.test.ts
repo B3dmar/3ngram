@@ -271,12 +271,17 @@ describe('commitment owner and filing (runtime role, issue #261)', () => {
     const owned = await seedMemory(userA, 'commitment', { scope: 'work', project: 'p1' })
     const unscoped = await seedMemory(userA, 'commitment', { scope: 'work', project: null })
     const otherScope = await seedMemory(userA, 'commitment', { scope: 'personal', project: 'p1' })
+    const otherUnscoped = await seedMemory(userA, 'commitment', {
+      scope: 'personal',
+      project: null,
+    })
     const resolved = await seedMemory(userA, 'commitment', { scope: 'work', project: 'p1' })
     await seedCommitment(userA, owned, { owner: 'release-captain', dueAt: PAST })
     await seedCommitment(userA, unscoped, { dueAt: PAST })
     await seedCommitment(userA, otherScope, { owner: 'someone', dueAt: PAST })
+    await seedCommitment(userA, otherUnscoped, { dueAt: PAST })
     await seedCommitment(userA, resolved, { status: 'resolved', owner: 'x', dueAt: PAST })
-    return { owned, unscoped, otherScope, resolved }
+    return { owned, unscoped, otherScope, otherUnscoped, resolved }
   }
 
   const byMemory = (items: { memoryId: string }[], id: string) =>
@@ -302,12 +307,12 @@ describe('commitment owner and filing (runtime role, issue #261)', () => {
         project: null,
       })
       expect(byMemory(page.items, otherScope)).toMatchObject({ scope: 'personal', project: 'p1' })
-      expect(page.totalCount).toBe(3)
+      expect(page.totalCount).toBe(4)
     }
   })
 
   it("scope_project is a strict intersection; includeUnscoped adds only that scope's NULL-project rows", async () => {
-    const { owned, unscoped, otherScope, resolved } = await seed()
+    const { owned, unscoped, otherScope, otherUnscoped, resolved } = await seed()
     const strict = {
       kind: 'scope_project',
       scope: 'work',
@@ -331,6 +336,7 @@ describe('commitment owner and filing (runtime role, issue #261)', () => {
     for (const page of [strictPage, widenedPage, overdueWidened]) {
       const ids = page.items.map((r) => r.memoryId)
       expect(ids).not.toContain(otherScope)
+      expect(ids).not.toContain(otherUnscoped)
       expect(ids).not.toContain(resolved)
     }
   })

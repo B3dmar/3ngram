@@ -123,6 +123,20 @@ export interface BriefingPage<T> {
  */
 const TOTAL_COUNT = sql<number>`count(*) over()`.mapWith(Number)
 
+/** The commitment-section projection shared by the open and overdue reads. */
+const COMMITMENT_COLUMNS = {
+  id: commitments.id,
+  memoryId: commitments.memoryId,
+  topic: memories.topic,
+  status: commitments.status,
+  dueAt: commitments.dueAt,
+  nextSurfacingAt: commitments.nextSurfacingAt,
+  owner: commitments.owner,
+  scope: memories.scope,
+  project: memories.project,
+  totalCount: TOTAL_COUNT,
+}
+
 /**
  * Read `totalCount` from a window-count result. The window value is identical on
  * every row, so the first row carries it; an empty result means no matching rows,
@@ -276,20 +290,6 @@ export async function overdueCommitments(
     .orderBy(asc(commitments.dueAt), asc(commitments.id))
     .limit(limit)
   return { items: rows.map(stripCount), totalCount: totalFrom(rows) }
-}
-
-/** The commitment-section projection shared by the open and overdue reads. */
-const COMMITMENT_COLUMNS = {
-  id: commitments.id,
-  memoryId: commitments.memoryId,
-  topic: memories.topic,
-  status: commitments.status,
-  dueAt: commitments.dueAt,
-  nextSurfacingAt: commitments.nextSurfacingAt,
-  owner: commitments.owner,
-  scope: memories.scope,
-  project: memories.project,
-  totalCount: TOTAL_COUNT,
 }
 
 /** Drop the window-count column from a commitment row to yield the public shape. */
