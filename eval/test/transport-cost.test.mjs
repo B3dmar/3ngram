@@ -191,7 +191,15 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // schema, paid on tools/list per turn. REST and CLI request surfaces are
       // unchanged. The tool description is unchanged (no embeddings regen).
       // MEASURED on staging ab8b193, not summed.
-      mcp: [28685, 231296, 57752],
+      // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
+      // list input gains an optional opaque `cursor` (with a field
+      // description) and the list OUTPUT variant gains `counts`/`totals`
+      // ({ edge, fact }), `hasMore` and `nextCursor`; both schemas ride
+      // tools/list every MCP turn. The tool description is unchanged (no
+      // embeddings regen). REST and CLI are unchanged: the REST surface does
+      // not carry the proposals list and the CLI has no proposals command.
+      // MEASURED on staging a21c604, not summed.
+      mcp: [28879, 232848, 58130],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },

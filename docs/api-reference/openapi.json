@@ -5959,6 +5959,17 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep status identical across pages of one walk.",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5972,6 +5983,13 @@
                       "maximum": 9007199254740991,
                       "minimum": 0,
                       "type": "integer"
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    },
+                    "nextCursor": {
+                      "minLength": 1,
+                      "type": "string"
                     },
                     "proposals": {
                       "items": {
@@ -6064,11 +6082,27 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "totals": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "edge": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "edge"
+                      ],
+                      "type": "object"
                     }
                   },
                   "required": [
                     "proposals",
-                    "count"
+                    "count",
+                    "totals",
+                    "hasMore"
                   ],
                   "type": "object"
                 }
@@ -6077,7 +6111,7 @@
             "description": "Success"
           }
         },
-        "summary": "List consolidation proposals (bounded)"
+        "summary": "List consolidation proposals (bounded, cursor-paginated)"
       }
     },
     "/api/v1/proposals/{id}/apply": {

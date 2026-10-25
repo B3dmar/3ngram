@@ -6,10 +6,16 @@
 // stays dependency-light (zod only — no @types/node for Buffer). Clients treat
 // the token as opaque and never decode it (see lib/search/api.ts).
 import { createHash } from 'node:crypto'
-import { type CursorPayload, cursorPayloadSchema, legacyCursorPayloadSchema } from '@3ngram/schema'
+import {
+  type CursorPayload,
+  cursorPayloadSchema,
+  legacyCursorPayloadSchema,
+  type ProposalsCursorPayload,
+  proposalsCursorPayloadSchema,
+} from '@3ngram/schema'
 
 /** Serialize a cursor payload to an opaque base64url token. */
-export function encodeCursor(payload: CursorPayload): string {
+export function encodeCursor(payload: CursorPayload | ProposalsCursorPayload): string {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
 }
 
@@ -45,8 +51,10 @@ export function decodeCursor(token: string): CursorPayload | undefined {
  * query text (hard rule 6).
  */
 export class CursorQueryMismatchError extends Error {
-  constructor() {
-    super('cursor was issued for a different query — omit the cursor to start a new search')
+  constructor(
+    message = 'cursor was issued for a different query — omit the cursor to start a new search',
+  ) {
+    super(message)
     this.name = 'CursorQueryMismatchError'
   }
 }
@@ -136,4 +144,71 @@ export function decodeSearchCursor(token: string, fingerprint: string): CursorPa
     throw new CursorQueryMismatchError()
   }
   return payload
+}
+
+// ---------------------------------------------------------------------------
+// Proposals review cursor (issue #320) — a SIBLING codec, not a search variant:
+// decodeCursor above parses only the search union, so a proposals token can
+// never decode as a search continuation (or the reverse).
+// ---------------------------------------------------------------------------
+
+/** A position in the merged proposal order (structurally core's ProposalPosition). */
+export interface ProposalsCursorPosition {
+  createdAt: string
+  id: string
+}
+
+/**
+ * What a proposals walk is bound to. `surface` + `kinds` keep an MCP (edge +
+ * fact) cursor from continuing a REST (edge-only) walk and vice versa; `status`
+ * is the filter the walk was started with; `tenant` is the authenticated user
+ * id — HASHED into the fingerprint only, so another tenant's cursor fails the
+ * check while the caller-visible token never carries the id itself.
+ */
+export interface ProposalsCursorBinding {
+  surface: 'mcp' | 'rest'
+  kinds: readonly string[]
+  status: string | undefined
+  tenant: string
+}
+
+/** Short stable fingerprint of a proposals walk (sha256, 16 hex — a mismatch guard). */
+export function proposalsFingerprint(binding: ProposalsCursorBinding): string {
+  const canonical = JSON.stringify(canonicalize({ ...binding, order: 'created_at_desc' }))
+  return createHash('sha256').update(`proposals\n${canonical}`).digest('hex').slice(0, 16)
+}
+
+/** Mint the opaque continuation token for a proposals walk. */
+export function encodeProposalsCursor(position: ProposalsCursorPosition, fp: string): string {
+  return encodeCursor({
+    v: 4,
+    kind: 'proposals',
+    createdAt: position.createdAt,
+    id: position.id,
+    fp,
+  })
+}
+
+/**
+ * Decode a proposals continuation token AND bind it to the current walk.
+ * Garbled base64/JSON or a shape other than the v4 proposals payload throws a
+ * ZodError (invalid input: 400 on REST, invalid_input on MCP) — never a silent
+ * page-1 restart, which would let an auditor believe a partial walk completed.
+ * A well-formed token minted for a different surface, status filter, or tenant
+ * throws {@link CursorQueryMismatchError}. Neither error carries the token.
+ */
+export function decodeProposalsCursor(token: string, fingerprint: string): ProposalsCursorPosition {
+  let json: unknown
+  try {
+    json = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'))
+  } catch {
+    json = undefined
+  }
+  const payload = proposalsCursorPayloadSchema.parse(json)
+  if (payload.fp !== fingerprint) {
+    throw new CursorQueryMismatchError(
+      'cursor was issued for a different proposals listing — omit the cursor to start a new walk',
+    )
+  }
+  return { createdAt: payload.createdAt, id: payload.id }
 }

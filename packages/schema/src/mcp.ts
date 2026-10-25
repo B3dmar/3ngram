@@ -28,6 +28,7 @@ import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { proposalsCursorSchema } from './proposals-page.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
@@ -676,7 +677,9 @@ export const MAX_PROPOSALS_LIMIT = 100
  * `review_proposals` input — an ACTION DISCRIMINATOR (list | reject | accept).
  *
  * - `list`   : optional status filter ({@link proposalStatusSchema}) + bounded
- *   limit (default {@link DEFAULT_PROPOSALS_LIMIT}). handler asserts memory:read.
+ *   limit (default {@link DEFAULT_PROPOSALS_LIMIT}) + optional opaque `cursor`
+ *   from a previous page's `nextCursor` (issue #320 — `limit` bounds the rows
+ *   of one page across BOTH kinds). handler asserts memory:read.
  * - `reject` : proposalId; status proposed -> rejected. memory:write (handler).
  * - `accept` : proposalId; returns a typed not_implemented (the consolidator
  *   that applies a proposal is not built).
@@ -692,6 +695,9 @@ export const reviewProposalsInputSchema = z.discriminatedUnion('action', [
       action: z.literal('list'),
       status: proposalStatusSchema.optional(),
       limit: z.number().int().min(1).max(MAX_PROPOSALS_LIMIT).default(DEFAULT_PROPOSALS_LIMIT),
+      // Keyset continuation over the merged edge+fact stream (issue #320;
+      // contract + live-view semantics: proposals-page.ts).
+      cursor: proposalsCursorSchema.optional(),
     })
     .strict(),
   z.object({ action: z.literal('reject'), proposalId: z.uuid() }).strict(),
@@ -708,6 +714,7 @@ export const reviewProposalsRegisterShape = {
   action: z.enum(['list', 'reject', 'accept']),
   status: proposalStatusSchema.optional(),
   limit: z.number().int().min(1).max(MAX_PROPOSALS_LIMIT).optional(),
+  cursor: proposalsCursorSchema.optional(),
   proposalId: z.uuid().optional(),
 } as const
 
