@@ -200,7 +200,7 @@ its row here even when its name and kind are unchanged.
 | `BeginTriageResult` | interface | `27b7ce303f4d` |
 | `BlockerNotFoundError` | class | `c9e230dee923` |
 | `Briefing` | interface | `a199b1441e0b` |
-| `BriefingCommitment` | interface | `f3a656d288d6` |
+| `BriefingCommitment` | interface | `7222cd5bf88d` |
 | `BriefingMemoryItem` | interface | `287e29a418b1` |
 | `BriefingMode` | type | `d8c0518eb536` |
 | `BriefingQuery` | interface | `6a1f4ee194a6` |
@@ -579,7 +579,7 @@ its row here even when its name and kind are unchanged.
 | `BeginTriageOptions` | interface | `f4eb50fd0af3` |
 | `BeginTriageResult` | interface | `27b7ce303f4d` |
 | `BlockerNotFoundError` | class | `c9e230dee923` |
-| `BriefingCommitmentRow` | interface | `6a2b55cb44cd` |
+| `BriefingCommitmentRow` | interface | `443172f7ecb8` |
 | `BriefingMemoryRow` | interface | `92d310713e1a` |
 | `BriefingPage` | interface | `a6a6e4f63345` |
 | `BriefingSelector` | type | `b0a556b10dfc` |
@@ -704,7 +704,7 @@ its row here even when its name and kind are unchanged.
 | `ScopeRow` | interface | `6874069522c2` |
 | `SearchAsOf` | interface | `dd0fe1ef2631` |
 | `SearchFilters` | interface | `8131acb3c156` |
-| `SearchHit` | interface | `6decb1397014` |
+| `SearchHit` | interface | `70453d212cd9` |
 | `SessionEpochFencedError` | class | `cc4a11973844` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
@@ -1261,7 +1261,7 @@ its row here even when its name and kind are unchanged.
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
 | `briefedMemorySchema` | const | `644d63b7a76e` |
-| `briefingCommitmentSchema` | const | `1a29febc4d45` |
+| `briefingCommitmentSchema` | const | `141d5e75d0f2` |
 | `briefingMemoryItemSchema` | const | `72cd0b44c81f` |
 | `briefingModeSchema` | const | `4124f29d7a33` |
 | `briefingSectionNameSchema` | const | `077c3845a881` |
@@ -1270,10 +1270,10 @@ its row here even when its name and kind are unchanged.
 | `briefingToolInputSchema` | const | `519839c27cfb` |
 | `briefingToolInputV2Schema` | const | `f0178f19eb42` |
 | `briefingToolInputV3Schema` | const | `e2f4e87054ad` |
-| `briefingToolOutputSchema` | const | `e127bdeb3f3d` |
-| `briefingToolOutputV2Schema` | const | `f3c7cce823f6` |
-| `briefingToolOutputV3Schema` | const | `f9520a578873` |
-| `briefingToolOutputV4Schema` | const | `a4d410f9b695` |
+| `briefingToolOutputSchema` | const | `20f5072805e6` |
+| `briefingToolOutputV2Schema` | const | `e8e9bc85c01c` |
+| `briefingToolOutputV3Schema` | const | `f83c4f934b86` |
+| `briefingToolOutputV4Schema` | const | `3792ea4457d5` |
 | `budgetStatusResponseSchema` | const | `350c20868744` |
 | `canTransition` | function | `753f70cf8b76` |
 | `capabilityDescriptorSchema` | const | `64ebc3cf1323` |
@@ -1428,8 +1428,8 @@ its row here even when its name and kind are unchanged.
 | `scopeSchema` | const | `c80b675a855b` |
 | `searchFiltersSchema` | const | `95db88e873a1` |
 | `searchFiltersV2Schema` | const | `a9ee22e6bf07` |
-| `searchHitCompactSchema` | const | `d39cf92b9106` |
-| `searchHitSchema` | const | `02afe1aa2c6a` |
+| `searchHitCompactSchema` | const | `60664d99da4b` |
+| `searchHitSchema` | const | `1ebde3a70a0c` |
 | `searchInputSchema` | const | `1b30debf20eb` |
 | `searchOrderSchema` | const | `53e1f0ae783f` |
 | `searchProjectionSchema` | const | `dbb4fe80fb3f` |
@@ -1439,10 +1439,10 @@ its row here even when its name and kind are unchanged.
 | `searchQueryV4ChronologicalSchema` | const | `13de60726a2b` |
 | `searchQueryV4RelevanceSchema` | const | `d8f3b10ea33d` |
 | `searchQueryV4Schema` | const | `fc8e00d5ee44` |
-| `searchRestResponseV2Schema` | const | `a21e9ddba2e7` |
-| `searchToolOutputSchema` | const | `9d19c5269b35` |
-| `searchToolOutputV2Schema` | const | `40979233f059` |
-| `searchToolOutputV3Schema` | const | `31d4af0943df` |
+| `searchRestResponseV2Schema` | const | `f21903378843` |
+| `searchToolOutputSchema` | const | `4df1b86b85cf` |
+| `searchToolOutputV2Schema` | const | `e996610620ee` |
+| `searchToolOutputV3Schema` | const | `81581242adfe` |
 | `sessionCloserJobDataSchema` | const | `d8b375861c64` |
 | `sessionCloserJobId` | function | `d84e5b9d3442` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |

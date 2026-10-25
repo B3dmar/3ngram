@@ -182,6 +182,15 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // REST only carries the remember request surface. CLI unchanged. No tool
       // description changed (no embeddings regen). MEASURED on this PR's actual
       // base (feat/165-commitment-due-dates), not summed.
+      // MCP +170/+1360/+331 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
+      // MCP +154/+1232/+300 (issue #261, owner/scope/project on briefing
+      // commitment items): three output fields ride the briefing output
+      // schema, paid on tools/list per turn. REST and CLI request surfaces are
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging ab8b193, not summed.
       // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
       // list input gains an optional opaque `cursor` (with a field
       // description) and the list OUTPUT variant gains `counts`/`totals`
@@ -189,8 +198,8 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // tools/list every MCP turn. The tool description is unchanged (no
       // embeddings regen). REST and CLI are unchanged: the REST surface does
       // not carry the proposals list and the CLI has no proposals command.
-      // MEASURED on staging d86c839, not summed.
-      mcp: [28555, 230256, 57498],
+      // MEASURED on staging a21c604, not summed.
+      mcp: [28879, 232848, 58130],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },

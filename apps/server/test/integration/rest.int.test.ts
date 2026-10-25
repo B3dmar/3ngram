@@ -353,6 +353,35 @@ describe('REST /api/v1 revise + resolve (runtime role, real DB)', () => {
     expect(body.commitments.count).toBeGreaterThanOrEqual(1)
   })
 
+  it('GET briefing commitment items carry owner and filing (issue #261)', async () => {
+    const tag = crypto.randomUUID()
+    const project = `owner-filing-${tag}`
+    const written = await api('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: {
+        memoryType: 'commitment',
+        topic: 'owner filing',
+        content: `owner-filing-${tag}`,
+        scope: 'work',
+        project,
+      },
+    })
+    expect(written.status).toBe(201)
+    const memoryId = ((await written.json()) as { memory: { id: string } }).memory.id
+
+    const briefed = await api(`/api/v1/briefing?kind=project&project=${project}&mode=full`, {
+      key: keyA,
+    })
+    expect(briefed.status).toBe(200)
+    const body = (await briefed.json()) as {
+      commitments: { items: Array<Record<string, unknown>> }
+    }
+    expect(body.commitments.items).toEqual([
+      expect.objectContaining({ memoryId, owner: null, scope: 'work', project }),
+    ])
+  })
+
   it('GET briefing kind=scope_project: includeUnscoped opts NULL-project rows in (issue #46)', async () => {
     const tag = crypto.randomUUID()
     const project = `sp-rest-${tag}`

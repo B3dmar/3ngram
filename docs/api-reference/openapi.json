@@ -1687,6 +1687,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1706,7 +1730,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -1773,6 +1800,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1792,7 +1843,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -6341,6 +6395,15 @@
                       "items": {
                         "additionalProperties": true,
                         "properties": {
+                          "commitmentStatus": {
+                            "enum": [
+                              "open",
+                              "waiting",
+                              "resolved",
+                              "expired"
+                            ],
+                            "type": "string"
+                          },
                           "content": {
                             "maxLength": 600,
                             "type": "string"
@@ -6356,6 +6419,24 @@
                             "type": "string"
                           },
                           "memoryType": {
+                            "type": "string"
+                          },
+                          "project": {
+                            "anyOf": [
+                              {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "scope": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$",
                             "type": "string"
                           },
                           "score": {
@@ -6379,7 +6460,9 @@
                           "contentLength",
                           "truncated",
                           "score",
-                          "superseded"
+                          "superseded",
+                          "scope",
+                          "project"
                         ],
                         "type": "object"
                       },
