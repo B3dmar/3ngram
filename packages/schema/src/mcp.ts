@@ -23,7 +23,7 @@
 // Rationale and the composition rules in output-openness.ts. INPUT schemas are
 // deliberately NOT marked — an unknown arg key stays a loud rejection.
 import { z } from 'zod'
-import { commitmentStatusSchema } from './commitment.js'
+import { commitmentStatusSchema, resolutionReasonSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
@@ -219,6 +219,15 @@ export type ReviseToolOutput = z.infer<typeof reviseToolOutputSchema>
  * PROJECT-scoped briefing if it was written WITH that `project` — a NULL-project
  * row never matches `project = $project`. Pass `project` on remember to make a
  * blocker/commitment resolvable from inside a project briefing.
+ *
+ * REASON (issue #234): optional evidence for THIS transition, stored on the
+ * commitment row (`last_resolution_reason`) in the same transaction as the
+ * status change — never in the audit event payload. A reason explains one
+ * transition: any later status change without one clears it, and a same-state
+ * no-op writes nothing (the reason is not stored). A blocker has no commitment
+ * row to carry it, so a blocker resolve WITH a reason is rejected (invalid
+ * input) instead of silently dropping it. Read back only through the
+ * authenticated history read (`lastResolutionReason`).
  */
 export const resolveToolInputSchema = z
   .object({
@@ -228,6 +237,11 @@ export const resolveToolInputSchema = z
       .optional()
       .describe(
         'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.',
+      ),
+    reason: resolutionReasonSchema
+      .optional()
+      .describe(
+        'Optional evidence for this transition, e.g. "PR #123" or "superseded by <memory id>" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.',
       ),
   })
   .strict()

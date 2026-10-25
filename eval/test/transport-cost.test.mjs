@@ -186,9 +186,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // scope, nullable project, and optional commitmentStatus in both
       // projections. Descriptions are unchanged (no embeddings regen); REST
       // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
-      mcp: [28531, 230064, 57451],
+      // MCP +74/+592/+145, REST +74/+74/+74 (issue #234): the resolve input
+      // gains an optional, described `reason` (1-500 chars). MCP pays it on
+      // tools/list per turn, REST on the resolve request surface once. CLI
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on this PR's actual base (staging ab8b193), not summed.
+      mcp: [28605, 230656, 57596],
       cli: [333, 1236, 1236],
-      rest: [4145, 5162, 5162],
+      rest: [4219, 5236, 5236],
     },
   )
 })

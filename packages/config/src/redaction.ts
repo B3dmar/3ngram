@@ -6,6 +6,15 @@ import { loadEnv } from './env.js'
  * Memory-content field names that must never reach logs, traces, or metrics
  * (docs/concepts/observability.mdx §1 red line; AGENTS.md hard rule 6). Both snake_case
  * (Drizzle rows) and camelCase (DTOs) spellings.
+ *
+ * The commitment resolution reason (issue #234) is listed under its
+ * unambiguous spellings — the stored column / read field and the core
+ * parameter. The bare `reason` key is deliberately NOT listed: it is the
+ * established key for bounded, content-free diagnostic labels (embed failure
+ * class, budget gate, OAuth rejection, breach-check outage), and blanket
+ * redaction would hash every one of those. The resolve input's `reason` never
+ * reaches a log call (transports log class names only) — pinned by the
+ * resolve-reason integration test, which captures every line a resolve emits.
  */
 export const REDACTED_FIELDS = [
   'answer',
@@ -14,9 +23,13 @@ export const REDACTED_FIELDS = [
   'chunk_content',
   'content',
   'embedding',
+  'lastResolutionReason',
+  'last_resolution_reason',
   'query',
   'queryText',
   'query_text',
+  'resolutionReason',
+  'resolution_reason',
   'summary',
   'text',
   'topic',

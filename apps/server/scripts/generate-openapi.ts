@@ -208,6 +208,7 @@ const exportCommitment = z
     recurrence: z.unknown(),
     nextSurfacingAt: isoDateTime().nullable(),
     resolvedAt: isoDateTime().nullable(),
+    lastResolutionReason: z.string().nullable(),
     createdAt: isoDateTime(),
     updatedAt: isoDateTime(),
   })

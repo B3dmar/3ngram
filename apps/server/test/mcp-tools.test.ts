@@ -225,6 +225,14 @@ class UnscopedWriteError extends Error {
     this.name = 'UnscopedWriteError'
   }
 }
+class ResolveReasonNotSupportedError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a resolve reason is stored only on a commitment; omit reason to resolve a blocker')
+    this.name = 'ResolveReasonNotSupportedError'
+    this.memoryId = memoryId
+  }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -311,6 +319,7 @@ vi.mock('@3ngram/core', () => ({
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
   UnscopedWriteError,
+  ResolveReasonNotSupportedError,
   // D3 admin tools
   listScopes,
   setRetrievalDefault,
@@ -1710,6 +1719,49 @@ describe('resolve tool', () => {
     const result = await call('resolve', { memoryId: 'not-a-uuid', status: 'resolved' }, ctx())
     expect(result.isError).toBe(true)
     expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('forwards a trimmed reason to core as the sixth argument (issue #234)', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: crypto.randomUUID(), status: 'resolved' })
+    const result = await call(
+      'resolve',
+      { memoryId: MEMO_ID, status: 'resolved', reason: '  PR #234  ' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(resolveByMemoryId.mock.calls[0]?.[5]).toBe('PR #234')
+  })
+
+  it('omits the reason (undefined) when the caller passes none', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: crypto.randomUUID(), status: 'resolved' })
+    await call('resolve', { memoryId: MEMO_ID, status: 'resolved' }, ctx())
+    expect(resolveByMemoryId.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '  '],
+    ['oversize', 'x'.repeat(501)],
+  ])('rejects a %s reason as invalid input without calling core', async (_label, reason) => {
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'resolved', reason }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid input')
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('maps a blocker reason rejection to invalid input with fixed text', async () => {
+    resolveByMemoryId.mockRejectedValue(new ResolveReasonNotSupportedError(MEMO_ID))
+    const result = await call(
+      'resolve',
+      { memoryId: MEMO_ID, status: 'resolved', reason: 'private-evidence-text' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toBe(
+      'invalid input: a resolve reason is stored only on a commitment; omit reason to resolve a blocker',
+    )
+    expect(text).not.toContain('private-evidence-text')
   })
 
   it('maps CommitmentNotFoundError to not_found, naming the id only', async () => {

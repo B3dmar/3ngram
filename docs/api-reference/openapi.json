@@ -2780,6 +2780,12 @@
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                             "type": "string"
                           },
+                          "lastResolutionReason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "memoryId": {
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -2834,6 +2840,7 @@
                           "recurrence",
                           "nextSurfacingAt",
                           "resolvedAt",
+                          "lastResolutionReason",
                           "createdAt",
                           "updatedAt"
                         ],
@@ -5142,6 +5149,18 @@
                     "eventsTruncated": {
                       "type": "boolean"
                     },
+                    "lastResolutionReason": {
+                      "anyOf": [
+                        {
+                          "maxLength": 500,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "lineage": {
                       "additionalProperties": false,
                       "properties": {
@@ -5457,7 +5476,8 @@
                     "directRelationships",
                     "auditEvents",
                     "eventsTruncated",
-                    "createdBySessionRunId"
+                    "createdBySessionRunId",
+                    "lastResolutionReason"
                   ],
                   "type": "object"
                 }
@@ -5490,6 +5510,12 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "reason": {
+                    "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "sessionRunId": {
                     "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.",
                     "format": "uuid",

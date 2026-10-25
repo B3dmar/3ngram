@@ -444,6 +444,11 @@ or demoted (`packages/db/src/memory-revise.ts`). `resolve` / `unresolve` /
 `archive` go through `transitionCommitment`, which today inserts an event with no
 payload. Thread the same payload through **all** of those inserts, including
 `supersede`. Listing only `create` would drop the predecessor close from the run.
+A `resolve` `reason` (issue #234) is deliberately **not** part of this payload: it
+is memory content, and the runtime role cannot UPDATE `memory_events`, so account
+erasure could never redact it there. It is stored on the commitment row
+(`last_resolution_reason`) instead, and the resolve event keeps carrying
+`{ sessionRunId }` only.
 
 **Do not add `sessionRunId` to `rememberInputSchema`.** `importMemoryInputSchema`
 extends that schema (`packages/schema/src/import.ts`); a key there would be accepted
@@ -569,6 +574,9 @@ all read `null`. The id is returned as recorded and not re-validated against
 also survives account erasure, which cannot reach `memory_events.payload`. It is
 an id, not content. Tenant isolation is RLS on the read, plus the write path
 refusing another tenant's run id. Harness and model labels are **not** projected.
+The envelope's one content field, `lastResolutionReason: string | null` (issue
+#234), is not read from any payload: it is the inspected memory's
+`commitments.last_resolution_reason`, joined in the identity query.
 
 ## Layer 4 — Stop is a nudge
 

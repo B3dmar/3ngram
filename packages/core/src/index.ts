@@ -281,6 +281,7 @@ export {
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
   type RememberResult,
+  ResolveReasonNotSupportedError,
   type ResolveStatus,
   type RetryFailedEmbedsOptions,
   type RetryFailedEmbedsResult,

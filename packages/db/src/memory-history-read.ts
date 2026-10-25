@@ -3,7 +3,9 @@
 // This module is read-only and identity-only: it never selects memory content,
 // tags, content hashes, embeddings, raw event payloads, or arbitrary payload
 // keys — the one allowlisted payload key, `sessionRunId`, is re-parsed through
-// its strict payload schema. It runs inside withTenant(); RLS scopes all rows to
+// its strict payload schema. The single deliberate exception is the inspected
+// memory's `lastResolutionReason` (issue #234): the owner's own evidence text
+// for its commitment's latest transition, never logged. It runs inside withTenant(); RLS scopes all rows to
 // the caller. The raw SQL reads + raw row shapes live in
 // ./memory-history-queries.ts (500-line cap).
 import { sessionProvenancePayloadSchema } from '@3ngram/schema'
@@ -108,6 +110,12 @@ export interface MemoryHistoryRead {
    * section. Never inherited from a predecessor or inferred from neighbours.
    */
   createdBySessionRunId: string | null
+  /**
+   * The inspected memory's commitment `last_resolution_reason` (issue #234):
+   * the reason given with its latest transition, or null (not a commitment, no
+   * reason on the latest transition, or the row moved to a successor).
+   */
+  lastResolutionReason: string | null
   /** Per-section load status. A readable identity never aborts the whole read. */
   sections: MemoryHistorySections
   /**
@@ -407,6 +415,7 @@ export async function getMemoryHistory(
     auditEvents: mapAuditEvents(boundedAuditRows),
     eventsTruncated: auditRows !== undefined && auditRows.length > MEMORY_HISTORY_EVENT_LIMIT,
     createdBySessionRunId: allowlistedSessionRunId(eventsGroup?.creatingSessionRunId),
+    lastResolutionReason: inspected.last_resolution_reason ?? null,
     sections: { lineage: lineageStatus, events: eventsStatus },
     ...(sectionErrors.lineage !== undefined || sectionErrors.events !== undefined
       ? { sectionErrors }

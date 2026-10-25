@@ -100,6 +100,7 @@ const {
   createCommitment,
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
+  ResolveReasonNotSupportedError,
   resolveByMemoryId,
   resolveForClosedRun,
   transition,
@@ -331,6 +332,70 @@ describe('resolveByMemoryId (memory-keyed transition for the resolve tool)', () 
     expect(dbTransitionCommitment).not.toHaveBeenCalled()
   })
 
+  // Issue #234: the optional reason rides the same transition write.
+  it('forwards a reason to the db transition with the session run id', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'resolved' })
+
+    await resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR, RUN, 'PR #234')
+
+    expect(dbTransitionCommitment.mock.calls[0]?.[0]).toMatchObject({
+      commitmentId: COMMITMENT,
+      to: 'resolved',
+      expectedFrom: 'open',
+      sessionRunId: RUN,
+      resolutionReason: 'PR #234',
+    })
+  })
+
+  it('passes no reason when none is given, so the db clears the previous one', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({
+      id: COMMITMENT,
+      memoryId: MEMORY,
+      status: 'resolved',
+    })
+    dbTransitionCommitment.mockResolvedValue({ id: COMMITMENT, status: 'open' })
+
+    await resolveByMemoryId(USER, MEMORY, 'open', ACTOR)
+
+    expect(dbTransitionCommitment.mock.calls[0]?.[0].resolutionReason).toBeUndefined()
+  })
+
+  it('stores nothing for a reason on a same-state no-op', async () => {
+    getCommitmentByMemoryId.mockResolvedValue({
+      id: COMMITMENT,
+      memoryId: MEMORY,
+      status: 'resolved',
+    })
+
+    const result = await resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR, undefined, 'late')
+
+    expect(result).toEqual({ id: COMMITMENT, status: 'resolved' })
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+
+  it('rejects a reason on a BLOCKER before archiving it (no silent drop)', async () => {
+    getCommitmentByMemoryId.mockResolvedValue(undefined)
+    getMemoryById.mockResolvedValue({ id: MEMORY, memoryType: 'blocker', status: 'active' })
+
+    const attempt = resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR, undefined, 'PR #234')
+
+    await expect(attempt).rejects.toBeInstanceOf(ResolveReasonNotSupportedError)
+    await expect(attempt).rejects.toMatchObject({ memoryId: MEMORY })
+    await expect(attempt).rejects.not.toHaveProperty('message', expect.stringContaining('PR #234'))
+    expect(archiveBlockerMemory).not.toHaveBeenCalled()
+    expect(dbTransitionCommitment).not.toHaveBeenCalled()
+  })
+
+  it('keeps the not-found contract for a reason on a non-resolvable id', async () => {
+    getCommitmentByMemoryId.mockResolvedValue(undefined)
+    getMemoryById.mockResolvedValue({ id: MEMORY, memoryType: 'decision', status: 'active' })
+
+    await expect(
+      resolveByMemoryId(USER, MEMORY, 'resolved', ACTOR, undefined, 'PR #234'),
+    ).rejects.toBeInstanceOf(CommitmentNotFoundError)
+  })
+
   it('fails a same-state no-op carrying a run id this tenant does not own', async () => {
     getCommitmentByMemoryId.mockResolvedValue({ id: COMMITMENT, memoryId: MEMORY, status: 'open' })
     assertSessionRunOwned.mockRejectedValue(new UnknownSessionRunError(RUN))
@@ -477,6 +542,8 @@ describe('resolveForClosedRun compare-and-set', () => {
 
     const call = dbTransitionCommitment.mock.calls[0]?.[0] as Record<string, unknown>
     expect(call.expectedFrom).toBe('open')
+    // The closer never supplies a reason (issue #234): its resolve clears one.
+    expect(call.resolutionReason).toBeUndefined()
   })
 
   it('reports already-resolved WITHOUT writing when it loses the race', async () => {

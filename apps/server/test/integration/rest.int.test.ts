@@ -957,6 +957,35 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.writeScopePolicy).toMatchObject({ mode: 'default', defaultScope: aScope })
   })
 
+  it("exports the commitment's latest resolution reason to its owner (#234)", async () => {
+    const write = await api('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: {
+        memoryType: 'commitment',
+        topic: 'export reason',
+        content: `rest-export-commitment-${crypto.randomUUID()}`,
+      },
+    })
+    expect(write.status).toBe(201)
+    const memoryId = ((await write.json()) as { memory: { id: string } }).memory.id
+    const reason = `export-reason-${crypto.randomUUID()}`
+    const resolved = await api(`/api/v1/memories/${memoryId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved', reason },
+    })
+    expect(resolved.status).toBe(200)
+
+    const res = await api('/api/v1/export', { key: keyA })
+    const body = (await res.json()) as {
+      commitments: Array<{ memoryId: string; lastResolutionReason: string | null }>
+    }
+    expect(body.commitments.find((c) => c.memoryId === memoryId)?.lastResolutionReason).toBe(reason)
+    const other = await api('/api/v1/export', { key: keyB })
+    expect(JSON.stringify(await other.json())).not.toContain(reason)
+  })
+
   it('TENANT ISOLATION: A export carries A profile only, never B (RLS, no explicit filter)', async () => {
     await seedProfile(await userIdFor(emailB), 'founder', 'twitter')
 
