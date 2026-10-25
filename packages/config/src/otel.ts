@@ -3,7 +3,7 @@
 // in every app entrypoint — Sentry's OTel auto-instrumentation must load
 // before http/pg/etc. Never import it from library code; apps only.
 import * as Sentry from '@sentry/node'
-import { type Env, loadEnv } from './env.js'
+import { type Env, type EnvRole, loadEnv } from './env.js'
 import { logger } from './logger.js'
 import { contentDigest, REDACTED, REDACTED_FIELDS } from './redaction.js'
 
@@ -114,11 +114,12 @@ let initialized = false
  * and the provider-rebind test in metrics.test.ts proves instruments pick up
  * a provider installed after first use.
  */
-export function initObservability(options: { release?: string } = {}): void {
+export function initObservability(options: { release?: string; role?: EnvRole } = {}): void {
   if (initialized) return
   initialized = true
 
-  const env = loadEnv()
+  // The first loadEnv caller in an entrypoint: it fixes the role for the process.
+  const env = loadEnv(options.role === undefined ? undefined : { role: options.role })
   if (env.SENTRY_DSN === '') {
     logger.info('observability: telemetry disabled (no SENTRY_DSN)')
     registerCrashHandlers(false)

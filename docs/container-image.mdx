@@ -86,16 +86,16 @@ warnings while the retry loop spins — the process stays alive and the
 container stays "healthy" with every job stalled. Monitor Redis and queue
 throughput separately; the healthcheck cannot see them.
 
-It validates the same production environment contract as the server
-(`packages/config/src/env.ts`) minus `PORT`: `BASE_URL` (https) is still
-required even though the worker serves no HTTP, along with `REDIS_URL`,
+It validates the production environment contract
+(`packages/config/src/env.ts`) as role `worker`: `BASE_URL` (https) is still
+required even though the worker serves no HTTP, along with
 a `DATABASE_URL` whose username matches `RUNTIME_DB_ROLE` (default
 `app_user`) and whose password is strong (12+ characters, not a shipped
 dev/example value — weak passwords are rejected at boot), no
-`DATABASE_URL_UNPOOLED`, and a non-placeholder `LOG_HASH_SALT`. `OAUTH_JWKS` is also required in production even though
-the worker has no OAuth surface — the shared validation does not yet
-distinguish the consuming process (tracked in issue #204); supply the
-server's value until then. `SESSION_CLOSER_ENABLED` (default `false`) gates the
+`DATABASE_URL_UNPOOLED`, and a non-placeholder `LOG_HASH_SALT`. The worker role does not require `OAUTH_JWKS` (it signs
+no tokens) or `REDIS_URL` (only the server's rate limiter needs it at
+validation time). The resident BullMQ worker still hard-fails at boot
+without `REDIS_URL`, because its queues cannot start. `SESSION_CLOSER_ENABLED` (default `false`) gates the
 session-sweep scheduler and closer job processors — with it off, the
 scheduler is removed entirely and closer jobs no-op; consolidation,
 surfacing, and OAuth-client GC run regardless.
