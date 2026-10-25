@@ -5,7 +5,9 @@
 // vendor SDK (`@typesafe-ai/sdk`) is pre-1.0 and proprietary-adjacent, so this
 // file speaks its wire contract directly instead. CONTRACT SOURCE: the published
 // `@typesafe-ai/sdk@0.7.0` type declarations and client (`POST /v1/systemone`,
-// Bearer auth, body `{state, questions, model}` → `{model, answers, usage}`).
+// Bearer auth, body `{state, questions, model}` → `{model, answers, usage}`),
+// checked against a recorded live response for the pin `jev-1.14.0` on
+// 2026-10-25 (test/__fixtures__/jev-systemone-recorded.json).
 // The SDK retries and logs bodies at debug level; this client does neither —
 // one bounded attempt, and no body (request or response) ever reaches a log
 // line or an error message (hard rule 6).
