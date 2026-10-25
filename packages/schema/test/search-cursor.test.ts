@@ -26,8 +26,18 @@ const FULL_HIT = {
   truncated: false,
   score: 0.5,
   superseded: false,
+  scope: 'work',
+  project: null,
 }
-const COMPACT_HIT = { id: ID, memoryType: 'note', topic: 'topic', score: 0.5, superseded: false }
+const COMPACT_HIT = {
+  id: ID,
+  memoryType: 'note',
+  topic: 'topic',
+  score: 0.5,
+  superseded: false,
+  scope: 'work',
+  project: null,
+}
 
 describe('searchQueryV3Schema — cursor + projection composition', () => {
   it('defaults projection to full and limit to the shipped default', () => {
@@ -98,6 +108,18 @@ describe('searchProjectionSchema / searchHitCompactSchema', () => {
   it('compact hit omits the excerpt triple and stays strict', () => {
     expect(searchHitCompactSchema.parse(COMPACT_HIT)).toEqual(COMPACT_HIT)
     expect(searchHitCompactSchema.safeParse(FULL_HIT).success).toBe(false)
+  })
+
+  it('compact hit keeps the filing and the optional commitment lifecycle (#319)', () => {
+    const resolved = { ...COMPACT_HIT, project: 'engine', commitmentStatus: 'resolved' }
+    expect(searchHitCompactSchema.parse(resolved)).toEqual(resolved)
+    const { scope: _s, ...noScope } = COMPACT_HIT
+    const { project: _p, ...noProject } = COMPACT_HIT
+    expect(searchHitCompactSchema.safeParse(noScope).success).toBe(false)
+    expect(searchHitCompactSchema.safeParse(noProject).success).toBe(false)
+    expect(
+      searchHitCompactSchema.safeParse({ ...COMPACT_HIT, commitmentStatus: 'done' }).success,
+    ).toBe(false)
   })
 })
 

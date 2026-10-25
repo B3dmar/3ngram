@@ -198,7 +198,7 @@ cursor on `memory_events.payload`. That does not work:
    commitment via `resolve` is a write; being *shown* one is not.
 3. **`memory_events` cannot hold a session marker.** Every row needs a real `memory_id`
    and an `event_kind` in the existing CHECK
-   (`create|revise|supersede|resolve|unresolve|archive|import|embed_failed`).
+   (`create|revise|supersede|resolve|unresolve|archive|import|embed_failed|reaffirm`).
 4. **A cursor sampled at SessionEnd sits after Session A's writes**, so a naive "since
    close" delta omits exactly the work that should hand off.
 5. **Stop is not a session boundary.** The first qualifying turn is not "the session
@@ -444,12 +444,18 @@ or demoted (`packages/db/src/memory-revise.ts`). `resolve` / `unresolve` /
 `archive` go through `transitionCommitment`, which today inserts an event with no
 payload. Thread the same payload through **all** of those inserts, including
 `supersede`. Listing only `create` would drop the predecessor close from the run.
+A `resolve` `reason` (issue #234) is deliberately **not** part of this payload: it
+is memory content, and the runtime role cannot UPDATE `memory_events`, so account
+erasure could never redact it there. It is stored on the commitment row
+(`last_resolution_reason`) instead, and the resolve event keeps carrying
+`{ sessionRunId }` only.
 
 **Do not add `sessionRunId` to `rememberInputSchema`.** `importMemoryInputSchema`
 extends that schema (`packages/schema/src/import.ts`); a key there would be accepted
 on import and then silently dropped. The shipped native write path is already the
 facts-capable schema: `rememberToolInputV2Schema` aliases
-`rememberWithFactsInputSchema`, and `packages/core/src/write/remember.ts` re-parses
+`nativeRememberInputSchema` (facts, `sessionRunId`, and since issue #165 a
+commitment's optional `dueAt`/`owner`), and `packages/core/src/write/remember.ts` re-parses
 that **strict** shape. Compose beside that canonical native input (ADR-0011):
 
 ```text
@@ -532,7 +538,8 @@ event the transaction inserts (`create`, `supersede`, and any implicit
 
 [REST history](/concepts/data-model) redacts event payloads on purpose
 (`packages/schema/src/rest.ts`): *never raw payload values or arbitrary payload keys.*
-The history endpoint does **not** start returning payload.
+The history endpoint does **not** start returning payload; it projects only
+allowlisted keys as sibling fields (see "On the memory history read" below).
 
 This is a **narrowing of that rule**, not an exception:
 
@@ -548,8 +555,28 @@ ceiling. A truncated run is **terminal `overflowed`**: the closer must not
 re-claim and re-spend an LLM pass on the same run; emit a metric. Chunked
 progress across ceilings is out — that is a pathological case, not a product
 path. `jsonb` operators for `sessionRunId` only, parsed through
-`sessionProvenancePayloadSchema`, never `payload` as a blob. History DTO stays
-metadata-only (`present` / `jsonType` / `byteLength`).
+`sessionProvenancePayloadSchema`, never `payload` as a blob.
+
+**On the memory history read** (issue #262). `GET /api/v1/memories/{id}/history`
+applies the same narrowing per memory. `payloadMetadata` (`present` / `jsonType` /
+`byteLength`) still describes the whole stored payload; beside it, each audit
+event carries `sessionRunId: uuid | null`, projected with
+`payload->>'sessionRunId'` and re-parsed through `sessionProvenancePayloadSchema`.
+A stored value that fails the parse reads as `null`; it is not thrown and not
+passed through. The envelope adds `createdBySessionRunId: uuid | null`: the run
+on this memory's own native `create` event, read by its own query so a truncated
+events window cannot hide it. In a revision chain each version reports its own
+creating run. The predecessor's `supersede` event carries the run that revised
+it, and nothing is inherited or inferred from neighbouring events. An imported
+memory, a create written without provenance, and an `unavailable` events section
+all read `null`. The id is returned as recorded and not re-validated against
+`agent_sessions`, so it survives the session row being deleted or redacted. It
+also survives account erasure, which cannot reach `memory_events.payload`. It is
+an id, not content. Tenant isolation is RLS on the read, plus the write path
+refusing another tenant's run id. Harness and model labels are **not** projected.
+The envelope's one content field, `lastResolutionReason: string | null` (issue
+#234), is not read from any payload: it is the inspected memory's
+`commitments.last_resolution_reason`, joined in the identity query.
 
 ## Layer 4 — Stop is a nudge
 
@@ -596,7 +623,17 @@ Three implementation decisions this section left open:
   `pending` decline. That means the finalize path calls a route that COULD arm;
   if it does, the hook still refuses to inject (`stop_hook_active=true` forbids
   it) and completes the fresh attempt immediately, which lands the row on
-  `expired` — closer-eligible. The nudge is lost, the debrief is not.
+  `expired` — closer-eligible. The nudge is lost, the debrief is not. That
+  complete carries `defensive: true`
+  ([issue #189](https://github.com/B3dmar/3ngram/issues/189)): no debrief was
+  shown, so the outcome is `expired` whatever arrived since begin and the
+  watermark stays at the begin stamp. An async write that commits between the
+  two calls therefore stays untriaged — it re-arms the next Stop and keeps the
+  run closer-eligible — instead of being absorbed as if a debrief had covered
+  it. The complete that releases an armed attempt whose debrief fetch failed
+  carries the same flag; finalizing a `pending` attempt, whose debrief *was*
+  shown, does not. The field is optional and the body strict, so a server older
+  than it answers 400 and the hook falls back to the ordinary complete.
 - **No `turnCount` hint is sent.** Neither harness carries a turn count in the
   Stop payload, and the transcript is not a stable interface. The debounce is a
   disjunction and its other two arms are server-side facts, so the condition
@@ -651,6 +688,10 @@ Stop(stop_hook_active=true)  OR  numeric self-cap hit
   → if visible truncated: triage_status=overflowed   // terminal; closer does not retry
   → else if since_begin is empty: triage_status=expired   // closer-eligible
   → else: triage_status=completed
+
+triage/complete with defensive=true   // armed, but no debrief was shown (#189)
+  → as above, except: triage_status=expired even when since_begin is non-empty
+  → last_triaged_event_ids unchanged   // the begin stamp; nothing claimed as covered
 ```
 
 `since_begin` is a **set difference against the begin stamp**, not a timestamp or
@@ -1059,7 +1100,7 @@ there would `409` every resume of a live session instead of refreshing its lease
 | `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch (shipped) |
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key; optional bounded `last_message_excerpt` (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |
-| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id (shipped) |
+| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id; `defensive` lands `expired` and keeps the begin watermark (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}` | the bookkeeping-row read: identity, lifecycle, epoch, triage status, `briefed_memories` — never the excerpt or the watermark ids. The briefing is the CURRENT activation's snapshot (a reopening startup restamps it), so a recall reader over a reopened run scopes the run's events by `briefing_delivered_at` (shipped, issue #203) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/triage-attempts` | the run's interactive nudge history: armed/finalized instants and outcomes off the bounded `triage_attempt_log`, with the true `count` and a `truncated` flag (shipped, issue #203) |

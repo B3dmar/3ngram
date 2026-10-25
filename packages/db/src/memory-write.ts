@@ -55,6 +55,10 @@ export interface MemoryWrite {
   actorKind: ActorKind
   /** Native-only session provenance. Import never sets this. */
   sessionRunId?: string | undefined
+  /** Native-only commitment lifecycle (issue #165): written onto the
+   * auto-created `commitments` row of a commitment-type memory. Ignored for
+   * every other type (the schema boundary already rejects it there). */
+  commitment?: CommitmentWrite | undefined
   /** Injected clock for lease evaluation. Defaults to now. */
   now?: Date | undefined
   // Optional original-history overrides (import path). Omitted -> column
@@ -65,6 +69,12 @@ export interface MemoryWrite {
    * outside the live-hash space, so the duplicate guard is skipped for it. */
   validTo?: Date | undefined
   recordedAt?: Date | undefined
+}
+
+/** Explicit lifecycle values for a native commitment write. Absent -> NULL. */
+export interface CommitmentWrite {
+  dueAt?: Date | undefined
+  owner?: string | undefined
 }
 
 /** Audit-event metadata for the row's insert event. Defaults model today's
@@ -214,9 +224,9 @@ export async function insertMemoryWithEvent(
  *
  * Auto-created commitment:
  * when `memory_type === 'commitment'` this ALSO inserts a `commitments` row
- * (status 'open', defaults only — no dueAt/owner; the schema still models none)
- * in the SAME transaction, so a commitment memory and its lifecycle row land or
- * roll back together. Rationale: an MCP-created commitment memory MUST be
+ * (status 'open', plus the caller's explicit `dueAt`/`owner` when given — issue
+ * #165; both stay NULL otherwise) in the SAME transaction, so a commitment memory
+ * and its lifecycle row land or roll back together. Rationale: an MCP-created commitment memory MUST be
  * resolvable via the `resolve` tool, and resolve keys on the COMMITMENT — without
  * the auto-create the memory would have no commitment to transition. The earlier
  * deferral held only because no surface created commitment memories yet. The
@@ -269,12 +279,18 @@ export async function writeMemory(
       )
       const written: WrittenMemory = factIds.length > 0 ? { ...inserted, factIds } : inserted
       if (input.memoryType !== 'commitment') return written
-      // Same-tx commitment auto-create: defaults only (status 'open'). The
-      // composite FK to the just-inserted memory holds inside the tx; the unique
-      // index (one commitment per memory) cannot collide on a fresh memory id.
+      // Same-tx commitment auto-create: status 'open' plus the explicit
+      // deadline/owner when given (NULL otherwise). The composite FK to the
+      // just-inserted memory holds inside the tx; the unique index (one
+      // commitment per memory) cannot collide on a fresh memory id.
       const [commitment] = await tx
         .insert(commitments)
-        .values({ userId: input.userId, memoryId: written.id })
+        .values({
+          userId: input.userId,
+          memoryId: written.id,
+          dueAt: input.commitment?.dueAt ?? null,
+          owner: input.commitment?.owner ?? null,
+        })
         .returning({ id: commitments.id })
       if (!commitment) throw new Error('writeMemory commitment auto-create returned no row')
       return { ...written, commitmentId: commitment.id }

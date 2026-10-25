@@ -9,7 +9,7 @@
 import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { edgeTypeSchema, eventKindSchema, memoryStatusSchema } from './memory.js'
-import { MAX_CONTENT_LENGTH, rememberInputSchema } from './write.js'
+import { commitmentOwnerSchema, MAX_CONTENT_LENGTH, rememberInputSchema } from './write.js'
 
 /** Serialized ceiling for a caller-supplied import event payload. The payload
  * carries source ids/types for correlation — it is metadata, never a body. */
@@ -87,7 +87,7 @@ const importEventOverrideSchema = z
 export const importCommitmentSchema = z
   .object({
     status: commitmentStatusSchema.default('open'),
-    owner: z.string().trim().min(1).max(256).optional(),
+    owner: commitmentOwnerSchema.optional(),
     dueAt: nullableTimestampSchema,
     resolvedAt: nullableTimestampSchema,
     recurrence: z.unknown().optional(),

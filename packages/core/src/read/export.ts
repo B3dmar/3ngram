@@ -37,6 +37,7 @@ export type {
   ExportRetrievalPolicyRow,
   ExportScopeRow,
   ExportUserProfileRow,
+  ExportWriteScopePolicyRow,
   UserDataExport,
 } from '@3ngram/db'
 

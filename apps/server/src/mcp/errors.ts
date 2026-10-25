@@ -28,12 +28,14 @@ import {
   // appended block. ProposalNotFoundError now also covers the accept path's
   // not-open / not-owned guard.
   ProposalNotFoundError,
+  ResolveReasonNotSupportedError,
   ResourceLimitExceededError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
   UnknownSessionRunError,
   UnscopedRetrievalError,
+  UnscopedWriteError,
 } from '@3ngram/core'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { ZodError } from 'zod'
@@ -100,6 +102,22 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: unscoped read rejected by policy')
     return fail(`invalid input: ${formatUnscopedRetrievalDetail(err.registeredScopes)}`)
   }
+  // A `remember` without scope rejected by the caller's own write-scope policy
+  // (mode 'require', issue #235): the write-side sibling above, same
+  // invalid_input reason. The message is fixed text naming the fix; no content.
+  if (err instanceof UnscopedWriteError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: unscoped write rejected by policy')
+    return fail(`invalid input: ${err.message}`)
+  }
+  // A blocker resolve carrying a `reason` (issue #234): blockers have no
+  // commitment row to hold one. invalid_input with fixed text naming the fix;
+  // the reason itself is never echoed or logged. Mirrors REST.
+  if (err instanceof ResolveReasonNotSupportedError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: resolve reason rejected for a blocker')
+    return fail(`invalid input: ${err.message}`)
+  }
   // A continuation cursor replayed against a DIFFERENT query/filter set than
   // the one that issued it — the caller's mistake, named honestly with the
   // recovery (never a silent re-page of the old search's frozen ordering, and
@@ -107,9 +125,9 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
   if (err instanceof CursorQueryMismatchError) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: cursor query mismatch')
-    return fail(
-      'invalid input: cursor was issued for a different query — omit the cursor to start a new search',
-    )
+    // The message is a fixed per-codec constant (search or proposals) — it
+    // never carries query text, the token, or a tenant id.
+    return fail(`invalid input: ${err.message}`)
   }
   // Over the per-user budget cap. A documented domain denial,
   // not a server fault: a class-named isError result counted under budget_exceeded.

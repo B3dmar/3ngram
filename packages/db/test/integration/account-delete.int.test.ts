@@ -4,7 +4,7 @@
 //
 // Proves the append-only reconciliation END TO END:
 //   - PII columns are redacted in place (memories/facts/fact_proposals/
-//     commitments/users)
+//     commitments owner + last_resolution_reason/users)
 //   - NO memory-domain row is physically deleted (row counts unchanged) — the
 //     runtime grant has no DELETE on memory data, so erasure CANNOT delete it
 //   - sessions are deleted; api keys + oauth tokens are revoked (revoked_at)
@@ -22,7 +22,9 @@ import {
   insertPasswordResetToken,
   type NewOauthToken,
   resetPasswordAtomic,
+  transitionCommitment,
   withTenant,
+  writeMemory,
 } from '../../src/index.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
@@ -140,6 +142,11 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     await ownerPool.query(
       `INSERT INTO user_retrieval_policy (user_id, mode, default_scope)
        VALUES ($1, 'default', 'private')`,
+      [userA],
+    )
+    await ownerPool.query(
+      `INSERT INTO user_write_scope_policy (user_id, mode, default_scope)
+       VALUES ($1, 'default', 'private-writes')`,
       [userA],
     )
     // Credentials: a session (deletable) + an api key + an oauth client/token.
@@ -296,10 +303,64 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
       [userA],
     )
     expect(policy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
+    // The write-scope policy's scope label is erased too (issue #235).
+    const writePolicy = await ownerPool.query(
+      'SELECT mode, default_scope FROM user_write_scope_policy WHERE user_id = $1',
+      [userA],
+    )
+    expect(writePolicy.rows[0]).toMatchObject({ mode: 'off', default_scope: null })
 
     await ownerPool.query('DELETE FROM oauth_codes WHERE client_id = $1', [clientId])
     await ownerPool.query('DELETE FROM oauth_tokens WHERE client_id = $1', [clientId])
     await ownerPool.query('DELETE FROM oauth_clients WHERE client_id = $1', [clientId])
+  })
+
+  it("redacts a commitment's resolution reason in place; B's survives (#234)", async () => {
+    // Written through the runtime role exactly as resolve writes it.
+    const seed = async (userId: string, reason: string): Promise<string> => {
+      const written = await writeMemory({
+        userId,
+        memoryType: 'commitment',
+        topic: 'obligation',
+        content: `obligation ${reason}`,
+        scope: 'work',
+        tags: [],
+        contentHash: `hash-${crypto.randomUUID()}`,
+        actorKind: 'user_api',
+      })
+      if (written.commitmentId === undefined) throw new Error('expected a commitment')
+      await transitionCommitment({
+        userId,
+        commitmentId: written.commitmentId,
+        to: 'resolved',
+        actorKind: 'user_api',
+        resolutionReason: reason,
+      })
+      return written.commitmentId
+    }
+    const aCommitment = await seed(userA, 'secret evidence A')
+    const bCommitment = await seed(userB, 'evidence B')
+
+    const result = await withTenant(userA, (tx) => eraseAccountData(tx, userA, NOW))
+    expect(result?.commitments).toBe(1)
+
+    const rows = await ownerPool.query(
+      'SELECT id, status, last_resolution_reason FROM commitments WHERE id = ANY($1)',
+      [[aCommitment, bCommitment]],
+    )
+    const byId = new Map(rows.rows.map((r) => [r.id, r]))
+    // The skeleton (row + status) survives; the reason text does not.
+    expect(byId.get(aCommitment)).toMatchObject({
+      status: 'resolved',
+      last_resolution_reason: null,
+    })
+    expect(byId.get(bCommitment)?.last_resolution_reason).toBe('evidence B')
+    // And nothing unerasable was left behind: the append-only event payloads
+    // never carried the reason in the first place.
+    const events = await ownerPool.query('SELECT payload FROM memory_events WHERE user_id = $1', [
+      userA,
+    ])
+    expect(JSON.stringify(events.rows)).not.toContain('secret evidence A')
   })
 
   it('is idempotent: a second erasure short-circuits on the deletion marker', async () => {

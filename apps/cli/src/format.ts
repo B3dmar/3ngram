@@ -27,10 +27,15 @@ export function formatSearch(result: SearchRestResponseV2): string {
       : [`retrieval scope: ${result.appliedScope} (policy applied)`]
   if (result.count === 0) return [...scopeLine, 'no matches'].join('\n')
   const header = `${result.count} match${result.count === 1 ? '' : 'es'}`
-  const blocks = result.hits.map(
-    (hit) =>
-      `[${hit.score.toFixed(3)}] ${hit.memoryType} ${hit.id}\n  ${hit.topic}\n  ${hit.content}`,
-  )
+  const blocks = result.hits.map((hit) => {
+    // A server predating #319 sends no filing: print nothing rather than "undefined".
+    const filing =
+      hit.scope === undefined ? '' : hit.project == null ? hit.scope : `${hit.scope}/${hit.project}`
+    const lifecycle =
+      hit.commitmentStatus === undefined ? '' : ` commitment:${hit.commitmentStatus}`
+    const head = `[${hit.score.toFixed(3)}] ${hit.memoryType} ${hit.id}${filing === '' ? '' : ` ${filing}`}${lifecycle}`
+    return `${head}\n  ${hit.topic}\n  ${hit.content}`
+  })
   return [...scopeLine, header, ...blocks].join('\n')
 }
 

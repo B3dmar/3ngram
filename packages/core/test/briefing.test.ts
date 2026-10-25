@@ -43,7 +43,9 @@ const {
   STALE_WINDOW_DAYS,
   MAX_BRIEFING_SECTION,
 } = await import('../src/read/briefing.js')
-const { MAX_BRIEFING_SECTION_CEILING, MEMORY_TYPES } = await import('@3ngram/schema')
+const { MAX_BRIEFING_SECTION_CEILING, MEMORY_TYPES, briefingToolOutputV4Schema } = await import(
+  '@3ngram/schema'
+)
 
 const NOW = new Date('2026-06-06T12:00:00.000Z')
 
@@ -60,6 +62,9 @@ function commitmentRow(overrides: Record<string, unknown> = {}) {
     status: 'open',
     dueAt: null,
     nextSurfacingAt: null,
+    owner: null,
+    scope: 'work',
+    project: null,
     ...overrides,
   }
 }
@@ -174,6 +179,29 @@ describe('briefing — scope_project selector (issue #46)', () => {
       expect(fn.mock.calls[0]?.[2]).toEqual(selector)
     }
     expect(result.selector).toEqual(selector)
+  })
+})
+
+describe('briefing — commitment owner and filing (issue #261)', () => {
+  it('maps owner, scope and project onto open and overdue items, and the result parses', async () => {
+    resetAll()
+    const owned = commitmentRow({
+      owner: 'release-captain',
+      project: 'p1',
+      dueAt: new Date(NOW.getTime() - 1000),
+    })
+    const unscoped = commitmentRow({ scope: 'personal' })
+    openCommitments.mockResolvedValue(page([owned, unscoped]))
+    overdueCommitments.mockResolvedValue(page([owned]))
+
+    const result = await briefing('u1', { selector: { kind: 'all' }, mode: 'full', now: NOW })
+
+    expect(result.commitments.items).toEqual([
+      expect.objectContaining({ owner: 'release-captain', scope: 'work', project: 'p1' }),
+      expect.objectContaining({ owner: null, scope: 'personal', project: null }),
+    ])
+    expect(result.overdue.items[0]).toMatchObject({ owner: 'release-captain', overdue: true })
+    expect(briefingToolOutputV4Schema.safeParse(result).success).toBe(true)
   })
 })
 

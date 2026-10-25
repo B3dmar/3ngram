@@ -154,7 +154,9 @@ export function sessionRouter(options: SessionRouterOptions): Router {
   // POST /api/v1/agent-sessions/triage/complete — Stop, second half. Absorbs the
   // continuation's writes: `completed` when it produced provenance, `expired`
   // when it produced none (so the closer still runs), `overflowed` past the
-  // per-run ceiling — and stamps the CUMULATIVE watermark.
+  // per-run ceiling — and stamps the CUMULATIVE watermark. `defensive: true`
+  // (issue #189) is a hook that armed but showed no debrief: `expired`, and the
+  // watermark stays at the begin stamp. Core owns that rule; this forwards it.
   //
   // A stale attempt is a 409, not a silent no-op: a crashed hook, a second Stop
   // or a closer that re-claimed the row after the lease expired mid-handshake
@@ -208,8 +210,10 @@ export function sessionRouter(options: SessionRouterOptions): Router {
       // (`cmd/3ngram-hook/briefing.go`). A caller that reconstructs the facet
       // from its own environment cannot know that narrowed name, so the prompt
       // would tell the model to file under a scope it was never briefed under —
-      // and an omitted `scope` on `remember` defaults to `personal`, which drops
-      // the debrief memories out of the very briefing that surfaced the work.
+      // and an omitted `scope` on `remember` follows the write-scope policy
+      // (`personal` unless the tenant configured otherwise, issue #235), which
+      // can drop the debrief memories out of the very briefing that surfaced
+      // the work.
       // Same argument for `project`: the row holds the facet resolved at open.
       //
       // An EXPLICIT query value still wins. This route is not hook-only, and a

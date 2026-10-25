@@ -58,8 +58,27 @@ export class InvalidCommitmentTransitionError extends Error {
   }
 }
 
-/** Optional metadata for a new commitment. remember() does NOT auto-create
- * one (no commitment metadata in rememberInputSchema) — this is the surface. */
+/**
+ * Thrown when a `resolve` carrying a `reason` targets a BLOCKER (issue #234).
+ * A reason is stored on the commitment row it explains; a blocker has no such
+ * row, and putting the text in the append-only event payload would make it
+ * unerasable — so the request is rejected (invalid input, nothing written)
+ * rather than silently dropping the reason. The message is fixed text naming
+ * the fix; it never echoes the reason (hard rule 6).
+ */
+export class ResolveReasonNotSupportedError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a resolve reason is stored only on a commitment; omit reason to resolve a blocker')
+    this.name = 'ResolveReasonNotSupportedError'
+    this.memoryId = memoryId
+  }
+}
+
+/** Optional metadata for a new commitment on an EXISTING commitment memory that
+ * has none. A native remember() of a commitment already auto-creates its row and
+ * takes an explicit dueAt/owner (issue #165); this standalone surface remains for
+ * programmatic callers. */
 export interface CreateCommitmentOptions {
   owner?: string | undefined
   dueAt?: Date | undefined
@@ -150,10 +169,17 @@ export type ResolveStatus = CommitmentStatus | 'archived'
  *   {@link CommitmentNotFoundError} keyed on the memory id, preserving the
  *   pre-existing not-found contract for non-blocker, non-commitment ids.
  *
+ * `resolutionReason` (issue #234, the transports' `reason`, already validated by
+ * `resolutionReasonSchema`) is the evidence for THIS transition, stored on the
+ * commitment row with the status change; a transition without one clears any
+ * earlier reason, and a same-state no-op stores nothing. A blocker cannot carry one:
+ * {@link ResolveReasonNotSupportedError}, before any write.
+ *
  * @throws {@link CommitmentNotFoundError} no commitment rides the memory AND it
  *   is not a live blocker (RLS hides cross-tenant rows).
  * @throws {@link InvalidCommitmentTransitionError} illegal per the schema FSM
  *   (commitment path only).
+ * @throws {@link ResolveReasonNotSupportedError} a reason on a blocker resolve.
  */
 export async function resolveByMemoryId(
   userId: string,
@@ -161,9 +187,12 @@ export async function resolveByMemoryId(
   to: CommitmentStatus,
   actorKind: ActorKind,
   sessionRunId?: string,
+  resolutionReason?: string,
 ): Promise<{ id: string; status: ResolveStatus }> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
-  if (current) return applyTransition(userId, current, to, actorKind, sessionRunId)
+  if (current) {
+    return applyTransition(userId, current, to, actorKind, sessionRunId, resolutionReason)
+  }
 
   // No commitment rides the memory. A blocker is MEMORY-ONLY: it
   // leaves the active set by archiving its OWN status, not via a commitment FSM.
@@ -172,6 +201,7 @@ export async function resolveByMemoryId(
   // or already-archived blocker still maps to the not-found contract below).
   const memory = await withTenant(userId, (tx) => getMemoryById(tx, userId, memoryId))
   if (memory?.memoryType === 'blocker') {
+    if (resolutionReason !== undefined) throw new ResolveReasonNotSupportedError(memoryId)
     try {
       return await archiveBlockerMemory(userId, memoryId, actorKind, sessionRunId)
     } catch (error) {
@@ -344,6 +374,10 @@ const MAX_TRANSITION_ATTEMPTS = 3
  * request shape where a bad id was silently accepted. The check is ownership
  * only: it never attaches, heartbeats, or stamps an event, so a no-op resolve
  * cannot be used to keep a session's lease alive.
+ *
+ * A `resolutionReason` on that no-op is likewise NOT stored (issue #234): nothing
+ * transitioned, so there is no transition for it to explain, and the reason
+ * already on the row keeps explaining the transition that set the status.
  */
 async function applyTransition(
   userId: string,
@@ -351,6 +385,7 @@ async function applyTransition(
   to: CommitmentStatus,
   actorKind: ActorKind,
   sessionRunId?: string,
+  resolutionReason?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
   let observed = current
   let lastRace: CommitmentStateChangedError | undefined
@@ -381,6 +416,7 @@ async function applyTransition(
         // double-counts the commitment-recall metric the closer is measured on.
         expectedFrom: observed.status,
         sessionRunId,
+        resolutionReason,
       })
     } catch (error) {
       if (!(error instanceof CommitmentStateChangedError)) throw error
