@@ -25,8 +25,12 @@ import { FakeRedis } from './fake-redis.js'
 // Mocks @3ngram/core/auth for the api-key middleware tests only.
 // ---------------------------------------------------------------------------
 
-const authenticateApiKey = vi.fn<(key: string) => Promise<string | undefined>>()
-const touchApiKeyLastUsed = vi.fn<(userId: string, key: string) => Promise<void>>()
+// Hoisted: rate-limit.js imports @3ngram/core, which loads core/auth before the
+// module body runs, so the mock factory must not read uninitialised bindings.
+const { authenticateApiKey, touchApiKeyLastUsed } = vi.hoisted(() => ({
+  authenticateApiKey: vi.fn<(key: string) => Promise<string | undefined>>(),
+  touchApiKeyLastUsed: vi.fn<(userId: string, key: string) => Promise<void>>(),
+}))
 vi.mock('@3ngram/core/auth', () => ({ authenticateApiKey, touchApiKeyLastUsed }))
 
 const { apiKeyAuth } = await import('../src/middleware/api-key.js')

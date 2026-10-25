@@ -20,7 +20,7 @@ A 3ngram deployment is four portable pieces:
 | Server | Node.js — one deployable | REST API, OAuth authorization server, OAuth resource server, and MCP endpoint |
 | Worker | Node.js — one deployable (`ghcr.io/b3dmar/3ngram-worker`) | Background jobs: consolidation, surfacing, OAuth-client GC, and the flag-gated session closer |
 | Database | Postgres + pgvector | Durable identity, memory, audit, eval, and usage data |
-| Redis | Redis | Cross-instance rate limiting and the worker's job queue |
+| Redis | Redis | Cross-instance rate limiting and the worker's job queue. Optional with `RATE_LIMIT_STORE=postgres` and one-shot workers |
 
 Everything runs on stock Postgres and Redis, so deploy to whatever you already
 operate: the bundled Compose stack on a single host, a PaaS such as Railway or
@@ -82,9 +82,17 @@ describes each tool and its required scope.
 
 ## Rate limits
 
-Production deployments require Redis for cross-instance limits. Local
-development can fall back to in-memory buckets, but that is not a production
-limit.
+`RATE_LIMIT_STORE` picks where limiter buckets live:
+
+- `redis` keeps them in Redis and requires `REDIS_URL`.
+- `postgres` keeps them in the `rate_limits` table (migration 0039) on
+  `DATABASE_URL`, so a production server needs no Redis.
+- `memory` keeps them per process. In production it is an explicit opt-in for a
+  single replica and logs a warning at boot.
+
+Unset, the server uses Redis when `REDIS_URL` is set and in-memory buckets
+outside production. In production an unset store without `REDIS_URL` fails
+validation at boot; it never falls back to memory.
 
 Current limit dimensions are:
 
@@ -92,7 +100,7 @@ Current limit dimensions are:
 - per-IP on login and OAuth authorization-server endpoints;
 - per API key/source on `/api/v1`.
 
-If Redis is unavailable, rate limiting fails open so the service keeps serving.
+If the store is unavailable, rate limiting fails open so the service keeps serving.
 Operators should treat repeated `rate-limit: store unavailable` warnings as a
 degraded-protection incident.
 
@@ -144,7 +152,7 @@ Use the smallest recovery action that matches the failure:
 |---|---|
 | Server regression | Redeploy the last good server commit if schema-compatible, otherwise roll forward |
 | OAuth/config failure | Check `BASE_URL`, `WEB_APP_URL`, signing keys, and discovery endpoints |
-| Redis outage | Confirm the server still serves; treat limits as degraded until Redis returns |
+| Rate-limit store outage | Confirm the server still serves; treat limits as degraded until the store returns |
 | Database/data incident | Restore from backup — or your provider's point-in-time / branch restore — then repoint runtime credentials only after an explicit operator decision |
 
 After recovery, rerun the deploy verification checks and one authenticated read

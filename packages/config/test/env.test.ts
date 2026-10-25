@@ -4,6 +4,7 @@ import {
   isAllowedMcpOrigin,
   loadEnv,
   loadMcpAllowedOrigins,
+  loadRateLimitStoreConfig,
   loadSmtpConfig,
   parseEnv,
   resetEnvCache,
@@ -552,5 +553,57 @@ describe('role (issues #204, #315: the worker skips server-only prod rules)', ()
     const fresh = await import('../src/env.js')
     expect(fresh.loadEnv({ role: 'worker' }).NODE_ENV).toBe('production')
     fresh.resetEnvCache()
+  })
+})
+
+describe('RATE_LIMIT_STORE (#315)', () => {
+  const { REDIS_URL: _omit, ...noRedis } = PROD_ENV
+  const originalEnv = { ...process.env }
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    resetEnvCache()
+  })
+
+  it('makes REDIS_URL optional in production only with postgres or explicit memory', () => {
+    expect(parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'postgres' }).RATE_LIMIT_STORE).toBe('postgres')
+    expect(parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'memory' }).RATE_LIMIT_STORE).toBe('memory')
+    expect(() => parseEnv(noRedis)).toThrow(/REDIS_URL/)
+    expect(() => parseEnv({ ...noRedis, RATE_LIMIT_STORE: '' })).toThrow(/REDIS_URL/)
+  })
+
+  it('refuses redis without REDIS_URL and postgres without DATABASE_URL', () => {
+    expect(() => parseEnv({ ...noRedis, RATE_LIMIT_STORE: 'redis' })).toThrow(/RATE_LIMIT_STORE/)
+    expect(() => parseEnv({ NODE_ENV: 'development', RATE_LIMIT_STORE: 'redis' })).toThrow(
+      /RATE_LIMIT_STORE=redis requires REDIS_URL/,
+    )
+    expect(() => parseEnv({ NODE_ENV: 'development', RATE_LIMIT_STORE: 'postgres' })).toThrow(
+      /RATE_LIMIT_STORE=postgres requires DATABASE_URL/,
+    )
+  })
+
+  it('treats empty as unset and rejects an unknown store', () => {
+    expect(parseEnv({ RATE_LIMIT_STORE: '' }).RATE_LIMIT_STORE).toBeUndefined()
+    expect(() => parseEnv({ RATE_LIMIT_STORE: 'dynamo' })).toThrow()
+  })
+
+  it('resolves the store: explicit value, else redis when REDIS_URL is set, else memory', () => {
+    const cases: Array<[Record<string, string>, unknown]> = [
+      [{ REDIS_URL: 'redis://h:6379' }, { kind: 'redis', explicit: false }],
+      [{}, { kind: 'memory', explicit: false }],
+      [
+        { RATE_LIMIT_STORE: 'memory', REDIS_URL: 'redis://h:6379' },
+        { kind: 'memory', explicit: true },
+      ],
+      [
+        { RATE_LIMIT_STORE: 'postgres', DATABASE_URL: PROD_ENV.DATABASE_URL },
+        { kind: 'postgres', explicit: true },
+      ],
+    ]
+    for (const [source, expected] of cases) {
+      process.env = { NODE_ENV: 'test', ...source }
+      resetEnvCache()
+      expect(loadRateLimitStoreConfig()).toEqual(expected)
+    }
   })
 })
