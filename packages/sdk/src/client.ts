@@ -113,6 +113,8 @@ export class ThreengramClient {
     predecessorId: string,
     input: Exclude<ReviseBody, ReviseDispositionBody>,
   ): Promise<ReviseToolOutput>
+  // A caller holding the whole `ReviseBody` union gets the whole output union.
+  revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutputV2>
   revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutputV2> {
     const path = `/api/v1/memories/${encodeURIComponent(predecessorId)}/revise`
     return this.#send<ReviseToolOutputV2>('POST', path, { ...input, predecessorId })
