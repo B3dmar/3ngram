@@ -277,19 +277,28 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   // future tools alike (AGENTS.md hard rule 8): whoever adds tool #12 writes 5
   // scenarios for it. There is no lower allowance for a new arrival — a tool
   // measured over fewer utterances is the one whose routing nobody can vouch for.
+  // The same holds per CAPABILITY: a scenario tagged `capability` measures a
+  // second job one tool's description names (revise's archive/reaffirm
+  // disposition), and each such (tool, capability) pair also needs exactly 5,
+  // on top of the tool's untagged 5 for its core job.
   const PER_TOOL = 5
+  const key = (s) =>
+    s.capability === undefined ? s.expected_tool : `${s.expected_tool}#${s.capability}`
   const counts = new Map([...registered].map((name) => [name, 0]))
-  for (const s of scenarios.toolScenarios)
-    counts.set(s.expected_tool, counts.get(s.expected_tool) + 1)
+  for (const s of scenarios.toolScenarios) counts.set(key(s), (counts.get(key(s)) ?? 0) + 1)
   const offenders = [...counts.entries()].filter(([, n]) => n !== PER_TOOL)
   assert.deepEqual(
     offenders,
     [],
-    `every registered tool needs exactly ${PER_TOOL} scenarios; offenders: ${offenders
+    `every registered tool and tagged capability needs exactly ${PER_TOOL} scenarios; offenders: ${offenders
       .map(([name, n]) => `${name}=${n}`)
       .join(', ')}`,
   )
-  assert.equal(scenarios.toolScenarios.length, registered.size * PER_TOOL)
+  assert.equal(scenarios.toolScenarios.length, counts.size * PER_TOOL)
+  for (const s of scenarios.toolScenarios) {
+    if (s.capability !== undefined)
+      assert.match(s.capability, /^[a-z][a-z-]*$/, `${s.id} capability`)
+  }
   for (const s of scenarios.surfaceScenarios) {
     assert.match(s.expected_surface, /^(resource|prompt):/)
   }

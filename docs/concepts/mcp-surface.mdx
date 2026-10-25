@@ -41,7 +41,9 @@ re-sent on every `tools/list`. Two well-separated tools cost less than one overl
 one. That is what to optimise; the number was only ever a proxy.
 
 So the proxy was replaced by the measurement. The `tool-selection` eval slice scores every
-registered description against five agent utterances per tool and gates three numbers:
+registered description against five agent utterances per tool (plus five per extra
+capability a description names, such as `revise`'s archive/reaffirm dispositions) and
+gates three numbers:
 `selection_accuracy_at_1` and `selection_margin` as floors, and `max_description_overlap`
 — the largest pairwise cosine between two tool descriptions — as a **ceiling**. A twelfth
 tool is not blocked; a twelfth tool that reads like an existing one is. That is the
