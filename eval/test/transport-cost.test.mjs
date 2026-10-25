@@ -195,9 +195,16 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // response once. CLI has no revise command. The tool description is
       // unchanged (no embeddings regen). MEASURED on this PR's actual base
       // (staging ab8b193), not summed.
-      mcp: [29153, 235040, 58664],
+      // MCP +42/+336/+82, REST +32/+32/+32 (issue #218, revise reaffirm
+      // disposition): the disposition `kind` enum gains `reaffirm` and its
+      // field description one sentence; the outcome enum gains `reaffirmed`
+      // and the rejection enum `archived`. MCP pays it on tools/list per turn,
+      // REST on the request/response surface once; CLI has no revise command.
+      // The tool description is unchanged (no embeddings regen). MEASURED on
+      // this PR's actual base (#217 on staging ab8b193), not summed.
+      mcp: [29195, 235376, 58746],
       cli: [333, 1236, 1236],
-      rest: [4530, 5547, 5547],
+      rest: [4562, 5579, 5579],
     },
   )
 })

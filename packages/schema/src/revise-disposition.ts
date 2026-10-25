@@ -5,6 +5,11 @@
 //   - archive (issue #217): status 'active' -> 'archived' on each listed
 //     memory. No successor, no edge; content, topic, tags and the bi-temporal
 //     columns are untouched (hard rule 1's audited status carve-out).
+//   - reaffirm (issue #218): "reviewed, still valid". Stamps
+//     memories.last_reviewed_at so the row leaves the stale-candidate queue
+//     for a full window. No new row, no edge, no status change, and content,
+//     topic, recorded_at and valid time are untouched — a review is not a
+//     revision, so nothing pretends to succeed the original.
 //
 // SHAPE: a bounded, de-duplicated `memoryIds` batch, never a single
 // `predecessorId`. A stale-candidate review answers many rows at once, and
@@ -24,7 +29,7 @@ import { sessionRunIdField } from './write.js'
 export const MAX_REVISE_DISPOSITION_IDS = 50
 
 /** The disposition kinds `revise` accepts beside the successor and move shapes. */
-export const reviseDispositionKindSchema = z.enum(['archive'])
+export const reviseDispositionKindSchema = z.enum(['archive', 'reaffirm'])
 export type ReviseDispositionKind = z.infer<typeof reviseDispositionKindSchema>
 
 const memoryIdsField = z
@@ -38,7 +43,7 @@ const memoryIdsField = z
 
 const dispositionFields = {
   kind: reviseDispositionKindSchema.describe(
-    'archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve.',
+    'archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while.',
   ),
   memoryIds: memoryIdsField,
   sessionRunId: sessionRunIdField,
@@ -65,23 +70,36 @@ export const archiveEventPayloadSchema = z
   .strict()
 export type ArchiveEventPayload = z.infer<typeof archiveEventPayloadSchema>
 
+/** Payload of the `reaffirm` memory event (issue #218): same strict shape as archive's. */
+export const reaffirmEventPayloadSchema = z
+  .object({ sessionRunId: sessionRunIdField, disposition: z.literal('reaffirm') })
+  .strict()
+export type ReaffirmEventPayload = z.infer<typeof reaffirmEventPayloadSchema>
+
 /**
  * Why one id was not acted on. `not_found` covers unknown and other-tenant ids
  * alike (no existence leak); `superseded` rows are already closed history;
- * `open_commitment` and `blocker` leave the active set through `resolve`.
+ * `open_commitment` and `blocker` leave the active set through `resolve`;
+ * `archived` rows are out of the review queue already (reaffirm only).
  */
 export const reviseDispositionRejectionSchema = z.enum([
   'not_found',
   'superseded',
   'open_commitment',
   'blocker',
+  'archived',
 ])
 export type ReviseDispositionRejection = z.infer<typeof reviseDispositionRejectionSchema>
 
-/** What happened to one id. `already_archived` is the idempotent repeat. */
+/**
+ * What happened to one id. `already_archived` is archive's idempotent repeat;
+ * `reaffirmed` is every successful reaffirm, a repeat included (each review is
+ * its own event).
+ */
 export const reviseDispositionOutcomeKindSchema = z.enum([
   'archived',
   'already_archived',
+  'reaffirmed',
   'rejected',
 ])
 export type ReviseDispositionOutcomeKind = z.infer<typeof reviseDispositionOutcomeKindSchema>

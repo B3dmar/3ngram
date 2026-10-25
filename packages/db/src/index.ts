@@ -204,6 +204,10 @@ export {
   archiveMemory,
   archiveMemoryDisposition,
   archiveMemoryIn,
+  type ReaffirmOutcome,
+  type ReaffirmWrite,
+  reaffirmMemoryDisposition,
+  reaffirmMemoryIn,
 } from './memory-disposition.js'
 // Revise path + typed edges (slice 2) — appended as its own block.
 export { EdgeConflictError, type EdgeWrite, insertEdge } from './memory-edges.js'

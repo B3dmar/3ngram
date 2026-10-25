@@ -1245,7 +1245,8 @@
                               "unresolve",
                               "archive",
                               "import",
-                              "embed_failed"
+                              "embed_failed",
+                              "reaffirm"
                             ],
                             "type": "string"
                           },
@@ -3209,6 +3210,18 @@
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                             "type": "string"
                           },
+                          "lastReviewedAt": {
+                            "anyOf": [
+                              {
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "memoryType": {
                             "type": "string"
                           },
@@ -3274,7 +3287,8 @@
                           "validTo",
                           "recordedAt",
                           "createdAt",
-                          "updatedAt"
+                          "updatedAt",
+                          "lastReviewedAt"
                         ],
                         "type": "object"
                       },
@@ -4698,7 +4712,8 @@
                               "unresolve",
                               "archive",
                               "import",
-                              "embed_failed"
+                              "embed_failed",
+                              "reaffirm"
                             ],
                             "type": "string"
                           },
@@ -5585,9 +5600,10 @@
                     "additionalProperties": false,
                     "properties": {
                       "kind": {
-                        "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve.",
+                        "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while.",
                         "enum": [
-                          "archive"
+                          "archive",
+                          "reaffirm"
                         ],
                         "type": "string"
                       },
@@ -5805,7 +5821,8 @@
                       "properties": {
                         "kind": {
                           "enum": [
-                            "archive"
+                            "archive",
+                            "reaffirm"
                           ],
                           "type": "string"
                         },
@@ -5822,6 +5839,7 @@
                                 "enum": [
                                   "archived",
                                   "already_archived",
+                                  "reaffirmed",
                                   "rejected"
                                 ],
                                 "type": "string"
@@ -5832,7 +5850,8 @@
                                   "not_found",
                                   "superseded",
                                   "open_commitment",
-                                  "blocker"
+                                  "blocker",
+                                  "archived"
                                 ],
                                 "type": "string"
                               }

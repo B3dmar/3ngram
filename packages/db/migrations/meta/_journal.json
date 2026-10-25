@@ -281,6 +281,13 @@
       "when": 1792929872476,
       "tag": "0039_user_write_scope_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792938897169,
+      "tag": "0040_memory_last_reviewed_at",
+      "breakpoints": true
     }
   ]
 }

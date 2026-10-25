@@ -102,6 +102,11 @@ const writeScopePolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
   'utf8',
 )
+// 0040 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
+const reviewStampSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0040_memory_last_reviewed_at.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -704,6 +709,25 @@ describe('write-scope policy table (0039, issue #235)', () => {
       'GRANT SELECT, INSERT, UPDATE ON user_write_scope_policy TO app_user;',
     )
     expect(rolesSql).not.toMatch(/DELETE[^\n]*user_write_scope_policy/)
+  })
+})
+
+describe('reaffirm review stamp (0040, issue #218)', () => {
+  it('adds a nullable, default-less column: no rewrite, no backfill', () => {
+    expect(reviewStampSql).toContain(
+      'ALTER TABLE "memories" ADD COLUMN "last_reviewed_at" timestamp with time zone;',
+    )
+  })
+
+  it('regenerates the event-kind CHECK from the schema enum, reaffirm included', () => {
+    expect(eventKindSchema.options).toContain('reaffirm')
+    expect(reviewStampSql).toContain(
+      `CHECK ("memory_events"."event_kind" IN (${eventKindSchema.options.map((k) => `'${k}'`).join(', ')}))`,
+    )
+  })
+
+  it('adds no table and touches no policy', () => {
+    expect(reviewStampSql).not.toMatch(/CREATE TABLE|POLICY|ROW LEVEL SECURITY/i)
   })
 })
 

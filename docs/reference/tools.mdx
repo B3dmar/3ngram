@@ -839,9 +839,10 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
         "kind": {
           "type": "string",
           "enum": [
-            "archive"
+            "archive",
+            "reaffirm"
           ],
-          "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+          "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while."
         },
         "memoryIds": {
           "minItems": 1,
@@ -1079,7 +1080,8 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
         "kind": {
           "type": "string",
           "enum": [
-            "archive"
+            "archive",
+            "reaffirm"
           ]
         },
         "outcomes": {
@@ -1098,6 +1100,7 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
                 "enum": [
                   "archived",
                   "already_archived",
+                  "reaffirmed",
                   "rejected"
                 ]
               },
@@ -1108,7 +1111,8 @@ Supersede an existing memory with a corrected successor, linked by a typed edge 
                   "not_found",
                   "superseded",
                   "open_commitment",
-                  "blocker"
+                  "blocker",
+                  "archived"
                 ]
               }
             },

@@ -648,9 +648,10 @@ await client.revise(memoryId, {
         "kind": {
           "type": "string",
           "enum": [
-            "archive"
+            "archive",
+            "reaffirm"
           ],
-          "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+          "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while."
         },
         "sessionRunId": {
           "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
@@ -864,7 +865,8 @@ await client.revise(memoryId, {
         "kind": {
           "type": "string",
           "enum": [
-            "archive"
+            "archive",
+            "reaffirm"
           ]
         },
         "outcomes": {
@@ -883,6 +885,7 @@ await client.revise(memoryId, {
                 "enum": [
                   "archived",
                   "already_archived",
+                  "reaffirmed",
                   "rejected"
                 ]
               },
@@ -893,7 +896,8 @@ await client.revise(memoryId, {
                   "not_found",
                   "superseded",
                   "open_commitment",
-                  "blocker"
+                  "blocker",
+                  "archived"
                 ]
               }
             },

@@ -6,9 +6,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const archiveMemoryDisposition = vi.fn()
+const reaffirmMemoryDisposition = vi.fn()
 const assertSessionRunOwned = vi.fn()
 vi.mock('@3ngram/db', () => ({
   archiveMemoryDisposition: (...a: unknown[]) => archiveMemoryDisposition(...a),
+  reaffirmMemoryDisposition: (...a: unknown[]) => reaffirmMemoryDisposition(...a),
   assertSessionRunOwned: (...a: unknown[]) => assertSessionRunOwned(...a),
 }))
 
@@ -22,6 +24,7 @@ const RUN = '01890b6e-0000-7000-8000-0000000000dd'
 
 afterEach(() => {
   archiveMemoryDisposition.mockReset()
+  reaffirmMemoryDisposition.mockReset()
   assertSessionRunOwned.mockReset()
 })
 
@@ -100,6 +103,30 @@ describe('reviseDisposition archive (#217)', () => {
     ]) {
       await expect(reviseDisposition(USER, input, 'user_api')).rejects.toThrow()
     }
+    expect(archiveMemoryDisposition).not.toHaveBeenCalled()
+  })
+})
+
+describe('reviseDisposition reaffirm (#218)', () => {
+  it('routes each id to the reaffirm write, never the archive one', async () => {
+    reaffirmMemoryDisposition
+      .mockResolvedValueOnce({ memoryId: A, outcome: 'reaffirmed' })
+      .mockResolvedValueOnce({ memoryId: B, outcome: 'rejected', reason: 'archived' })
+
+    const result = await reviseDisposition(
+      USER,
+      { kind: 'reaffirm', memoryIds: [A, B] },
+      'user_mcp',
+    )
+
+    expect(result).toEqual({
+      kind: 'reaffirm',
+      outcomes: [
+        { memoryId: A, outcome: 'reaffirmed' },
+        { memoryId: B, outcome: 'rejected', reason: 'archived' },
+      ],
+    })
+    expect(reaffirmMemoryDisposition.mock.calls.map(([input]) => input.memoryId)).toEqual([A, B])
     expect(archiveMemoryDisposition).not.toHaveBeenCalled()
   })
 })
