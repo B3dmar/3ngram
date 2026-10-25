@@ -3,7 +3,13 @@
 // (graceful degradation). Split from memory-history-read.ts to keep that
 // module under the 500-line cap. Read-only and identity-only:
 // never selects memory content, tags, content hashes, embeddings, raw event
-// payloads, or arbitrary payload keys. Runs inside withTenant(); RLS scopes rows.
+// payloads, or arbitrary payload keys. The ONLY payload key projected is
+// `sessionRunId` (issue #262), with `payload->>'sessionRunId'`; the mapper
+// re-parses it through sessionProvenancePayloadSchema. ONE content column is
+// read on purpose: `commitments.last_resolution_reason` (issue #234), joined
+// onto the inspected memory's own row — the owner's evidence text for the latest
+// transition, returned only through this authenticated, tenant-scoped read.
+// Runs inside withTenant(); RLS scopes rows.
 import { sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 
@@ -23,6 +29,11 @@ export interface RawIdentityRow {
   valid_to: Date | null
   recorded_at: Date
   created_at: Date
+}
+
+/** The inspected memory: identity + its commitment's latest reason (issue #234). */
+export interface RawInspectedRow extends RawIdentityRow {
+  last_resolution_reason: string | null
 }
 
 export interface RawLineageNodeRow extends RawIdentityRow {
@@ -61,6 +72,8 @@ export interface RawEventRow {
   payload_present: boolean
   payload_json_type: string | null
   payload_byte_length: string | number | null
+  /** Allowlisted `payload->>'sessionRunId'` (issue #262); unvalidated text. */
+  session_run_id: string | null
 }
 
 function rowsOf<T>(result: { rows: unknown[] }): T[] {
@@ -94,15 +107,22 @@ export async function withSavepoint<T>(
 export async function readInspectedMemory(
   tx: TenantTx,
   memoryId: string,
-): Promise<RawIdentityRow | undefined> {
+): Promise<RawInspectedRow | undefined> {
+  // The commitment rides the memory through the UNIQUE (user_id, memory_id)
+  // index, so the LEFT JOIN adds at most one row and no extra round-trip; the
+  // join is tenant-bound on user_id (RLS scopes both tables as well).
   const result = await tx.execute(sql`
-    SELECT id, memory_type, topic, project, scope, status,
-           valid_from, valid_to, recorded_at, created_at
-    FROM memories
-    WHERE id = ${memoryId}::uuid
+    SELECT m.id, m.memory_type, m.topic, m.project, m.scope, m.status,
+           m.valid_from, m.valid_to, m.recorded_at, m.created_at,
+           c.last_resolution_reason
+    FROM memories m
+    LEFT JOIN commitments c
+      ON c.user_id = m.user_id
+     AND c.memory_id = m.id
+    WHERE m.id = ${memoryId}::uuid
     LIMIT 1
   `)
-  return rowsOf<RawIdentityRow>(result)[0]
+  return rowsOf<RawInspectedRow>(result)[0]
 }
 
 export async function readDirectRelationships(
@@ -200,11 +220,41 @@ export async function readAuditEvents(tx: TenantTx, memoryId: string): Promise<R
     SELECT e.id, e.event_kind, e.actor_kind, e.created_at,
            (e.payload IS NOT NULL) AS payload_present,
            jsonb_typeof(e.payload) AS payload_json_type,
-           CASE WHEN e.payload IS NULL THEN 0 ELSE octet_length(e.payload::text) END AS payload_byte_length
+           CASE WHEN e.payload IS NULL THEN 0 ELSE octet_length(e.payload::text) END AS payload_byte_length,
+           e.payload->>'sessionRunId' AS session_run_id
     FROM memory_events e
     WHERE e.memory_id = ${memoryId}::uuid
     ORDER BY e.created_at DESC, e.id DESC
     LIMIT ${MEMORY_HISTORY_EVENT_LIMIT + 1}
   `)
   return rowsOf<RawEventRow>(result)
+}
+
+/**
+ * The raw `payload->>'sessionRunId'` of this memory's native `create` event
+ * (issue #262), or undefined when there is none. Its own bounded statement, NOT
+ * a scan of the {@link readAuditEvents} window: that window keeps the newest
+ * events, so a memory with more than MEMORY_HISTORY_EVENT_LIMIT events would
+ * otherwise lose its create. `actor_kind <> 'importer'` keeps an imported
+ * historical `create` (importEvent) from ever standing in for a native one —
+ * imported provenance is never inferred. "Earliest" is load-bearing, not just
+ * a tie-break: createCommitment (commitments.ts) appends a second, payload-less
+ * native `create` event when a commitment row is attached later, and
+ * `ORDER BY created_at, id` keeps the memory's own first create. Served by
+ * memory_events_memory_idx.
+ */
+export async function readCreatingSessionRunId(
+  tx: TenantTx,
+  memoryId: string,
+): Promise<string | null | undefined> {
+  const result = await tx.execute(sql`
+    SELECT e.payload->>'sessionRunId' AS session_run_id
+    FROM memory_events e
+    WHERE e.memory_id = ${memoryId}::uuid
+      AND e.event_kind = 'create'
+      AND e.actor_kind <> 'importer'
+    ORDER BY e.created_at ASC, e.id ASC
+    LIMIT 1
+  `)
+  return rowsOf<{ session_run_id: string | null }>(result)[0]?.session_run_id
 }

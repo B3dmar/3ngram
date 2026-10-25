@@ -1,5 +1,5 @@
 {
-  "id": "6e53862e-05bb-4d1d-81ba-6a7feb1374ad",
+  "id": "3b6ccd44-7f7b-4b31-8cea-4b3b2ef7f5a7",
   "prevId": "3fd5bb9f-6afe-4fa2-a1a8-82d460aab434",
   "version": "7",
   "dialect": "postgresql",
@@ -1412,6 +1412,80 @@
         }
       },
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user_write_scope_policy": {
+      "name": "user_write_scope_policy",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'off'"
+        },
+        "default_scope": {
+          "name": "default_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "user_write_scope_policy_user_id_users_id_fk": {
+          "name": "user_write_scope_policy_user_id_users_id_fk",
+          "tableFrom": "user_write_scope_policy",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": ["public"],
+          "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
+          "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "user_write_scope_policy_mode_check": {
+          "name": "user_write_scope_policy_mode_check",
+          "value": "\"user_write_scope_policy\".\"mode\" IN ('off', 'default', 'require')"
+        },
+        "user_write_scope_policy_scope_consistency_check": {
+          "name": "user_write_scope_policy_scope_consistency_check",
+          "value": "((\"user_write_scope_policy\".\"mode\" = 'off' AND \"user_write_scope_policy\".\"default_scope\" IS NULL) OR (\"user_write_scope_policy\".\"mode\" = 'default' AND \"user_write_scope_policy\".\"default_scope\" IS NOT NULL) OR (\"user_write_scope_policy\".\"mode\" = 'require' AND \"user_write_scope_policy\".\"default_scope\" IS NULL))"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.users": {
@@ -3171,38 +3245,6 @@
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
       },
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.rate_limits": {
-      "name": "rate_limits",
-      "schema": "",
-      "columns": {
-        "key": {
-          "name": "key",
-          "type": "varchar(255)",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "points": {
-          "name": "points",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "expire": {
-          "name": "expire",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
     }

@@ -5,10 +5,10 @@
 // GREATEST floor evaluated by Postgres, the FOR UPDATE re-read against real
 // grants, and tenant isolation on a key another tenant also uses.
 //
-// The attach-vs-close ordering itself is pinned by the fake-tx suites
-// (session-provenance.test.ts, session-lifecycle.test.ts) — a real
-// two-transaction race is not deterministic and a timing-based test here would
-// be a flake, which hard rule 4 forbids.
+// The attach-vs-close ordering is pinned statement-by-statement by the fake-tx
+// suites (session-provenance.test.ts, session-lifecycle.test.ts) and as real
+// two-connection interleavings — constructed with lock barriers, never timed —
+// by session-contention.int.test.ts.
 import { SESSION_LEASE_MS } from '@3ngram/schema'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { eraseAccountData } from '../../src/account-delete.js'

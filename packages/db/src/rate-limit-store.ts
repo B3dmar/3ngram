@@ -39,7 +39,7 @@ let sweeperClaimed = false
 
 /**
  * A fixed-window limiter over `rate_limits`. The table is created by migration
- * 0039 (tableCreated: true, no runtime DDL). The table is shared, so only the
+ * 0042 (tableCreated: true, no runtime DDL). The table is shared, so only the
  * first limiter per process runs the library's expired-row sweep (one DELETE
  * every 5 min per replica, errors swallowed by the library). No
  * insuranceLimiter: a silent in-memory fallback would split limits per replica.

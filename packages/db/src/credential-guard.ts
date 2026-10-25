@@ -33,18 +33,36 @@ export class AccountDeletedError extends Error {
 }
 
 /**
- * True when the user may still be issued credentials. Assumes the caller already
- * holds the account-lifecycle lock (so the tombstone read cannot race a deletion
- * that has not yet committed). False when the row is gone or tombstoned.
+ * The account id of a LIVE user, or undefined when the row is absent or a
+ * deletion tombstone ({@link isAccountTombstoned}). The ONE liveness read:
+ * {@link userIsLiveForIssuance} is this answer as a boolean, and
+ * describe_environment reports the returned id as `account.id` (issue #321).
+ * The lookup is keyed by primary key, so a found row's id IS `userId`; the id
+ * is returned only once a live row proved it, never echoed for a missing or
+ * erased account. The email and password hash are read only to recognise a
+ * tombstone and never leave this function.
+ *
+ * Lock-free on its own: a caller that must serialize against a concurrent
+ * erasure takes the account-lifecycle lock first (as the issuance guards below
+ * do); a plain read sees its transaction's snapshot.
  */
-export async function userIsLiveForIssuance(tx: TenantTx, userId: string): Promise<boolean> {
+export async function getLiveAccountId(tx: TenantTx, userId: string): Promise<string | undefined> {
   const [user] = await tx
     .select({ email: users.email, passwordHash: users.passwordHash })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1)
-  if (user === undefined) return false
-  return !isAccountTombstoned(userId, user)
+  if (user === undefined || isAccountTombstoned(userId, user)) return undefined
+  return userId
+}
+
+/**
+ * True when the user may still be issued credentials. Assumes the caller already
+ * holds the account-lifecycle lock (so the tombstone read cannot race a deletion
+ * that has not yet committed). False when the row is gone or tombstoned.
+ */
+export async function userIsLiveForIssuance(tx: TenantTx, userId: string): Promise<boolean> {
+  return (await getLiveAccountId(tx, userId)) !== undefined
 }
 
 /**

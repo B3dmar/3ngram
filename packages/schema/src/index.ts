@@ -175,16 +175,44 @@ export {
   capabilityKindSchema,
 } from './capabilities.js'
 export type { CommitmentStatus } from './commitment.js'
-export { COMMITMENT_TRANSITIONS, canTransition, commitmentStatusSchema } from './commitment.js'
+export {
+  COMMITMENT_TRANSITIONS,
+  canTransition,
+  commitmentStatusSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
+  resolutionReasonSchema,
+} from './commitment.js'
 export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
-export type { CursorPayload, CursorPayloadV2, CursorPayloadV3 } from './cursor.js'
+export type {
+  CursorPayload,
+  CursorPayloadV2,
+  CursorPayloadV3,
+  ProposalsCursorPayload,
+} from './cursor.js'
 export {
   cursorPayloadSchema,
   cursorPayloadV2Schema,
   cursorPayloadV3Schema,
   legacyCursorPayloadSchema,
+  proposalsCursorPayloadSchema,
 } from './cursor.js'
+// --- describe_environment successors: account identity (#321), facets inventory (#168), write policy (#235) ---
+export type {
+  AccountIdentity,
+  DescribeEnvironmentOutputV3,
+  DescribeEnvironmentOutputV4,
+  DescribeEnvironmentOutputV5,
+  EnvironmentFacets,
+} from './describe-environment.js'
+export {
+  accountIdentitySchema,
+  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputV4Schema,
+  describeEnvironmentOutputV5Schema,
+  environmentFacetsSchema,
+  MAX_INLINE_FACET_LABELS,
+} from './describe-environment.js'
 // --- get_facts range read: time-series reads over bi-temporal facts ---
 export type { FactsQueryArgsV2, FactsQueryInputV2, FactsRangeInput } from './facts-range.js'
 export { factsQueryInputV2Schema, factsRangeSchema } from './facts-range.js'
@@ -266,6 +294,7 @@ export type {
   ReviseToolArgs,
   ReviseToolInput,
   ReviseToolOutput,
+  ReviseToolOutputV2,
   ScopeRecordOutput,
   SearchFiltersInput,
   SearchFiltersV2Input,
@@ -323,6 +352,7 @@ export {
   reviewProposalsRegisterShape,
   reviseToolInputSchema,
   reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   reviseToolRequestSchema,
   scopeAliasesSchema,
   scopeNameSchema,
@@ -361,6 +391,13 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+// --- proposal review pagination (issue #320) ---
+export type { ProposalEdgeTotals, ProposalKindCounts } from './proposals-page.js'
+export {
+  proposalEdgeTotalsSchema,
+  proposalKindCountsSchema,
+  proposalsCursorSchema,
+} from './proposals-page.js'
 // --- shared recorded_at range rules (issue #58) ---
 export type { RecordedRangeIssue } from './recorded-range.js'
 export {
@@ -399,6 +436,7 @@ export type {
   MeResponse,
   ProposalRejectBody,
   ProposalsListQueryInput,
+  ProposalsListResponse,
   RestErrorResponse,
   StatsResponse,
   VersionResponse,
@@ -432,6 +470,7 @@ export {
   meResponseSchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   restErrorResponseSchema,
   statsResponseSchema,
   versionResponseSchema,
@@ -474,6 +513,27 @@ export {
   reviewProposalsOutputV2Schema,
   reviewProposalsRegisterOutputShapeV2,
 } from './review-fact-proposals.js'
+// --- revise dispositions (issue #216 umbrella) — appended block ---
+export {
+  type ArchiveEventPayload,
+  archiveEventPayloadSchema,
+  MAX_REVISE_DISPOSITION_IDS,
+  type NativeReviseDispositionInput,
+  nativeReviseDispositionBodySchema,
+  nativeReviseDispositionInputSchema,
+  type ReaffirmEventPayload,
+  type ReviseDispositionKind,
+  type ReviseDispositionOutcome,
+  type ReviseDispositionOutcomeKind,
+  type ReviseDispositionOutput,
+  type ReviseDispositionRejection,
+  reaffirmEventPayloadSchema,
+  reviseDispositionKindSchema,
+  reviseDispositionOutcomeKindSchema,
+  reviseDispositionOutcomeSchema,
+  reviseDispositionOutputSchema,
+  reviseDispositionRejectionSchema,
+} from './revise-disposition.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---
@@ -519,6 +579,7 @@ export type {
   Tag,
 } from './write.js'
 export {
+  commitmentOwnerSchema,
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,
@@ -546,3 +607,22 @@ export {
   reviseRequestSchema,
   tagSchema,
 } from './write.js'
+// --- write-scope policy (issue #235) — appended block ---
+export type {
+  ConfigureScopeInputV3,
+  ConfigureScopeOutputV3,
+  DescribeEnvironmentOutputWithWritePolicy,
+  SetWriteDefaultInput,
+  WriteScopeMode,
+  WriteScopePolicy,
+} from './write-scope.js'
+export {
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentWritePolicyFields,
+  setWriteDefaultInputSchema,
+  writeScopeModeSchema,
+  writeScopePolicySchema,
+  writeScopePolicyScopeRequirements,
+} from './write-scope.js'

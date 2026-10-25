@@ -55,6 +55,32 @@ describe('redaction-by-construction (docs/concepts/observability.mdx §1 — the
     expect(JSON.stringify(line)).not.toContain('secret topic')
   })
 
+  it('redacts the commitment resolution reason under every stored/core spelling (#234)', () => {
+    const { lines, stream } = createSink()
+    const evidence = 'closed by the penicillin fix in PR #234'
+    createLogger(stream).info(
+      {
+        commitment: { id: 'c-1', last_resolution_reason: evidence },
+        history: { lastResolutionReason: evidence },
+        call: { resolutionReason: evidence, resolution_reason: evidence },
+      },
+      'commitment transitioned',
+    )
+
+    const line = lines[0] as LogLine
+    expect(JSON.stringify(line)).not.toContain('penicillin')
+    expect((line.commitment as LogLine).last_resolution_reason_len).toBe(evidence.length)
+    expect((line.history as LogLine).lastResolutionReason_len).toBe(evidence.length)
+    expect((line.call as LogLine).resolutionReason_len).toBe(evidence.length)
+    expect((line.commitment as LogLine).id).toBe('c-1')
+  })
+
+  it('keeps the bare `reason` key: it carries bounded diagnostic labels, not content', () => {
+    const { lines, stream } = createSink()
+    createLogger(stream).warn({ memoryId: 'mem-1', reason: 'timeout' }, 'embed failed')
+    expect((lines[0] as LogLine).reason).toBe('timeout')
+  })
+
   it('redacts memory rows in arrays under arbitrary keys (the result-list case)', () => {
     const { lines, stream } = createSink()
     createLogger(stream).info({ results: [memory, memory], query: 'what allergies?' })
