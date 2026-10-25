@@ -34,8 +34,10 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
+| `EnvRole` | type | `3d4c8d58bbd2` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
+| `LoadEnvOptions` | interface | `0effeb9ce608` |
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
@@ -62,7 +64,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
-| `loadEnv` | function | `0d36c5eb44b0` |
+| `loadEnv` | function | `5a8a8b05c6de` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
@@ -77,7 +79,7 @@ its row here even when its name and kind are unchanged.
 | `mcpToolErrors` | const | `a662ed6bef5a` |
 | `memorySuperseded` | const | `2d6911d621fb` |
 | `memoryWritten` | const | `2020e0ddd282` |
-| `parseEnv` | function | `6fb096f7581e` |
+| `parseEnv` | function | `4122c985baee` |
 | `rateLimitStoreFailure` | const | `ba920cb50e05` |
 | `redactDeep` | function | `f8cde51e7351` |
 | `requireContext` | function | `15d815f03ed5` |
@@ -103,8 +105,10 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
+| `EnvRole` | type | `3d4c8d58bbd2` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
+| `LoadEnvOptions` | interface | `0effeb9ce608` |
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
@@ -115,7 +119,7 @@ its row here even when its name and kind are unchanged.
 | `envSchema` | const | `3b83b111807f` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
-| `loadEnv` | function | `0d36c5eb44b0` |
+| `loadEnv` | function | `5a8a8b05c6de` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
@@ -123,7 +127,7 @@ its row here even when its name and kind are unchanged.
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
 | `loadSurfacingConfig` | function | `cbd828f4ef34` |
-| `parseEnv` | function | `6fb096f7581e` |
+| `parseEnv` | function | `4122c985baee` |
 | `resetEnvCache` | function | `a1660e0fd58c` |
 
 ### `./logger`
@@ -160,7 +164,8 @@ its row here even when its name and kind are unchanged.
 | Export | Kind | Signature |
 |---|---|---|
 | `crashSafeError` | function | `17e662f1ed24` |
-| `initObservability` | function | `184b3fb3d0be` |
+| `flushObservability` | function | `dc10f59c42cc` |
+| `initObservability` | function | `bb8fa29c2e18` |
 | `resolveSentryEnvironment` | function | `fd88a78c181e` |
 | `scrubEvent` | function | `e24aa095d332` |
 | `scrubSentryEvent` | function | `e087a51244ab` |
@@ -312,12 +317,14 @@ its row here even when its name and kind are unchanged.
 | `MissingSelectorError` | class | `a60398202990` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
+| `PostgresRateLimiterOptions` | interface | `47b744d8a434` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalNotFoundError` | class | `c3368d4608c3` |
 | `ProposalRecord` | type | `7ef93d00e3ad` |
 | `ProposalsListQuery` | interface | `cd92940b612e` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
+| `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `ResolveStatus` | type | `7accd0c80ed5` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `ResourceLimitKind` | type | `38affb7e6a60` |
@@ -368,10 +375,12 @@ its row here even when its name and kind are unchanged.
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
+| `closeDb` | function | `07b382de379c` |
 | `closeSessionRun` | function | `7be3707051e7` |
 | `completeAgentSessionTriage` | function | `34348b3754ec` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
+| `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `1e8f58a54fe9` |
 | `createUser` | function | `41cb089db439` |
 | `dbConsolidateRepo` | const | `d157d777ed45` |
@@ -662,12 +671,14 @@ its row here even when its name and kind are unchanged.
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OAuthClientRow` | interface | `1a2affe71574` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
+| `PostgresRateLimiterOptions` | interface | `47b744d8a434` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalNotFoundError` | class | `c3368d4608c3` |
 | `ProposalRow` | interface | `118db521ee36` |
 | `ProposalWrite` | interface | `303e63b2723b` |
 | `ProposalsQuery` | interface | `60bf10951af6` |
+| `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `ResolvedApiKey` | interface | `8af9600d6f10` |
 | `ResolvedOauthToken` | interface | `476671b8cf0e` |
 | `ResolvedSession` | interface | `b94d810c770d` |
@@ -728,6 +739,7 @@ its row here even when its name and kind are unchanged.
 | `countMemories` | function | `c61756cb455f` |
 | `countProposalsByStatus` | function | `83536379eed5` |
 | `createCommitment` | function | `fb2e38368ac8` |
+| `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `f1efc67b328e` |
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
@@ -805,6 +817,7 @@ its row here even when its name and kind are unchanged.
 | `peekEmailVerificationToken` | function | `12dd669b9f76` |
 | `peekResetToken` | function | `2536f5228240` |
 | `planTiers` | const | `4a0f287afe02` |
+| `rateLimits` | const | `62564cfadee3` |
 | `readAgentSession` | function | `6cbc302058a4` |
 | `readAgentSessionRun` | function | `be8d5c8a688e` |
 | `readCloserSession` | function | `1a19fa49b914` |
