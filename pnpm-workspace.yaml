@@ -10,7 +10,9 @@ packages:
 overrides:
   '@hono/node-server@<1.19.15': ^1.19.15
   '@opentelemetry/core@<2.8.0': ^2.8.0
-  body-parser@<2.3.0: ^2.3.0
+  # CVE-2026-111181 (<2.4.0, DoS via an unhandled decompression stream error). Transitive
+  # under express 5.3.0 (^2.3.0); the v1.9.0 release image scan blocked on it.
+  body-parser@<2.4.0: ^2.4.0
   esbuild@<0.25.0: ">=0.25.0"
   esbuild@>=0.27.3 <0.28.1: ^0.28.1
   # GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx (<4.13.5) and
@@ -37,7 +39,7 @@ engineStrict: true
 # Registry cooldown: reject every dependency version published less than seven days ago. A
 # too-new version that must resolve before it clears the cooldown can be reviewed and added to
 # a TOP-LEVEL minimumReleaseAgeExclude: list (a new key nested under allowBuilds or another
-# mapping is silently ignored by pnpm); none is currently excluded. Strict mode fails
+# mapping is silently ignored by pnpm); see the list below for what is excluded and why. Strict mode fails
 # resolution instead of silently falling back to a too-new version when no mature version
 # satisfies the requested range.
 #
@@ -46,6 +48,11 @@ engineStrict: true
 # same class of silent-no-op that closed PR #379 and that .npmrc warns about.
 minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
+# Reviewed exclusions (exact versions only; drop each once it clears the cooldown):
+# - body-parser@2.4.0 (published 2026-10-22): the CVE-2026-111181 fix. The v1.9.0 release image
+#   scan fails on 2.3.0, and no mature version carries the fix.
+minimumReleaseAgeExclude:
+  - body-parser@2.4.0
 
 # Lifecycle-script policy: default-deny + fail-closed. strictDepBuilds turns an undeclared
 # build-script dependency into a hard install error (ERR_PNPM_IGNORED_BUILDS) instead of a

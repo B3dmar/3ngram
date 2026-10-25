@@ -54,18 +54,19 @@ import {
   memoryHistoryResponseSchema,
   memoryStatusSchema,
   meResponseSchema,
+  nativeReviseDispositionBodySchema,
   nativeReviseMoveBodySchema,
-  proposalRecordSchema,
   proposalRejectBodySchema,
   proposalStatusSchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   rememberToolInputV2Schema,
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
   retrievalScopeModeSchema,
   reviseToolInputSchema,
-  reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   scopeNameSchema,
   searchQuerySchema,
   searchRestResponseV2Schema,
@@ -75,6 +76,7 @@ import {
   statsResponseSchema,
   triageAttemptLogEntrySchema,
   versionResponseSchema,
+  writeScopeModeSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
 
@@ -139,10 +141,6 @@ const proposalDecision = z.object({ id: z.uuid(), status: proposalStatusSchema }
 const archiveResult = z
   .object({ id: z.uuid(), status: memoryStatusSchema.extract(['archived']) })
   .strict()
-/** GET /api/v1/proposals envelope — the bounded list + count-consistent count. */
-const proposalsList = z
-  .object({ proposals: z.array(proposalRecordSchema), count: z.number().int().min(0) })
-  .strict()
 /** GET /api/v1/scopes envelope — registered scope registry rows + count. */
 const scopeRow = z
   .object({
@@ -155,8 +153,8 @@ const scopeRow = z
 const scopesList = z.object({ scopes: z.array(scopeRow), count: z.number().int().min(0) }).strict()
 
 // GET /api/v1/export envelope — the complete portable dataset. Composed here
-// from the route's output shape (like scopesList /
-// proposalsList above); content-bearing because the archive is the owner's JTBD.
+// from the route's output shape (like scopesList above); content-bearing
+// because the archive is the owner's JTBD.
 const exportAccount = z
   .object({
     id: z.uuid(),
@@ -181,6 +179,7 @@ const exportMemory = z
     recordedAt: isoDateTime(),
     createdAt: isoDateTime(),
     updatedAt: isoDateTime(),
+    lastReviewedAt: isoDateTime().nullable(),
   })
   .strict()
 const exportFact = z
@@ -207,6 +206,7 @@ const exportCommitment = z
     recurrence: z.unknown(),
     nextSurfacingAt: isoDateTime().nullable(),
     resolvedAt: isoDateTime().nullable(),
+    lastResolutionReason: z.string().nullable(),
     createdAt: isoDateTime(),
     updatedAt: isoDateTime(),
   })
@@ -347,6 +347,13 @@ const exportRetrievalPolicy = z
     updatedAt: isoDateTime(),
   })
   .strict()
+const exportWriteScopePolicy = z
+  .object({
+    mode: writeScopeModeSchema,
+    defaultScope: scopeNameSchema.nullable(),
+    updatedAt: isoDateTime(),
+  })
+  .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
@@ -365,6 +372,7 @@ const accountExport = z
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
     retrievalPolicy: exportRetrievalPolicy.nullable(),
+    writeScopePolicy: exportWriteScopePolicy.nullable(),
     counts: z
       .object({
         memories: z.number().int().min(0),
@@ -441,17 +449,17 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'post', path: '/api/v1/dashboard/search', operationId: 'dashboardSearch', summary: 'Dashboard search continuation with identity-only hits', body: dashboardSearchQuerySchema, status: 200, response: dashboardSearchResponseV2Schema, errors: [{ status: 400, description: 'Invalid search input or continuation cursor; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/facts', operationId: 'getFacts', summary: 'Currently-valid facts, with optional bi-temporal time travel (mirrors the MCP get_facts tool)', query: factsQuery, status: 200, response: factsToolOutputSchema },
   { method: 'get', path: '/api/v1/briefing', operationId: 'briefing', summary: 'Session briefing over an explicit selector (mirrors the MCP briefing tool)', query: z.object(briefingQueryShape), status: 200, response: briefingToolOutputV4Schema, errors: [{ status: 400, description: 'Invalid briefing input; detail names retryable scopes when retrieval policy requires one', response: invalidInputRestErrorResponseSchema }] },
-  { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor, or refile it in place with kind: move (mirrors the MCP revise tool)', body: z.union([nativeReviseMoveBodySchema, reviseToolInputSchema.omit({ predecessorId: true })]), status: 200, response: reviseToolOutputSchema },
+  { method: 'post', path: '/api/v1/memories/:id/revise', operationId: 'revise', summary: 'Supersede a memory with a corrected successor, refile it in place with kind: move, or archive it with kind: archive (mirrors the MCP revise tool)', body: z.union([nativeReviseDispositionBodySchema, nativeReviseMoveBodySchema, reviseToolInputSchema.omit({ predecessorId: true })]), status: 200, response: reviseToolOutputV2Schema },
   { method: 'post', path: '/api/v1/memories/:id/resolve', operationId: 'resolve', summary: 'Transition the commitment riding a memory (mirrors the MCP resolve tool)', body: resolveToolInputSchema.omit({ memoryId: true }), status: 200, response: resolveToolOutputSchema },
-  { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory (REST-only lifecycle operation; no MCP mirror)', body: archiveMemoryBodySchema, optionalBody: true, status: 200, response: archiveResult },
-  { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded)', query: proposalsListQuerySchema, status: 200, response: proposalsList },
+  { method: 'post', path: '/api/v1/memories/:id/archive', operationId: 'archiveMemory', summary: 'Archive an active memory of any type (operator form; the guarded agent form is revise kind: archive)', body: archiveMemoryBodySchema, optionalBody: true, status: 200, response: archiveResult },
+  { method: 'get', path: '/api/v1/proposals', operationId: 'listProposals', summary: 'List consolidation proposals (bounded, cursor-paginated)', query: proposalsListQuerySchema, status: 200, response: proposalsListResponseSchema },
   { method: 'post', path: '/api/v1/proposals/:id/apply', operationId: 'applyProposal', summary: 'Accept a consolidation proposal', status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/proposals/:id/reject', operationId: 'rejectProposal', summary: 'Reject a consolidation proposal', body: proposalRejectBodySchema, optionalBody: true, status: 200, response: proposalDecision },
   { method: 'post', path: '/api/v1/agent-sessions/open', operationId: 'openAgentSession', summary: 'Open or re-activate an agent session by its natural key (SessionStart). Idempotent: startup inserts, resume reuses the row and advances activation_epoch, and neither restamps the briefing.', body: agentSessionOpenBodySchema, status: 200, response: agentSessionOpenResponseSchema, errors: [{ status: 409, description: 'A startup open reused a natural key already opened with different project, scope or selector', reasons: ['conflict'] }, { status: 410, description: 'The account was erased while the request was in flight', reasons: ['account_deleted'] }] },
   { method: 'post', path: '/api/v1/agent-sessions/close', operationId: 'closeAgentSession', summary: 'Close an agent session by natural key (SessionEnd). Carries no activation_epoch and is idempotent — a repeat close echoes the first close timestamp.', body: agentSessionCloseBodySchema, status: 200, response: agentSessionCloseResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }] },
   { method: 'post', path: '/api/v1/agent-sessions/heartbeat', operationId: 'heartbeatAgentSession', summary: 'Refresh an agent session lease by natural key (Stop), resurrecting a closed or lease-expired row and optionally snapshotting the turn\'s bounded last assistant message.', body: agentSessionHeartbeatBodySchema, status: 200, response: agentSessionHeartbeatResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }] },
   { method: 'post', path: '/api/v1/agent-sessions/triage/begin', operationId: 'beginAgentSessionTriage', summary: 'Ask whether a Stop should inject the debrief nudge for this run (natural key). The server evaluates the entry rule and the debounce and answers `armed`; a decline is a 200 carrying a content-free reason, and only an unknown natural key is a 404.', body: agentSessionTriageBeginBodySchema, status: 200, response: agentSessionTriageBeginResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }] },
-  { method: 'post', path: '/api/v1/agent-sessions/triage/complete', operationId: 'completeAgentSessionTriage', summary: 'Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark.', body: agentSessionTriageCompleteBodySchema, status: 200, response: agentSessionTriageCompleteResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }, { status: 409, description: 'The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row', reasons: ['conflict'] }] },
+  { method: 'post', path: '/api/v1/agent-sessions/triage/complete', operationId: 'completeAgentSessionTriage', summary: 'Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark. defensive: true (no debrief was shown) lands expired and keeps the begin watermark.', body: agentSessionTriageCompleteBodySchema, status: 200, response: agentSessionTriageCompleteResponseSchema, errors: [{ status: 404, description: 'This tenant owns no session with that natural key', reasons: ['not_found'] }, { status: 409, description: 'The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row', reasons: ['conflict'] }] },
   { method: 'get', path: '/api/v1/prompts/debrief', operationId: 'getDebriefPrompt', summary: 'Render the debrief prompt the MCP debrief registrar serves, so a Stop hook can inject it. Instructions are server-authored; the scope and project facets and the run\'s briefed commitments render as delimited data, never as imperative sentences.', query: debriefPromptQuerySchema, status: 200, response: debriefPromptResponseSchema, errors: [{ status: 404, description: 'A natural key was supplied but this tenant owns no session with it', reasons: ['not_found'] }] },
   { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId/events', operationId: 'listSessionEvents', summary: 'List the audit events one agent-session run produced (bounded, keyset-paginated). Each page is its own read-committed snapshot, so a write that commits after a page was read may be absent from that walk even if its id sorts earlier; treat one walk as a bounded observation, not the complete record of a run.', query: sessionEventsQuerySchema, status: 200, response: sessionEventsResponseSchema, errors: [{ status: 400, description: 'Malformed run id, cursor or limit, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },
   { method: 'get', path: '/api/v1/agent-sessions/:sessionRunId', operationId: 'getAgentSessionRun', summary: 'The bookkeeping row for one run, addressed by sessionRunId: identity, lifecycle timestamps, activation_epoch, triage status and the briefed memories the run was shown. Read-only — the read never refreshes the lease or resurrects a closed row. The last assistant-message excerpt and the watermark ids are not projected.', status: 200, response: agentSessionRunResponseSchema, errors: [{ status: 400, description: 'Malformed run id, or a run id this tenant does not own', response: invalidInputRestErrorResponseSchema }] },

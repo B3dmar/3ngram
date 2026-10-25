@@ -213,29 +213,46 @@ export interface MemoryFacets {
   projects: string[]
 }
 
+/** Options for {@link listMemoryFacets}. */
+export interface MemoryFacetsOptions {
+  /** At most this many values PER array (ASC order kept). Omitted = unbounded,
+   * which the on-demand REST facets route and `threengram://facets` use. */
+  limit?: number
+}
+
 /**
  * Return the DISTINCT scope and project values present in the tenant's LIVE
  * memories (status='active' AND valid_to IS NULL). Ordered ASC for a stable
  * surface. Projects exclude NULL (an unscoped memory carries no project).
  * Used by GET /api/v1/memories/facets so the UI can populate filter dropdowns
- * from the actual corpus rather than a hardcoded list.
+ * from the actual corpus rather than a hardcoded list. `limit` bounds each
+ * array in SQL (describe_environment's inline copy probes with cap + 1).
  */
-export async function listMemoryFacets(tx: TenantTx, userId: string): Promise<MemoryFacets> {
+export async function listMemoryFacets(
+  tx: TenantTx,
+  userId: string,
+  options: MemoryFacetsOptions = {},
+): Promise<MemoryFacets> {
+  const scopeQuery = tx
+    .select({ scope: memories.scope })
+    .from(memories)
+    .where(and(eq(memories.userId, userId), liveMemoryPredicate()) as SQL)
+    .groupBy(memories.scope)
+    .orderBy(asc(memories.scope))
+    .$dynamic()
+  const projectQuery = tx
+    .select({ project: memories.project })
+    .from(memories)
+    .where(
+      and(eq(memories.userId, userId), liveMemoryPredicate(), isNotNull(memories.project)) as SQL,
+    )
+    .groupBy(memories.project)
+    .orderBy(asc(memories.project))
+    .$dynamic()
+  const { limit } = options
   const [scopeRows, projectRows] = await Promise.all([
-    tx
-      .select({ scope: memories.scope })
-      .from(memories)
-      .where(and(eq(memories.userId, userId), liveMemoryPredicate()) as SQL)
-      .groupBy(memories.scope)
-      .orderBy(asc(memories.scope)),
-    tx
-      .select({ project: memories.project })
-      .from(memories)
-      .where(
-        and(eq(memories.userId, userId), liveMemoryPredicate(), isNotNull(memories.project)) as SQL,
-      )
-      .groupBy(memories.project)
-      .orderBy(asc(memories.project)),
+    limit === undefined ? scopeQuery : scopeQuery.limit(limit),
+    limit === undefined ? projectQuery : projectQuery.limit(limit),
   ])
   return {
     scopes: scopeRows.map((r) => r.scope),

@@ -142,7 +142,7 @@ export {
   type WrittenCommitment,
 } from './commitments.js'
 // --- credential-resurrection guard ---
-export { AccountDeletedError } from './credential-guard.js'
+export { AccountDeletedError, getLiveAccountId } from './credential-guard.js'
 // --- full-account data export (GDPR portability) — appended block ---
 export {
   type ExportAccountRow,
@@ -160,6 +160,7 @@ export {
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
+  type ExportWriteScopePolicyRow,
   readUserDataExport,
   type UserDataExport,
 } from './data-export.js'
@@ -195,6 +196,19 @@ export {
 } from './facts-write.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
+export {
+  ActiveMemoryNotFoundError,
+  type ArchiveOutcome,
+  type ArchivePolicy,
+  type ArchiveWrite,
+  archiveMemory,
+  archiveMemoryDisposition,
+  archiveMemoryIn,
+  type ReaffirmOutcome,
+  type ReaffirmWrite,
+  reaffirmMemoryDisposition,
+  reaffirmMemoryIn,
+} from './memory-disposition.js'
 // Revise path + typed edges (slice 2) — appended as its own block.
 export { EdgeConflictError, type EdgeWrite, insertEdge } from './memory-edges.js'
 export {
@@ -242,12 +256,11 @@ export {
   type MemoryBatchRow,
   type MemoryDetailRow,
   type MemoryFacets,
+  type MemoryFacetsOptions,
   type MemoryListRow,
 } from './memory-read.js'
 export {
-  ActiveMemoryNotFoundError,
   archiveBlockerMemory,
-  archiveMemory,
   BlockerNotFoundError,
   type MovedMemory,
   type MoveWrite,
@@ -259,6 +272,7 @@ export {
   reviseMemory,
 } from './memory-revise.js'
 export {
+  type CommitmentWrite,
   DuplicateMemoryError,
   insertMemoryWithEvent,
   type MemoryEventWrite,
@@ -273,6 +287,16 @@ export {
   EpisodicSupersessionError,
   SuccessorNotLiveError,
 } from './proposals-apply.js'
+// --- complete proposal-review pagination (issue #320) ---
+export {
+  countFactProposals,
+  countProposals,
+  type KeyedProposal,
+  listFactProposalsAfter,
+  listProposalsAfter,
+  type ProposalKeyset,
+  type ProposalPageQuery,
+} from './proposals-page.js'
 // --- MCP admin tools D3: scopes registry + proposals + env stats ---
 export {
   countProposalsByStatus,
@@ -294,6 +318,7 @@ export { ResourceLimitExceededError } from './resource-limits.js'
 export {
   getRetrievalPolicy,
   lockRetrievalScopePolicy,
+  lockScopePolicies,
   type RetrievalPolicyRow,
   replaceRetrievalPolicyDefault,
   upsertRetrievalPolicy,
@@ -405,3 +430,10 @@ export {
 } from './user-profile-attributes.js'
 // --- /me identity read: keyed id+email lookup, no credential ---
 export { getUserIdentityById, type UserIdentityRow } from './users-read.js'
+// --- write-scope policy store (issue #235) ---
+export {
+  getWriteScopePolicy,
+  replaceWriteScopePolicyDefault,
+  upsertWriteScopePolicy,
+  type WriteScopePolicyRow,
+} from './write-scope-policy.js'

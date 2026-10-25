@@ -100,7 +100,16 @@ export interface SearchHit {
    * composition note on {@link searchFused}.
    */
   vectorScore?: number
-  /** Commitment FSM status when this memory carries a commitment row. */
+  /** The memory's filing scope (memories.scope), read from the same tenant-scoped row. */
+  scope: string
+  /** The memory's filing project, or null when unfiled (memories.project). */
+  project: string | null
+  /**
+   * Commitment FSM status when this memory carries a commitment row. Set by the
+   * fused path and {@link fetchHitsByIds} (and the chronological list), which
+   * join commitments; the standalone single-leg helpers (`searchFts`,
+   * `searchRecency`, `searchVector`) do not join it and never set it.
+   */
   commitmentStatus?: CommitmentStatus
   /**
    * True when this row is a superseded predecessor — its validity is CLOSED
@@ -250,7 +259,7 @@ export async function searchFts(
   const rows = await tx.execute(sql`
     WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS tsq),
     ranked AS (
-      SELECT m.id, m.memory_type, m.topic, m.content,
+      SELECT m.id, m.memory_type, m.topic, m.content, m.scope, m.project,
              ${supersededExists('m')} AS superseded,
              ts_rank(m.search_tsv, q.tsq) AS rank
       FROM memories m, q
@@ -258,7 +267,7 @@ export async function searchFts(
       ORDER BY rank DESC
       LIMIT ${limit}
     )
-    SELECT id, memory_type, topic, content, superseded,
+    SELECT id, memory_type, topic, content, scope, project, superseded,
            CASE WHEN max(rank) OVER () = min(rank) OVER () THEN 1.0
                 ELSE (rank - min(rank) OVER ()) / (max(rank) OVER () - min(rank) OVER ())
            END AS score
@@ -279,7 +288,7 @@ export async function searchRecency(
   limit: number,
 ): Promise<SearchHit[]> {
   const rows = await tx.execute(sql`
-    SELECT id, memory_type, topic, content,
+    SELECT id, memory_type, topic, content, scope, project,
            ${supersededExists('m')} AS superseded,
            power(0.5, EXTRACT(EPOCH FROM (now() - recorded_at)) / 86400.0
                       / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS score
@@ -320,7 +329,7 @@ export async function searchVector(
   await tx.execute(sql`SET LOCAL hnsw.iterative_scan = relaxed_order`)
   const vec = toVectorLiteral(queryEmbedding)
   const rows = await tx.execute(sql`
-    SELECT id, memory_type, topic, content,
+    SELECT id, memory_type, topic, content, scope, project,
            ${supersededExists('m')} AS superseded,
            GREATEST(0, 1 - (embedding <=> ${vec}::vector)) AS score
     FROM memories m
@@ -892,7 +901,8 @@ export async function searchFused(
       UNION SELECT id FROM recency_pool${vectorUnionArm}
     ),
     candidates AS (
-      SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
+      SELECT m.id, m.memory_type, m.topic, m.content, m.scope, m.project,
+             c.status AS commitment_status,
              coalesce(f.score, 0) AS fts_score,
              power(0.5, EXTRACT(EPOCH FROM (now() - m.recorded_at)) / 86400.0
                         / ${DEFAULT_RECENCY_HALF_LIFE_DAYS}) AS recency_score,
@@ -920,7 +930,7 @@ export async function searchFused(
     -- computed alias is not referenceable in the same SELECT's WHERE, so the
     -- score is wrapped here and the continuation cursor filters the outer query.
     scored AS (
-      SELECT id, memory_type, topic, content, commitment_status,
+      SELECT id, memory_type, topic, content, scope, project, commitment_status,
              -- vector_score is the UNWEIGHTED cosine-scale leg component, surfaced
              -- additively for cosine-scale abstention (core policy reads it on the
              -- top hit and compares to the frozen tau). On the inert path it is the
@@ -936,7 +946,8 @@ export async function searchFused(
               - CASE WHEN superseded THEN ${supersessionPenalty}::float8 ELSE 0 END) AS score
       FROM candidates
     )
-    SELECT id, memory_type, topic, content, commitment_status, vector_score, superseded, score
+    SELECT id, memory_type, topic, content, scope, project, commitment_status, vector_score,
+           superseded, score
     FROM scored
     WHERE ${buildCursorPredicate(cursor)}
     ORDER BY score DESC, id ASC
@@ -971,7 +982,8 @@ export async function fetchHitsByIds(
     sql`, `,
   )
   const rows = await tx.execute(sql`
-    SELECT m.id, m.memory_type, m.topic, m.content, c.status AS commitment_status,
+    SELECT m.id, m.memory_type, m.topic, m.content, m.scope, m.project,
+           c.status AS commitment_status,
            ${supersededExists('m')} AS superseded,
            0::float8 AS score
     FROM memories m
@@ -981,11 +993,13 @@ export async function fetchHitsByIds(
   return mapHits(rows, false)
 }
 
-interface RawRow {
+export interface RawRow {
   id: string
   memory_type: string
   topic: string
   content: string
+  scope: string
+  project: string | null
   score: string | number
   vector_score?: string | number
   commitment_status?: string | null
@@ -998,12 +1012,14 @@ interface RawRow {
  * (searchFts, searchRecency) and the inert fused path pass it false so the
  * cosine-scale `vectorScore` stays `undefined` rather than a misleading 0.
  */
-function mapHits(result: { rows: unknown[] }, withVectorScore = false): SearchHit[] {
+export function mapHits(result: { rows: unknown[] }, withVectorScore = false): SearchHit[] {
   return (result.rows as RawRow[]).map((r) => ({
     id: r.id,
     memoryType: r.memory_type,
     topic: r.topic,
     content: r.content,
+    scope: r.scope,
+    project: r.project,
     score: Number(r.score),
     // Always present (required on SearchHit) and always genuinely computed —
     // every caller of mapHits selects `superseded` via supersededExists, so

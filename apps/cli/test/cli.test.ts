@@ -166,6 +166,36 @@ describe('remember command', () => {
     })
   })
 
+  it('forwards --due and --owner for a commitment, leaving validation to the server', async () => {
+    const { client, calls } = stubClient({ remember: REMEMBER_OUT })
+    const { io } = captureIo(client)
+
+    await run(
+      [
+        'remember',
+        '--type',
+        'commitment',
+        '--topic',
+        't',
+        '--content',
+        'c',
+        '--due',
+        '2026-11-30T17:00:00Z',
+        '--owner',
+        'release-captain',
+      ],
+      io,
+    )
+
+    expect(calls[0]?.payload).toEqual({
+      memoryType: 'commitment',
+      topic: 't',
+      content: 'c',
+      dueAt: '2026-11-30T17:00:00Z',
+      owner: 'release-captain',
+    })
+  })
+
   it('--json prints the raw SDK response', async () => {
     const { client } = stubClient({ remember: REMEMBER_OUT })
     const { io, out } = captureIo(client)
@@ -195,7 +225,12 @@ const SEARCH_OUT: SearchToolOutput = {
       memoryType: 'decision',
       topic: 'layering',
       content: 'apps -> core -> db',
+      contentLength: 18,
+      truncated: false,
       score: 0.873,
+      superseded: false,
+      scope: 'work',
+      project: null,
     },
   ],
   count: 1,
@@ -220,6 +255,32 @@ describe('search command', () => {
     ])
     expect(out.join('\n')).toContain('1 match')
     expect(out.join('\n')).toContain('[0.873] decision')
+    expect(out.join('\n')).toContain('2222 work\n')
+  })
+
+  it('labels a hit with its filing and commitment lifecycle (#319)', async () => {
+    const hit = SEARCH_OUT.hits[0] as SearchToolOutput['hits'][number]
+    const resolved = { ...hit, project: 'engine', commitmentStatus: 'resolved' as const }
+    const { client } = stubClient({ search: { hits: [resolved], count: 1 } })
+    const { io, out } = captureIo(client)
+
+    await run(['search', 'x'], io)
+    expect(out.join('\n')).toContain(`decision ${hit.id} work/engine commitment:resolved`)
+  })
+
+  it('prints no filing label for a hit from a server that predates #319', async () => {
+    const {
+      scope: _scope,
+      project: _project,
+      ...legacy
+    } = SEARCH_OUT.hits[0] as Record<string, unknown>
+    const stubbed = { hits: [legacy], count: 1 } as unknown as typeof SEARCH_OUT
+    const { client } = stubClient({ search: stubbed })
+    const { io, out } = captureIo(client)
+
+    await run(['search', 'x'], io)
+    expect(out.join('\n')).not.toContain('undefined')
+    expect(out.join('\n')).toContain(`decision ${legacy.id as string}\n`)
   })
 
   it('accepts --query as an alternative to the positional', async () => {

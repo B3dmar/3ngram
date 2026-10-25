@@ -278,8 +278,29 @@
     {
       "idx": 39,
       "version": "7",
-      "when": 1792929011126,
-      "tag": "0039_rate_limits",
+      "when": 1792929872476,
+      "tag": "0039_user_write_scope_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792937280388,
+      "tag": "0040_commitment_resolution_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792944081570,
+      "tag": "0041_memory_last_reviewed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792951307903,
+      "tag": "0042_rate_limits",
       "breakpoints": true
     }
   ]

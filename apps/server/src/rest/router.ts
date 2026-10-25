@@ -38,9 +38,9 @@ import {
   getMemoryHistory,
   getSessionTriageAttempts,
   type LimitsResolver,
+  listEdgeProposalsPage,
   listMemories,
   listMemoryFacets,
-  listProposals,
   listScopes,
   listSessionEvents,
   rejectProposal,
@@ -48,6 +48,7 @@ import {
   resolveByMemoryId,
   resolveRetrievalPolicy,
   revise,
+  reviseDisposition,
 } from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
 import {
@@ -58,6 +59,7 @@ import {
   memoriesListQuerySchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   rememberToolInputV2Schema,
   resolveToolInputSchema,
   reviseToolRequestSchema,
@@ -66,10 +68,12 @@ import {
 } from '@3ngram/schema'
 import { Router } from 'express'
 import { z } from 'zod'
+import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
+import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
-import { defined, guard, tenant, toAsOf, toRange } from './route-helpers.js'
+import { defined, guard, mergeReviseTarget, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 import { sessionRouter } from './session-router.js'
 
@@ -189,8 +193,9 @@ export function restRouter(options: RestRouterOptions): Router {
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
-  // NORMALIZED write (scope default + null project) in the response, exactly as
-  // the MCP tool does. Embedding is ack-before-embed: never awaited.
+  // normalized write (null project) in the response, exactly as the MCP tool
+  // does. The echoed scope is the one core WROTE (write-scope policy, #235).
+  // Embedding is ack-before-embed: never awaited.
   router.post('/api/v1/memories', (req, res) => {
     void guard('memories', res, async () => {
       const input = rememberToolInputV2Schema.parse(req.body)
@@ -216,7 +221,7 @@ export function restRouter(options: RestRouterOptions): Router {
             id: written.id,
             memoryType: input.memoryType,
             topic: input.topic,
-            scope: input.scope,
+            scope: written.scope,
             project: input.project ?? null,
           },
           embedded,
@@ -442,7 +447,14 @@ export function restRouter(options: RestRouterOptions): Router {
   // GET /api/v1/memories/:id/history — identity-only lineage + audit trail for
   // dashboard detail. Registered before /:id for route clarity. Returns no
   // content and no raw audit payload values: only identity fields, typed edges,
-  // event kind/actor/time, and payload metadata.
+  // event kind/actor/time, payload metadata, and ALLOWLISTED payload keys as
+  // sibling fields — today only `sessionRunId` (issue #262), projected and
+  // re-parsed in packages/db the same way the agent-sessions events route
+  // narrows it, plus `createdBySessionRunId` (the run on this memory's own
+  // native `create` event). Both are ids, not content. The one content field is
+  // `lastResolutionReason` (issue #234): the owner's reason for the latest
+  // transition of the commitment riding this memory, returned only on this
+  // authenticated, tenant-scoped read and never logged.
   router.get('/api/v1/memories/:id/history', (req, res) => {
     void guard('memories.history', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -487,8 +499,11 @@ export function restRouter(options: RestRouterOptions): Router {
           actorKind: event.actorKind,
           createdAt: event.createdAt.toISOString(),
           payloadMetadata: event.payloadMetadata,
+          sessionRunId: event.sessionRunId,
         })),
         eventsTruncated: history.eventsTruncated,
+        createdBySessionRunId: history.createdBySessionRunId,
+        lastResolutionReason: history.lastResolutionReason,
         sections: history.sections,
       })
     })
@@ -653,14 +668,23 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // POST /api/v1/memories/:id/revise — revise (mirrors the MCP revise tool). The
-  // body is the full successor write, or a `kind: "move"` refile (issue #233);
-  // core revise() is THE validation boundary.
-  // :id is the predecessor — merged into the body as predecessorId BEFORE the
-  // single parse, so the URL and body cannot disagree (the URL wins).
+  // body is the full successor write, a `kind: "move"` refile (issue #233), or
+  // a `kind: "archive"` disposition (issue #217); core is THE validation
+  // boundary.
+  // :id is the target — merged into the body BEFORE the single parse, so the URL
+  // and body cannot disagree (the URL wins): as predecessorId for a successor or
+  // move, as the one-element memoryIds batch for a disposition.
   router.post('/api/v1/memories/:id/revise', (req, res) => {
     void guard('revise', res, async () => {
-      const merged = { ...(req.body as Record<string, unknown>), predecessorId: req.params.id }
-      const input = reviseToolRequestSchema.parse(merged)
+      const input = reviseToolRequestSchema.parse(mergeReviseTarget(req.body, req.params.id))
+      // Only a disposition carries `memoryIds` (same dispatch as the MCP tool).
+      if ('memoryIds' in input) {
+        const result = await reviseDisposition(tenant(req), input, 'user_api', {
+          access: options.access,
+        })
+        res.status(200).json(result)
+        return
+      }
       const gatewayOpts =
         options.gateway === undefined
           ? { access: options.access, limits: options.limits }
@@ -693,7 +717,8 @@ export function restRouter(options: RestRouterOptions): Router {
   // POST /api/v1/memories/:id/resolve — resolve (mirrors the MCP resolve tool,
   // keyed on the MEMORY id from D1). :id -> memoryId merged with body -> status,
   // THEN validated against resolveToolInputSchema (single boundary). Serves
-  // resolve AND unresolve (resolved -> open) — the FSM owns legality.
+  // resolve AND unresolve (resolved -> open) — the FSM owns legality. The
+  // optional `reason` (issue #234) passes straight through to core.
   router.post('/api/v1/memories/:id/resolve', (req, res) => {
     void guard('resolve', res, async () => {
       const merged = { ...(req.body as Record<string, unknown>), memoryId: req.params.id }
@@ -707,13 +732,15 @@ export function restRouter(options: RestRouterOptions): Router {
         input.status,
         'user_api',
         input.sessionRunId,
+        input.reason,
       )
       res.status(200).json({ commitmentId: result.id, status: result.status })
     })
   })
 
   // POST /api/v1/memories/:id/archive — archive an active memory of ANY type
-  // (adoption-gate Decision D: REST-only, no MCP tool mirrors it). status flips
+  // (the unguarded operator form; the agent-facing form is the revise archive
+  // disposition, issue #217, which rejects blockers and live commitments). status flips
   // 'active' -> 'archived'; valid_to stays NULL, so the row lands in the archived
   // bucket GET /memories?status=archived and GET /stats read. Optional body
   // carries sessionRunId; omitted body is the same as {}. A malformed uuid path
@@ -735,30 +762,41 @@ export function restRouter(options: RestRouterOptions): Router {
     })
   })
 
-  // GET /api/v1/proposals — bounded consolidation-proposal list over
-  // the EXISTING core listProposals. status/limit arrive as query params; limit is
-  // coerced before the single parse against proposalsListQuerySchema. The route
-  // shapes the proposal records (timestamps to ISO; rationale may be null).
+  // GET /api/v1/proposals — bounded, cursor-paginated EDGE-proposal list
+  // (issue #320). status/limit/cursor arrive as query params; limit is coerced
+  // before the single parse against proposalsListQuerySchema. The cursor is
+  // bound to the REST edge-only walk, the status filter and the tenant (hashed),
+  // so an MCP cursor, a cursor for another status, or another tenant's cursor is
+  // a 400. The route shapes the records (timestamps to ISO; rationale may be
+  // null) and validates the envelope against proposalsListResponseSchema
+  // (a shape fault is a 500 invalid_output, never a silently wrong page).
   router.get('/api/v1/proposals', (req, res) => {
     void guard('proposals.list', res, async () => {
       const query = proposalsListQuerySchema.parse(
         defined({
           status: req.query.status,
           limit: req.query.limit === undefined ? undefined : Number(req.query.limit),
+          cursor: req.query.cursor,
         }),
       )
       // ACCESS GUARD: proposals are memory-derived (consolidation candidates over
       // the tenant's memories), so read access is asserted BEFORE the read
       // (self-host allowAllAccess allows all).
       if (options.access) await options.access.assertRead(tenant(req))
-      // limit carries the schema default (always present); status is OPTIONAL —
-      // strip it when undefined so the exactOptional core query type fits.
-      const proposals = await listProposals(tenant(req), {
-        limit: query.limit,
-        ...defined({ status: query.status }),
+      const fp = proposalsFingerprint({
+        surface: 'rest',
+        kinds: ['edge'],
+        status: query.status,
+        tenant: tenant(req),
       })
-      res.status(200).json({
-        proposals: proposals.map((proposal) => ({
+      const after = query.cursor === undefined ? undefined : decodeProposalsCursor(query.cursor, fp)
+      const page = await listEdgeProposalsPage(tenant(req), {
+        status: query.status,
+        limit: query.limit,
+        after,
+      })
+      const body = parseOutput('proposals.list', proposalsListResponseSchema, {
+        proposals: page.proposals.map((proposal) => ({
           id: proposal.id,
           fromId: proposal.fromId,
           toId: proposal.toId,
@@ -770,8 +808,13 @@ export function restRouter(options: RestRouterOptions): Router {
           decidedAt: proposal.decidedAt?.toISOString() ?? null,
           createdAt: proposal.createdAt.toISOString(),
         })),
-        count: proposals.length,
+        // `count` keeps its shipped meaning: rows on THIS page, never a total.
+        count: page.proposals.length,
+        totals: page.totals,
+        hasMore: page.hasMore,
+        ...(page.next === undefined ? {} : { nextCursor: encodeProposalsCursor(page.next, fp) }),
       })
+      res.status(200).json(body)
     })
   })
 
@@ -940,6 +983,7 @@ export function restRouter(options: RestRouterOptions): Router {
           recordedAt: memory.recordedAt.toISOString(),
           createdAt: memory.createdAt.toISOString(),
           updatedAt: memory.updatedAt.toISOString(),
+          lastReviewedAt: memory.lastReviewedAt?.toISOString() ?? null,
         })),
         facts: data.facts.map((fact) => ({
           id: fact.id,
@@ -962,6 +1006,7 @@ export function restRouter(options: RestRouterOptions): Router {
           recurrence: commitment.recurrence ?? null,
           nextSurfacingAt: commitment.nextSurfacingAt?.toISOString() ?? null,
           resolvedAt: commitment.resolvedAt?.toISOString() ?? null,
+          lastResolutionReason: commitment.lastResolutionReason ?? null,
           createdAt: commitment.createdAt.toISOString(),
           updatedAt: commitment.updatedAt.toISOString(),
         })),
@@ -1070,6 +1115,13 @@ export function restRouter(options: RestRouterOptions): Router {
               mode: data.retrievalPolicy.mode,
               defaultScope: data.retrievalPolicy.defaultScope,
               updatedAt: data.retrievalPolicy.updatedAt.toISOString(),
+            }
+          : null,
+        writeScopePolicy: data.writeScopePolicy
+          ? {
+              mode: data.writeScopePolicy.mode,
+              defaultScope: data.writeScopePolicy.defaultScope,
+              updatedAt: data.writeScopePolicy.updatedAt.toISOString(),
             }
           : null,
         counts: {

@@ -6,16 +6,18 @@
 // the 500-line budget (hard rule 5) and a composed successor is exactly the seam
 // where a new module costs nothing. The V1 schemas stay untouched (ADR-0011).
 //
-// THE INPUT IS UNCHANGED. accept/reject already take a bare proposalId, and ids
-// are uuidv7 and disjoint across the two tables, so the id alone says which kind
-// it is — asking the caller to also name the kind would be a contract change
-// that buys nothing.
+// THE DECISION INPUT IS UNCHANGED. accept/reject already take a bare
+// proposalId, and ids are uuidv7 and disjoint across the two tables, so the id
+// alone says which kind it is — asking the caller to also name the kind would
+// be a contract change that buys nothing. (The list input gained an optional
+// `cursor` for pagination, issue #320 — see proposals-page.ts.)
 import { z } from 'zod'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
 import { reviewProposalsOutputSchema } from './mcp.js'
 import { memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { proposalKindCountsSchema } from './proposals-page.js'
 
 /**
  * One extracted-fact proposal in a tool result — what a REVIEWER needs to
@@ -61,8 +63,18 @@ const [listVariant, rejectedVariant, appliedVariant] = reviewProposalsOutputSche
  * `review_proposals` V2 output.
  *
  * `list` grows an OPTIONAL `factProposals` array. Optional is load-bearing: a
- * tenant with only edge proposals gets a response with no `factProposals` key
- * at all — byte-identical to V1 — so no existing client sees a new field appear.
+ * page with no fact proposals carries no `factProposals` key at all, so an
+ * edge-only client never sees an empty array appear.
+ *
+ * `list` also carries the pagination envelope (issue #320), additively:
+ * `count` KEEPS its shipped meaning — the number of EDGE proposals on this page,
+ * never a total. `counts` breaks the page down per kind, `totals` is the live
+ * per-kind count of every proposal matching the status filter (as of this
+ * page's read, not frozen across pages), `hasMore` says whether rows remain
+ * after this page in the merged `created_at DESC, id DESC` order, and
+ * `nextCursor` (present exactly when `hasMore`) continues the walk. `limit`
+ * bounds the page across BOTH kinds. See proposals-page.ts for the full
+ * contract, including concurrent create/decide behaviour.
  *
  * The decision variants are NEW discriminator literals (`rejected_fact` /
  * `applied_fact`) rather than a widened payload on the shipped `rejected` /
@@ -79,8 +91,29 @@ export const reviewProposalsOutputV2Schema = z.discriminatedUnion('action', [
   listVariant
     .safeExtend({
       factProposals: z.array(factProposalRecordSchema).optional(),
+      // Pagination (issue #320; contract + live-view semantics: proposals-page.ts).
+      counts: proposalKindCountsSchema,
+      totals: proposalKindCountsSchema,
+      hasMore: z.boolean(),
+      nextCursor: z.string().min(1).optional(),
     })
-    .meta(OPEN_OUTPUT_META),
+    .meta(OPEN_OUTPUT_META)
+    .refine((o) => o.count === o.proposals.length && o.counts.edge === o.proposals.length, {
+      message: 'count and counts.edge must equal proposals.length',
+      path: ['counts', 'edge'],
+    })
+    .refine((o) => o.counts.fact === (o.factProposals?.length ?? 0), {
+      message: 'counts.fact must equal factProposals.length (0 when omitted)',
+      path: ['counts', 'fact'],
+    })
+    .refine((o) => o.factProposals === undefined || o.factProposals.length > 0, {
+      message: 'factProposals is omitted, never empty',
+      path: ['factProposals'],
+    })
+    .refine((o) => (o.nextCursor !== undefined) === o.hasMore, {
+      message: 'nextCursor must be present exactly when hasMore is true',
+      path: ['nextCursor'],
+    }),
   rejectedVariant,
   appliedVariant,
   z
@@ -108,6 +141,10 @@ export const reviewProposalsRegisterOutputShapeV2 = {
   proposals: z.array(listVariant.shape.proposals.element).optional(),
   factProposals: z.array(factProposalRecordSchema).optional(),
   count: z.number().int().min(0).optional(),
+  counts: proposalKindCountsSchema.optional(),
+  totals: proposalKindCountsSchema.optional(),
+  hasMore: z.boolean().optional(),
+  nextCursor: z.string().min(1).optional(),
   proposal: z.union([listVariant.shape.proposals.element, factProposalRecordSchema]).optional(),
   factId: z.uuid().optional(),
 } as const

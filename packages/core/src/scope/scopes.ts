@@ -9,15 +9,17 @@
 // DELETE semantics (orchestrator decision, documented in packages/db/scopes.ts):
 // deleting a scope removes the REGISTRY row only. memories.scope is denormalized
 // text with no FK, so a deleted scope leaves memory rows untouched and valid.
-// An active retrieval default is different: delete atomically moves its policy
-// to fail-closed `require`, while rename carries it to the new registry name.
+// An active retrieval or write default is different (issue #47, #235): delete
+// atomically moves that policy to fail-closed `require`, while rename carries
+// it to the new registry name. Both policies share one per-user lock.
 import {
   createScope as createScopeDb,
   deleteScope as deleteScopeDb,
   listScopes as listScopesDb,
-  lockRetrievalScopePolicy,
+  lockScopePolicies,
   renameScope as renameScopeDb,
   replaceRetrievalPolicyDefault,
+  replaceWriteScopePolicyDefault,
   type ScopeRow,
   setScopeAliases as setScopeAliasesDb,
   withTenant,
@@ -45,12 +47,11 @@ export function createScope(
 /** Rename a scope. Missing -> ScopeNotFoundError; new name taken -> conflict. */
 export function renameScope(userId: string, from: string, to: string): Promise<ScopeRecord> {
   return withTenant(userId, async (tx) => {
-    await lockRetrievalScopePolicy(tx, userId)
+    await lockScopePolicies(tx, userId)
     const scope = await renameScopeDb(tx, userId, from, to)
-    await replaceRetrievalPolicyDefault(tx, userId, from, {
-      mode: 'default',
-      defaultScope: to,
-    })
+    const renamed = { mode: 'default', defaultScope: to } as const
+    await replaceRetrievalPolicyDefault(tx, userId, from, renamed)
+    await replaceWriteScopePolicyDefault(tx, userId, from, renamed)
     return scope
   })
 }
@@ -65,16 +66,17 @@ export function setScopeAliases(
 }
 
 /**
- * Delete a registry scope (memory rows untouched). An active default moves to
- * `require` in the same transaction so reads fail closed until reconfigured.
+ * Delete a registry scope (memory rows untouched). An active retrieval or write
+ * default on it moves to `require` in the same transaction, so unscoped reads
+ * and unscoped writes fail closed until reconfigured (never silently back to
+ * `personal`).
  */
 export function deleteScope(userId: string, name: string): Promise<void> {
   return withTenant(userId, async (tx) => {
-    await lockRetrievalScopePolicy(tx, userId)
+    await lockScopePolicies(tx, userId)
     await deleteScopeDb(tx, userId, name)
-    await replaceRetrievalPolicyDefault(tx, userId, name, {
-      mode: 'require',
-      defaultScope: null,
-    })
+    const failClosed = { mode: 'require', defaultScope: null } as const
+    await replaceRetrievalPolicyDefault(tx, userId, name, failClosed)
+    await replaceWriteScopePolicyDefault(tx, userId, name, failClosed)
   })
 }

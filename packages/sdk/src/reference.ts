@@ -65,9 +65,11 @@ export const SDK_METHODS: readonly SdkMethodReference[] = [
   },
   {
     name: 'revise',
-    signature: 'revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutput>',
+    signature:
+      'revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutput | ReviseDispositionOutput>',
     route: 'POST /api/v1/memories/:id/revise',
-    summary: 'Create a corrected successor memory and link it to the predecessor.',
+    summary:
+      "Create a corrected successor memory and link it to the predecessor, refile it with kind: 'move', or archive it with kind: 'archive' (per-id outcome).",
     requestSchema: 'revise',
     responseSchema: 'revise',
     example: [
