@@ -592,6 +592,29 @@ func TestDefensiveCompleteDoesNotRetryAConflict(t *testing.T) {
 	}
 }
 
+// TestDefensiveFallbackDoesNotRetryASecondBadRequest: a 400 that is not about
+// the `defensive` field (a bad attempt id, say) is still in the fallback body,
+// so the fallback 400s too. That is logged once and never tried a third time.
+func TestDefensiveFallbackDoesNotRetryASecondBadRequest(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = armedBody(testAttemptID)
+	ns.completeCode = http.StatusBadRequest
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	captureHook(t, stopPayload("sess-defensive-400", true), func() int { return runStop(nil) })
+
+	if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 2 {
+		t.Fatalf("complete called %d times, want the defensive try plus one fallback", n)
+	}
+	if !strings.Contains(stderr.String(), "agent-sessions/triage/complete") {
+		t.Fatalf("the second 400 was not logged: %q", stderr.String())
+	}
+}
+
 // TestPendingDeclineNeverInjects is the CAP PROPERTY, stated as a test.
 //
 // The numeric self-cap is maxInjectionsPerAttempt = 1, and it is held by the

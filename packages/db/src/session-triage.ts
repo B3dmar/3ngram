@@ -682,7 +682,9 @@ export interface CompleteTriageOptions {
  * and the watermark is NOT advanced past the begin stamp, so such a write stays
  * untriaged — the next Stop's entry rule re-arms on it and the closer still
  * selects the run. Truncation still wins (`overflowed` is a capacity fact, not a
- * coverage claim). The fence is unchanged, so a repeat or stale defensive
+ * coverage claim), but a defensive overflow keeps the begin-time watermark
+ * where an ordinary one stamps the visible set; both are terminal, so the two
+ * shapes differ only in what the row records. The fence is unchanged, so a repeat or stale defensive
  * complete is the same 409.
  */
 export async function completeSessionTriage(

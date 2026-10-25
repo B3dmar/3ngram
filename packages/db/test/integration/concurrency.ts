@@ -17,7 +17,9 @@
 // Every wait is bounded and throws a message naming what it expected and what it
 // saw. Every held transaction is rolled back by {@link releaseHeld} (wire it into
 // `afterEach`) so a failing assertion never leaves a connection parked inside an
-// open transaction for the next test to queue behind.
+// open transaction for the next test to queue behind. Wrap each production call
+// in {@link track} so `releaseHeld` also waits for the calls those rollbacks
+// unblock: otherwise they commit (or reject) during the next test's setup.
 //
 // Each `withTenant` call checks out its own pooled runtime-role connection
 // (client.ts), so the held transaction and the production call are genuinely
@@ -72,6 +74,9 @@ const parked = new Set<() => Promise<void>>()
  * If `fn` throws, `ready` rejects and the transaction rolls back. A transaction
  * nobody finishes is rolled back after {@link MAX_HOLD_MS} as a teardown
  * fail-safe (it does not decide any interleaving), and by {@link releaseHeld}.
+ * The fail-safe only acts once `fn` has returned, so `fn` must take only locks
+ * that are free: a held `fn` that itself blocks would park until vitest's
+ * timeout instead.
  */
 export function holdOpen<T>(userId: string, fn: (tx: TenantTx) => Promise<T>): HeldTransaction<T> {
   let pid = -1
@@ -134,9 +139,28 @@ export function holdOpen<T>(userId: string, fn: (tx: TenantTx) => Promise<T>): H
   }
 }
 
-/** Roll back every transaction a test left parked. Call from `afterEach`. */
+const inFlight = new Set<Promise<unknown>>()
+
+/**
+ * Register a production call placed behind a held transaction and return it
+ * unchanged. After a failed assertion, {@link releaseHeld} settles it before
+ * the next test starts, and its rejection (if any) is never reported as an
+ * unhandled one on top of the assertion that actually failed.
+ */
+export function track<T>(call: Promise<T>): Promise<T> {
+  inFlight.add(call)
+  const forget = () => inFlight.delete(call)
+  call.then(forget, forget)
+  return call
+}
+
+/**
+ * Roll back every transaction a test left parked, then wait for every tracked
+ * production call those rollbacks released. Call from `afterEach`.
+ */
 export async function releaseHeld(): Promise<void> {
   await Promise.all([...parked].map((finish) => finish()))
+  await Promise.allSettled([...inFlight])
 }
 
 /** A row-level lock wait shows up as one of these (`tuple` once a queue forms). */

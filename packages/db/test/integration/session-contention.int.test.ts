@@ -23,7 +23,14 @@ import { lockSessionAttach, type TenantTx, withTenant } from '../../src/client.j
 import { writeMemory } from '../../src/memory-write.js'
 import { closeSession, heartbeatSession, openSession } from '../../src/session-lifecycle.js'
 import { resolveSessionProvenance } from '../../src/session-provenance.js'
-import { assertPending, holdOpen, ROW_LOCK, releaseHeld, waitForLockWait } from './concurrency.js'
+import {
+  assertPending,
+  holdOpen,
+  ROW_LOCK,
+  releaseHeld,
+  track,
+  waitForLockWait,
+} from './concurrency.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const NOW = new Date('2026-08-23T12:00:00.000Z')
@@ -84,10 +91,12 @@ async function committed(id = RUN): Promise<SessionState> {
 }
 
 const attachKnown = (now = NOW) =>
-  withTenant(uid, (tx) => resolveSessionProvenance(tx, uid, { sessionRunId: RUN, now }))
+  track(withTenant(uid, (tx) => resolveSessionProvenance(tx, uid, { sessionRunId: RUN, now })))
 
 const attachOmitted = (now = NOW) =>
-  withTenant(uid, (tx) => resolveSessionProvenance(tx, uid, { project: PROJECT, now }))
+  track(withTenant(uid, (tx) => resolveSessionProvenance(tx, uid, { project: PROJECT, now })))
+
+const startErase = () => track(withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW)))
 
 /** Park a transaction holding the session row's lock, as a pause point for others. */
 const holdRow = (id = RUN) =>
@@ -119,19 +128,21 @@ describe('stale-run resurrection under concurrent writers (claim 1)', () => {
     await holder.ready
 
     const writes = Array.from({ length: writers }, () =>
-      writeMemory({
-        userId: uid,
-        memoryType: 'note',
-        topic: 'contention',
-        content: unique('body'),
-        scope: 'work',
-        project: PROJECT,
-        tags: [],
-        contentHash: unique('hash'),
-        actorKind: 'user_api',
-        sessionRunId: RUN,
-        now: NOW,
-      }),
+      track(
+        writeMemory({
+          userId: uid,
+          memoryType: 'note',
+          topic: 'contention',
+          content: unique('body'),
+          scope: 'work',
+          project: PROJECT,
+          tags: [],
+          contentHash: unique('hash'),
+          actorKind: 'user_api',
+          sessionRunId: RUN,
+          now: NOW,
+        }),
+      ),
     )
     await waitForLockWait({ locktype: 'advisory', blockedBy: holder.pid, count: writers })
     for (const [index, write] of writes.entries()) await assertPending(write, `writer ${index}`)
@@ -285,7 +296,7 @@ describe('attach vs account erasure lock order (claim 4)', () => {
 
     const attach = attachKnown()
     await waitForLockWait({ locktype: ROW_LOCK, blockedBy: pause.pid })
-    const erase = withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+    const erase = startErase()
     await waitForLockWait({ locktype: ROW_LOCK, count: 2 })
     await assertPending(attach, 'attach')
     await assertPending(erase, 'erase')
@@ -305,7 +316,11 @@ describe('attach vs account erasure lock order (claim 4)', () => {
 describe('heartbeat excerpt vs account erasure (claim 5)', () => {
   const EXCERPT = 'the agent said something'
   const beat = (now: Date) =>
-    withTenant(uid, (tx) => heartbeatSession(tx, uid, { ...KEY, lastMessageExcerpt: EXCERPT }, now))
+    track(
+      withTenant(uid, (tx) =>
+        heartbeatSession(tx, uid, { ...KEY, lastMessageExcerpt: EXCERPT }, now),
+      ),
+    )
 
   it('a heartbeat holding the shared lifecycle lock makes erasure wait', async () => {
     await seedSession({ lastSeenAt: NOW })
@@ -316,7 +331,7 @@ describe('heartbeat excerpt vs account erasure (claim 5)', () => {
     const heartbeat = beat(new Date(NOW.getTime() + 1_000))
     const [beatPid] = await waitForLockWait({ locktype: ROW_LOCK, blockedBy: pause.pid })
 
-    const erase = withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+    const erase = startErase()
     await waitForLockWait({ locktype: 'advisory', blockedBy: beatPid })
     await assertPending(erase, 'erase')
 

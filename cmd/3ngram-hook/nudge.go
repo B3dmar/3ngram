@@ -39,7 +39,9 @@ const (
 	// makes all three calls — must still fit a per-hook budget a user would
 	// plausibly set. 3 x 2s on top of the 2s heartbeat is 8s worst case, which
 	// is why the README raises the Stop registration to `"timeout": 10` when the
-	// nudge is enabled. Every one of them fails to exit 0, never to a block.
+	// nudge is enabled. A defensive complete that an older server rejects with a
+	// fast 400 adds one more complete call; a timed-out one never retries, so
+	// the worst case grows only by that fast round trip. Every one of them fails to exit 0, never to a block.
 	triageBeginTimeout    = 2 * time.Second
 	triageCompleteTimeout = 2 * time.Second
 	debriefPromptTimeout  = 2 * time.Second

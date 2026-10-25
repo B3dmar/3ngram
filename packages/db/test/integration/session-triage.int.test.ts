@@ -38,7 +38,14 @@ import {
   beginSessionTriage,
   completeSessionTriage,
 } from '../../src/session-triage.js'
-import { assertPending, holdOpen, ROW_LOCK, releaseHeld, waitForLockWait } from './concurrency.js'
+import {
+  assertPending,
+  holdOpen,
+  ROW_LOCK,
+  releaseHeld,
+  track,
+  waitForLockWait,
+} from './concurrency.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const NOW = new Date('2026-08-23T12:00:00.000Z')
@@ -680,7 +687,7 @@ describe('defensive finalize: no debrief shown, nothing claimed as covered (issu
       }),
     )
     expect(await held.ready).toMatchObject({ armed: true })
-    const writing = write(uid, runId)
+    const writing = track(write(uid, runId))
     await waitForLockWait({ locktype: ROW_LOCK, blockedBy: held.pid })
     await assertPending(writing, 'write')
 
