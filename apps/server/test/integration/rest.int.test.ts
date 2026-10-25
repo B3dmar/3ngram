@@ -986,6 +986,25 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     expect(body.writeScopePolicy).toMatchObject({ mode: 'default', defaultScope: aScope })
   })
 
+  it('exports the key tenant judgment opt-in, never another tenant’s (#225)', async () => {
+    await ownerPool.query(
+      `INSERT INTO user_judgment_policy (user_id, mode) VALUES ($1, 'on')
+       ON CONFLICT (user_id) DO UPDATE SET mode = 'on', updated_at = now()`,
+      [await userIdFor(emailA)],
+    )
+    await ownerPool.query('DELETE FROM user_judgment_policy WHERE user_id = $1', [
+      await userIdFor(emailB),
+    ])
+    const a = (await (await api('/api/v1/export', { key: keyA })).json()) as {
+      judgmentPolicy: { mode: string; updatedAt: string } | null
+    }
+    expect(a.judgmentPolicy?.mode).toBe('on')
+    const b = (await (await api('/api/v1/export', { key: keyB })).json()) as {
+      judgmentPolicy: unknown
+    }
+    expect(b.judgmentPolicy).toBeNull()
+  })
+
   it("exports the commitment's latest resolution reason to its owner (#234)", async () => {
     const write = await api('/api/v1/memories', {
       method: 'POST',
@@ -1027,5 +1046,66 @@ describe('GET /api/v1/export (GDPR portability, real DB, spec 015)', () => {
     // so B's 'founder'/'twitter' row must never surface in A's archive.
     expect(body.profile?.role).not.toBe('founder')
     expect(body.profile?.referralSource).not.toBe('twitter')
+  })
+})
+
+describe('REST /api/v1/settings/judgment (runtime role, real DB, issue #225)', () => {
+  beforeAll(async () => {
+    await ownerPool.query(
+      'DELETE FROM user_judgment_policy WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1))',
+      [[emailA, emailB]],
+    )
+  })
+
+  it('reads off with no stored row', async () => {
+    const res = await api('/api/v1/settings/judgment', { key: keyA })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ mode: 'off', updatedAt: null })
+  })
+
+  it('sets on for the caller only, and back to off', async () => {
+    const put = await api('/api/v1/settings/judgment', {
+      method: 'PUT',
+      key: keyA,
+      body: { mode: 'on' },
+    })
+    expect(put.status).toBe(200)
+    const set = (await put.json()) as { mode: string; updatedAt: string | null }
+    expect(set.mode).toBe('on')
+    expect(set.updatedAt).not.toBeNull()
+    // Session Bearer reads the same setting; B is untouched.
+    expect(
+      (
+        (await (await api('/api/v1/settings/judgment', { token: tokenA })).json()) as {
+          mode: string
+        }
+      ).mode,
+    ).toBe('on')
+    expect(
+      ((await (await api('/api/v1/settings/judgment', { key: keyB })).json()) as { mode: string })
+        .mode,
+    ).toBe('off')
+    const off = await api('/api/v1/settings/judgment', {
+      method: 'PUT',
+      key: keyA,
+      body: { mode: 'off' },
+    })
+    expect(((await off.json()) as { mode: string }).mode).toBe('off')
+  })
+
+  it('400s an unknown mode or an extra key, and writes nothing', async () => {
+    for (const body of [{ mode: 'always' }, { mode: 'on', userId: userBId }, {}]) {
+      const res = await api('/api/v1/settings/judgment', { method: 'PUT', key: keyB, body })
+      expect(res.status).toBe(400)
+    }
+    expect(
+      ((await (await api('/api/v1/settings/judgment', { key: keyB })).json()) as { mode: string })
+        .mode,
+    ).toBe('off')
+  })
+
+  it('401s without credentials', async () => {
+    const res = await api('/api/v1/settings/judgment', { method: 'PUT', body: { mode: 'on' } })
+    expect(res.status).toBe(401)
   })
 })

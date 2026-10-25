@@ -260,6 +260,17 @@ export {
 // --- ISO 8601 datetime: the one datetime grammar, pinned to zod 4.4.3's ---
 export type { IsoDateTimeOptions } from './iso-datetime.js'
 export { isoDateTime } from './iso-datetime.js'
+// --- judgment opt-in (issue #225) — appended block ---
+export type {
+  JudgmentMode,
+  JudgmentPolicyBody,
+  JudgmentPolicyResponse,
+} from './judgment-policy.js'
+export {
+  judgmentModeSchema,
+  judgmentPolicyBodySchema,
+  judgmentPolicyResponseSchema,
+} from './judgment-policy.js'
 // --- MCP tool IO (briefing/handoff orientation + search filters V2) — appended ---
 export type {
   AsOfInput,

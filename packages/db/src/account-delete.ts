@@ -28,6 +28,7 @@ import {
   oauthCodes,
   oauthTokens,
   passwordResetTokens,
+  userJudgmentPolicy,
   userProfileAttributes,
   userRetrievalPolicy,
   userSessions,
@@ -313,6 +314,12 @@ export async function eraseAccountData(
     .update(userWriteScopePolicy)
     .set({ mode: 'off', defaultScope: null, updatedAt: now })
     .where(eq(userWriteScopePolicy.userId, userId))
+  // Judgment opt-in (issue #225): an erased account must not keep sending
+  // derived text to the judgment provider, so restore the 'off' default.
+  await tx
+    .update(userJudgmentPolicy)
+    .set({ mode: 'off', updatedAt: now })
+    .where(eq(userJudgmentPolicy.userId, userId))
   const deletedSessions = await tx.delete(userSessions).returning({ id: userSessions.id })
   const revokedKeys = await tx
     .update(apiKeys)

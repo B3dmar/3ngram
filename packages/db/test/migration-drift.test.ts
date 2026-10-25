@@ -8,6 +8,7 @@ import {
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
+  judgmentModeSchema,
   MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
@@ -101,6 +102,11 @@ const sessionCloserIndexSql = readFileSync(
 // 0039 adds the write-scope policy (issue #235), the write-side twin of 0030.
 const writeScopePolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
+  'utf8',
+)
+// 0042 adds the judgment opt-in (issue #225).
+const judgmentPolicySql = readFileSync(
+  join(import.meta.dirname, '../migrations/0042_user_judgment_policy.sql'),
   'utf8',
 )
 // 0040 adds the commitment's latest-transition reason (issue #234).
@@ -790,5 +796,37 @@ describe('provision-roles.sql append-and-supersede grants', () => {
 
   it('runtime role is NOBYPASSRLS', () => {
     expect(rolesSql).toContain('NOBYPASSRLS')
+  })
+})
+
+describe('judgment opt-in table (0042, issue #225)', () => {
+  it('derives the mode CHECK from the schema and defaults to off', () => {
+    expect(judgmentPolicySql).toContain(
+      `CHECK ("user_judgment_policy"."mode" IN (${judgmentModeSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    expect(judgmentPolicySql).toContain('"user_id" uuid PRIMARY KEY NOT NULL')
+    expect(judgmentPolicySql).toContain(`"mode" text DEFAULT 'off' NOT NULL`)
+    expect(judgmentPolicySql).toContain(
+      'FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade',
+    )
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE', () => {
+    expect(judgmentPolicySql).toContain(
+      'ALTER TABLE "user_judgment_policy" ENABLE ROW LEVEL SECURITY',
+    )
+    expect(judgmentPolicySql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "user_judgment_policy"',
+    )
+    expect(judgmentPolicySql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(judgmentPolicySql).toContain(
+      'ALTER TABLE "user_judgment_policy" FORCE ROW LEVEL SECURITY',
+    )
+    expect(judgmentPolicySql).not.toMatch(/DROP (TABLE|POLICY)/)
+  })
+
+  it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON user_judgment_policy TO app_user;')
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*user_judgment_policy/)
   })
 })

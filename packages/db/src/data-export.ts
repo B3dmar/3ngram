@@ -43,6 +43,7 @@
 import type {
   BriefedMemory,
   BriefingSelectorV2Input,
+  JudgmentMode,
   RetrievalScopeMode,
   TriageAttemptLogEntry,
   WriteScopeMode,
@@ -52,6 +53,7 @@ import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
 import {
+  userJudgmentPolicy,
   userProfileAttributes,
   userRetrievalPolicy,
   users,
@@ -247,6 +249,13 @@ export interface ExportWriteScopePolicyRow {
   updatedAt: Date
 }
 
+/** A stored judgment opt-in row for a portability export (issue #225). */
+export interface ExportJudgmentPolicyRow {
+  mode: JudgmentMode
+  createdAt: Date
+  updatedAt: Date
+}
+
 /** An agent_sessions row for a portability export (minus tenant id). */
 export interface ExportAgentSessionRow {
   id: string
@@ -294,6 +303,8 @@ export interface UserDataExport {
   retrievalPolicy: ExportRetrievalPolicyRow | null
   /** Stored write-scope policy; null if the user never configured one. */
   writeScopePolicy: ExportWriteScopePolicyRow | null
+  /** Stored judgment opt-in; null if the user never set one (= off). */
+  judgmentPolicy: ExportJudgmentPolicyRow | null
 }
 
 /**
@@ -558,6 +569,16 @@ export async function readUserDataExport(
     .where(eq(userWriteScopePolicy.userId, userId))
     .limit(1)
 
+  const [judgmentPolicyRow] = await tx
+    .select({
+      mode: userJudgmentPolicy.mode,
+      createdAt: userJudgmentPolicy.createdAt,
+      updatedAt: userJudgmentPolicy.updatedAt,
+    })
+    .from(userJudgmentPolicy)
+    .where(eq(userJudgmentPolicy.userId, userId))
+    .limit(1)
+
   const base: UserDataExport = {
     account,
     memories: memoryRows,
@@ -574,6 +595,7 @@ export async function readUserDataExport(
     profile: profileRow ?? null,
     retrievalPolicy: retrievalPolicyRow ?? null,
     writeScopePolicy: writeScopePolicyRow ?? null,
+    judgmentPolicy: judgmentPolicyRow ?? null,
   }
   if (enrich === undefined) return base
   // Merge the platform hook's extra user-owned rows over the base archive in the

@@ -12,6 +12,8 @@
 // registrations plus CIMD FK materializations, no user_id) are true system tables.
 
 import {
+  type JudgmentMode,
+  judgmentModeSchema,
   type OAuthClientRegistrationMethod,
   oauthClientRegistrationMethodSchema,
   profileReferralSourceSchema,
@@ -327,6 +329,28 @@ export const userWriteScopePolicy = pgTable(
       'user_write_scope_policy_scope_consistency_check',
       modeNullableValueCheckSql(t.mode, t.defaultScope, writeScopePolicyScopeRequirements),
     ),
+    tenantPolicy(),
+  ],
+)
+
+/**
+ * Per-user judgment opt-in (issue #225): whether this tenant's derived text may
+ * be sent to the judgment provider (`Gateway.decide()`). One optional row per
+ * user; NO ROW means `off`, the default. RLS + FORCE (0042); account erasure
+ * resets it to `off`.
+ */
+export const userJudgmentPolicy = pgTable(
+  'user_judgment_policy',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mode: text('mode').notNull().default('off').$type<JudgmentMode>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('user_judgment_policy_mode_check', enumCheckSql(t.mode, judgmentModeSchema.options)),
     tenantPolicy(),
   ],
 )
