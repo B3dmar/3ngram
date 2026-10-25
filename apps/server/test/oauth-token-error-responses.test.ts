@@ -96,7 +96,7 @@ afterEach(() => {
   authenticatedClient = undefined
   exchangeError = undefined
   logLines.length = 0
-  // Each case starts below the progressive-delay threshold (no-Redis Map fallback).
+  // Each case starts below the progressive-delay threshold (memory-store Map).
   _exchangeFailures.clear()
 })
 
