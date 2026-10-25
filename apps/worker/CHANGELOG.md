@@ -1,5 +1,33 @@
 # @3ngram/worker
 
+## 1.10.0
+
+### Minor Changes
+
+- 51fc6a7: One-shot mode accepts `session-sweep` (#315): closers drain in-process after the sweep, deduped by (run, epoch), each as a last attempt so a failure stamps the row-level backoff once (#184).
+- eee7fe3: Add a one-shot worker entrypoint, `node dist/once.js <consolidation|surfacing|gc-clients>`, for cron-style schedulers (#315). It runs one pass without Redis, closes the database pool, and exits 0 on success, 1 on failure, or 2 for an unknown job. The resident BullMQ worker (`node dist/index.js`) stays the default. `@3ngram/core` re-exports `closeDb`, and `@3ngram/config/otel` adds `flushObservability` to drain Sentry events before a deliberate exit.
+
+### Patch Changes
+
+- 1c874bf: `loadEnv` and `parseEnv` take an optional `{ role: 'server' | 'worker' }`. The worker now validates its env as role `worker`, which skips the server-only production requirements: `OAUTH_JWKS` (the worker signs no tokens) and `REDIS_URL` (only the server's rate limiter needs it; the resident BullMQ worker still fails at boot without it). `BASE_URL`, `LOG_HASH_SALT` and the `DATABASE_URL` checks still apply. With no argument, `loadEnv()` behaves as before (server role), and asking for a different role once the env is resolved throws. The exported `envSchema` is now the role-agnostic base and no longer carries the server-only production rules; validate through `parseEnv`/`loadEnv`. Closes #204, refs #315.
+- dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
+  
+  Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
+- Updated dependencies [0888ff0]
+- Updated dependencies [1c874bf]
+- Updated dependencies [dc5dd43]
+- Updated dependencies [537811a]
+- Updated dependencies [48dcb4a]
+- Updated dependencies [6a3adf5]
+- Updated dependencies [5ceaec4]
+- Updated dependencies [2d36f37]
+- Updated dependencies [7dec400]
+- Updated dependencies [eee7fe3]
+  - @3ngram/core@0.15.0
+  - @3ngram/config@0.6.0
+  - @3ngram/llm@0.4.0
+  - @3ngram/schema@0.13.0
+
 ## 1.9.1
 
 ### Patch Changes

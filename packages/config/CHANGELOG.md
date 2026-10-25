@@ -1,5 +1,19 @@
 # @3ngram/config
 
+## 0.6.0
+
+### Minor Changes
+
+- 1c874bf: `loadEnv` and `parseEnv` take an optional `{ role: 'server' | 'worker' }`. The worker now validates its env as role `worker`, which skips the server-only production requirements: `OAUTH_JWKS` (the worker signs no tokens) and `REDIS_URL` (only the server's rate limiter needs it; the resident BullMQ worker still fails at boot without it). `BASE_URL`, `LOG_HASH_SALT` and the `DATABASE_URL` checks still apply. With no argument, `loadEnv()` behaves as before (server role), and asking for a different role once the env is resolved throws. The exported `envSchema` is now the role-agnostic base and no longer carries the server-only production rules; validate through `parseEnv`/`loadEnv`. Closes #204, refs #315.
+- dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
+  
+  Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
+- 2d36f37: `RATE_LIMIT_STORE=redis|postgres|memory` selects the server's rate-limiter store (#315). `postgres` backs every limiter with the `rate_limits` table on `DATABASE_URL`, and production then accepts a missing `REDIS_URL`. `redis` requires `REDIS_URL` and `postgres` requires `DATABASE_URL` in every environment. Unset keeps today's behaviour: Redis when `REDIS_URL` is set, in-memory outside production, a validation error in production. `memory` in production is an explicit single-replica opt-in that logs a boot warning; the server also refuses an implicit memory store in production at boot. `createRateLimiter` takes `store` in place of `redis`. Refs #315.
+
+### Patch Changes
+
+- eee7fe3: Add a one-shot worker entrypoint, `node dist/once.js <consolidation|surfacing|gc-clients>`, for cron-style schedulers (#315). It runs one pass without Redis, closes the database pool, and exits 0 on success, 1 on failure, or 2 for an unknown job. The resident BullMQ worker (`node dist/index.js`) stays the default. `@3ngram/core` re-exports `closeDb`, and `@3ngram/config/otel` adds `flushObservability` to drain Sentry events before a deliberate exit.
+
 ## 0.5.3
 
 ### Patch Changes
