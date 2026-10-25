@@ -34,7 +34,7 @@ import {
   deleteScope,
   describeEnvironment,
   type FactProposalRecord,
-  listAllProposals,
+  listProposalsPage,
   listScopes,
   type ProposalRecord,
   rejectProposalAnyKind,
@@ -50,12 +50,13 @@ import {
   configureScopeInputV3Schema,
   configureScopeOutputV3Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentOutputV5Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
+import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
 import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
@@ -238,22 +239,37 @@ async function runReviewProposals(
     // ACCESS GUARD: proposals are memory-derived, so listing them is a READ — read
     // access is asserted BEFORE the db op (self-host allowAllAccess allows all).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    const { proposals, factProposals } = await listAllProposals(ctx.userId, {
+    // The continuation is bound to this surface's kinds, the status filter and
+    // the tenant (hashed): a mismatched cursor is a typed invalid-input error.
+    const fp = proposalsFingerprint({
+      surface: 'mcp',
+      kinds: ['edge', 'fact'],
+      status: input.status,
+      tenant: ctx.userId,
+    })
+    const after = input.cursor === undefined ? undefined : decodeProposalsCursor(input.cursor, fp)
+    const page = await listProposalsPage(ctx.userId, {
       status: input.status,
       limit: input.limit,
+      after,
     })
+    const { proposals, factProposals } = page
     return ok(
       parseOutput('review_proposals', reviewProposalsOutputV2Schema, {
         action: 'list',
         proposals: proposals.map(toProposalOutput),
-        // `count` stays the EDGE count: it is the shipped field, and a tenant
-        // with no fact proposals must see the identical response it always has.
+        // `count` stays the EDGE count ON THIS PAGE: it is the shipped field,
+        // never reinterpreted as a total (`totals` carries those).
         count: proposals.length,
-        // Key OMITTED when there are none, so an edge-only tenant's response is
-        // byte-identical to V1 rather than growing an empty array.
+        // Key OMITTED when there are none, so an edge-only page never grows an
+        // empty array.
         ...(factProposals.length > 0
           ? { factProposals: factProposals.map(toFactProposalOutput) }
           : {}),
+        counts: { edge: proposals.length, fact: factProposals.length },
+        totals: page.totals,
+        hasMore: page.hasMore,
+        ...(page.next === undefined ? {} : { nextCursor: encodeProposalsCursor(page.next, fp) }),
       }),
     )
   }
@@ -361,10 +377,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      // V2 + writeScopePolicy (issue #235). Once PR #335's account/facets
-      // successors land, this becomes
-      // describeEnvironmentOutputV4Schema.safeExtend(describeEnvironmentWritePolicyFields).
-      outputSchema: describeEnvironmentOutputWithWritePolicySchema,
+      // V4 (account identity #321, capped facets #168) + writeScopePolicy (#235).
+      outputSchema: describeEnvironmentOutputV5Schema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -376,26 +390,33 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput(
-        'describe_environment',
-        describeEnvironmentOutputWithWritePolicySchema,
-        {
-          capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
-          scopes: report.scopes.map(toScopeOutput),
-          // The active retrieval-scope policy (issue #47): a bounded mode enum +
-          // a registered scope NAME — the redaction posture is unchanged.
-          retrievalScopePolicy: report.retrievalScopePolicy,
-          // The effective write-scope policy (issue #235), same redaction posture.
-          writeScopePolicy: report.writeScopePolicy,
-          stats: {
-            memoriesByType: report.stats.memoriesByType,
-            activeMemories: report.stats.activeMemories,
-            supersededMemories: report.stats.supersededMemories,
-            archivedMemories: report.stats.archivedMemories,
-            commitmentsByStatus: report.stats.commitmentsByStatus,
-          },
+      const output = parseOutput('describe_environment', describeEnvironmentOutputV5Schema, {
+        // The authenticated account (issue #321): its users.id, read by core from
+        // the live users row — identity, distinct from scopes and the policies.
+        account: { id: report.account.id },
+        capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
+        scopes: report.scopes.map(toScopeOutput),
+        // The live scope/project inventory (issue #168), inlined for hosts that
+        // never surface the threengram://facets resource to the model. Core
+        // already capped it per array and flagged what it cut.
+        facets: {
+          scopes: report.facets.scopes,
+          projects: report.facets.projects,
+          truncated: report.facets.truncated,
         },
-      )
+        // The active retrieval-scope policy (issue #47): a bounded mode enum +
+        // a registered scope NAME — the redaction posture is unchanged.
+        retrievalScopePolicy: report.retrievalScopePolicy,
+        // The effective write-scope policy (issue #235), same redaction posture.
+        writeScopePolicy: report.writeScopePolicy,
+        stats: {
+          memoriesByType: report.stats.memoriesByType,
+          activeMemories: report.stats.activeMemories,
+          supersededMemories: report.stats.supersededMemories,
+          archivedMemories: report.stats.archivedMemories,
+          commitmentsByStatus: report.stats.commitmentsByStatus,
+        },
+      })
       return ok(output)
     },
   }
