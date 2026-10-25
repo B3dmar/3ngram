@@ -41,6 +41,9 @@ type nudgeServer struct {
 	promptBody   string
 	promptCode   int
 	completeCode int
+	// rejectDefensive impersonates a server older than the `defensive` complete
+	// field (issue #189): its strict body schema 400s any complete carrying it.
+	rejectDefensive bool
 }
 
 func newNudgeServer(t *testing.T) *nudgeServer {
@@ -60,6 +63,7 @@ func newNudgeServer(t *testing.T) *nudgeServer {
 		beginBody, beginCode := ns.beginBody, ns.beginCode
 		promptBody, promptCode := ns.promptBody, ns.promptCode
 		completeCode := ns.completeCode
+		rejectDefensive := ns.rejectDefensive
 		ns.mu.Unlock()
 
 		switch r.URL.Path {
@@ -76,6 +80,10 @@ func newNudgeServer(t *testing.T) *nudgeServer {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(beginBody))
 		case "/api/v1/agent-sessions/triage/complete":
+			if rejectDefensive && strings.Contains(string(body), `"defensive"`) {
+				http.Error(w, `{"error":"invalid_input"}`, http.StatusBadRequest)
+				return
+			}
 			if completeCode != http.StatusOK {
 				http.Error(w, "stale attempt", completeCode)
 				return
@@ -179,6 +187,25 @@ func (ns *nudgeServer) bodyFor(t *testing.T, path string) map[string]any {
 	}
 	t.Fatalf("no request recorded for %s (saw %v)", path, ns.paths())
 	return nil
+}
+
+// bodiesFor decodes every request recorded for path, in arrival order.
+func (ns *nudgeServer) bodiesFor(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	var out []map[string]any
+	for _, req := range ns.requests {
+		if req.path != path {
+			continue
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(req.body, &decoded); err != nil {
+			t.Fatalf("body for %s is not JSON: %v\n%s", path, err, req.body)
+		}
+		out = append(out, decoded)
+	}
+	return out
 }
 
 // stopPayload builds a Stop stdin envelope.
@@ -388,10 +415,14 @@ func TestStopNudgeNeverEmitsABlankReason(t *testing.T) {
 			if out != "" {
 				t.Fatalf("emitted an envelope with no words: %q", out)
 			}
-			// The armed attempt is released rather than stranded.
+			// The armed attempt is released rather than stranded — DEFENSIVELY,
+			// because no debrief was shown (issue #189).
 			complete := ns.bodyFor(t, "/api/v1/agent-sessions/triage/complete")
 			if complete["attemptId"] != testAttemptID {
 				t.Fatalf("complete fenced on %v, want %v", complete["attemptId"], testAttemptID)
+			}
+			if complete["defensive"] != true {
+				t.Fatalf("an attempt released without a debrief was not defensive: %v", complete)
 			}
 		})
 	}
@@ -419,6 +450,12 @@ func TestStopNudgeFinalizesOnStopHookActive(t *testing.T) {
 	}
 	if complete["attemptId"] != testAttemptID {
 		t.Fatalf("complete fenced on %v, want the attempt begin republished", complete["attemptId"])
+	}
+	// The debrief for a `pending` attempt WAS shown by the Stop that armed it,
+	// so this is the ordinary complete — and the key is absent, not false, so the
+	// body stays valid on a server older than the field.
+	if _, present := complete["defensive"]; present {
+		t.Fatalf("finalizing a shown debrief sent defensive: %v", complete)
 	}
 }
 
@@ -489,6 +526,93 @@ func TestStopHookActiveNeverInjects(t *testing.T) {
 	if complete["attemptId"] != testAttemptID {
 		t.Fatalf("the swallowed arm was not finalized: %v", complete)
 	}
+	// DEFENSIVE (issue #189): no debrief was shown, so an async write that
+	// committed between begin and complete must not be absorbed as covered.
+	if complete["defensive"] != true {
+		t.Fatalf("the swallowed arm was completed non-defensively: %v", complete)
+	}
+}
+
+// TestDefensiveCompleteFallsBackOnAnOlderServer is the compatibility contract
+// for the `defensive` field (issue #189). A server older than the field has a
+// strict complete body and 400s it; the hook must then send the ordinary
+// complete, so the swallowed attempt is still released — today's behavior,
+// with only the race the flag closes left open on that server.
+func TestDefensiveCompleteFallsBackOnAnOlderServer(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = armedBody(testAttemptID)
+	ns.rejectDefensive = true
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	out := captureHook(t, stopPayload("sess-old-server", true), func() int { return runStop(nil) })
+
+	if out != "" {
+		t.Fatalf("the fallback injected: %q", out)
+	}
+	bodies := ns.bodiesFor(t, "/api/v1/agent-sessions/triage/complete")
+	if len(bodies) != 2 {
+		t.Fatalf("complete called %d times, want the defensive try plus one fallback", len(bodies))
+	}
+	if bodies[0]["defensive"] != true {
+		t.Fatalf("first complete was not defensive: %v", bodies[0])
+	}
+	if _, present := bodies[1]["defensive"]; present || bodies[1]["attemptId"] != testAttemptID {
+		t.Fatalf("fallback was not the ordinary complete for the attempt: %v", bodies[1])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("a successful fallback logged a failure: %q", stderr.String())
+	}
+}
+
+// TestDefensiveCompleteDoesNotRetryAConflict: only a 400 means "older server".
+// A 409 is the fence saying the attempt is over, for a defensive complete
+// exactly as for an ordinary one, and resending without the flag could only
+// meet the same fence.
+func TestDefensiveCompleteDoesNotRetryAConflict(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = armedBody(testAttemptID)
+	ns.completeCode = http.StatusConflict
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	captureHook(t, stopPayload("sess-defensive-409", true), func() int { return runStop(nil) })
+
+	if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 1 {
+		t.Fatalf("a 409 on the defensive complete was retried (%d calls)", n)
+	}
+	if !strings.Contains(stderr.String(), "agent-sessions/triage/complete") {
+		t.Fatalf("the 409 was not logged: %q", stderr.String())
+	}
+}
+
+// TestDefensiveFallbackDoesNotRetryASecondBadRequest: a 400 that is not about
+// the `defensive` field (a bad attempt id, say) is still in the fallback body,
+// so the fallback 400s too. That is logged once and never tried a third time.
+func TestDefensiveFallbackDoesNotRetryASecondBadRequest(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = armedBody(testAttemptID)
+	ns.completeCode = http.StatusBadRequest
+
+	var stderr strings.Builder
+	orig := stderrWriter
+	stderrWriter = &stderr
+	t.Cleanup(func() { stderrWriter = orig })
+
+	captureHook(t, stopPayload("sess-defensive-400", true), func() int { return runStop(nil) })
+
+	if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 2 {
+		t.Fatalf("complete called %d times, want the defensive try plus one fallback", n)
+	}
+	if !strings.Contains(stderr.String(), "agent-sessions/triage/complete") {
+		t.Fatalf("the second 400 was not logged: %q", stderr.String())
+	}
 }
 
 // TestPendingDeclineNeverInjects is the CAP PROPERTY, stated as a test.
@@ -522,6 +646,11 @@ func TestPendingDeclineNeverInjects(t *testing.T) {
 			// that never sets stop_hook_active.
 			if n := ns.countFor("/api/v1/agent-sessions/triage/complete"); n != 1 {
 				t.Fatalf("a pending decline completed %d attempts, want 1", n)
+			}
+			// Its debrief was shown when the attempt armed: ordinary complete.
+			complete := ns.bodyFor(t, "/api/v1/agent-sessions/triage/complete")
+			if _, present := complete["defensive"]; present {
+				t.Fatalf("finalizing a pending attempt sent defensive: %v", complete)
 			}
 		})
 	}
