@@ -108,7 +108,7 @@ The memory operations (`remember`, `search`, `revise`, …) are exposed by two s
 
 ## Hardening notes
 
-- Keep `NODE_ENV=production` for any networked deployment — it enforces `BASE_URL`, `OAUTH_JWKS`, `REDIS_URL`, and `LOG_HASH_SALT` at boot rather than degrading silently.
+- Keep `NODE_ENV=production` for any networked deployment — the server enforces `BASE_URL`, `OAUTH_JWKS`, `REDIS_URL` (unless `RATE_LIMIT_STORE=postgres`), and `LOG_HASH_SALT` at boot rather than degrading silently; the worker enforces `BASE_URL`, `LOG_HASH_SALT`, and the `DATABASE_URL` checks (its BullMQ queues still need `REDIS_URL` to start).
 - The bundled Postgres is bound to `127.0.0.1` only (host-local), published solely for the optional host-run seed. Comment out the `postgres` `ports:` block in `compose.selfhost.yml` once you have your key to close it entirely. Redis is never published.
 - The server port (`3000`) is published on all interfaces so clients can reach the API/MCP. Put the server behind TLS (a reverse proxy) and set `BASE_URL` to the public HTTPS origin so OAuth issuer/audience values are correct; if the proxy runs on the same host, bind the server to `127.0.0.1:3000:3000` so only the proxy can reach the plaintext port.
 

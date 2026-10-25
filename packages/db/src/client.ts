@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The ONE TRUE ACCESS PATH (docs/concepts/data-model.mdx, proven by spike S3).
-// Nothing else in this package — and nothing outside it — exports a pool,
-// client, or db handle. All tenant-scoped data access goes through
+// Nothing outside this package sees a pool, client, or db handle (getPool() is
+// package-internal, for rate-limit-store.ts). All tenant-scoped data access goes through
 // withTenant(); the no-raw-db lint plugin enforces this repo-wide.
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -13,13 +13,22 @@ export type TenantTx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[
 let db: NodePgDatabase | undefined
 let pool: pg.Pool | undefined
 
-function getDb(): NodePgDatabase {
-  if (!db) {
+/**
+ * The shared lazy pool. Package-internal (rate-limit-store.ts); NOT exported
+ * from the barrel. closeDb() ends and resets it, so callers must call this per
+ * query rather than capture the pool once.
+ */
+export function getPool(): pg.Pool {
+  if (!pool) {
     const url = process.env.DATABASE_URL
     if (!url) throw new Error('DATABASE_URL is not set')
     pool = new pg.Pool({ connectionString: url })
-    db = drizzle(pool)
   }
+  return pool
+}
+
+function getDb(): NodePgDatabase {
+  if (!db) db = drizzle(getPool())
   return db
 }
 
@@ -123,9 +132,10 @@ export async function lockPasswordReset(tx: TenantTx, userId: string): Promise<v
 
 /**
  * Pool-scoped db handle WITHOUT tenant context, for the pre-tenant system
- * tables only (`users`, `oauth_clients`). These tables carry no `user_id` and
- * no RLS, so withTenant() does not apply — the identity must be created or
- * looked up before any tenant context can exist. Reuse via src/auth-admin.ts;
+ * tables only (`users`, `oauth_clients`, and the `rate_limits` counters). These
+ * tables carry no `user_id` and no RLS, so withTenant() does not apply — the
+ * identity must be created or looked up before any tenant context can exist
+ * (rate_limits keys are per-IP / per-client, never per-tenant). Reuse via src/auth-admin.ts;
  * do NOT touch user-owned tables through this handle (their RLS would fail
  * closed with no app.user_id set, which is the point).
  */
@@ -133,7 +143,7 @@ export function getAdminDb(): NodePgDatabase {
   return getDb()
 }
 
-/** Test-only teardown hook. */
+/** Teardown hook: closes the pool. Used by one-shot entrypoints (apps/worker/src/once.ts) and tests. */
 export async function closeDb(): Promise<void> {
   if (pool) {
     await pool.end()

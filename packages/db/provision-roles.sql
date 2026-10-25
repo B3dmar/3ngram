@@ -100,3 +100,5 @@ GRANT SELECT ON plan_tiers TO app_user;
 -- gate INSERTs a reservation before a metered call and DELETEs it after, so this
 -- table is MUTABLE — unlike the append-only llm_usage cost ledger.
 GRANT SELECT, INSERT, DELETE ON budget_reservations TO app_user;
+-- rate_limits: system table (no user_id/RLS) for rate-limiter-flexible counters; app_user upserts, reads, and DELETEs expired rows (#315).
+GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limits TO app_user;

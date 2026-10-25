@@ -24,7 +24,7 @@ describe('migration round-trip structure', () => {
 
   // PHYSICAL TABLE COUNT: bump EXPECTED_TABLES (and the ledger below) when a
   // migration adds a table, RLS or not.
-  const EXPECTED_TABLES = 28
+  const EXPECTED_TABLES = 29
   it(`all ${EXPECTED_TABLES} tables exist`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
@@ -35,6 +35,7 @@ describe('migration round-trip structure', () => {
     // + user_profile_attributes (0026) = 24, + user_retrieval_policy (0030) = 25
     // + fact_proposals (0031) = 26, + agent_sessions (0032) = 27
     // + user_write_scope_policy (0039) = 28
+    // + rate_limits (0042) = 29
     expect(Number(r.rows[0].n)).toBe(EXPECTED_TABLES)
   })
 

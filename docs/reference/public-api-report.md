@@ -34,13 +34,16 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
+| `EnvRole` | type | `3d4c8d58bbd2` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
+| `LoadEnvOptions` | interface | `0effeb9ce608` |
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
 | `REDACTED` | const | `4a6e93923c89` |
 | `REDACTED_FIELDS` | const | `cc90498724f8` |
+| `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `RequestContext` | interface | `7b9320e0e681` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
@@ -56,16 +59,17 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `3b83b111807f` |
+| `envSchema` | const | `6187120a369f` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
-| `loadEnv` | function | `0d36c5eb44b0` |
+| `loadEnv` | function | `5a8a8b05c6de` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadRateLimitStoreConfig` | function | `5dce569bcc99` |
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
@@ -77,7 +81,7 @@ its row here even when its name and kind are unchanged.
 | `mcpToolErrors` | const | `a662ed6bef5a` |
 | `memorySuperseded` | const | `2d6911d621fb` |
 | `memoryWritten` | const | `2020e0ddd282` |
-| `parseEnv` | function | `6fb096f7581e` |
+| `parseEnv` | function | `4122c985baee` |
 | `rateLimitStoreFailure` | const | `ba920cb50e05` |
 | `redactDeep` | function | `f8cde51e7351` |
 | `requireContext` | function | `15d815f03ed5` |
@@ -103,27 +107,31 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
+| `EnvRole` | type | `3d4c8d58bbd2` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
+| `LoadEnvOptions` | interface | `0effeb9ce608` |
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
+| `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `3b83b111807f` |
+| `envSchema` | const | `6187120a369f` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
-| `loadEnv` | function | `0d36c5eb44b0` |
+| `loadEnv` | function | `5a8a8b05c6de` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadRateLimitStoreConfig` | function | `5dce569bcc99` |
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
 | `loadSurfacingConfig` | function | `cbd828f4ef34` |
-| `parseEnv` | function | `6fb096f7581e` |
+| `parseEnv` | function | `4122c985baee` |
 | `resetEnvCache` | function | `a1660e0fd58c` |
 
 ### `./logger`
@@ -160,7 +168,8 @@ its row here even when its name and kind are unchanged.
 | Export | Kind | Signature |
 |---|---|---|
 | `crashSafeError` | function | `17e662f1ed24` |
-| `initObservability` | function | `184b3fb3d0be` |
+| `flushObservability` | function | `dc10f59c42cc` |
+| `initObservability` | function | `bb8fa29c2e18` |
 | `resolveSentryEnvironment` | function | `fd88a78c181e` |
 | `scrubEvent` | function | `e24aa095d332` |
 | `scrubSentryEvent` | function | `e087a51244ab` |
@@ -315,6 +324,7 @@ its row here even when its name and kind are unchanged.
 | `MissingSelectorError` | class | `a60398202990` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
+| `PostgresRateLimiterOptions` | interface | `47b744d8a434` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalNotFoundError` | class | `c3368d4608c3` |
@@ -324,6 +334,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalsPage` | interface | `dacd6828e940` |
 | `ProposalsPageQuery` | interface | `443bc668abd5` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
+| `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `RememberResult` | interface | `9cca2f28c36c` |
 | `ResolveReasonNotSupportedError` | class | `d28ecb2bd083` |
 | `ResolveStatus` | type | `7accd0c80ed5` |
@@ -380,10 +391,12 @@ its row here even when its name and kind are unchanged.
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
+| `closeDb` | function | `07b382de379c` |
 | `closeSessionRun` | function | `7be3707051e7` |
 | `completeAgentSessionTriage` | function | `34348b3754ec` |
 | `consolidate` | function | `b7af3875f5b6` |
 | `createCommitment` | function | `b8097afe16dd` |
+| `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `1e8f58a54fe9` |
 | `createUser` | function | `41cb089db439` |
 | `dbConsolidateRepo` | const | `d157d777ed45` |
@@ -393,6 +406,7 @@ its row here even when its name and kind are unchanged.
 | `dbSurfacingRepo` | const | `bd42a3f284fd` |
 | `deleteAccount` | function | `43aafd3f76ea` |
 | `deleteScope` | function | `8e460c0839b0` |
+| `deleteWindowCounter` | function | `13cc4dd10203` |
 | `describeEnvironment` | function | `4ba1439f061f` |
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expiryCutoff` | function | `66a0347310b8` |
@@ -416,6 +430,7 @@ its row here even when its name and kind are unchanged.
 | `importEvent` | function | `b646608824c0` |
 | `importFact` | function | `de183450645f` |
 | `importMemory` | function | `94b80cc5a793` |
+| `incrementWindowCounter` | function | `36c4508075c1` |
 | `isCloserEligible` | function | `5ba2c96e3393` |
 | `listAllProposals` | function | `a406e03c4581` |
 | `listEdgeProposalsPage` | function | `3ad34c3c272d` |
@@ -427,6 +442,7 @@ its row here even when its name and kind are unchanged.
 | `listSessionEvents` | function | `ebd96679d1c9` |
 | `mergeProposalStreams` | function | `dd0dce5af6ae` |
 | `openAgentSession` | function | `f9f1c5480ba4` |
+| `readWindowCounter` | function | `5a420ebce5e1` |
 | `rejectProposal` | function | `33be71cbec7e` |
 | `rejectProposalAnyKind` | function | `e5eb76037fc2` |
 | `releaseBudgetReservation` | function | `391df079ae05` |
@@ -690,6 +706,7 @@ its row here even when its name and kind are unchanged.
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OAuthClientRow` | interface | `1a2affe71574` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
+| `PostgresRateLimiterOptions` | interface | `47b744d8a434` |
 | `PredecessorAlreadySupersededError` | class | `90531b48591a` |
 | `PredecessorNotFoundError` | class | `2db71afcf812` |
 | `ProposalKeyset` | interface | `4630f44f74df` |
@@ -698,6 +715,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalRow` | interface | `118db521ee36` |
 | `ProposalWrite` | interface | `303e63b2723b` |
 | `ProposalsQuery` | interface | `60bf10951af6` |
+| `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `ReaffirmOutcome` | type | `3f19d3b45ae0` |
 | `ReaffirmWrite` | type | `932c546d55f0` |
 | `ResolvedApiKey` | interface | `8af9600d6f10` |
@@ -765,10 +783,12 @@ its row here even when its name and kind are unchanged.
 | `countProposals` | function | `7c68fb735bcd` |
 | `countProposalsByStatus` | function | `83536379eed5` |
 | `createCommitment` | function | `fb2e38368ac8` |
+| `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `f1efc67b328e` |
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
 | `deleteScope` | function | `d948256373ca` |
+| `deleteWindowCounter` | function | `13cc4dd10203` |
 | `deletedEmail` | function | `ae76aba2c615` |
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
@@ -798,6 +818,7 @@ its row here even when its name and kind are unchanged.
 | `getUserProfileAttributes` | function | `673f97623df1` |
 | `getWriteScopePolicy` | function | `c9edb51fecd6` |
 | `heartbeatSession` | function | `f792e4d2366f` |
+| `incrementWindowCounter` | function | `36c4508075c1` |
 | `insertApiKey` | function | `e0020f05cd8f` |
 | `insertAuditLog` | function | `5ab559d1a0ae` |
 | `insertEdge` | function | `5b307f86e993` |
@@ -847,11 +868,13 @@ its row here even when its name and kind are unchanged.
 | `peekEmailVerificationToken` | function | `12dd669b9f76` |
 | `peekResetToken` | function | `2536f5228240` |
 | `planTiers` | const | `4a0f287afe02` |
+| `rateLimits` | const | `62564cfadee3` |
 | `readAgentSession` | function | `6cbc302058a4` |
 | `readAgentSessionRun` | function | `be8d5c8a688e` |
 | `readCloserSession` | function | `1a19fa49b914` |
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
+| `readWindowCounter` | function | `5a420ebce5e1` |
 | `reaffirmMemoryDisposition` | function | `04c47c7c6ccd` |
 | `reaffirmMemoryIn` | function | `7ec25d6fbf66` |
 | `recentDecisions` | function | `386c29c370a3` |
@@ -1525,7 +1548,7 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
-| `AppOptions` | interface | `ae4a4c43e2d5` |
+| `AppOptions` | interface | `dfea1b083f73` |
 | `Extension` | interface | `7340dd0f768e` |
 | `RESOURCE_LIMITS_ENFORCED` | const | `3a196bd283fc` |
 | `createApp` | function | `b4fbf33cc40e` |
