@@ -1124,9 +1124,22 @@
               },
               "required": ["mode", "scope"],
               "additionalProperties": true
+            },
+            "account": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "description": "Stable id of the authenticated 3ngram account (equals GET /api/v1/me id). Not a scope or project."
+                }
+              },
+              "required": ["id"],
+              "additionalProperties": true
             }
           },
-          "required": ["capabilities", "scopes", "stats", "retrievalScopePolicy"],
+          "required": ["capabilities", "scopes", "stats", "retrievalScopePolicy", "account"],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": true
         },

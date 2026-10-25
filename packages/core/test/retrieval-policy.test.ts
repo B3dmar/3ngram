@@ -23,6 +23,7 @@ const upsertRetrievalPolicy = vi.fn()
 const listScopes = vi.fn()
 const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const getEnvironmentStats = vi.fn()
+const getLiveAccountId = vi.fn()
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
 )
@@ -31,6 +32,12 @@ class InvalidEmbeddingError extends Error {
   constructor(actual: number) {
     super(`embedding must have exactly ${EMBEDDING_DIMENSIONS} dimensions, got ${actual}`)
     this.name = 'InvalidEmbeddingError'
+  }
+}
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account_deleted')
+    this.name = 'AccountDeletedError'
   }
 }
 class ScopeNotFoundError extends Error {
@@ -57,6 +64,8 @@ vi.mock('@3ngram/db', () => ({
   listScopes: (...a: unknown[]) => listScopes(...a),
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
+  getLiveAccountId: (...a: unknown[]) => getLiveAccountId(...a),
+  AccountDeletedError,
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
   ScopeNotFoundError,
@@ -485,6 +494,7 @@ describe('describeEnvironment report mapping', () => {
   }
 
   it('reports the off default when no row is stored', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
     getRetrievalPolicy.mockResolvedValue(null)
@@ -493,10 +503,33 @@ describe('describeEnvironment report mapping', () => {
   })
 
   it('reports the stored policy verbatim', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
     getRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
     const report = await describeEnvironment(USER)
     expect(report.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+  })
+
+  it('reports the account id the live users row returns, inside the same tenant tx (#321)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    const report = await describeEnvironment(USER)
+    expect(report.account).toEqual({ id: USER })
+    expect(getLiveAccountId).toHaveBeenCalledWith(expect.anything(), USER)
+    expect(withTenant).toHaveBeenCalledTimes(1)
+  })
+
+  it('FAILS rather than reporting an identity for an erased or missing account (#321)', async () => {
+    // getLiveAccountId answers undefined for an absent row AND a tombstone; the
+    // report must not fall back to echoing the caller's id.
+    getLiveAccountId.mockResolvedValue(undefined)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    await expect(describeEnvironment(USER)).rejects.toBeInstanceOf(AccountDeletedError)
+    expect(listScopes).not.toHaveBeenCalled()
   })
 })

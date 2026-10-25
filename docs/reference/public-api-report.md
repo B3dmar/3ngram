@@ -251,7 +251,7 @@ its row here even when its name and kind are unchanged.
 | `EdgeConflictError` | class | `1edf03d6924b` |
 | `EmbeddingSource` | type | `4d033ba4bef9` |
 | `EmptySectionsError` | class | `951ee5599e42` |
-| `EnvironmentReport` | interface | `bd3983fb56b7` |
+| `EnvironmentReport` | interface | `8affe0ef5733` |
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
 | `ExportAccountRow` | interface | `371759da5226` |
@@ -749,6 +749,7 @@ its row here even when its name and kind are unchanged.
 | `getCommitmentByMemoryId` | function | `0629c8a41d7f` |
 | `getEnvironmentStats` | function | `e15c275ef074` |
 | `getFacts` | function | `fa54c70ac1dc` |
+| `getLiveAccountId` | function | `ecf1e7b0880b` |
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `f98653cf2421` |
@@ -928,6 +929,7 @@ its row here even when its name and kind are unchanged.
 | Export | Kind | Signature |
 |---|---|---|
 | `AccountDeleteBody` | type | `67b6affde4b2` |
+| `AccountIdentity` | type | `6bca32a98a1e` |
 | `ActorKind` | type | `0e0517b76c62` |
 | `AgentName` | type | `11a9a370f4c8` |
 | `AgentSessionCloseInput` | type | `38f02c9083c6` |
@@ -1007,6 +1009,7 @@ its row here even when its name and kind are unchanged.
 | `DescribeEnvironmentInput` | type | `ccbb4620ed2f` |
 | `DescribeEnvironmentOutput` | type | `0b7acee1f097` |
 | `DescribeEnvironmentOutputV2` | type | `a84de5a9077c` |
+| `DescribeEnvironmentOutputV3` | type | `083fcacc5c9d` |
 | `EDGE_TYPES` | const | `2123ce5046a8` |
 | `EXCERPT_MARKER` | const | `c94c597ad8df` |
 | `EdgeInput` | type | `148a30e60bcc` |
@@ -1197,6 +1200,7 @@ its row here even when its name and kind are unchanged.
 | `VersionResponse` | type | `e78eb92637a7` |
 | `WrittenMemoryOutput` | type | `56fbf701722c` |
 | `accountDeleteBodySchema` | const | `3de27a9bbf59` |
+| `accountIdentitySchema` | const | `180fdd5eecf4` |
 | `actorKindSchema` | const | `768f5910467d` |
 | `agentNameSchema` | const | `1e4eae0c30ad` |
 | `agentSessionCloseBodySchema` | const | `399ac64e367e` |
@@ -1262,6 +1266,7 @@ its row here even when its name and kind are unchanged.
 | `describeEnvironmentInputSchema` | const | `38dfd6c1a221` |
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |
+| `describeEnvironmentOutputV3Schema` | const | `70334227f056` |
 | `edgeInputSchema` | const | `56912f6f68d8` |
 | `edgeTypeSchema` | const | `86414d0a3335` |
 | `embedStatusSchema` | const | `ac5117a08996` |

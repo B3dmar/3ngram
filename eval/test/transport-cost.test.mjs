@@ -166,7 +166,12 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
-      mcp: [27700, 223416, 55831],
+      // MCP +156/+1248/+304 (issue #321): describe_environment's output schema
+      // gains the required `account: { id }` object (a uuid with its field
+      // description) that MCP pays on tools/list per turn. The tool description
+      // is unchanged (no embeddings regen); REST and CLI are unchanged.
+      // MEASURED, not summed.
+      mcp: [27856, 224664, 56135],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },

@@ -398,4 +398,4 @@ export {
   upsertUserProfileAttributes,
 } from './user-profile-attributes.js'
 // --- /me identity read: keyed id+email lookup, no credential ---
-export { getUserIdentityById, type UserIdentityRow } from './users-read.js'
+export { getLiveAccountId, getUserIdentityById, type UserIdentityRow } from './users-read.js'

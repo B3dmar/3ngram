@@ -13,6 +13,7 @@
 // Content discipline (hard rule 6): only the id + email are read; the
 // password_hash is NEVER selected here.
 import { eq } from 'drizzle-orm'
+import { isAccountTombstoned } from './account-delete.js'
 import type { TenantTx } from './client.js'
 import { users } from './schema/identity.js'
 
@@ -37,4 +38,22 @@ export async function getUserIdentityById(
     .where(eq(users.id, userId))
     .limit(1)
   return row
+}
+
+/**
+ * The account id of a LIVE user, or undefined when the row is absent or a
+ * deletion tombstone (issue #321 — describe_environment's `account.id`). The
+ * row's own primary key is returned, so the id comes from the identity model
+ * rather than being echoed from the caller. The email and password hash are
+ * read only to recognise a tombstone ({@link isAccountTombstoned}) and never
+ * leave this function.
+ */
+export async function getLiveAccountId(tx: TenantTx, userId: string): Promise<string | undefined> {
+  const [row] = await tx
+    .select({ id: users.id, email: users.email, passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+  if (row === undefined || isAccountTombstoned(userId, row)) return undefined
+  return row.id
 }

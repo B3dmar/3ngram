@@ -16,7 +16,7 @@ import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
   configureScopeOutputV2Schema,
-  describeEnvironmentOutputV2Schema,
+  describeEnvironmentOutputV3Schema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -2325,6 +2325,7 @@ describe('configure_scope tool', () => {
 describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
       stats: {
@@ -2337,7 +2338,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2351,6 +2352,41 @@ describe('describe_environment tool', () => {
     expect(parsed.stats.supersededMemories).toBe(2)
     expect(parsed.stats.archivedMemories).toBe(1)
     expect(parsed.stats.commitmentsByStatus.resolved).toBe(4)
+    // The authenticated account (issue #321): core's users.id, verbatim.
+    expect(parsed.account).toEqual({ id: UID })
+  })
+
+  it('reports the account id core read, not one derived from a scope name (#321)', async () => {
+    // core is the source of the id (the live users row); the transport neither
+    // substitutes ctx.userId nor derives anything from the scope registry.
+    const coreId = crypto.randomUUID()
+    describeEnvironment.mockResolvedValue({
+      account: { id: coreId },
+      scopes: [scopeRecord('work'), scopeRecord('personal')],
+      retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    expect(parsed.account.id).toBe(coreId)
+    expect(describeEnvironment).toHaveBeenCalledWith(UID)
+    // Identity only: no email, label, or OAuth client id rides on the account.
+    expect(Object.keys(parsed.account)).toEqual(['id'])
+  })
+
+  it('an erased account yields account_deleted and NO identity (#321)', async () => {
+    describeEnvironment.mockRejectedValueOnce(new AccountDeletedError())
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('account_deleted')
+    expect(result.structuredContent).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain(UID)
   })
 
   it('REDACTION: the response never carries a configured secret (sentinel)', async () => {
@@ -2362,6 +2398,7 @@ describe('describe_environment tool', () => {
     process.env.OAUTH_PRIVATE_KEYS = SENTINEL
     try {
       describeEnvironment.mockResolvedValue({
+        account: { id: UID },
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
         stats: {
@@ -2754,6 +2791,7 @@ describe('retrieval-scope policy wiring', () => {
 
   it('describe_environment reports the active policy', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
       stats: {
@@ -2766,7 +2804,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 
