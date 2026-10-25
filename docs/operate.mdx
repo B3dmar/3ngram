@@ -106,7 +106,9 @@ is acceptable.
 
 Database scaling is your Postgres provider's operation. Background workers use
 BullMQ, ship as their own image (`ghcr.io/b3dmar/3ngram-worker`), and are part
-of both Compose stacks (`docker-compose.yml`, `compose.selfhost.yml`).
+of both Compose stacks (`docker-compose.yml`, `compose.selfhost.yml`). The
+worker validates its env as role `worker`, so it does not need the OAuth
+signing keys (`OAUTH_JWKS`).
 
 ## Recovery
 
