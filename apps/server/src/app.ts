@@ -162,6 +162,9 @@ function resolveGateway(override: Gateway | undefined): Gateway | undefined {
   if (override !== undefined) return override
   const base = loadLlmGatewayConfig()
   const judgment = loadJevGatewayConfig()
+  if (judgment !== undefined && base === undefined) {
+    log().warn({}, 'JEV_* set without LLM_GATEWAY_URL/LLM_GATEWAY_API_KEY: decide() unavailable')
+  }
   return composeGateway({
     base: base === undefined ? undefined : createOpenAIGateway(base),
     judgment: judgment === undefined ? undefined : createJevGateway(judgment),

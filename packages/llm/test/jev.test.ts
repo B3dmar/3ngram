@@ -5,7 +5,13 @@
 // counts/kinds only: never state, instructions, labels, the key or the body.
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createJevGateway, InvalidDecideError, MAX_DECIDE_STATE_CHARS } from '../src/jev.js'
+import {
+  createJevGateway,
+  InvalidDecideError,
+  isFloatingModelAlias,
+  MAX_DECIDE_QUESTIONS,
+  MAX_DECIDE_STATE_CHARS,
+} from '../src/jev.js'
 import { GatewayRequestError, NotImplementedError } from '../src/openai.js'
 import type { DecideRequest } from '../src/types.js'
 
@@ -87,6 +93,13 @@ describe('createJevGateway decide()', () => {
     ['an unknown probability label', (r: Wire) => (r.answers.kind.probabilities.zzz = 0.1)],
     ['a score past the rubric', (r: Wire) => (r.answers.effort.score = 3)],
     ['a missing model', (r: Wire) => delete r.model],
+    ['an empty model', (r: Wire) => (r.model = '')],
+    ['an Infinity probability', (r: Wire) => (r.answers.c1.noul = Number.POSITIVE_INFINITY)],
+    ['probabilities missing a label', (r: Wire) => delete r.answers.kind.probabilities.other],
+    ['empty probabilities', (r: Wire) => (r.answers.kind.probabilities = {})],
+    ['a score probability past the rubric', (r: Wire) => (r.answers.effort.probabilities['3'] = 0)],
+    ['null answers', (r: Wire) => ((r as { answers: unknown }).answers = null)],
+    ['array answers', (r: Wire) => ((r as { answers: unknown }).answers = [])],
   ])('rejects %s without echoing content', async (_name, mutate) => {
     const response = clone(fixture.response) as unknown as Wire
     mutate(response)
@@ -151,5 +164,86 @@ describe('createJevGateway decide()', () => {
     const gw = createJevGateway(CONFIG)
     expect(await rejection(gw.embed(['x'], 'op'))).toBeInstanceOf(NotImplementedError)
     expect(await rejection(gw.complete('x', 'op'))).toBeInstanceOf(NotImplementedError)
+  })
+
+  it('keeps the billed input count when only the free output count is malformed', async () => {
+    const response = clone(fixture.response)
+    response.usage = { input_tokens: 40, output_tokens: 'n/a' }
+    stub(response)
+    const result = await createJevGateway(CONFIG).decide(fixture.request, 'op')
+    expect(result.usage).toEqual({ inputTokens: 40, outputTokens: 0 })
+  })
+
+  it.each([-1, 1.5, '40'])('leaves usage unpriced for input count %s', async (input) => {
+    const response = clone(fixture.response)
+    response.usage = { input_tokens: input, output_tokens: 0 }
+    stub(response)
+    const result = await createJevGateway(CONFIG).decide(fixture.request, 'op')
+    expect(result.usage).toBeUndefined()
+  })
+
+  it('answers a question named __proto__ as an own key', async () => {
+    const request: DecideRequest = {
+      state: 's',
+      questions: { ['__proto__']: { type: 'noul', instructions: 'i' } },
+    }
+    stub(`{"model":"m","answers":{"__proto__":{"type":"noul","noul":0.4}}}`)
+    const result = await createJevGateway(CONFIG).decide(request, 'op')
+    expect(Object.hasOwn(result.answers, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype)
+  })
+
+  it('rejects more than the question cap before any network call', async () => {
+    const mock = stub(fixture.response)
+    const questions = Object.fromEntries(
+      Array.from({ length: MAX_DECIDE_QUESTIONS + 1 }, (_, i) => [
+        `q${i}`,
+        { type: 'noul' as const, instructions: 'i' },
+      ]),
+    )
+    const error = await rejection(createJevGateway(CONFIG).decide({ state: 's', questions }, 'op'))
+    expect(error).toBeInstanceOf(InvalidDecideError)
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('aborts a body that stalls after the headers arrive', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')))
+          },
+        })
+        return Promise.resolve(new Response(body, { status: 200 }))
+      }),
+    )
+    const gw = createJevGateway({ ...CONFIG, timeoutMs: 5 })
+    expect((await rejection(gw.decide(fixture.request, 'op'))).message).toBe('aborted')
+  })
+
+  it('never puts the api key in an error message', async () => {
+    stub({ error: 'k-secret' }, 401)
+    const error = await rejection(createJevGateway(CONFIG).decide(fixture.request, 'op'))
+    expect(error.message).not.toContain('k-secret')
+  })
+})
+
+describe('createJevGateway config', () => {
+  it.each([
+    'jev-latest',
+    'latest',
+    'jev_latest',
+    'jev.LATEST',
+    'jev:latest',
+    '  ',
+  ])('refuses the floating model %j', (model) => {
+    expect(() => createJevGateway({ ...CONFIG, model })).toThrow(/pin a version/)
+  })
+
+  it('accepts a pinned model and rejects a non-positive timeout', () => {
+    expect(isFloatingModelAlias('jev-1.13.0')).toBe(false)
+    expect(() => createJevGateway({ ...CONFIG, timeoutMs: 0 })).toThrow(/timeoutMs/)
+    expect(() => createJevGateway({ ...CONFIG, timeoutMs: Number.NaN })).toThrow(/timeoutMs/)
   })
 })

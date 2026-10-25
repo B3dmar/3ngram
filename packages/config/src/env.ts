@@ -152,6 +152,23 @@ export interface OAuthConfig {
  * - `LOG_HASH_SALT` is required in production and the public self-host example
  *   placeholder is rejected (hashed user_id correlation, §1).
  */
+/**
+ * A usable Jev API root: https, no userinfo (a fetch error can echo the URL,
+ * which would put a credential in an error message), no query or fragment, and
+ * no trailing `/v1` (the client appends `/v1/systemone` itself).
+ */
+function isJevApiRoot(value: string): boolean {
+  const url = new URL(value)
+  return (
+    url.protocol === 'https:' &&
+    url.username === '' &&
+    url.password === '' &&
+    url.search === '' &&
+    url.hash === '' &&
+    !/\/v1\/*$/.test(url.pathname)
+  )
+}
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -274,13 +291,20 @@ export const envSchema = z
       .pipe(
         z
           .url()
-          .refine((value) => value.startsWith('https://'), 'JEV_API_URL must be https')
+          .refine(
+            isJevApiRoot,
+            'JEV_API_URL must be an https API root with no credentials, query or /v1 path',
+          )
           .optional(),
       ),
+    // Trimmed: a trailing newline from a secrets file would otherwise make every
+    // Authorization header invalid; whitespace-only reads as unset.
     JEV_API_KEY: z
       .string()
       .optional()
-      .transform((value) => (value === undefined || value === '' ? undefined : value)),
+      .transform((value) =>
+        value === undefined || value.trim() === '' ? undefined : value.trim(),
+      ),
     JEV_MODEL: z
       .string()
       .optional()
@@ -289,7 +313,7 @@ export const envSchema = z
         z
           .string()
           .refine(
-            (value) => !/-latest$/i.test(value),
+            (value) => !/(^|[-_.@:])latest$/i.test(value),
             'JEV_MODEL must pin a model version, not a -latest alias',
           )
           .optional(),

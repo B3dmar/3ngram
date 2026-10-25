@@ -274,6 +274,9 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   // #225); otherwise it rejects with a typed NotImplementedError.
   const gatewayConfig = loadLlmGatewayConfig()
   const jevConfig = loadJevGatewayConfig()
+  if (jevConfig !== undefined && gatewayConfig === undefined) {
+    log().warn({}, 'JEV_* set without LLM_GATEWAY_URL/LLM_GATEWAY_API_KEY: decide() unavailable')
+  }
   const gateway = composeGateway({
     base: gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig),
     judgment: jevConfig === undefined ? undefined : createJevGateway(jevConfig),

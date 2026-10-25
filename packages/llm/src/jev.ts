@@ -12,8 +12,8 @@
 //
 // MODEL PIN. `model` is required and sent on every call: the vendor's
 // `jev-latest` alias would let the judged distribution change under a fixed
-// threshold without any change on our side. packages/config refuses a
-// `-latest` value before this factory is reached.
+// threshold without any change on our side. The factory refuses an alias
+// (isFloatingModelAlias), and packages/config refuses one at env load.
 //
 // Only `decide()` exists here. `embed()` and `complete()` throw
 // NotImplementedError; composeGateway (compose.ts) routes those to the
@@ -39,6 +39,15 @@ export const MAX_DECIDE_STATE_CHARS = 64_000
 export const MAX_DECIDE_QUESTIONS = 100
 
 const DEFAULT_TIMEOUT_MS = 10_000
+
+/**
+ * True for a model name that floats rather than pins: `latest`, or anything
+ * ending in a separator then `latest` (`jev-latest`, `jev_latest`, `jev.latest`,
+ * `jev:latest`). packages/config applies the same rule at env load.
+ */
+export function isFloatingModelAlias(model: string): boolean {
+  return /(^|[-_.@:])latest$/i.test(model.trim())
+}
 
 /** Resolved config for the Jev gateway. */
 export interface JevGatewayConfig {
@@ -105,25 +114,23 @@ export function assertDecideRequest(request: DecideRequest): void {
   }
 }
 
-/** The wire form of one question. Our shapes are already wire-shaped; this only
- * drops an absent noul `criteria` instead of sending `undefined`. */
-function toWireQuestion(question: DecideQuestion): Record<string, unknown> {
-  if (question.type !== 'noul' || question.criteria === undefined) return { ...question }
-  return { type: 'noul', instructions: question.instructions, criteria: question.criteria }
-}
-
-/** Probabilities keyed by label (or score index), each in [0, 1], keys within `allowed`. */
+/**
+ * Probabilities keyed by label (or score index), each in [0, 1], over EXACTLY
+ * the `allowed` keys — the vendor contract types this as a total map, and a
+ * caller reading `probabilities[label]` must never get undefined. Built with
+ * Object.fromEntries so a `__proto__` label lands as an own key.
+ */
 function readProbabilities(
   value: unknown,
   allowed: ReadonlySet<string>,
 ): Record<string, number> | undefined {
   if (!isRecord(value)) return undefined
-  const out: Record<string, number> = {}
-  for (const [key, p] of Object.entries(value)) {
+  const entries = Object.entries(value)
+  if (entries.length !== allowed.size) return undefined
+  for (const [key, p] of entries) {
     if (!allowed.has(key) || !isUnit(p)) return undefined
-    out[key] = p
   }
-  return out
+  return Object.fromEntries(entries) as Record<string, number>
 }
 
 /** Validate one wire answer against the question it answers; undefined = invalid. */
@@ -159,7 +166,8 @@ function readAnswer(question: DecideQuestion, wire: unknown): DecideAnswer | und
  * carry counts and positions only.
  */
 export function parseDecideResponse(request: DecideRequest, payload: unknown): DecideResult {
-  if (!isRecord(payload) || !isRecord(payload.answers) || typeof payload.model !== 'string') {
+  const model = isRecord(payload) ? payload.model : undefined
+  if (!isRecord(payload) || !isRecord(payload.answers) || typeof model !== 'string' || !model) {
     throw new InvalidDecideError('decide response is not an object with answers and model')
   }
   const wireAnswers = payload.answers
@@ -168,24 +176,26 @@ export function parseDecideResponse(request: DecideRequest, payload: unknown): D
   if (extra.length > 0) {
     throw new InvalidDecideError(`decide response has ${extra.length} unasked answers`)
   }
-  const answers: Record<string, DecideAnswer> = {}
-  for (const [index, name] of names.entries()) {
+  // Own-key reads and Object.fromEntries: a question named `__proto__` must be
+  // answered by an own key and land as one, never touch a prototype.
+  const answered = names.map((name, index): [string, DecideAnswer] => {
     const question = request.questions[name] as DecideQuestion
-    const answer = readAnswer(question, wireAnswers[name])
+    const wire = Object.hasOwn(wireAnswers, name) ? wireAnswers[name] : undefined
+    const answer = readAnswer(question, wire)
     if (answer === undefined) {
       throw new InvalidDecideError(`decide answer ${index} (${question.type}) missing or invalid`)
     }
-    answers[name] = answer
-  }
-  return { answers, ...readUsage(payload.usage), model: payload.model }
+    return [name, answer]
+  })
+  return { answers: Object.fromEntries(answered), ...readUsage(payload.usage), model }
 }
 
-/** Usage counts. An absent or null input count yields NO usage (unpriced), never
- * zero; output is billed free by the vendor, so a null output count reads 0. */
+/** Usage counts. An absent or invalid input count yields NO usage (unpriced),
+ * never zero. Output is billed free by the vendor, so an absent or invalid output
+ * count reads 0 rather than discarding the billed input count with it. */
 function readUsage(value: unknown): Pick<DecideResult, 'usage'> {
   if (!isRecord(value) || !isCount(value.input_tokens)) return {}
-  const output = value.output_tokens ?? 0
-  if (!isCount(output)) return {}
+  const output = isCount(value.output_tokens) ? value.output_tokens : 0
   return { usage: { inputTokens: value.input_tokens, outputTokens: output } }
 }
 
@@ -199,14 +209,18 @@ function notImplemented(operation: string): Promise<never> {
  * and a hidden retry would double-spend against a reservation made for one call.
  */
 export function createJevGateway(config: JevGatewayConfig): Gateway {
-  const url = `${stripTrailingSlashes(config.baseUrl ?? JEV_DEFAULT_BASE_URL)}/v1/systemone`
+  // Config errors name the field, never its value.
+  if (config.model.trim() === '' || isFloatingModelAlias(config.model)) {
+    throw new Error('Jev gateway model must pin a version, not an alias like jev-latest')
+  }
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('Jev gateway timeoutMs must be a positive number')
+  }
+  const url = `${stripTrailingSlashes(config.baseUrl ?? JEV_DEFAULT_BASE_URL)}/v1/systemone`
 
   async function decide(request: DecideRequest, _operation: string): Promise<DecideResult> {
     assertDecideRequest(request)
-    const questions = Object.fromEntries(
-      Object.entries(request.questions).map(([name, q]) => [name, toWireQuestion(q)]),
-    )
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     // Armed until the BODY is read, as in openai.ts complete(): a stall after the
@@ -215,7 +229,13 @@ export function createJevGateway(config: JevGatewayConfig): Gateway {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ state: request.state, questions, model: config.model }),
+        // Our question shapes ARE the wire shapes (JSON drops an absent noul
+        // `criteria`), so they go out as given.
+        body: JSON.stringify({
+          state: request.state,
+          questions: request.questions,
+          model: config.model,
+        }),
         signal: controller.signal,
       })
       if (!response.ok) {

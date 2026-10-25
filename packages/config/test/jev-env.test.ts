@@ -51,13 +51,35 @@ describe('loadJevGatewayConfig', () => {
 })
 
 describe('JEV_* env schema', () => {
-  it('refuses a -latest alias as the model pin', () => {
-    expect(() => parseEnv({ JEV_MODEL: 'jev-latest' })).toThrow()
-    expect(() => parseEnv({ JEV_MODEL: 'JEV-LATEST' })).toThrow()
+  it.each([
+    'jev-latest',
+    'JEV-LATEST',
+    'latest',
+    'jev_latest',
+    'jev.latest',
+  ])('refuses the floating alias %j as the model pin', (model) => {
+    expect(() => parseEnv({ JEV_MODEL: model })).toThrow()
   })
 
-  it('refuses a non-https JEV_API_URL', () => {
-    expect(() => parseEnv({ JEV_API_URL: 'http://jev.test' })).toThrow()
+  it('treats a whitespace-only model or key as unset and trims the key', () => {
+    expect(parseEnv({ JEV_MODEL: '   ' }).JEV_MODEL).toBeUndefined()
+    expect(parseEnv({ JEV_API_KEY: '  ' }).JEV_API_KEY).toBeUndefined()
+    expect(parseEnv({ JEV_API_KEY: 'k-test\n' }).JEV_API_KEY).toBe('k-test')
+  })
+
+  it.each([
+    'http://jev.test',
+    'https://user:pass@jev.test',
+    'https://jev.test/?a=1',
+    'https://jev.test/#x',
+    'https://jev.test/v1',
+    'https://jev.test/v1/',
+  ])('refuses the JEV_API_URL %s', (url) => {
+    expect(() => parseEnv({ JEV_API_URL: url })).toThrow()
+  })
+
+  it('never echoes credentials in a URL rejection', () => {
+    expect(() => parseEnv({ JEV_API_URL: 'https://user:hunter2@jev.test' })).not.toThrow(/hunter2/)
   })
 
   it('treats empty JEV_API_URL as unset', () => {
