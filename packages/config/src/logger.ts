@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type DestinationStream, type Logger, pino } from 'pino'
 import { getContext, type RequestContext } from './context.js'
-import { loadEnv } from './env.js'
+import { envSchema } from './env.js'
 import { redactDeep } from './redaction.js'
 
 const CONTEXT_LOG_KEYS = {
@@ -33,7 +33,10 @@ export function contextBindings(ctx: RequestContext): Record<string, unknown> {
 export function createLogger(destination?: DestinationStream): Logger {
   return pino(
     {
-      level: loadEnv().LOG_LEVEL,
+      // Only LOG_LEVEL, not loadEnv(): the root logger is built at import time,
+      // before the entrypoint resolves the env with its role (#204). A full
+      // no-argument loadEnv() here would fix the role as 'server' first.
+      level: envSchema.shape.LOG_LEVEL.parse(process.env.LOG_LEVEL),
       // Recursive redaction of the entire log object — any key, any depth,
       // arrays included. Serializers/redact-path allowlists were rejected:
       // they miss memory rows under unanticipated keys ({ results: rows }).

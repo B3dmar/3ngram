@@ -10,11 +10,13 @@ export {
 export {
   type BudgetConfig,
   type Env,
+  type EnvRole,
   envSchema,
   isAllowedMcpOrigin,
   type JevGatewayConfig,
   type LlmGatewayConfig,
   LOG_LEVELS,
+  type LoadEnvOptions,
   loadBudgetConfig,
   loadEnv,
   loadJevGatewayConfig,
