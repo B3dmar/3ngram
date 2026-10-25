@@ -773,6 +773,9 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                     "type": "string"
                   },
+                  "defensive": {
+                    "type": "boolean"
+                  },
                   "sessionId": {
                     "maxLength": 256,
                     "minLength": 1,
@@ -882,7 +885,7 @@
             "description": "The attempt named is no longer the current one — a stale hook delivery, a second Stop, or a closer that re-claimed the row"
           }
         },
-        "summary": "Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark."
+        "summary": "Finish a triage attempt: absorb whatever the continuation wrote and stamp the outcome — completed with provenance, expired on a zero-write continuation so the closer still runs, overflowed past the per-run ceiling — plus the cumulative event-id watermark. defensive: true (no debrief was shown) lands expired and keeps the begin watermark."
       }
     },
     "/api/v1/agent-sessions/{sessionRunId}": {

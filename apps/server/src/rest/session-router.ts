@@ -154,7 +154,9 @@ export function sessionRouter(options: SessionRouterOptions): Router {
   // POST /api/v1/agent-sessions/triage/complete — Stop, second half. Absorbs the
   // continuation's writes: `completed` when it produced provenance, `expired`
   // when it produced none (so the closer still runs), `overflowed` past the
-  // per-run ceiling — and stamps the CUMULATIVE watermark.
+  // per-run ceiling — and stamps the CUMULATIVE watermark. `defensive: true`
+  // (issue #189) is a hook that armed but showed no debrief: `expired`, and the
+  // watermark stays at the begin stamp. Core owns that rule; this forwards it.
   //
   // A stale attempt is a 409, not a silent no-op: a crashed hook, a second Stop
   // or a closer that re-claimed the row after the lease expired mid-handshake

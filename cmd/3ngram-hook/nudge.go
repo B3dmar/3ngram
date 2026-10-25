@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -175,6 +176,19 @@ type triageCompleteRequest struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"sessionId"`
 	AttemptID string `json:"attemptId"`
+	// Defensive declares that this hook ARMED the attempt but displayed NO
+	// debrief for it (issue #189). The server then lands `expired` whatever was
+	// written since begin and leaves the watermark at the begin stamp, so an
+	// async write that committed between begin and complete stays untriaged and
+	// closer-eligible instead of being claimed as covered by a debrief nobody
+	// saw. Only abandonTriage sets it.
+	//
+	// OMITTED WHEN FALSE, for the same reason StopHookActive is: the complete
+	// body is a `.strict()` Zod object, so a server older than the field 400s
+	// it. The ordinary complete — the one that finishes a debrief that WAS shown
+	// — therefore stays byte-identical on the wire, and abandonTriage falls back
+	// to it on a 400.
+	Defensive bool `json:"defensive,omitempty"`
 }
 
 // debriefPrompt is the render. One bounded string, injected VERBATIM.
@@ -267,13 +281,15 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 		// attempt back: `complete` with no writes since begin lands the row on
 		// `expired`, which is closer-eligible — so the debrief still happens,
 		// off the interactive turn, which is where the page wanted it anyway.
-		completeTriage(key, begun.AttemptID)
+		// DEFENSIVE (issue #189): nothing was shown, so nothing written while
+		// the prompt was fetched may count as answered.
+		abandonTriage(key, begun.AttemptID)
 		return 0
 	}
 
 	envelope, err := continuationEnvelope(key.Agent, prompt)
 	if err != nil {
-		completeTriage(key, begun.AttemptID)
+		abandonTriage(key, begun.AttemptID)
 		return 0
 	}
 	fmt.Println(string(envelope))
@@ -294,10 +310,15 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 // If `begin` unexpectedly ARMS here — the row was not pending, and new
 // provenance plus the debounce admitted it — the hook still must not inject,
 // because `stop_hook_active=true` forbids it. Leaving the fresh attempt in
-// flight would strand it until some later Stop, so it is completed immediately:
-// with no writes since a begin stamp taken moments ago the row lands on
-// `expired`, which is unconditionally closer-eligible. The nudge is lost; the
-// debrief is not.
+// flight would strand it until some later Stop, so it is completed immediately
+// and DEFENSIVELY (abandonTriage, issue #189): the row lands on `expired`, which
+// is unconditionally closer-eligible, and a write that committed between begin
+// and complete stays outside the watermark rather than being absorbed as if a
+// debrief had covered it. The nudge is lost; the debrief is not.
+//
+// The `pending` decline is the opposite case and keeps the ordinary complete:
+// that attempt's debrief WAS shown by the Stop that armed it, so what the
+// continuation wrote is exactly what the outcome should absorb.
 //
 // Any other decline (`not-live`, `no-signal`, `debounce`, `terminal`) carries no
 // attempt id, which is the honest answer "nothing was armed, or the closer took
@@ -322,32 +343,64 @@ func finalizeTriage(key agentSessionKey) {
 	if !ok {
 		return
 	}
+	if begun.Armed {
+		abandonTriage(key, begun.AttemptID)
+		return
+	}
 	completeTriage(key, begun.AttemptID)
 }
 
-// completeTriage posts the absorb, fenced on the attempt id. An empty id means
-// there is nothing in flight and no call is made — `complete` requires a uuid
-// and would 400.
+// completeTriage posts the absorb for an attempt whose debrief WAS shown,
+// fenced on the attempt id. An empty id means there is nothing in flight and no
+// call is made — `complete` requires a uuid and would 400.
 func completeTriage(key agentSessionKey, attemptID string) {
 	if attemptID == "" {
-		return
-	}
-	body, err := json.Marshal(triageCompleteRequest{
-		Agent:     key.Agent,
-		SessionID: key.SessionID,
-		AttemptID: attemptID,
-	})
-	if err != nil {
 		return
 	}
 	// A 409 is EXPECTED here, not a bug: a stale attempt (a crashed hook, a
 	// duplicate delivery, or a closer that re-claimed the row after the lease
 	// expired mid-handshake) must learn its attempt is over. It logs like any
 	// other non-2xx and the hook exits 0.
-	_, status, err := apiRequest("POST", "/api/v1/agent-sessions/triage/complete", body, triageCompleteTimeout)
+	if status, err := postTriageComplete(key, attemptID, false); err != nil || status >= 400 {
+		logSessionFailure("agent-sessions/triage/complete", status, err)
+	}
+}
+
+// abandonTriage releases an attempt this hook ARMED but showed no debrief for:
+// the defensive complete (issue #189). See triageCompleteRequest.Defensive.
+//
+// A 400 is read as a server older than the field — the strict body rejects the
+// unknown key — and falls back to the ordinary complete, which is exactly the
+// behavior before the field existed: the attempt is still released (`expired`
+// in the common no-write case), and only the race the flag closes stays open on
+// that server. Any other failure, a 409 included, means the same as it does for
+// completeTriage and is not retried.
+func abandonTriage(key agentSessionKey, attemptID string) {
+	if attemptID == "" {
+		return
+	}
+	status, err := postTriageComplete(key, attemptID, true)
+	if err == nil && status == http.StatusBadRequest {
+		status, err = postTriageComplete(key, attemptID, false)
+	}
 	if err != nil || status >= 400 {
 		logSessionFailure("agent-sessions/triage/complete", status, err)
 	}
+}
+
+// postTriageComplete sends one complete and reports the HTTP status.
+func postTriageComplete(key agentSessionKey, attemptID string, defensive bool) (int, error) {
+	body, err := json.Marshal(triageCompleteRequest{
+		Agent:     key.Agent,
+		SessionID: key.SessionID,
+		AttemptID: attemptID,
+		Defensive: defensive,
+	})
+	if err != nil {
+		return 0, err
+	}
+	_, status, err := apiRequest("POST", "/api/v1/agent-sessions/triage/complete", body, triageCompleteTimeout)
+	return status, err
 }
 
 // triageBegin asks the server whether to nudge. The bool is "I got an answer",

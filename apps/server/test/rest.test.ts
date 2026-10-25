@@ -3265,6 +3265,25 @@ describe('agent-session lifecycle routes', () => {
       expect(await res.json()).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 0 })
     })
 
+    it('forwards a defensive complete verbatim — core owns the rule (issue #189)', async () => {
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'expired',
+        eventCount: 0,
+        sinceBeginCount: 1,
+        truncated: false,
+      })
+      const body = { ...BODY, defensive: true }
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 1 })
+      expect(completeAgentSessionTriage).toHaveBeenCalledWith(TENANT, body)
+    })
+
     it('409s a stale attempt', async () => {
       // A crashed hook, a second Stop, or a closer that re-claimed the row after
       // the lease expired mid-handshake. The caller must learn its attempt is
