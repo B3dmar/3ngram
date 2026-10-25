@@ -48,12 +48,14 @@ import {
   PredecessorAlreadySupersededError,
   PredecessorNotFoundError,
   ProposalNotFoundError,
+  ResolveReasonNotSupportedError,
   ResourceLimitExceededError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
   UnknownSessionRunError,
   UnscopedRetrievalError,
+  UnscopedWriteError,
 } from '@3ngram/core'
 import { ZodError } from 'zod'
 import { CursorQueryMismatchError } from '../cursor.js'
@@ -103,6 +105,20 @@ export function mapRestError(route: string, err: unknown): RestError | undefined
       reason: 'invalid_input',
       detail: formatUnscopedRetrievalDetail(err.registeredScopes),
     }
+  }
+  // A `remember` without scope rejected by the caller's own write-scope policy
+  // (mode 'require', issue #235): 400 invalid_input, with the fixed recovery
+  // text as detail (names the fix; no content). Mirrors MCP.
+  if (err instanceof UnscopedWriteError) {
+    log().warn({ route, err: err.name }, 'rest: unscoped write rejected by policy')
+    return { status: 400, reason: 'invalid_input', detail: err.message }
+  }
+  // A blocker resolve carrying a `reason` (issue #234): blockers have no
+  // commitment row to hold one. 400 invalid_input with the fixed recovery text
+  // as detail — never the reason itself. Mirrors MCP.
+  if (err instanceof ResolveReasonNotSupportedError) {
+    log().warn({ route, err: err.name }, 'rest: resolve reason rejected for a blocker')
+    return { status: 400, reason: 'invalid_input', detail: err.message }
   }
   // Malformed CLIENT input — a ZodError from a boundary INPUT .parse() or a
   // typed core validation error — is a 400, not a server fault: only the error

@@ -87,6 +87,11 @@ export function createMcpServer(ctx: ToolContext): McpServer {
       // site (see resources.ts). Per-resource hints win over this map field by
       // field, so the two never collide.
       'resources/templates/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
+      // resources/list carries the ONE fixed `threengram://facets` descriptor
+      // (issue #168) — a uri and its metadata, identical for every tenant, so it
+      // is a catalog like the template list. Its BODY is tenant data and caches
+      // 'private' on a short TTL at the registration site (resources.ts).
+      'resources/list': { ttlMs: MCP_CATALOG_CACHE_TTL_MS, cacheScope: 'public' },
     },
   })
   for (const tool of TOOLS) {

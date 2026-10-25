@@ -203,20 +203,85 @@ export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema
  * (docs/concepts/session-continuity.mdx). JSON key spelling matches
  * sessionProvenancePayloadSchema.
  */
-const sessionRunIdField = sessionRunIdSchema
+export const sessionRunIdField = sessionRunIdSchema
   .optional()
   .describe(
     'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.',
   )
 
 /**
- * Canonical native remember input (ADR-0011): facts-capable remember PLUS
- * optional sessionRunId. Core's single parse must accept this shape so
- * session provenance does not regress structured fact writes.
+ * Who a commitment is owed by or assigned to: a short free-text label, never
+ * inferred from the content (issue #165). Shared with the import contract so a
+ * native and an imported owner obey one bound.
  */
-export const nativeRememberInputSchema = rememberWithFactsInputSchema.safeExtend({
-  sessionRunId: sessionRunIdField,
-})
+export const commitmentOwnerSchema = z.string().trim().min(1).max(256)
+
+/**
+ * Native-only commitment lifecycle fields (issue #165). Explicit values only:
+ * no parser guesses a deadline from prose, so an undated commitment stays
+ * undated. NOT on {@link rememberInputSchema}: `revise` and import extend that
+ * base, and a revise carries the predecessor's commitment row (deadline, owner,
+ * identity) across supersession instead of re-stating it.
+ *
+ * `dueAt` reuses the fact-instant contract: an ISO-8601 string (JSON has no
+ * date type), at most millisecond precision because core converts it with
+ * `new Date()`, and `null` meaning the same as omitting it.
+ */
+const commitmentDueAtField = factTimestampSchema.describe(
+  `Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.`,
+)
+const commitmentOwnerField = commitmentOwnerSchema
+  .optional()
+  .describe('Commitments only: who owns the commitment, as a short label. Omit when unknown.')
+
+/**
+ * Native-only optional scope: omission is preserved for the write-scope policy
+ * (see {@link nativeRememberInputSchema}).
+ */
+const writeScopeField = scopeSchema
+  .optional()
+  .describe(
+    "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
+  )
+
+/**
+ * Canonical native remember input (ADR-0011): facts-capable remember PLUS
+ * optional sessionRunId and, for a commitment, its explicit deadline and owner.
+ * Core's single parse must accept this shape so session provenance does not
+ * regress structured fact writes.
+ *
+ * `scope` carries NO default here (issue #235): an omitted scope must survive
+ * the parse so core can apply the tenant's write-scope policy (`off` fills
+ * `personal`, `default` the configured scope, `require` rejects). A schema
+ * default would make an omitted scope indistinguishable from an explicit
+ * `personal`. The base {@link rememberInputSchema} keeps its `personal`
+ * default for import and the V1 alias.
+ *
+ * A `dueAt` or `owner` VALUE on a non-commitment is rejected rather than
+ * ignored: a silently dropped deadline would look accepted to the caller. An
+ * explicit `dueAt: null` means "no deadline" on every type (the same absent
+ * meaning it has on a commitment), so it carries nothing to drop. The issue is
+ * reported at the offending key, not at `memoryType`, so an agent reading the
+ * validation error sees which argument to remove.
+ */
+export const nativeRememberInputSchema = rememberWithFactsInputSchema
+  .extend({
+    scope: writeScopeField,
+    sessionRunId: sessionRunIdField,
+    dueAt: commitmentDueAtField,
+    owner: commitmentOwnerField,
+  })
+  .superRefine((input, ctx) => {
+    if (input.memoryType === 'commitment') return
+    for (const key of ['dueAt', 'owner'] as const) {
+      if (input[key] === undefined) continue
+      ctx.addIssue({
+        code: 'custom',
+        message: `${key} applies to commitment memories only`,
+        path: [key],
+      })
+    }
+  })
 export type NativeRememberInput = z.infer<typeof nativeRememberInputSchema>
 
 /**

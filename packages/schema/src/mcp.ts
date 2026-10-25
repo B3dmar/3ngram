@@ -23,17 +23,22 @@
 // Rationale and the composition rules in output-openness.ts. INPUT schemas are
 // deliberately NOT marked — an unknown arg key stays a loud rejection.
 import { z } from 'zod'
-import { commitmentStatusSchema } from './commitment.js'
+import { commitmentStatusSchema, resolutionReasonSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
 import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { proposalsCursorSchema } from './proposals-page.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
+import {
+  nativeReviseDispositionInputSchema,
+  reviseDispositionOutputSchema,
+} from './revise-disposition.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
 import {
   nativeReviseInputSchema,
-  nativeReviseRequestSchema,
+  nativeReviseMoveInputSchema,
   projectSchema,
   rememberInputSchema,
 } from './write.js'
@@ -91,10 +96,11 @@ export type RememberToolInput = z.infer<typeof rememberToolInputSchema>
 export type RememberToolArgs = z.input<typeof rememberToolInputSchema>
 
 /**
- * The created-memory view a write tool returns (structured output). The id is
- * the only field core remember() returns directly; the rest echo the NORMALIZED
- * write input (scope default applied, project null when absent) so the caller
- * gets the canonical stored shape without a follow-up read.
+ * The created-memory view a write tool returns (structured output). `id` and
+ * `scope` come from core remember() (the scope the row was WRITTEN to, after
+ * the write-scope policy resolved an omitted one, issue #235); the rest echo the
+ * normalized write input (project null when absent) so the caller gets the
+ * canonical stored shape without a follow-up read.
  */
 export const writtenMemorySchema = z
   .object({
@@ -162,11 +168,18 @@ export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 export const reviseToolInputSchema = nativeReviseInputSchema
 export type ReviseToolInput = z.infer<typeof reviseToolInputSchema>
 /**
- * What the tool actually accepts (issue #233): the successor object above OR a
- * move. Registered as the tool's input schema and parsed by both transports;
+ * What the tool actually accepts: a disposition over a batch of ids (issue
+ * #217), a move (issue #233), or the successor object above. Registered as the
+ * tool's input schema and parsed by both transports, which hand a disposition
+ * to core reviseDisposition() and the other two to core revise() (whose own
+ * contract, nativeReviseRequestSchema, stays successor | move).
  * `reviseToolInputSchema` keeps its object shape for callers that compose it.
  */
-export const reviseToolRequestSchema = nativeReviseRequestSchema
+export const reviseToolRequestSchema = z.union([
+  nativeReviseDispositionInputSchema,
+  nativeReviseMoveInputSchema,
+  nativeReviseInputSchema,
+])
 export type ReviseToolRequest = z.infer<typeof reviseToolRequestSchema>
 /** Caller-side shape of either kind; what the SDK's revise body derives from. */
 export type ReviseToolRequestArgs = z.input<typeof reviseToolRequestSchema>
@@ -192,6 +205,16 @@ export const reviseToolOutputSchema = z
   .strict()
   .meta(OPEN_OUTPUT_META)
 export type ReviseToolOutput = z.infer<typeof reviseToolOutputSchema>
+/**
+ * What the tool actually returns (issue #217): the written/moved memory above,
+ * or a disposition's per-id outcomes. A union under a new name so
+ * {@link reviseToolOutputSchema} keeps its shape for existing callers.
+ */
+export const reviseToolOutputV2Schema = z.union([
+  reviseToolOutputSchema,
+  reviseDispositionOutputSchema,
+])
+export type ReviseToolOutputV2 = z.infer<typeof reviseToolOutputV2Schema>
 
 // ---------------------------------------------------------------------------
 // resolve
@@ -218,6 +241,15 @@ export type ReviseToolOutput = z.infer<typeof reviseToolOutputSchema>
  * PROJECT-scoped briefing if it was written WITH that `project` — a NULL-project
  * row never matches `project = $project`. Pass `project` on remember to make a
  * blocker/commitment resolvable from inside a project briefing.
+ *
+ * REASON (issue #234): optional evidence for THIS transition, stored on the
+ * commitment row (`last_resolution_reason`) in the same transaction as the
+ * status change — never in the audit event payload. A reason explains one
+ * transition: any later status change without one clears it, and a same-state
+ * no-op writes nothing (the reason is not stored). A blocker has no commitment
+ * row to carry it, so a blocker resolve WITH a reason is rejected (invalid
+ * input) instead of silently dropping it. Read back only through the
+ * authenticated history read (`lastResolutionReason`).
  */
 export const resolveToolInputSchema = z
   .object({
@@ -227,6 +259,11 @@ export const resolveToolInputSchema = z
       .optional()
       .describe(
         'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.',
+      ),
+    reason: resolutionReasonSchema
+      .optional()
+      .describe(
+        'Optional evidence for this transition, e.g. "PR #123" or "superseded by <memory id>" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.',
       ),
   })
   .strict()
@@ -296,7 +333,9 @@ export type SearchInput = z.infer<typeof searchInputSchema>
  * can fetch the full memory by id when it needs the body. `superseded` marks a
  * demoted predecessor row (docs/concepts/memory-model.mdx: ranked below its
  * successor, never filtered) so a caller can label it rather than receive it
- * unmarked.
+ * unmarked. `scope`/`project` are the hit's filing. `commitmentStatus` is the
+ * commitment lifecycle, a separate axis from memory status: present only when a
+ * commitment row rides the memory, so a resolved commitment reads as history.
  */
 export const searchHitSchema = z
   .object({
@@ -308,6 +347,9 @@ export const searchHitSchema = z
     truncated: z.boolean(),
     score: z.number(),
     superseded: z.boolean(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+    commitmentStatus: commitmentStatusSchema.optional(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)
@@ -670,7 +712,9 @@ export const MAX_PROPOSALS_LIMIT = 100
  * `review_proposals` input — an ACTION DISCRIMINATOR (list | reject | accept).
  *
  * - `list`   : optional status filter ({@link proposalStatusSchema}) + bounded
- *   limit (default {@link DEFAULT_PROPOSALS_LIMIT}). handler asserts memory:read.
+ *   limit (default {@link DEFAULT_PROPOSALS_LIMIT}) + optional opaque `cursor`
+ *   from a previous page's `nextCursor` (issue #320 — `limit` bounds the rows
+ *   of one page across BOTH kinds). handler asserts memory:read.
  * - `reject` : proposalId; status proposed -> rejected. memory:write (handler).
  * - `accept` : proposalId; returns a typed not_implemented (the consolidator
  *   that applies a proposal is not built).
@@ -686,6 +730,9 @@ export const reviewProposalsInputSchema = z.discriminatedUnion('action', [
       action: z.literal('list'),
       status: proposalStatusSchema.optional(),
       limit: z.number().int().min(1).max(MAX_PROPOSALS_LIMIT).default(DEFAULT_PROPOSALS_LIMIT),
+      // Keyset continuation over the merged edge+fact stream (issue #320;
+      // contract + live-view semantics: proposals-page.ts).
+      cursor: proposalsCursorSchema.optional(),
     })
     .strict(),
   z.object({ action: z.literal('reject'), proposalId: z.uuid() }).strict(),
@@ -702,6 +749,7 @@ export const reviewProposalsRegisterShape = {
   action: z.enum(['list', 'reject', 'accept']),
   status: proposalStatusSchema.optional(),
   limit: z.number().int().min(1).max(MAX_PROPOSALS_LIMIT).optional(),
+  cursor: proposalsCursorSchema.optional(),
   proposalId: z.uuid().optional(),
 } as const
 
@@ -824,7 +872,13 @@ export const briefingToolInputSchema = z
   .strict()
 export type BriefingToolInput = z.infer<typeof briefingToolInputSchema>
 
-/** A commitment line in the briefing (ids/topic/status/due + the overdue flag). */
+/**
+ * A commitment line in the briefing (ids/topic/status/due + the overdue flag),
+ * plus its owner and filing (issue #261): `owner` is the recorded owner label or
+ * null (never inferred from content); `scope`/`project` are the riding memory's
+ * filing, so a reader can label a row (including an unscoped `project: null` one)
+ * without reading each memory back.
+ */
 export const briefingCommitmentSchema = z
   .object({
     id: z.uuid(),
@@ -833,6 +887,9 @@ export const briefingCommitmentSchema = z
     status: commitmentStatusSchema,
     dueAt: isoDateTime().nullable(),
     overdue: z.boolean(),
+    owner: z.string().nullable(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

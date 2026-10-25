@@ -6,7 +6,7 @@
 // @3ngram/sdk + @3ngram/schema ONLY — never @3ngram/core or @3ngram/db (layering).
 
 import { parseArgs } from 'node:util'
-import type { AsOfInput, FactsQueryArgs, RememberToolArgs } from '@3ngram/schema'
+import type { AsOfInput, FactsQueryArgs, RememberToolArgsV2 } from '@3ngram/schema'
 import type { SearchOptions, ThreengramClient } from '@3ngram/sdk'
 import { type ConfigFlags, resolveConfig } from './config.js'
 import { formatFacts, formatRemember, formatSearch } from './format.js'
@@ -75,7 +75,8 @@ function clientFor(values: Record<string, unknown>, io: Io): ThreengramClient {
   return io.makeClient(resolveConfig(configFlags(values), io.env))
 }
 
-/** `3ngram remember` — --type/--topic/--content required; optional scope/project/tags. */
+/** `3ngram remember` — --type/--topic/--content required; optional scope/project/tags,
+ * and for a commitment its explicit --due/--owner (issue #165). */
 async function runRemember(argv: string[], io: Io): Promise<void> {
   const { values } = parseArgs({
     args: argv,
@@ -87,6 +88,8 @@ async function runRemember(argv: string[], io: Io): Promise<void> {
       scope: { type: 'string' },
       project: { type: 'string' },
       tags: { type: 'string', multiple: true },
+      due: { type: 'string' },
+      owner: { type: 'string' },
     },
     allowPositionals: false,
   })
@@ -95,13 +98,15 @@ async function runRemember(argv: string[], io: Io): Promise<void> {
   emit(io, values.json === true, result, formatRemember(result))
 }
 
-/** Assemble a RememberToolArgs from parsed values; required fields are enforced. */
-function rememberArgs(values: Record<string, unknown>): RememberToolArgs {
+/** Assemble remember args from parsed values; required fields are enforced. The
+ * server validates --due/--owner (ISO instant, commitments only) — the CLI only
+ * forwards them, so the one validation boundary stays in @3ngram/schema. */
+function rememberArgs(values: Record<string, unknown>): RememberToolArgsV2 {
   const memoryType = requireString(values.type, '--type')
   const topic = requireString(values.topic, '--topic')
   const content = requireString(values.content, '--content')
-  const args: RememberToolArgs = {
-    memoryType: memoryType as RememberToolArgs['memoryType'],
+  const args: RememberToolArgsV2 = {
+    memoryType: memoryType as RememberToolArgsV2['memoryType'],
     topic,
     content,
   }
@@ -109,6 +114,8 @@ function rememberArgs(values: Record<string, unknown>): RememberToolArgs {
   if (typeof values.project === 'string') args.project = values.project
   const tags = parseTags(values.tags)
   if (tags !== undefined) args.tags = tags
+  if (typeof values.due === 'string') args.dueAt = values.due
+  if (typeof values.owner === 'string') args.owner = values.owner
   return args
 }
 

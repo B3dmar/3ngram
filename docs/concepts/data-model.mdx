@@ -4,7 +4,7 @@ description: "The v1 table layout, the append-and-supersede write path, and the 
 icon: "table"
 ---
 
-Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema (identity 10 · memory domain 9 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 27 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (25). `agent_sessions` (0032) is the 27th: JTBD "worth-keeping work is written without a human typing `/debrief`" cannot live on `memory_events` (needs a `memory_id` and a lifecycle kind).
+Shipped baseline: **28 physical tables** — **26** in the public Drizzle schema (identity 11 · memory domain 9 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 28 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (26). `agent_sessions` (0032) is the 27th: JTBD "worth-keeping work is written without a human typing `/debrief`" cannot live on `memory_events` (needs a `memory_id` and a lifecycle kind). `user_write_scope_policy` (0039) is the 28th: JTBD "an unscoped `remember` lands where this tenant said writes should land, or is rejected" (issue #235) needs a per-tenant setting independent of the retrieval policy, whose row means something else.
 
 ## Design rules
 
@@ -18,7 +18,7 @@ Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema
 
 ## Tables (v1)
 
-### Identity & access (10)
+### Identity & access (11)
 
 | Table | Purpose | Notes |
 |---|---|---|
@@ -30,6 +30,7 @@ Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema
 | `email_verification_tokens` | Single-use, time-boxed signup verification | RLS |
 | `user_profile_attributes` | Onboarding attributes: `role`, `use_case`, `ai_tools`, `referral_source` | RLS; no display-name column |
 | `user_retrieval_policy` | Per-tenant retrieval-scope default (`off` / `default` / `require`) | RLS |
+| `user_write_scope_policy` | Per-tenant write-scope default for a `remember` without `scope` (`off` = `personal` / `default` / `require`) | RLS + FORCE; account erasure resets it to `off` and drops the scope label |
 
 **Pre-tenant auth resolution**: every user-owned credential table (`user_sessions`, `api_keys`, `oauth_codes`, `oauth_tokens`) is RLS-enforced like the memory domain. The pre-tenant lookup path (credential hash → user, before tenant context exists) goes exclusively through narrow `SECURITY DEFINER` resolver functions (`auth_resolve_session`, `auth_resolve_api_key`, `auth_resolve_oauth_token`, `auth_consume_oauth_code`) with pinned `search_path`, EXECUTE-granted to the runtime role only. No blanket RLS exemptions on auth tables. Only `users` and `oauth_clients` (no `user_id`) are true system tables.
 
@@ -37,10 +38,10 @@ Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema
 
 | Table | Purpose | Notes |
 |---|---|---|
-| `memories` | topic, content, `memory_type` (decision/commitment/blocker/fact/preference/pattern/note/event), `scope`, `project`, `embedding vector(1536)`, `valid_from`, `valid_to`, `recorded_at`, `status` | **No commitment columns** — see `commitments` |
+| `memories` | topic, content, `memory_type` (decision/commitment/blocker/fact/preference/pattern/note/event), `scope`, `project`, `embedding vector(1536)`, `valid_from`, `valid_to`, `recorded_at`, `status`, `updated_at`, `last_reviewed_at` | **No commitment columns** — see `commitments`. `last_reviewed_at` (0041, issue #218) is the reaffirm review stamp, NULL until first reviewed; stale candidates key on `GREATEST(updated_at, last_reviewed_at)`, and `updated_at` also moves on the embedding write-back. It is not content: account erasure leaves it, and the data export carries it. Import does not restore it (like `updated_at`), and an imported `reaffirm` event is history only, so a round-tripped memory re-enters the stale queue until it is reaffirmed again |
 | `memory_edges` | `from_id`, `to_id`, `edge_type` (`supersedes`/`updates`/`extends`/`derives`), `created_by` (user/consolidator) | The typed-edge relationship model |
 | `memory_events` | Append-only lifecycle audit: `event_kind`, `actor_kind`, payload | INSERT-only grant; first-class actor taxonomy on every event |
-| `commitments` | Own entity with explicit FSM: `open → waiting → resolved/expired`, owner, due, recurrence, `next_surfacing_at`, FK → `memories` | Commitments modeled as their own entity, not columns on `memories` |
+| `commitments` | Own entity with explicit FSM: `open → waiting → resolved/expired`, owner, due, recurrence, `next_surfacing_at`, `last_resolution_reason` (the optional `resolve` reason of the latest transition, ≤ 500 chars, issue #234), FK → `memories` | Commitments modeled as their own entity, not columns on `memories`; account erasure nulls `owner` and `last_resolution_reason` |
 | `facts` | Structured projection: subject, predicate, value, confidence, bi-temporal cols, FK → source memory | **Values are text**, so the unit belongs in the predicate and each row holds ONE measure: subject `lift.back_squat`, predicate `top_set.weight_kg`, value `98` — never a predicate `top_set` carrying `98kg x 3`. A range read is only comparable across rows if every writer follows it. A typed `value_numeric` column is deferred; it can be added later as a stored generated column without changing a writer. |
 | `consolidation_proposals` | Background-worker output: candidate edge + rationale + status (proposed/applied/rejected) + **`similarity` and `memory_type`** so the per-type precision bar is auditable | Advisory, type-aware; `event` type never auto-applies. **Edge direction is the locked contract**: `from_id`/`to_id` are materialized verbatim into `memory_edges`, so for a `supersedes`/`updates` proposal the successor is `from_id` and the **predecessor (the superseded row whose `valid_to` closes on accept) is `to_id`** — the same `successor → predecessor` convention `revise`/`search` rely on. The consolidator MUST emit rows in this orientation. |
 | `fact_proposals` | Staging area for extracted facts awaiting review: the same triple + bi-temporal columns as `facts`, plus `memory_type`, `rationale`, `status` (proposed/applied/rejected) and `decided_at`, FK → source memory | Nothing an extractor produced becomes queryable truth until a human accepts it. A sibling of `consolidation_proposals` rather than a mode on it, so every shipped object stays byte-identical. One OPEN proposal per (memory, subject, predicate, value) — re-proposal after a rejection is allowed, and repeated extractions of one triple collapse to the first. `valid_from` is nullable here (an extractor often cannot date a claim) but a `valid_to` still requires one. |
@@ -106,7 +107,7 @@ The table sketches above are conceptual. The schema PR (`packages/db`) is the bi
 
 ## Archived status in `GET /api/v1/stats`
 
-The `GET /api/v1/stats` endpoint surfaces `archivedMemories` — the count of memories where `status = 'archived' AND valid_to IS NULL`. This is distinct from `supersededMemories` (which counts any row with `valid_to` set, regardless of status). A revise of an archived memory closes its `valid_to` window, moving it into the superseded bucket and out of archived; the two counts are mutually exclusive.
+The `GET /api/v1/stats` endpoint surfaces `archivedMemories` — the count of memories where `status = 'archived' AND valid_to IS NULL`. This is distinct from `supersededMemories` (which counts any row with `valid_to` set, regardless of status). A revise of an archived memory closes its `valid_to` window, moving it into the superseded bucket and out of archived; the two counts are mutually exclusive. Every archive disposition — the `revise` tool's `kind: "archive"` (issue #217) and `POST /api/v1/memories/:id/archive` — flips `status` only and writes an `archive` memory event whose payload is exactly `{ disposition: "archive", sessionRunId? }`; blocker `resolve` and the commitment sweep also write `archive` events, without a `disposition`.
 
 ## Embeddings
 

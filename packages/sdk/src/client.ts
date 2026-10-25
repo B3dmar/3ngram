@@ -21,7 +21,10 @@ import type {
   RememberToolOutputV2,
   ResolveToolOutput,
   RestErrorResponse,
+  ReviseDispositionKind,
+  ReviseDispositionOutput,
   ReviseToolOutput,
+  ReviseToolOutputV2,
   ReviseToolRequestArgs,
   SearchQueryArgs,
   SearchRestResponseV2,
@@ -44,13 +47,16 @@ export interface ThreengramClientConfig {
 export type SearchOptions = Omit<SearchQueryArgs, 'query'>
 
 /**
- * Revise body: the successor write WITHOUT `predecessorId`. The predecessor is
- * the URL arg of {@link ThreengramClient.revise}, and the REST router overwrites
- * any body `predecessorId` with the path id anyway ("the URL wins"), so requiring
- * it in the body would be redundant.
+ * Revise body: the successor write, move or disposition WITHOUT the target id.
+ * The target is the URL arg of {@link ThreengramClient.revise}, and the REST
+ * router overwrites any body `predecessorId`/`memoryIds` with the path id anyway
+ * ("the URL wins"), so requiring it in the body would be redundant. Over REST a
+ * disposition therefore acts on that one memory; the MCP tool takes a batch.
  */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
-export type ReviseBody = DistributiveOmit<ReviseToolRequestArgs, 'predecessorId'>
+export type ReviseBody = DistributiveOmit<ReviseToolRequestArgs, 'predecessorId' | 'memoryIds'>
+/** A disposition body (issue #217): `kind` plus the optional sessionRunId. */
+export type ReviseDispositionBody = Extract<ReviseBody, { kind: ReviseDispositionKind }>
 
 /** The `fetch` surface the client depends on — injectable for tests (no network). */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
@@ -95,21 +101,35 @@ export class ThreengramClient {
   }
 
   /**
-   * POST /api/v1/memories/:id/revise — supersede a predecessor with a successor write.
+   * POST /api/v1/memories/:id/revise — supersede a predecessor with a successor
+   * write, refile it (`kind: 'move'`), or archive it (`kind: 'archive'`, which
+   * answers with the per-id outcome instead of a memory).
    * `predecessorId` is the path arg ONLY; it is merged into the body internally
    * (the REST router does the same — "the URL wins", router.ts), so callers never
    * duplicate it in {@link ReviseBody}.
    */
-  revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutput> {
+  revise(predecessorId: string, input: ReviseDispositionBody): Promise<ReviseDispositionOutput>
+  revise(
+    predecessorId: string,
+    input: Exclude<ReviseBody, ReviseDispositionBody>,
+  ): Promise<ReviseToolOutput>
+  // A caller holding the whole `ReviseBody` union gets the whole output union.
+  revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutputV2>
+  revise(predecessorId: string, input: ReviseBody): Promise<ReviseToolOutputV2> {
     const path = `/api/v1/memories/${encodeURIComponent(predecessorId)}/revise`
-    return this.#send<ReviseToolOutput>('POST', path, { ...input, predecessorId })
+    return this.#send<ReviseToolOutputV2>('POST', path, { ...input, predecessorId })
   }
 
-  /** POST /api/v1/memories/:id/resolve — transition the commitment riding a memory. */
+  /**
+   * POST /api/v1/memories/:id/resolve — transition the commitment riding a memory.
+   * `opts.reason` (issue #234) is optional evidence for this transition, e.g.
+   * "PR #123" (trimmed, 1-500 chars); it is stored on the commitment, replaced
+   * by the next transition, and rejected (400 invalid_input) for a blocker.
+   */
   resolve(
     memoryId: string,
     status: CommitmentStatus,
-    opts?: { sessionRunId?: string },
+    opts?: { sessionRunId?: string; reason?: string },
   ): Promise<ResolveToolOutput> {
     const path = `/api/v1/memories/${encodeURIComponent(memoryId)}/resolve`
     return this.#send<ResolveToolOutput>('POST', path, { status, ...opts })

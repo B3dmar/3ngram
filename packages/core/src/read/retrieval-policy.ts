@@ -57,23 +57,37 @@ const UNSCOPED_RECOVERY_PREFIX =
   "this account requires an explicit retrieval scope (retrieval-scope mode 'require') — "
 const MAX_UNSCOPED_RECOVERY_SCOPES = 8
 
-/** Build the bounded recovery detail shared by every transport. */
-export function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+/**
+ * Build a bounded scope-recovery detail: `prefix` followed by as many registered
+ * scope names as fit under MAX_REST_ERROR_DETAIL_LENGTH (at most
+ * {@link MAX_UNSCOPED_RECOVERY_SCOPES}), then a count of the omitted ones.
+ * Scope names are user labels, never memory content (hard rule 6). Shared by
+ * the retrieval and write-scope `require` errors so both stay bounded alike.
+ */
+export function formatScopeRecoveryDetail(
+  prefix: string,
+  registeredScopes: readonly string[],
+): string {
   if (registeredScopes.length === 0) {
-    return `${UNSCOPED_RECOVERY_PREFIX}no scopes are registered yet — register one with configure_scope`
+    return `${prefix}no scopes are registered yet — register one with configure_scope`
   }
 
   const candidateCount = Math.min(registeredScopes.length, MAX_UNSCOPED_RECOVERY_SCOPES)
   for (let included = candidateCount; included > 0; included -= 1) {
     const omitted = registeredScopes.length - included
     const omission = omitted > 0 ? `; +${omitted} more omitted` : ''
-    const detail = `${UNSCOPED_RECOVERY_PREFIX}registered scopes: ${registeredScopes
+    const detail = `${prefix}registered scopes: ${registeredScopes
       .slice(0, included)
       .join(', ')}${omission}`
     if (detail.length <= MAX_REST_ERROR_DETAIL_LENGTH) return detail
   }
 
-  return `${UNSCOPED_RECOVERY_PREFIX}registered scopes: +${registeredScopes.length} omitted`
+  return `${prefix}registered scopes: +${registeredScopes.length} omitted`
+}
+
+/** Build the bounded recovery detail shared by every transport. */
+export function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): string {
+  return formatScopeRecoveryDetail(UNSCOPED_RECOVERY_PREFIX, registeredScopes)
 }
 
 /**

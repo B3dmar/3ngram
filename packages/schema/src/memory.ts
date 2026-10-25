@@ -59,6 +59,10 @@ export const eventKindSchema = z.enum([
   'archive',
   'import',
   'embed_failed',
+  // 'reaffirm' (issue #218): the revise reaffirm disposition recorded a review —
+  // "reviewed, still valid". Payload `{ disposition: 'reaffirm', sessionRunId? }`;
+  // the row's only change is memories.last_reviewed_at.
+  'reaffirm',
 ])
 export type EventKind = z.infer<typeof eventKindSchema>
 
