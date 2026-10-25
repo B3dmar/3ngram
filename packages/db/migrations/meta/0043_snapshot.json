@@ -1,5 +1,5 @@
 {
-  "id": "e67cd825-7cc9-4306-949a-67b414d665a7",
+  "id": "9892252e-c8bb-470b-8484-f14741722e9b",
   "prevId": "80cc7951-8e53-4679-a4c9-29be4eaeffaa",
   "version": "7",
   "dialect": "postgresql",
@@ -2972,7 +2972,7 @@
         },
         "probability": {
           "name": "probability",
-          "type": "real",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": true
         },
@@ -3016,6 +3016,33 @@
           ],
           "isUnique": true,
           "where": "status = 'proposed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resolution_proposals_run_memory_uq": {
+          "name": "resolution_proposals_run_memory_uq",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "session_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "memory_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}

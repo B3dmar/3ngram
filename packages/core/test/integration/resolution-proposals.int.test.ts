@@ -88,6 +88,24 @@ describe('resolution proposals through core (issue #229)', () => {
     expect(status.rows[0]).toMatchObject({ status: 'applied' })
   })
 
+  it('an accept that loses to a reject writes nothing; a refused transition reopens', async () => {
+    const { memoryId, proposalId } = await staged('race the reviewer')
+    await rejectProposalAnyKind(userA, proposalId)
+    await expect(acceptProposalAnyKind(userA, proposalId, ACTOR)).rejects.toThrow()
+    expect(await commitmentStatus(memoryId)).toBe('open')
+
+    const second = await staged('expire meanwhile')
+    await ownerPool.query(`UPDATE commitments SET status = 'expired' WHERE memory_id = $1`, [
+      second.memoryId,
+    ])
+    await expect(acceptProposalAnyKind(userA, second.proposalId, ACTOR)).rejects.toThrow()
+    const row = await ownerPool.query(
+      'SELECT status, decided_at FROM resolution_proposals WHERE id = $1',
+      [second.proposalId],
+    )
+    expect(row.rows[0]).toMatchObject({ status: 'proposed', decided_at: null })
+  })
+
   it('reject leaves the commitment open', async () => {
     const { memoryId, proposalId } = await staged('reply to review')
     const decided = await rejectProposalAnyKind(userA, proposalId)

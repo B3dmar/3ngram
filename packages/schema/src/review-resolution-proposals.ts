@@ -16,11 +16,15 @@
 // client matching on `applied`/`applied_fact` keeps the payload it was written
 // against. V1/V2 schemas stay untouched (ADR-0011).
 import { z } from 'zod'
+import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
-import { resolveOutcomeStatusSchema, reviewProposalsOutputSchema } from './mcp.js'
+import { reviewProposalsOutputSchema } from './mcp.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { factProposalRecordSchema } from './review-fact-proposals.js'
+
+/** Bounds of a judged probability; the DB CHECK on resolution_proposals is generated from these. */
+export const PROBABILITY_BOUNDS = { min: 0, max: 1 } as const
 
 /**
  * One resolution proposal in a tool result. It carries the commitment's memory
@@ -33,7 +37,7 @@ export const resolutionProposalRecordSchema = z
     id: z.uuid(),
     memoryId: z.uuid(),
     sessionRunId: z.uuid(),
-    probability: z.number().min(0).max(1),
+    probability: z.number().min(PROBABILITY_BOUNDS.min).max(PROBABILITY_BOUNDS.max),
     status: proposalStatusSchema,
     decidedAt: isoDateTime().nullable(),
     createdAt: isoDateTime(),
@@ -115,9 +119,9 @@ export const reviewProposalsOutputV3Schema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('applied_resolution'),
       proposal: resolutionProposalRecordSchema,
-      // What the accept's resolve did, in the `resolve` tool's own terms.
+      // The commitment the accept resolved, and the status it now holds.
       commitmentId: z.uuid(),
-      commitmentStatus: resolveOutcomeStatusSchema,
+      commitmentStatus: commitmentStatusSchema,
     })
     .strict()
     .meta(OPEN_OUTPUT_META),

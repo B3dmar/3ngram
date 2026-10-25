@@ -3,7 +3,7 @@ CREATE TABLE "resolution_proposals" (
 	"user_id" uuid NOT NULL,
 	"memory_id" uuid NOT NULL,
 	"session_run_id" uuid NOT NULL,
-	"probability" real NOT NULL,
+	"probability" double precision NOT NULL,
 	"status" text DEFAULT 'proposed' NOT NULL,
 	"decided_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -16,6 +16,7 @@ ALTER TABLE "resolution_proposals" ADD CONSTRAINT "resolution_proposals_user_id_
 ALTER TABLE "resolution_proposals" ADD CONSTRAINT "resolution_proposals_memory_fk" FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "resolution_proposals" ADD CONSTRAINT "resolution_proposals_session_fk" FOREIGN KEY ("user_id","session_run_id") REFERENCES "public"."agent_sessions"("user_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "resolution_proposals_open_idx" ON "resolution_proposals" USING btree ("user_id","memory_id") WHERE status = 'proposed';--> statement-breakpoint
+CREATE UNIQUE INDEX "resolution_proposals_run_memory_uq" ON "resolution_proposals" USING btree ("user_id","session_run_id","memory_id");--> statement-breakpoint
 CREATE INDEX "resolution_proposals_review_idx" ON "resolution_proposals" USING btree ("user_id","status","created_at");--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "resolution_proposals" AS PERMISSIVE FOR ALL TO public USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid) WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);--> statement-breakpoint
 -- Tenant-isolation hardening (0028/0030/0039/0042 precedent): FORCE so the

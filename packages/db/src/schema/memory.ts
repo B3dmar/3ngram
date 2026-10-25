@@ -11,11 +11,13 @@ import {
   MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
+  PROBABILITY_BOUNDS,
   proposalStatusSchema,
 } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
   check,
+  doublePrecision,
   foreignKey,
   index,
   jsonb,
@@ -396,7 +398,8 @@ export const resolutionProposals = pgTable(
     // The commitment's MEMORY id — what resolve and get_memories key on.
     memoryId: uuid('memory_id').notNull(),
     sessionRunId: uuid('session_run_id').notNull(),
-    probability: real('probability').notNull(),
+    // Double precision: a float4 0.8 reads back as 0.800000011920929.
+    probability: doublePrecision('probability').notNull(),
     status: text('status').notNull().default('proposed'),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -419,6 +422,9 @@ export const resolutionProposals = pgTable(
     uniqueIndex('resolution_proposals_open_idx')
       .on(t.userId, t.memoryId)
       .where(sql`status = 'proposed'`),
+    // One proposal per (run, commitment) EVER: a retried closer pass must not
+    // re-stage a proposal a reviewer already decided in between.
+    uniqueIndex('resolution_proposals_run_memory_uq').on(t.userId, t.sessionRunId, t.memoryId),
     index('resolution_proposals_review_idx').on(t.userId, t.status, t.createdAt),
     check(
       'resolution_proposals_status_check',
@@ -426,7 +432,7 @@ export const resolutionProposals = pgTable(
     ),
     check(
       'resolution_proposals_probability_check',
-      sql`${t.probability} >= 0 AND ${t.probability} <= 1`,
+      sql`${t.probability} >= ${sql.raw(String(PROBABILITY_BOUNDS.min))} AND ${t.probability} <= ${sql.raw(String(PROBABILITY_BOUNDS.max))}`,
     ),
     tenantPolicy(),
   ],

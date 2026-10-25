@@ -248,7 +248,7 @@ its row here even when its name and kind are unchanged.
 | `DashboardSearchPage` | interface | `77168fc773d5` |
 | `DebriefBriefedMemory` | interface | `82f24b49a983` |
 | `DebriefPromptContext` | interface | `8ca9a0260c74` |
-| `DecidedProposal` | type | `b868911d64a4` |
+| `DecidedProposal` | type | `3e983d9a9cd5` |
 | `DeleteAccountOptions` | interface | `fd986a00ec9a` |
 | `DuplicateEmailError` | class | `4f7a078f9631` |
 | `DuplicateMemoryError` | class | `93f0fe6bc97d` |
@@ -711,7 +711,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalRow` | interface | `118db521ee36` |
 | `ProposalWrite` | interface | `303e63b2723b` |
 | `ProposalsQuery` | interface | `60bf10951af6` |
-| `RESOLUTION_PROPOSAL_COLUMNS` | const | `1f54c0a1aca2` |
+| `RESOLUTION_PROPOSAL_COLUMNS` | const | `8436389f787c` |
 | `ReaffirmOutcome` | type | `3f19d3b45ae0` |
 | `ReaffirmWrite` | type | `932c546d55f0` |
 | `ResolutionProposalRow` | interface | `80b6b1ed0256` |
@@ -884,12 +884,13 @@ its row here even when its name and kind are unchanged.
 | `rejectProposal` | function | `84cffbf7a592` |
 | `releaseReservation` | function | `6c31f8a910fe` |
 | `renameScope` | function | `995856195877` |
+| `reopenResolutionProposal` | function | `82c1e6078797` |
 | `replaceEmailVerificationTokens` | function | `0ccd6dde1aca` |
 | `replaceRetrievalPolicyDefault` | function | `e5e828350810` |
 | `replaceWriteScopePolicyDefault` | function | `c8b6f656773c` |
 | `reserveBudget` | function | `c74c7491a05c` |
 | `resetPasswordAtomic` | function | `49bed7f16d4b` |
-| `resolutionProposals` | const | `d124bfdc9f3d` |
+| `resolutionProposals` | const | `8e925088fc64` |
 | `resolveApiKey` | function | `d219083527a2` |
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
@@ -1211,6 +1212,7 @@ its row here even when its name and kind are unchanged.
 | `OAuthClientIdParam` | type | `cdff48c25b49` |
 | `OAuthClientRegistrationMethod` | type | `27dcbcff235b` |
 | `PLAN_TIERS` | const | `6daec5a496ed` |
+| `PROBABILITY_BOUNDS` | const | `2bd397b4f7c4` |
 | `PlanTier` | type | `bf3d518d14cd` |
 | `ProfileAiTool` | type | `78fd58fe03f6` |
 | `ProfileReferralSource` | type | `01fa2ba61c26` |
@@ -1506,7 +1508,7 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsInputSchema` | const | `c2ed7293542a` |
 | `reviewProposalsOutputSchema` | const | `9b97544b2f22` |
 | `reviewProposalsOutputV2Schema` | const | `c44e9b2087ea` |
-| `reviewProposalsOutputV3Schema` | const | `518e02ae1007` |
+| `reviewProposalsOutputV3Schema` | const | `a196245ef29e` |
 | `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
 | `reviewProposalsRegisterOutputShapeV2` | const | `a43afb37177a` |
 | `reviewProposalsRegisterShape` | const | `c147835e9d4d` |

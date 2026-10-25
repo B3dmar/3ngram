@@ -13,10 +13,10 @@
 //
 // Observability (hard rule 6): ids, probabilities and enum states only — this
 // table has no text columns, and this module logs nothing.
-import { and, count, eq, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { ProposalNotFoundError } from './proposals-read.js'
-import { resolutionProposals } from './schema/memory.js'
+import { commitments, resolutionProposals } from './schema/memory.js'
 
 /** A resolution proposal as returned to a reviewer. */
 export interface ResolutionProposalRow {
@@ -46,11 +46,21 @@ export interface ResolutionProposalWrite {
   probability: number
 }
 
+/** Commitment states a proposal can still be accepted from (resolved is reachable). */
+const PROPOSABLE_COMMITMENT_STATUSES = ['open', 'waiting'] as const
+
 /**
- * Stage proposals for one closed run. A commitment that already has an OPEN
- * proposal is skipped: the conflict target mirrors the partial
- * `resolution_proposals_open_idx` exactly (columns AND predicate). Returns the
- * number of rows actually inserted.
+ * Stage proposals for one closed run, in the caller's transaction.
+ *
+ * Only candidates whose COMMITMENT is still open or waiting are staged: the
+ * closer's judgment can be stale by the time it returns (another session may
+ * have resolved or expired the commitment), and a proposal over an expired
+ * commitment could never be accepted. A memory with no commitment (a blocker)
+ * is never staged at all. Then a candidate is skipped if the commitment already
+ * has an OPEN proposal (`resolution_proposals_open_idx`) or this run already
+ * proposed it in any state (`resolution_proposals_run_memory_uq`, so a retried
+ * pass cannot re-stage what a reviewer decided in between): the target-less
+ * ON CONFLICT DO NOTHING covers both unique indexes. Returns rows inserted.
  */
 export async function insertResolutionProposals(
   tx: TenantTx,
@@ -59,10 +69,26 @@ export async function insertResolutionProposals(
   candidates: readonly ResolutionProposalWrite[],
 ): Promise<number> {
   if (candidates.length === 0) return 0
+  const live = await tx
+    .select({ memoryId: commitments.memoryId })
+    .from(commitments)
+    .where(
+      and(
+        eq(commitments.userId, userId),
+        inArray(
+          commitments.memoryId,
+          candidates.map((c) => c.memoryId),
+        ),
+        inArray(commitments.status, [...PROPOSABLE_COMMITMENT_STATUSES]),
+      ),
+    )
+  const proposable = new Set(live.map((row) => row.memoryId))
+  const staged = candidates.filter((c) => proposable.has(c.memoryId))
+  if (staged.length === 0) return 0
   const rows = await tx
     .insert(resolutionProposals)
     .values(
-      candidates.map((c) => ({
+      staged.map((c) => ({
         userId,
         memoryId: c.memoryId,
         sessionRunId,
@@ -70,10 +96,7 @@ export async function insertResolutionProposals(
         status: 'proposed' as const,
       })),
     )
-    .onConflictDoNothing({
-      target: [resolutionProposals.userId, resolutionProposals.memoryId],
-      where: sql`status = 'proposed'`,
-    })
+    .onConflictDoNothing()
     .returning({ id: resolutionProposals.id })
   return rows.length
 }
@@ -123,6 +146,28 @@ export async function decideResolutionProposal(
     .returning(RESOLUTION_PROPOSAL_COLUMNS)
   if (row === undefined) throw new ProposalNotFoundError(proposalId)
   return row
+}
+
+/**
+ * Undo an accept's claim (applied -> proposed) when the commitment transition it
+ * claimed for then failed, so the proposal is open again for a reviewer to
+ * reject or retry. A compare-and-set: a no-op unless this row is `applied`.
+ */
+export async function reopenResolutionProposal(
+  tx: TenantTx,
+  userId: string,
+  proposalId: string,
+): Promise<void> {
+  await tx
+    .update(resolutionProposals)
+    .set({ status: 'proposed', decidedAt: null })
+    .where(
+      and(
+        eq(resolutionProposals.userId, userId),
+        eq(resolutionProposals.id, proposalId),
+        eq(resolutionProposals.status, 'applied'),
+      ),
+    )
 }
 
 /** Count the tenant's resolution proposals matching an optional status filter. */

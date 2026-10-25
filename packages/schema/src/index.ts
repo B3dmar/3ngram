@@ -531,6 +531,7 @@ export type {
   ReviewProposalsOutputV3,
 } from './review-resolution-proposals.js'
 export {
+  PROBABILITY_BOUNDS,
   proposalKindCountsV3Schema,
   resolutionProposalRecordSchema,
   reviewProposalsOutputV3Schema,

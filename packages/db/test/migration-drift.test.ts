@@ -13,6 +13,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
+  PROBABILITY_BOUNDS,
   proposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
@@ -837,12 +838,12 @@ describe('judgment opt-in table (0042, issue #225)', () => {
 })
 
 describe('resolution proposals table (0043, issue #229)', () => {
-  it('derives the status CHECK from the schema and bounds the probability', () => {
+  it('derives the status and probability CHECKs from the schema', () => {
     expect(resolutionProposalsSql).toContain(
       `CHECK ("resolution_proposals"."status" IN (${proposalStatusSchema.options.map((m) => `'${m}'`).join(', ')}))`,
     )
     expect(resolutionProposalsSql).toContain(
-      '"resolution_proposals"."probability" >= 0 AND "resolution_proposals"."probability" <= 1',
+      `"resolution_proposals"."probability" >= ${PROBABILITY_BOUNDS.min} AND "resolution_proposals"."probability" <= ${PROBABILITY_BOUNDS.max}`,
     )
   })
 
@@ -855,10 +856,14 @@ describe('resolution proposals table (0043, issue #229)', () => {
     )
   })
 
-  it('allows one OPEN proposal per commitment (the insert conflict target)', () => {
+  it('allows one OPEN proposal per commitment and one proposal per (run, commitment)', () => {
     expect(resolutionProposalsSql).toContain(
       `CREATE UNIQUE INDEX "resolution_proposals_open_idx" ON "resolution_proposals" USING btree ("user_id","memory_id") WHERE status = 'proposed'`,
     )
+    expect(resolutionProposalsSql).toContain(
+      'CREATE UNIQUE INDEX "resolution_proposals_run_memory_uq" ON "resolution_proposals" USING btree ("user_id","session_run_id","memory_id")',
+    )
+    expect(resolutionProposalsSql).toContain('"probability" double precision NOT NULL')
   })
 
   it('carries the NULLIF-guarded tenant policy with FORCE and a no-DELETE grant', () => {

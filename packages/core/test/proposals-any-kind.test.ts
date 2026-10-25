@@ -25,12 +25,12 @@ const applyFactProposal = vi.fn()
 const listProposals = vi.fn()
 const listFactProposals = vi.fn()
 const decideResolutionProposal = vi.fn()
-const getOpenResolutionProposal = vi.fn()
-const resolveByMemoryId = vi.fn()
+const reopenResolutionProposal = vi.fn()
+const resolveCommitmentByMemoryId = vi.fn()
 
-// The resolve path an accepted resolution proposal goes through (issue #229).
+// The commitment-only resolve an accepted resolution proposal goes through (#229).
 vi.mock('../src/write/commitments.js', () => ({
-  resolveByMemoryId: (...args: unknown[]) => resolveByMemoryId(...args),
+  resolveCommitmentByMemoryId: (...args: unknown[]) => resolveCommitmentByMemoryId(...args),
 }))
 
 vi.mock('@3ngram/db', () => ({
@@ -46,7 +46,7 @@ vi.mock('@3ngram/db', () => ({
   listProposals: (...args: unknown[]) => listProposals(...args),
   listFactProposals: (...args: unknown[]) => listFactProposals(...args),
   decideResolutionProposal: (...args: unknown[]) => decideResolutionProposal(...args),
-  getOpenResolutionProposal: (...args: unknown[]) => getOpenResolutionProposal(...args),
+  reopenResolutionProposal: (...args: unknown[]) => reopenResolutionProposal(...args),
 }))
 
 const { acceptProposalAnyKind, listAllProposals, rejectProposalAnyKind } = await import(
@@ -68,8 +68,8 @@ const reset = () => {
     listProposals,
     listFactProposals,
     decideResolutionProposal,
-    getOpenResolutionProposal,
-    resolveByMemoryId,
+    reopenResolutionProposal,
+    resolveCommitmentByMemoryId,
   ] as Mock[]) {
     m.mockReset()
   }
@@ -199,19 +199,23 @@ describe('listAllProposals', () => {
     expect(listProposals).toHaveBeenCalledWith('tx', { limit: 10 })
   })
 
-  it('accepts a resolution proposal by resolving its commitment as the reviewer (#229)', async () => {
+  it('accepts a resolution proposal: claim first, then resolve the commitment as the reviewer (#229)', async () => {
     reset()
     applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     const memoryId = '019fecaa-0000-7000-8000-0000000000a1'
-    getOpenResolutionProposal.mockResolvedValue({ id: ID, memoryId, status: 'proposed' })
-    resolveByMemoryId.mockResolvedValue({ id: 'c-1', status: 'resolved' })
     decideResolutionProposal.mockResolvedValue({ id: ID, memoryId, status: 'applied' })
+    resolveCommitmentByMemoryId.mockResolvedValue({ id: 'c-1', status: 'resolved' })
 
     const decided = await acceptProposalAnyKind(USER, ID, 'user_mcp')
 
-    expect(resolveByMemoryId).toHaveBeenCalledWith(USER, memoryId, 'resolved', 'user_mcp')
     expect(decideResolutionProposal).toHaveBeenCalledWith('tx', USER, ID, 'applied')
+    expect(resolveCommitmentByMemoryId).toHaveBeenCalledWith(USER, memoryId, 'user_mcp')
+    // Claimed BEFORE the transition, so a racing reject loses cleanly.
+    expect(decideResolutionProposal.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveCommitmentByMemoryId.mock.invocationCallOrder[0] ?? 0,
+    )
+    expect(reopenResolutionProposal).not.toHaveBeenCalled()
     expect(decided).toMatchObject({
       kind: 'resolution_applied',
       commitmentId: 'c-1',
@@ -219,15 +223,27 @@ describe('listAllProposals', () => {
     })
   })
 
-  it('leaves the resolution proposal open when the resolve is refused', async () => {
+  it('undoes the claim and propagates when the commitment transition is refused', async () => {
     reset()
     applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
-    getOpenResolutionProposal.mockResolvedValue({ id: ID, memoryId: 'm', status: 'proposed' })
+    decideResolutionProposal.mockResolvedValue({ id: ID, memoryId: 'm', status: 'applied' })
     const refusal = new Error('illegal transition expired -> resolved')
-    resolveByMemoryId.mockRejectedValue(refusal)
+    resolveCommitmentByMemoryId.mockRejectedValue(refusal)
 
     await expect(acceptProposalAnyKind(USER, ID, 'user_mcp')).rejects.toBe(refusal)
-    expect(decideResolutionProposal).not.toHaveBeenCalled()
+    expect(reopenResolutionProposal).toHaveBeenCalledWith('tx', USER, ID)
+  })
+
+  it('a lost claim (already decided, e.g. a racing reject) writes nothing', async () => {
+    reset()
+    applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+
+    await expect(acceptProposalAnyKind(USER, ID, 'user_mcp')).rejects.toBeInstanceOf(
+      ProposalNotFoundError,
+    )
+    expect(resolveCommitmentByMemoryId).not.toHaveBeenCalled()
   })
 })

@@ -15,7 +15,6 @@ import {
   applyProposal as applyProposalDb,
   decideResolutionProposal,
   type FactProposalRow,
-  getOpenResolutionProposal,
   listFactProposals as listFactProposalsDb,
   listProposals as listProposalsDb,
   ProposalNotFoundError,
@@ -23,10 +22,11 @@ import {
   type ResolutionProposalRow,
   rejectFactProposal as rejectFactProposalDb,
   rejectProposal as rejectProposalDb,
+  reopenResolutionProposal,
   withTenant,
 } from '@3ngram/db'
-import type { ActorKind } from '@3ngram/schema'
-import { type ResolveStatus, resolveByMemoryId } from '../write/commitments.js'
+import type { ActorKind, CommitmentStatus } from '@3ngram/schema'
+import { resolveCommitmentByMemoryId } from '../write/commitments.js'
 
 export {
   type AppliedProposalRow,
@@ -150,7 +150,7 @@ export type DecidedProposal =
       kind: 'resolution_applied'
       proposal: ResolutionProposalRecord
       commitmentId: string
-      commitmentStatus: ResolveStatus
+      commitmentStatus: CommitmentStatus
     }
 
 /**
@@ -182,24 +182,34 @@ async function decideAnyKind<T>(...probes: readonly (() => Promise<T>)[]): Promi
 }
 
 /**
- * Accept a resolution proposal (issue #229): resolve the commitment through the
- * SAME path a user's `resolve` takes (FSM-checked, compare-and-set, idempotent
- * when already resolved), as the reviewer, then mark the proposal applied with a
- * compare-and-set on its status. The resolve runs first, so a crash between the
- * two leaves an open proposal over a resolved commitment, and a retried accept
- * converges (the resolve is a same-state no-op). An illegal transition (the
- * commitment expired meanwhile) throws and leaves the proposal open.
+ * Accept a resolution proposal (issue #229): CLAIM the proposal first
+ * (proposed -> applied, a compare-and-set), then resolve its commitment as the
+ * reviewer through the shipped FSM-checked transition — commitment-only, so a
+ * memory without a commitment is refused, never archived. Claiming first is what
+ * makes accept and reject race cleanly: exactly one of them wins the CAS, and the
+ * loser gets ProposalNotFoundError having written nothing. If the transition then
+ * fails (the commitment expired meanwhile, or it is gone), the claim is undone
+ * (applied -> proposed) and the error propagates, so the proposal stays open for
+ * a reviewer to reject. A crash between the claim and the transition leaves an
+ * `applied` proposal over an unresolved commitment, which the audit trail shows
+ * as a decision with no `resolve` event. Not atomic, because the transition owns
+ * its own transaction and lock order (packages/db commitments.ts).
  */
 async function acceptResolutionProposal(
   userId: string,
   proposalId: string,
   actorKind: ActorKind,
 ): Promise<DecidedProposal> {
-  const open = await withTenant(userId, (tx) => getOpenResolutionProposal(tx, userId, proposalId))
-  const resolved = await resolveByMemoryId(userId, open.memoryId, 'resolved', actorKind)
   const proposal = await withTenant(userId, (tx) =>
     decideResolutionProposal(tx, userId, proposalId, 'applied'),
   )
+  let resolved: { id: string; status: CommitmentStatus }
+  try {
+    resolved = await resolveCommitmentByMemoryId(userId, proposal.memoryId, actorKind)
+  } catch (error) {
+    await withTenant(userId, (tx) => reopenResolutionProposal(tx, userId, proposalId))
+    throw error
+  }
   return {
     kind: 'resolution_applied',
     proposal,

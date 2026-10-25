@@ -28,11 +28,28 @@ import {
 let userA: string
 let userB: string
 
-/** A commitment memory owned by `userId` (fixture setup through the owner pool). */
-async function seedCommitment(userId: string): Promise<string> {
+/** A commitment memory plus its commitments row (owner pool fixture setup). */
+async function seedCommitment(userId: string, status = 'open'): Promise<string> {
   const r = await ownerPool.query(
     `INSERT INTO memories (user_id, content, memory_type, topic, scope, content_hash)
      VALUES ($1, 'fixture commitment', 'commitment', 'fixture', 'work', md5(random()::text))
+     RETURNING id`,
+    [userId],
+  )
+  const memoryId = (r.rows[0] as { id: string }).id
+  await ownerPool.query(
+    `INSERT INTO commitments (user_id, memory_id, status, resolved_at)
+     VALUES ($1, $2, $3, CASE WHEN $3 = 'resolved' THEN now() END)`,
+    [userId, memoryId, status],
+  )
+  return memoryId
+}
+
+/** A memory with NO commitment riding it (e.g. a blocker). */
+async function seedBlocker(userId: string): Promise<string> {
+  const r = await ownerPool.query(
+    `INSERT INTO memories (user_id, content, memory_type, topic, scope, content_hash)
+     VALUES ($1, 'fixture blocker', 'blocker', 'fixture', 'work', md5(random()::text))
      RETURNING id`,
     [userId],
   )
@@ -72,7 +89,8 @@ describe('resolution proposal store (runtime role, withTenant)', () => {
       listResolutionProposalsAfter(tx, userA, { status: 'proposed', limit: 10 }),
     )
     expect(open?.record).toMatchObject({ memoryId, sessionRunId: run, status: 'proposed' })
-    expect(open?.record.probability).toBeCloseTo(0.7)
+    // Double precision: the probability reads back exactly as written.
+    expect(open?.record.probability).toBe(0.7)
 
     const id = open?.record.id as string
     const rejected = await withTenant(userA, (tx) =>
@@ -80,8 +98,15 @@ describe('resolution proposal store (runtime role, withTenant)', () => {
     )
     expect(rejected.status).toBe('rejected')
     expect(rejected.decidedAt).not.toBeNull()
-    // Re-proposal after the rejection is allowed (the open index is partial).
-    expect(await insert()).toBe(1)
+    // The SAME run never re-stages what a reviewer decided (a retried pass)...
+    expect(await insert()).toBe(0)
+    // ...but a later run may propose the commitment again (the open index is partial).
+    const laterRun = await seedRun(userA)
+    expect(
+      await withTenant(userA, (tx) =>
+        insertResolutionProposals(tx, userA, laterRun, [{ memoryId, probability: 0.7 }]),
+      ),
+    ).toBe(1)
     expect(await withTenant(userA, (tx) => countResolutionProposals(tx, userA))).toBe(2)
     expect(await withTenant(userA, (tx) => countResolutionProposals(tx, userA, 'proposed'))).toBe(1)
   })
@@ -106,6 +131,31 @@ describe('resolution proposal store (runtime role, withTenant)', () => {
     ).rejects.toBeInstanceOf(ProposalNotFoundError)
   })
 
+  it('stages only still-open commitments: never a settled one, never a blocker', async () => {
+    const run = await seedRun(userA)
+    const open = await seedCommitment(userA, 'open')
+    const waiting = await seedCommitment(userA, 'waiting')
+    const expired = await seedCommitment(userA, 'expired')
+    const resolved = await seedCommitment(userA, 'resolved')
+    const blocker = await seedBlocker(userA)
+    const inserted = await withTenant(userA, (tx) =>
+      insertResolutionProposals(
+        tx,
+        userA,
+        run,
+        [open, waiting, expired, resolved, blocker].map((memoryId) => ({
+          memoryId,
+          probability: 0.6,
+        })),
+      ),
+    )
+    expect(inserted).toBe(2)
+    const rows = await withTenant(userA, (tx) =>
+      listResolutionProposalsAfter(tx, userA, { limit: 10 }),
+    )
+    expect(rows.map((r) => r.record.memoryId).sort()).toEqual([open, waiting].sort())
+  })
+
   it('the DB CHECK rejects a probability outside [0, 1]', async () => {
     const memoryId = await seedCommitment(userA)
     const run = await seedRun(userA)
@@ -116,14 +166,17 @@ describe('resolution proposal store (runtime role, withTenant)', () => {
     ).rejects.toThrow()
   })
 
-  it('refuses a proposal over another tenant’s memory or run (composite FKs)', async () => {
+  it('refuses a proposal over another tenant’s memory or run', async () => {
+    // Another tenant's commitment is invisible to the staging filter (RLS +
+    // user_id), so nothing is staged...
     const foreignMemory = await seedCommitment(userB)
     const run = await seedRun(userA)
-    await expect(
-      withTenant(userA, (tx) =>
+    expect(
+      await withTenant(userA, (tx) =>
         insertResolutionProposals(tx, userA, run, [{ memoryId: foreignMemory, probability: 0.6 }]),
       ),
-    ).rejects.toThrow()
+    ).toBe(0)
+    // ...and a foreign run breaks the tenant-composite FK.
     const memoryId = await seedCommitment(userA)
     const foreignRun = await seedRun(userB)
     await expect(

@@ -325,6 +325,7 @@ export {
   RESOLUTION_PROPOSAL_COLUMNS,
   type ResolutionProposalRow,
   type ResolutionProposalWrite,
+  reopenResolutionProposal,
 } from './resolution-proposals.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
