@@ -1,5 +1,40 @@
 # @3ngram/sdk
 
+## 1.9.1
+
+### Patch Changes
+
+- 48b8972: Security: zod 4.6.6 (CVE-2023-54404, denial of service via unbounded array validation) on every package that pins it, and body-parser 2.4.0 under express (CVE-2026-111181, denial of service via an unhandled decompression stream error) through the workspace advisory override. The v1.9.0 release image scan blocked publication on both. body-parser 2.4.0 is newer than the 7-day registry cooldown, so it is a reviewed exact-version `minimumReleaseAgeExclude` entry until it matures. No API or behaviour change.
+- Updated dependencies [48b8972]
+  - @3ngram/schema@0.12.1
+
+## 1.9.0
+
+### Minor Changes
+
+- 3222da4: Native `remember` can now record a commitment's deadline and owner (issue #165). A `commitment` write over MCP, REST (`POST /api/v1/memories`), the SDK or the CLI (`--due`, `--owner`) accepts an optional explicit `dueAt` (ISO-8601 instant, at most millisecond precision) and `owner`. Both are written onto the auto-created commitment row in the same transaction, so briefing reports the commitment overdue once the deadline passes and the surfacing sweep expires it after the grace window, exactly as for imported commitments. Either field on a non-commitment is rejected rather than dropped, and nothing is inferred from the content: an undated commitment stays undated. A `revise` keeps the deadline, owner and commitment identity with the successor. No migration; the columns already existed.
+- de8ad09: `resolve` accepts an optional `reason` (issue #234) on MCP, `POST /api/v1/memories/:id/resolve` and the SDK (`client.resolve(id, status, { reason })`), so whoever settles a commitment can say what settled it — a PR number, "superseded by X" — in the same call. The reason is trimmed and must be 1–500 characters; an empty or longer one is rejected as invalid input before anything is written. It is stored on the commitment row (new nullable column `commitments.last_resolution_reason`, migration 0040, with a length CHECK generated from the schema bound) in the same transaction as the status change, never in the append-only audit event payload, which keeps carrying only `sessionRunId`. A reason explains one transition: any later status change without one clears it (including the surfacing sweep's expiry and a revise that demotes the commitment), a same-state no-op stores nothing, and a revise that keeps the commitment carries it with the row. A blocker has no commitment row, so a blocker resolve with a `reason` is rejected as invalid input (MCP error, REST 400 with a recovery detail) instead of being dropped. The reason is memory content: it is returned only by the authenticated, tenant-scoped `GET /api/v1/memories/:id/history` (new top-level `lastResolutionReason: string | null`) and by the owner's account export, never by briefing or search, never logged (its stored and core spellings join the log redaction list), and account erasure nulls it in place alongside `owner`. The tool description is unchanged.
+- a550395: `revise` gains an archive disposition (issue #217): `{ kind: "archive", memoryIds }` takes 1-50 unique memories out of the active set (`status` `active → archived`) with no successor and no edge. Content, topic, tags, `valid_from`, `valid_to` and `recorded_at` are untouched, so an archived memory stays recoverable with `status: "archived"` and through `asOf`; it leaves default ranked search, briefing and the stale-candidate queue. Each id reports its own outcome — `archived`, `already_archived` (the idempotent repeat), or `rejected` with a reason code (`not_found` for unknown and other-tenant ids, `superseded`, `open_commitment` for an open or waiting commitment, `blocker`, which leaves through `resolve`) — and runs in its own transaction, so one bad id never fails the batch. Every archived row gets an `archive` memory event with the strict payload `{ disposition: "archive", sessionRunId? }`, attributed to the transport's actor and the session run; the REST archive route now writes the same payload. Over REST the revise route's URL id is the one-element batch; the SDK's `revise()` returns the outcome list for a disposition body (overloaded, so existing callers keep their types). The tool's registered output is the new `reviseToolOutputV2Schema` union; `reviseToolOutputSchema` keeps its shape. Hard rule 1 now names the audited `active → archived` transition as its second carve-out. The tool description is unchanged (no embeddings regen).
+- 38b83c9: `revise` gains a reaffirm disposition (issue #218): `{ kind: "reaffirm", memoryIds }` (the same bounded 1-50 unique batch as archive) records "reviewed, still valid". It stamps the new nullable `memories.last_reviewed_at` column (migration 0041) and writes a `reaffirm` memory event with the strict payload `{ disposition: "reaffirm", sessionRunId? }` — a new `reaffirm` event kind, with the generated `memory_events` CHECK regenerated. Nothing else changes: no new row, no edge, no status change, and content, topic, `recorded_at`, valid time and `updated_at` are untouched, so a review never poses as a revision. Briefing stale candidates now key on `GREATEST(updated_at, last_reviewed_at)`, so a reaffirmed memory leaves that section for one full stale window (30 days) and returns after it; a never-reviewed memory is judged exactly as before. Each id reports `reaffirmed` or `rejected` (`not_found`, `superseded`, `archived`). Ranked search is unchanged. The data export carries `lastReviewedAt` on every memory; account erasure leaves it (it is not content). The tool description is unchanged (no embeddings regen).
+- 959ce85: Search hits now carry their filing (`scope`, nullable `project`) and, for commitments only, the lifecycle `commitmentStatus` (#319). The fields ride both MCP `search` projections (`full` and `compact`) in relevance and chronological order, the public REST `POST /api/v1/search` response, and the SDK types; the CLI labels each hit with `scope/project` and `commitment:<status>`. Memory status and commitment lifecycle are separate axes, so a resolved commitment stays a valid historical hit, now labelled instead of reading as an active instruction. Ordering, candidate sets, supersession demotion and cursors are unchanged.
+- 9e3bd98: A `remember` without `scope` now lands where the account's write-scope policy says (issue #235), instead of always landing in `personal`. `configure_scope` gains a `set_write_default` action with the same shape as `set_retrieval_default`: `mode: "off"` (the default, so nothing changes until an account opts in) keeps writing `personal`, `mode: "default"` fills an omitted scope with a registered scope, and `mode: "require"` rejects an unscoped `remember` as invalid input (MCP error, REST 400 with a recovery detail) before anything is written, access- or budget-checked, or embedded. An explicit `scope` always wins. The `remember` response over MCP and REST now echoes the scope the memory was actually written to. `describe_environment` reports the effective policy as `writeScopePolicy` next to `retrievalScopePolicy`. Renaming a registry scope carries the write default along; deleting it moves the policy to `require`. Aliases are not resolved, so an alias passed to `set_write_default` is rejected as not found. New table `user_write_scope_policy` (migration 0039, RLS + FORCE RLS), included in the account export and reset by account erasure. On the native remember schema `scope` no longer carries a `personal` default, so an omitted scope survives the parse; the base remember schema used by import keeps it.
+
+### Patch Changes
+
+- Updated dependencies [545fb26]
+- Updated dependencies [2fc6fbf]
+- Updated dependencies [eef068b]
+- Updated dependencies [96c5e01]
+- Updated dependencies [b3d705d]
+- Updated dependencies [3222da4]
+- Updated dependencies [0d70e7c]
+- Updated dependencies [de8ad09]
+- Updated dependencies [a550395]
+- Updated dependencies [38b83c9]
+- Updated dependencies [959ce85]
+- Updated dependencies [9e3bd98]
+  - @3ngram/schema@0.12.0
+
 ## 1.8.7
 
 No changes in this release.

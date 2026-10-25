@@ -32,6 +32,7 @@ import {
   userRetrievalPolicy,
   userSessions,
   users,
+  userWriteScopePolicy,
 } from './schema/identity.js'
 import {
   commitments,
@@ -155,7 +156,9 @@ export async function eraseAccountData(
     .returning({ id: facts.id })
   const erasedCommitments = await tx
     .update(commitments)
-    .set({ owner: null, updatedAt: now })
+    // last_resolution_reason (issue #234) is user-written evidence text: redact
+    // it with the owner, the same in-place treatment as memories.content.
+    .set({ owner: null, lastResolutionReason: null, updatedAt: now })
     .returning({ id: commitments.id })
   const erasedProposals = await tx
     .update(consolidationProposals)
@@ -304,6 +307,12 @@ export async function eraseAccountData(
     .update(userRetrievalPolicy)
     .set({ mode: 'off', defaultScope: null, updatedAt: now })
     .where(eq(userRetrievalPolicy.userId, userId))
+  // Same for the write-scope policy (issue #235): drop the scope label and
+  // restore the inert 'off' default.
+  await tx
+    .update(userWriteScopePolicy)
+    .set({ mode: 'off', defaultScope: null, updatedAt: now })
+    .where(eq(userWriteScopePolicy.userId, userId))
   const deletedSessions = await tx.delete(userSessions).returning({ id: userSessions.id })
   const revokedKeys = await tx
     .update(apiKeys)
