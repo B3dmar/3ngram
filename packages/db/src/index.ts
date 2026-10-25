@@ -259,6 +259,7 @@ export {
   reviseMemory,
 } from './memory-revise.js'
 export {
+  type CommitmentWrite,
   DuplicateMemoryError,
   insertMemoryWithEvent,
   type MemoryEventWrite,

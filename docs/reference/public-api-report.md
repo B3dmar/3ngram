@@ -582,6 +582,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
 | `CommitmentTransition` | interface | `1697152a1177` |
+| `CommitmentWrite` | interface | `dd9c21233475` |
 | `CompleteTriageOptions` | interface | `8f2c4d86eeda` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
@@ -651,7 +652,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistorySectionStatus` | type | `8637fbf356e5` |
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
-| `MemoryWrite` | interface | `e8a209e29e38` |
+| `MemoryWrite` | interface | `e09dacc75b6f` |
 | `MoveWrite` | interface | `408d9ad30769` |
 | `MovedMemory` | interface | `3f7e9bd6301a` |
 | `NewEmailVerificationToken` | interface | `1b4b292f2832` |
@@ -1242,6 +1243,7 @@ its row here even when its name and kind are unchanged.
 | `clientIdMetadataUrlSchema` | const | `79e646e23b7f` |
 | `clientRegistrationInputSchema` | const | `ad6b01b9e266` |
 | `closerVerdictSchema` | const | `8bbdc50e3a74` |
+| `commitmentOwnerSchema` | const | `a9060fce415f` |
 | `commitmentStatusSchema` | const | `da1d2abddb4a` |
 | `configureScopeInputSchema` | const | `87a3e18e4268` |
 | `configureScopeInputV2Schema` | const | `1e66001fb4ae` |
@@ -1319,7 +1321,7 @@ its row here even when its name and kind are unchanged.
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
-| `nativeRememberInputSchema` | const | `079ad390af60` |
+| `nativeRememberInputSchema` | const | `f821047565cc` |
 | `nativeReviseInputSchema` | const | `008be3067068` |
 | `nativeReviseMoveBodySchema` | const | `1d56bb00cf48` |
 | `nativeReviseMoveInputSchema` | const | `b1bf05d9c611` |
@@ -1340,7 +1342,7 @@ its row here even when its name and kind are unchanged.
 | `redirectUriSchema` | const | `fd884c385be1` |
 | `rememberInputSchema` | const | `16100440a692` |
 | `rememberToolInputSchema` | const | `1489c4354420` |
-| `rememberToolInputV2Schema` | const | `3b797237b3c8` |
+| `rememberToolInputV2Schema` | const | `65a7314cca5d` |
 | `rememberToolOutputSchema` | const | `91a0502f9fa9` |
 | `rememberToolOutputV2Schema` | const | `5dd2d2f6afec` |
 | `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |

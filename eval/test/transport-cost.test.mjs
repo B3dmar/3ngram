@@ -166,9 +166,16 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
-      mcp: [27700, 223416, 55831],
+      // MCP +309/+2472/+603, REST +309/+309/+309 (issue #165, dueAt/owner on
+      // the remember input): two optional commitment-only fields with their
+      // descriptions ride the
+      // remember input schema; MCP pays them on tools/list per turn, REST on the
+      // request surface once. The CLI surface is unchanged. The tool
+      // description is unchanged (no embeddings regen). MEASURED on this PR's
+      // actual base (staging b1731b7), not summed.
+      mcp: [28009, 225888, 56434],
       cli: [333, 1236, 1236],
-      rest: [3816, 4833, 4833],
+      rest: [4125, 5142, 5142],
     },
   )
 })
