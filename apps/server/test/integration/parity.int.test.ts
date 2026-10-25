@@ -257,6 +257,67 @@ describe('A4 remember parity (REST x-api-key ≡ MCP Bearer, same tenant)', () =
   })
 })
 
+describe('remember commitment deadline parity (issue #165)', () => {
+  const dueAt = '2026-11-30T17:00:00.000Z'
+  const commitmentRow = (memoryId: string) =>
+    ownerPool.query<{ due_at: Date; owner: string }>(
+      'SELECT due_at, owner FROM commitments WHERE memory_id = $1',
+      [memoryId],
+    )
+
+  it('persists the same explicit dueAt and owner from REST and MCP', async () => {
+    const body = { memoryType: 'commitment', topic: 'c', dueAt, owner: 'release-captain' }
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { ...body, content: `due-rest-${crypto.randomUUID()}` },
+    })
+    expect(restRes.status).toBe(201)
+    const restBody = (await restRes.json()) as { memory: { id: string } }
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: { ...body, content: `due-mcp-${crypto.randomUUID()}` },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBeFalsy()
+    const mcpBody = mcpRes.structuredContent as { memory: { id: string } }
+
+    for (const id of [restBody.memory.id, mcpBody.memory.id]) {
+      const row = (await commitmentRow(id)).rows[0]
+      expect(row?.owner).toBe('release-captain')
+      expect(row?.due_at.toISOString()).toBe(dueAt)
+    }
+  })
+
+  it('rejects a deadline on a non-commitment on both, writing nothing', async () => {
+    const restContent = `due-note-rest-${crypto.randomUUID()}`
+    const mcpContent = `due-note-mcp-${crypto.randomUUID()}`
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { memoryType: 'note', topic: 'n', content: restContent, dueAt },
+    })
+    expect(restRes.status).toBe(400)
+    expect(await restRes.json()).toEqual({ error: 'invalid_input' })
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: { memoryType: 'note', topic: 'n', content: mcpContent, dueAt },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBe(true)
+
+    const written = await ownerPool.query(
+      'SELECT count(*)::int AS n FROM memories WHERE content = ANY($1)',
+      [[restContent, mcpContent]],
+    )
+    expect(written.rows[0].n).toBe(0)
+  })
+})
+
 describe('A4 search parity (same tenant, same projection)', () => {
   it('projects identical hit shape {id,memoryType,topic,content,score} with count===hits.length', async () => {
     // Write the SAME content over each transport, then search for each over the

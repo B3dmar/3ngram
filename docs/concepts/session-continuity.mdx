@@ -449,7 +449,8 @@ payload. Thread the same payload through **all** of those inserts, including
 extends that schema (`packages/schema/src/import.ts`); a key there would be accepted
 on import and then silently dropped. The shipped native write path is already the
 facts-capable schema: `rememberToolInputV2Schema` aliases
-`rememberWithFactsInputSchema`, and `packages/core/src/write/remember.ts` re-parses
+`nativeRememberInputSchema` (facts, `sessionRunId`, and since issue #165 a
+commitment's optional `dueAt`/`owner`), and `packages/core/src/write/remember.ts` re-parses
 that **strict** shape. Compose beside that canonical native input (ADR-0011):
 
 ```text

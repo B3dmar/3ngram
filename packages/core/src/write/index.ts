@@ -26,6 +26,7 @@ export {
 } from './embed.js'
 export {
   DuplicateMemoryError,
+  type RememberResult,
   remember,
   UnknownSessionRunError,
   type WriteResult,
