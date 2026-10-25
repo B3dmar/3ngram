@@ -22,7 +22,7 @@ type dashboardResponse struct {
 }
 
 type dashboardItem struct {
-	ID         int    `json:"id"`
+	ID         string `json:"id"`
 	Topic      string `json:"topic"`
 	Content    string `json:"content"`
 	MemoryType string `json:"memory_type"`
@@ -223,6 +223,7 @@ func precheckSearch(stem string, limit int) (dashboardResponse, bool) {
 	resp := dashboardResponse{Total: env.Count}
 	for _, h := range env.Hits {
 		resp.Items = append(resp.Items, dashboardItem{
+			ID:         h.ID,
 			Topic:      h.Topic,
 			Content:    h.Content,
 			MemoryType: h.MemoryType,
@@ -277,7 +278,12 @@ func renderPrecheck(resp dashboardResponse, stem string, limit int) string {
 		n = limit
 	}
 	for _, item := range resp.Items[:n] {
-		line := fmt.Sprintf("- [%d] **%s**", item.ID, item.Topic)
+		// The id is the memory's string id from the search hit, so the agent can
+		// tell hits apart and fetch one by id. Omit the bracket when it is absent.
+		line := fmt.Sprintf("- **%s**", item.Topic)
+		if item.ID != "" {
+			line = fmt.Sprintf("- [%s] **%s**", item.ID, item.Topic)
+		}
 		if item.MemoryType != "" {
 			line += fmt.Sprintf(" (%s)", item.MemoryType)
 		}
