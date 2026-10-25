@@ -114,7 +114,9 @@ function toFilters(input: FilterableInput) {
  * packages/core/src/read/excerpt.ts; contentLength/truncated let the caller
  * fetch the full memory by id when the excerpt was cut). `compact` omits the
  * triple (~5x fewer tokens per hit) for broad scans — the caller batch-fetches
- * the interesting ids with get_memories.
+ * the interesting ids with get_memories. BOTH projections carry the filing
+ * (`scope`/`project`) and, only for a commitment, its lifecycle
+ * `commitmentStatus` — a resolved commitment stays a valid hit, labelled.
  */
 function projectHit(hit: SearchHit, projection: SearchProjection): Record<string, unknown> {
   const compact = {
@@ -123,6 +125,9 @@ function projectHit(hit: SearchHit, projection: SearchProjection): Record<string
     topic: hit.topic,
     score: hit.score,
     superseded: hit.superseded,
+    scope: hit.scope,
+    project: hit.project,
+    ...(hit.commitmentStatus === undefined ? {} : { commitmentStatus: hit.commitmentStatus }),
   }
   if (projection === 'compact') return compact
   return {

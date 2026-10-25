@@ -424,12 +424,23 @@ export type AgentSessionTriageBeginResponse = z.infer<typeof agentSessionTriageB
  * closer re-claimed the row with an attempt id of its own. Stamping under an
  * attempt-id predicate is what stops that late call clobbering the newer
  * attempt's verdict.
+ *
+ * `defensive: true` declares that NO debrief was displayed for this attempt —
+ * the hook armed it but did not inject (a finalize-only Stop whose `begin`
+ * armed instead of declining `pending`, or a prompt fetch that failed). The
+ * outcome is then `expired` whatever was written since begin, and the watermark
+ * stays at the begin stamp, so a write that committed between begin and this
+ * call stays untriaged and closer-eligible instead of being claimed as covered
+ * by a debrief nobody saw (issue #189). Optional and additive: omitted is
+ * today's complete. Strict like the rest of the body, so a server older than the
+ * field 400s it — the hook sends it only when true and falls back on a 400.
  */
 export const agentSessionTriageCompleteBodySchema = z
   .object({
     agent: agentNameSchema,
     sessionId: harnessSessionIdSchema,
     attemptId: z.uuid(),
+    defensive: z.boolean().optional(),
   })
   .strict()
 export type AgentSessionTriageCompleteInput = z.infer<typeof agentSessionTriageCompleteBodySchema>
@@ -491,6 +502,11 @@ export type TriageAttemptLogEntry = z.infer<typeof triageAttemptLogEntrySchema>
  * event id visible for the run, not the since-begin slice. `sinceBeginCount` is
  * the zero-write check: `0` is exactly why an outcome is `expired` rather than
  * `completed`.
+ *
+ * A `defensive` complete stamps no new watermark: `eventCount` is then the begin
+ * stamp it left in place, and `sinceBeginCount` still reports what arrived since
+ * begin — writes the outcome deliberately did NOT absorb, which is why it can be
+ * non-zero on an `expired` outcome.
  */
 export const agentSessionTriageCompleteResponseSchema = z
   .object({

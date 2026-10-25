@@ -28,6 +28,7 @@ import {
   remember,
   resolveByMemoryId,
   revise,
+  reviseDisposition,
 } from '@3ngram/core'
 import { MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE, type MemoryScope } from '@3ngram/core/auth'
 import type { Gateway } from '@3ngram/llm'
@@ -42,6 +43,7 @@ import {
   resolveToolInputSchema,
   resolveToolOutputSchema,
   reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   reviseToolRequestSchema,
 } from '@3ngram/schema'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/server'
@@ -238,8 +240,9 @@ const rememberTool: ToolDefinition = {
   },
   async handler(args, ctx) {
     // core remember() is THE validation boundary; pass the args straight through.
-    // It returns the new id only, so the structured output echoes the NORMALIZED
-    // write input (scope default + null project applied here) for the rest.
+    // The echoed scope is the one core WROTE (an omitted scope is resolved by
+    // the tenant's write-scope policy, issue #235); the rest echoes the
+    // normalized input (null project applied here).
     // Embedding is on iff a gateway is configured — best-effort, never blocks.
     const input = rememberToolInputV2Schema.parse(args)
     const gatewayOpts =
@@ -268,7 +271,7 @@ const rememberTool: ToolDefinition = {
           id: written.id,
           memoryType: input.memoryType,
           topic: input.topic,
-          scope: input.scope,
+          scope: written.scope,
           project: input.project ?? null,
         },
         embedded,
@@ -371,14 +374,16 @@ const reviseTool: ToolDefinition = {
     // boundary so a supplied `scope`/`project` reaches the handler and an unknown
     // key is rejected, never silently stripped.
     inputSchema: reviseToolRequestSchema,
-    outputSchema: reviseToolOutputSchema,
+    outputSchema: reviseToolOutputV2Schema,
     // destructiveHint: false is the claim worth making visible. AGENTS.md hard
     // rule 1: no write path destroys memory data. revise closes the
     // predecessor's validity and APPENDS a successor row — the predecessor's
     // content is never rewritten (packages/db/src/memory-revise.ts), and archive
     // moves `status`, not content. The move disposition (issue #233) rewrites
     // filing metadata only (scope/project/tags) and keeps the previous filing in
-    // its audit event. Not idempotent: each successor call appends a new row,
+    // its audit event. The archive disposition (issue #217) flips `status`
+    // only, audited by an `archive` event, and a repeat reports
+    // `already_archived`. Not idempotent: each successor call appends a new row,
     // and a repeat against an already-superseded predecessor is a typed
     // rejection rather than a no-op (a repeated move is a harmless no-op).
     annotations: {
@@ -395,6 +400,13 @@ const reviseTool: ToolDefinition = {
     // echo comes from the write, not from the input. Embedding is best-effort
     // and never blocks (same ack-before-embed as remember).
     const input = reviseToolRequestSchema.parse(args)
+    // Only a disposition carries `memoryIds`: route it to its core entry point
+    // (the per-action dispatch configure_scope uses), which reports per-id
+    // outcomes and embeds nothing.
+    if ('memoryIds' in input) {
+      const result = await reviseDisposition(ctx.userId, input, 'user_mcp', { access: ctx.access })
+      return ok(parseOutput('revise', reviseToolOutputV2Schema, result))
+    }
     const gatewayOpts =
       ctx.gateway === undefined
         ? { access: ctx.access, limits: ctx.limits }
@@ -464,6 +476,7 @@ const resolveTool: ToolDefinition = {
       input.status,
       'user_mcp',
       input.sessionRunId,
+      input.reason,
     )
     const output = parseOutput('resolve', resolveToolOutputSchema, {
       commitmentId: result.id,

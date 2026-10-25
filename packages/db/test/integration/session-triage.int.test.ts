@@ -13,18 +13,22 @@
 //   - the `jsonb` round-trip of `last_triaged_event_ids`;
 //   - tenant isolation on a natural key another tenant also uses.
 //
-// Concurrency is NOT tested here. A real two-transaction race is
-// non-deterministic and hard rule 4 forbids flake retries; the attempt-id fence
-// and the row-lock ordering are pinned by the fake-tx suite instead, which
-// replays the exact observation sequence each statement sees.
+// The attempt-id fence and the row-lock ordering are pinned statement by
+// statement by the fake-tx suite. The one real interleaving here — a write in
+// flight across `begin` (issue #189) — is CONSTRUCTED with the lock-barrier
+// harness (./concurrency.ts), never timed: hard rule 4 forbids flake retries.
 import { SESSION_LEASE_MS, SESSION_SWEEP_GRACE_MS } from '@3ngram/schema'
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { and, eq } from 'drizzle-orm'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { ERASED_PII, eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
 import { writeMemory } from '../../src/memory-write.js'
 import { agentSessions } from '../../src/schema/agent-sessions.js'
 import {
   claimSessionTriage,
   finishSessionTriage,
+  hasUntriagedSessionEvent,
+  listCloserCandidates,
   readCloserSession,
   sweepExpiredLeases,
 } from '../../src/session-closer.js'
@@ -34,6 +38,14 @@ import {
   beginSessionTriage,
   completeSessionTriage,
 } from '../../src/session-triage.js'
+import {
+  assertPending,
+  holdOpen,
+  ROW_LOCK,
+  releaseHeld,
+  track,
+  waitForLockWait,
+} from './concurrency.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 const NOW = new Date('2026-08-23T12:00:00.000Z')
@@ -117,6 +129,12 @@ const complete = (userId: string, attemptId = attempt(1), ceiling?: number) =>
     }),
   )
 
+/** The complete a hook sends for an attempt it armed but showed no debrief for (issue #189). */
+const completeDefensive = (userId: string, attemptId = attempt(1)) =>
+  withTenant(userId, (tx) =>
+    completeSessionTriage(tx, userId, KEY, { attemptId, now: NOW, defensive: true }),
+  )
+
 async function rawRow(id: string): Promise<Record<string, unknown>> {
   const r = await ownerPool.query(
     `SELECT triage_status, triage_attempt_id, triage_armed_at, triage_attempt_log,
@@ -129,6 +147,8 @@ async function rawRow(id: string): Promise<Record<string, unknown>> {
 }
 
 const watermark = async (id: string) => (await rawRow(id)).last_triaged_event_ids as string[]
+
+afterEach(releaseHeld)
 
 beforeEach(async () => {
   await resetDomainTables()
@@ -564,5 +584,173 @@ describe('re-arm on write', () => {
 
     expect(done).toMatchObject({ triageStatus: 'completed', sinceBeginCount: 1, eventCount: 3 })
     expect(await watermark(runId)).toEqual(expect.arrayContaining(afterFirst))
+  })
+})
+
+describe('defensive finalize: no debrief shown, nothing claimed as covered (issue #189)', () => {
+  /** The shipped closer predicate's untriaged-event leg, evaluated on this run. */
+  const untriaged = (id: string) =>
+    withTenant(uid, async (tx) => {
+      const rows = await tx
+        .select({ id: agentSessions.id })
+        .from(agentSessions)
+        .where(and(eq(agentSessions.id, id), hasUntriagedSessionEvent))
+      return rows.length === 1
+    })
+
+  const closerSelects = async (id: string) => {
+    await withTenant(uid, (tx) => closeSession(tx, uid, KEY, LATER))
+    const candidates = await withTenant(uid, (tx) => listCloserCandidates(tx, uid, LATER, 100))
+    return candidates.some((c) => c.sessionRunId === id)
+  }
+
+  async function eventPayloads(id: string): Promise<unknown[]> {
+    const r = await ownerPool.query(
+      `SELECT payload FROM memory_events WHERE user_id = $1 AND payload->>'sessionRunId' = $2`,
+      [uid, id],
+    )
+    return r.rows.map((row) => row.payload)
+  }
+
+  it('a write committed between begin and a defensive complete stays untriaged and closer-eligible', async () => {
+    // The finalize-only Stop: `begin` with stop_hook_active ARMS instead of
+    // declining `pending`, so the hook may not inject and completes at once.
+    const armed = await begin(uid, { stopHookActive: true })
+    expect(armed).toMatchObject({ armed: true, attemptId: attempt(1) })
+    const atBegin = await watermark(runId)
+
+    // An async writer carrying this run's id commits between the two calls —
+    // they are separate transactions, so sequencing them IS the interleaving.
+    await write(uid, runId)
+
+    const done = await completeDefensive(uid)
+    expect(done).toMatchObject({
+      triageStatus: 'expired',
+      sinceBeginCount: 1,
+      eventCount: atBegin.length,
+      truncated: false,
+    })
+    const row = await rawRow(runId)
+    expect(row.triage_status).toBe('expired')
+    // Not advanced past the begin stamp: the write was not absorbed.
+    expect(row.last_triaged_event_ids).toEqual(atBegin)
+    expect(row.triage_attempt_log).toEqual([
+      {
+        attemptId: attempt(1),
+        armedAt: expect.any(String),
+        finalizedAt: NOW.toISOString(),
+        outcome: 'expired',
+      },
+    ])
+    expect(await untriaged(runId)).toBe(true)
+    // Provenance is retained, attributed to the run.
+    expect(await eventPayloads(runId)).toEqual([{ sessionRunId: runId }])
+
+    // The next Stop re-arms on it: the write is still new signal.
+    expect(await begin(uid, { attemptId: attempt(2), now: LATER })).toMatchObject({
+      armed: true,
+      attemptId: attempt(2),
+    })
+  })
+
+  it('leaves the run closer-eligible once the session ends', async () => {
+    await begin(uid, { stopHookActive: true })
+    await write(uid, runId)
+    await completeDefensive(uid)
+
+    expect(await closerSelects(runId)).toBe(true)
+  })
+
+  it('the ordinary complete still absorbs the write — the hole the flag exists for', async () => {
+    // Today's rule, kept for a debrief that WAS shown: what arrived since begin
+    // is the continuation's answer, so the run is `completed` and settled.
+    await begin(uid, { stopHookActive: true })
+    await write(uid, runId)
+
+    expect(await complete(uid)).toMatchObject({ triageStatus: 'completed', sinceBeginCount: 1 })
+    expect(await untriaged(runId)).toBe(false)
+    expect(await closerSelects(runId)).toBe(false)
+  })
+
+  it('a write in flight across begin stays untriaged after a defensive complete', async () => {
+    // The in-flight case, constructed: `begin` arms and parks before commit
+    // holding the row lock; the writer's attach queues on it, so the write is
+    // genuinely concurrent with the attempt and commits only after begin's
+    // listing has been stamped.
+    const held = holdOpen(uid, (tx) =>
+      beginSessionTriage(tx, uid, KEY, {
+        attemptId: attempt(1),
+        turnCount: THRESHOLDS.minTurns,
+        stopHookActive: true,
+        thresholds: THRESHOLDS,
+        now: NOW,
+      }),
+    )
+    expect(await held.ready).toMatchObject({ armed: true })
+    const writing = track(write(uid, runId))
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: held.pid })
+    await assertPending(writing, 'write')
+
+    await held.commit()
+    await writing
+    const atBegin = await watermark(runId)
+    expect(atBegin).toEqual([])
+
+    expect(await completeDefensive(uid)).toMatchObject({
+      triageStatus: 'expired',
+      sinceBeginCount: 1,
+    })
+    expect(await watermark(runId)).toEqual(atBegin)
+    expect(await untriaged(runId)).toBe(true)
+    expect(await closerSelects(runId)).toBe(true)
+  })
+
+  it('a defensive complete with no write lands exactly where the ordinary one does', async () => {
+    await write(uid, runId)
+    await begin(uid, { stopHookActive: true })
+    const atBegin = await watermark(runId)
+
+    expect(await completeDefensive(uid)).toMatchObject({
+      triageStatus: 'expired',
+      sinceBeginCount: 0,
+      eventCount: 1,
+    })
+    expect(await watermark(runId)).toEqual(atBegin)
+    expect(await untriaged(runId)).toBe(false)
+  })
+
+  it('keeps the attempt fence: a repeat or stale defensive complete is a conflict', async () => {
+    await begin(uid, { stopHookActive: true })
+    await write(uid, runId)
+    await completeDefensive(uid)
+
+    // Repeat of the same attempt: the `pending` leg refuses it.
+    await expect(completeDefensive(uid)).rejects.toBeInstanceOf(AgentSessionTriageConflictError)
+    // An ordinary complete cannot promote the defensive outcome after the fact.
+    await expect(complete(uid)).rejects.toBeInstanceOf(AgentSessionTriageConflictError)
+    expect((await rawRow(runId)).triage_status).toBe('expired')
+
+    // A superseded token: the attempt-id leg refuses it, the row is untouched.
+    await begin(uid, { attemptId: attempt(2), now: LATER })
+    await expect(completeDefensive(uid, attempt(1))).rejects.toBeInstanceOf(
+      AgentSessionTriageConflictError,
+    )
+    expect(await rawRow(runId)).toMatchObject({
+      triage_status: 'pending',
+      triage_attempt_id: attempt(2),
+    })
+  })
+
+  it('composes with account erasure between begin and the defensive complete', async () => {
+    await begin(uid, { stopHookActive: true })
+    await write(uid, runId)
+    await withTenant(uid, (tx) => eraseAccountData(tx, uid, NOW))
+
+    expect(await completeDefensive(uid)).toMatchObject({ triageStatus: 'expired' })
+    const row = await rawRow(runId)
+    // Erasure's reset of the watermark stands — the defensive complete restores
+    // nothing it discarded — and its redaction is untouched.
+    expect(row.last_triaged_event_ids).toEqual([])
+    expect(row.last_message_excerpt).toBe(ERASED_PII)
   })
 })

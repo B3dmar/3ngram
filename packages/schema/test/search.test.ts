@@ -200,6 +200,8 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     truncated: false,
     score: 0.9,
     superseded: false,
+    scope: 'personal',
+    project: null,
   })
 
   it('accepts a hit with content at the excerpt cap', () => {
@@ -228,6 +230,19 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     const { superseded: _s, ...noSuperseded } = hit('c')
     expect(searchHitSchema.safeParse(noSuperseded).success).toBe(false)
     expect(searchHitSchema.safeParse({ ...hit('c'), superseded: true }).success).toBe(true)
+  })
+
+  it('REQUIRES the filing; commitmentStatus is optional and enum-bound (#319)', () => {
+    const { scope: _s, ...noScope } = hit('c')
+    const { project: _p, ...noProject } = hit('c')
+    expect(searchHitSchema.safeParse(noScope).success).toBe(false)
+    expect(searchHitSchema.safeParse(noProject).success).toBe(false)
+    expect(searchHitSchema.safeParse({ ...hit('c'), project: 'engine' }).success).toBe(true)
+    for (const commitmentStatus of ['open', 'waiting', 'resolved', 'expired']) {
+      expect(searchHitSchema.safeParse({ ...hit('c'), commitmentStatus }).success).toBe(true)
+    }
+    expect(searchHitSchema.safeParse({ ...hit('c'), commitmentStatus: 'done' }).success).toBe(false)
+    expect(searchHitSchema.safeParse({ ...hit('c'), commitmentStatus: null }).success).toBe(false)
   })
 
   it('handoff lines share the SAME excerpt bound and metadata (the #238 sweep)', () => {

@@ -132,6 +132,41 @@ export const cursorPayloadV3Schema = z
   .strict()
 export type CursorPayloadV3 = z.infer<typeof cursorPayloadV3Schema>
 
+/**
+ * Decoded proposals-review cursor (v4, issue #320) — a keyset over the MERGED
+ * proposal stream (`created_at DESC, id DESC` across every proposal kind the
+ * listing covers). Deliberately NOT a member of {@link cursorPayloadSchema}:
+ * that union is the SEARCH continuation contract, and a proposals token handed
+ * to search (or a search token handed to review_proposals) must fail as
+ * malformed input rather than decode into the wrong walk. The proposals codec
+ * (apps/server/src/cursor.ts decodeProposalsCursor) parses only this shape.
+ *
+ * `createdAt`/`id` are the LAST EMITTED row's coordinates; the next page
+ * resumes strictly after them. `createdAt` carries the same full-microsecond
+ * opaque text as v3's `recordedAt` (and the same 6-digit cap, for the same
+ * reason: batch-inserted proposals share one transaction `now()`, and a
+ * millisecond-truncated boundary would strand the rest of a tied group). Proposal
+ * ids are uuidv7 drawn from disjoint tables, so `id` alone breaks every tie.
+ *
+ * `fp` is REQUIRED and binds the token to the surface, the kinds walked, the
+ * status filter, the order, AND the tenant (a hash — the user id itself never
+ * appears in this caller-visible token). A token replayed under a different
+ * binding is rejected with the typed cursor-mismatch error.
+ */
+export const proposalsCursorPayloadSchema = z
+  .object({
+    v: z.literal(4),
+    kind: z.literal('proposals'),
+    createdAt: isoDateTime().refine(
+      (iso) => !exceedsFractionalSecondPrecision(iso, MAX_CURSOR_RECORDED_AT_FRACTION_DIGITS),
+      { message: 'createdAt precision exceeds microseconds' },
+    ),
+    id: z.uuid(),
+    fp: fingerprintShape,
+  })
+  .strict()
+export type ProposalsCursorPayload = z.infer<typeof proposalsCursorPayloadSchema>
+
 /** Either cursor variant: the shipped v2 frozen ordering, or the v3 chronological keyset. */
 export const cursorPayloadSchema = z.union([cursorPayloadV2Schema, cursorPayloadV3Schema])
 export type CursorPayload = z.infer<typeof cursorPayloadSchema>

@@ -11,6 +11,7 @@ export {
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
   NotCommitmentMemoryError,
+  ResolveReasonNotSupportedError,
   type ResolveStatus,
   resolveByMemoryId,
   // `resolveForClosedRun` is deliberately NOT re-exported — see its doc comment.
@@ -26,6 +27,7 @@ export {
 } from './embed.js'
 export {
   DuplicateMemoryError,
+  type RememberResult,
   remember,
   UnknownSessionRunError,
   type WriteResult,
@@ -43,3 +45,4 @@ export {
   type ReviseResult,
   revise,
 } from './revise.js'
+export { type ReviseDispositionOptions, reviseDisposition } from './revise-disposition.js'

@@ -10,6 +10,7 @@ import {
   MAX_FACTS_PER_WRITE,
   MAX_TAGS,
   nativeRememberInputSchema,
+  nativeReviseInputSchema,
   nativeReviseRequestSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,
@@ -369,12 +370,131 @@ describe('factWrite', () => {
 })
 
 describe('nativeRememberInputSchema', () => {
+  describe('scope omission survives the parse (write-scope policy, issue #235)', () => {
+    it('leaves an omitted scope undefined: no eager default', () => {
+      const parsed = nativeRememberInputSchema.parse(validRemember)
+      expect(parsed.scope).toBeUndefined()
+      expect('scope' in parsed).toBe(false)
+    })
+
+    it("keeps an explicit 'personal' distinguishable from omission", () => {
+      expect(nativeRememberInputSchema.parse({ ...validRemember, scope: 'personal' }).scope).toBe(
+        'personal',
+      )
+    })
+
+    it('still validates an explicit scope (kebab-case, bounded)', () => {
+      expect(nativeRememberInputSchema.safeParse({ ...validRemember, scope: 'Work' }).success).toBe(
+        false,
+      )
+      expect(nativeRememberInputSchema.safeParse({ ...validRemember, scope: '' }).success).toBe(
+        false,
+      )
+    })
+
+    it('re-parsing a parsed payload keeps the omission (transport parse, then core parse)', () => {
+      const once = nativeRememberInputSchema.parse(validRemember)
+      expect(nativeRememberInputSchema.parse(once).scope).toBeUndefined()
+    })
+
+    it("the base remember schema keeps its 'personal' default (import, V1 alias)", () => {
+      expect(rememberInputSchema.parse(validRemember).scope).toBe('personal')
+      expect(rememberWithFactsInputSchema.parse(validRemember).scope).toBe('personal')
+    })
+
+    it('publishes no default for scope in the JSON Schema an MCP client sees', () => {
+      const json = z.toJSONSchema(nativeRememberInputSchema, { io: 'input' }) as {
+        properties: Record<string, { default?: unknown }>
+        required?: string[]
+      }
+      expect(json.properties.scope).toBeDefined()
+      expect(json.properties.scope?.default).toBeUndefined()
+      expect(json.required ?? []).not.toContain('scope')
+    })
+  })
+
   it('accepts optional sessionRunId beside facts', () => {
     const parsed = nativeRememberInputSchema.parse({
       ...validRemember,
       sessionRunId: UUID_A,
     })
     expect(parsed.sessionRunId).toBe(UUID_A)
+  })
+
+  describe('commitment dueAt/owner (issue #165)', () => {
+    const commitment = { ...validRemember, memoryType: 'commitment' }
+
+    it('accepts an explicit deadline and owner on a commitment', () => {
+      const parsed = nativeRememberInputSchema.parse({
+        ...commitment,
+        dueAt: '2026-11-30T17:00:00.000Z',
+        owner: '  sebastian  ',
+      })
+      expect(parsed.dueAt).toBe('2026-11-30T17:00:00.000Z')
+      expect(parsed.owner).toBe('sebastian')
+    })
+
+    it('keeps an undated commitment undated: omitted and null both mean absent', () => {
+      expect(nativeRememberInputSchema.parse(commitment).dueAt).toBeUndefined()
+      expect(nativeRememberInputSchema.parse({ ...commitment, dueAt: null }).dueAt).toBeUndefined()
+    })
+
+    it('rejects a deadline that is not an ISO-8601 instant (no prose parsing)', () => {
+      for (const dueAt of ['next friday', '2026-11-30', '2026-13-01T00:00:00Z', 1767225600000]) {
+        expect(nativeRememberInputSchema.safeParse({ ...commitment, dueAt }).success).toBe(false)
+      }
+    })
+
+    it('rejects sub-millisecond precision rather than truncating it', () => {
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, dueAt: '2026-11-30T17:00:00.1234Z' })
+          .success,
+      ).toBe(false)
+    })
+
+    it('bounds owner like the import contract', () => {
+      expect(nativeRememberInputSchema.safeParse({ ...commitment, owner: '   ' }).success).toBe(
+        false,
+      )
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, owner: 'x'.repeat(257) }).success,
+      ).toBe(false)
+    })
+
+    it('rejects a dueAt or owner value on a non-commitment, reporting the offending key', () => {
+      const dated = nativeRememberInputSchema.safeParse({
+        ...validRemember,
+        dueAt: '2026-11-30T17:00:00Z',
+      })
+      const owned = nativeRememberInputSchema.safeParse({ ...validRemember, owner: 'sebastian' })
+      expect(dated.success).toBe(false)
+      expect(dated.error?.issues.map((issue) => issue.path)).toEqual([['dueAt']])
+      expect(owned.success).toBe(false)
+      expect(owned.error?.issues.map((issue) => issue.path)).toEqual([['owner']])
+    })
+
+    it('treats dueAt: null as absent on any type (nothing to drop)', () => {
+      const parsed = nativeRememberInputSchema.parse({ ...validRemember, dueAt: null })
+      expect(parsed.dueAt).toBeUndefined()
+    })
+
+    it('accepts only a UTC instant ending in Z, not a local offset', () => {
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, dueAt: '2026-11-30T17:00:00+01:00' })
+          .success,
+      ).toBe(false)
+    })
+
+    it('keeps the fields off the base contract that revise and import extend', () => {
+      const dated = { ...commitment, dueAt: '2026-11-30T17:00:00Z' }
+      expect(rememberInputSchema.safeParse(dated).success).toBe(false)
+      expect(rememberWithFactsInputSchema.safeParse(dated).success).toBe(false)
+      const revision = { ...dated, predecessorId: UUID_A }
+      expect(nativeReviseInputSchema.safeParse(revision).success).toBe(false)
+      expect(
+        nativeReviseInputSchema.safeParse({ ...revision, dueAt: undefined, owner: 'x' }).success,
+      ).toBe(false)
+    })
   })
 
   it('rememberWithFactsInputSchema still rejects sessionRunId (import must not take it)', () => {
