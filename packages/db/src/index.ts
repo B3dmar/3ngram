@@ -153,6 +153,7 @@ export {
   type ExportEnricher,
   type ExportFactProposalRow,
   type ExportFactRow,
+  type ExportJudgmentPolicyRow,
   type ExportLlmUsageRow,
   type ExportMemoryEventRow,
   type ExportMemoryRow,
@@ -194,6 +195,12 @@ export {
   insertFacts,
   type MemoryFactWrite,
 } from './facts-write.js'
+// --- judgment opt-in store (issue #225) ---
+export {
+  getJudgmentPolicy,
+  type JudgmentPolicyRow,
+  upsertJudgmentPolicy,
+} from './judgment-policy.js'
 // --- llm_usage cost tracking — RLS-scoped, withTenant() ---
 export { insertLlmUsage, type LlmUsageWrite } from './llm-usage.js'
 export {

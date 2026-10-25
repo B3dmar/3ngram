@@ -76,6 +76,7 @@ import { SERVER_VERSION } from '../version.js'
 import { defined, guard, mergeReviseTarget, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 import { sessionRouter } from './session-router.js'
+import { settingsRouter } from './settings-router.js'
 
 // A non-UUID :id path segment can never match a stored uuid column, so treat a
 // malformed id the same as an unknown id (404) instead of letting Postgres raise
@@ -190,6 +191,8 @@ export function restRouter(options: RestRouterOptions): Router {
   // module for the same reason search has one: these routes share a concern
   // with each other, not with the memory mirror.
   router.use(sessionRouter(options))
+  // Tenant settings (the judgment opt-in, issue #225).
+  router.use(settingsRouter())
 
   // POST /api/v1/memories — remember (mirrors the MCP remember tool). Core
   // remember() is THE validation boundary; we re-parse here only to echo the
@@ -1122,6 +1125,12 @@ export function restRouter(options: RestRouterOptions): Router {
               mode: data.writeScopePolicy.mode,
               defaultScope: data.writeScopePolicy.defaultScope,
               updatedAt: data.writeScopePolicy.updatedAt.toISOString(),
+            }
+          : null,
+        judgmentPolicy: data.judgmentPolicy
+          ? {
+              mode: data.judgmentPolicy.mode,
+              updatedAt: data.judgmentPolicy.updatedAt.toISOString(),
             }
           : null,
         counts: {

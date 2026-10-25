@@ -35,6 +35,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON oauth_codes, user_sessions, password_res
 GRANT SELECT, INSERT, UPDATE ON user_profile_attributes TO app_user; -- onboarding profiling, RLS-enforced; upsert, no DELETE
 GRANT SELECT, INSERT, UPDATE ON user_retrieval_policy TO app_user; -- retrieval-scope policy (issue #47), RLS-enforced; upsert, no DELETE
 GRANT SELECT, INSERT, UPDATE ON user_write_scope_policy TO app_user; -- write-scope policy (issue #235), RLS-enforced; upsert, no DELETE
+GRANT SELECT, INSERT, UPDATE ON user_judgment_policy TO app_user; -- judgment opt-in (issue #225), RLS-enforced; upsert, no DELETE
 GRANT EXECUTE ON FUNCTION auth_resolve_session(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_api_key(text) TO app_user;
 GRANT EXECUTE ON FUNCTION auth_resolve_oauth_token(text) TO app_user;

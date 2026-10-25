@@ -30,6 +30,7 @@ export type {
   ExportEnricher,
   ExportFactProposalRow,
   ExportFactRow,
+  ExportJudgmentPolicyRow,
   ExportLlmUsageRow,
   ExportMemoryEventRow,
   ExportMemoryRow,

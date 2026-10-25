@@ -305,6 +305,8 @@ its row here even when its name and kind are unchanged.
 | `InlineFacets` | interface | `c7254b1afd05` |
 | `InvalidCommitmentTransitionError` | class | `35bdd3c53d32` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `JUDGMENT_POLICY_AUDIT_ACTION` | const | `515fcd14a3a0` |
+| `JudgmentPolicySetting` | interface | `2beed10014fa` |
 | `LEGACY_SURFACING_POLICY` | const | `ec760cc39997` |
 | `Limits` | interface | `8dfe7e48d9c8` |
 | `LimitsResolver` | type | `e9184939e253` |
@@ -379,7 +381,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
 | `UnscopedWriteError` | class | `836d2ad0275b` |
-| `UserDataExport` | interface | `fb4950dae828` |
+| `UserDataExport` | interface | `ba559f63fad0` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WriteScopePolicySetting` | interface | `ab65eda55f36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
@@ -423,6 +425,7 @@ its row here even when its name and kind are unchanged.
 | `getBudgetStatus` | function | `12b4019ba940` |
 | `getCurrentUser` | function | `91b1696ca909` |
 | `getFacts` | function | `e4962000fb84` |
+| `getJudgmentPolicy` | function | `5c662ff41e68` |
 | `getMemoriesByIds` | function | `a9fa490782cc` |
 | `getMemoryById` | function | `b5680c6aeae8` |
 | `getMemoryHistory` | function | `5bec4c08ade8` |
@@ -436,6 +439,7 @@ its row here even when its name and kind are unchanged.
 | `importMemory` | function | `94b80cc5a793` |
 | `incrementWindowCounter` | function | `36c4508075c1` |
 | `isCloserEligible` | function | `5ba2c96e3393` |
+| `isJudgmentEnabled` | function | `42e9b1ae785f` |
 | `listAllProposals` | function | `a406e03c4581` |
 | `listEdgeProposalsPage` | function | `3ad34c3c272d` |
 | `listMemories` | function | `949fe93c7c39` |
@@ -468,6 +472,7 @@ its row here even when its name and kind are unchanged.
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
 | `selectResolvable` | function | `6026659c6ba3` |
+| `setJudgmentPolicy` | function | `4b792c35865f` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
 | `setWriteDefault` | function | `8f06eefe3633` |
@@ -651,6 +656,7 @@ its row here even when its name and kind are unchanged.
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
 | `ExportFactRow` | interface | `2cf2890a3d69` |
+| `ExportJudgmentPolicyRow` | interface | `c9e8b8400c12` |
 | `ExportLlmUsageRow` | interface | `c20cc8fa5bcb` |
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
@@ -675,6 +681,7 @@ its row here even when its name and kind are unchanged.
 | `ImportedFactWrite` | type | `926ded5b48b2` |
 | `ImportedMemoryWrite` | interface | `7cb30c1000a5` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `JudgmentPolicyRow` | interface | `942c9595809a` |
 | `KeyedProposal` | interface | `ebfe0df84d30` |
 | `ListSessionEventsOptions` | interface | `180b2adf3aa9` |
 | `LlmUsageWrite` | interface | `0947a39fb65a` |
@@ -750,7 +757,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
 | `UserBudgetWrite` | interface | `8e6b2933fc5b` |
-| `UserDataExport` | interface | `fb4950dae828` |
+| `UserDataExport` | interface | `ba559f63fad0` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `UserRow` | interface | `0d5553e9b368` |
 | `WriteScopePolicyRow` | interface | `982129ab2c36` |
@@ -810,6 +817,7 @@ its row here even when its name and kind are unchanged.
 | `getCommitmentByMemoryId` | function | `0629c8a41d7f` |
 | `getEnvironmentStats` | function | `e15c275ef074` |
 | `getFacts` | function | `fa54c70ac1dc` |
+| `getJudgmentPolicy` | function | `48882328985c` |
 | `getLiveAccountId` | function | `ecf1e7b0880b` |
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
@@ -923,11 +931,13 @@ its row here even when its name and kind are unchanged.
 | `updateLastUsedAt` | function | `780f86d8ea02` |
 | `updateMemoryEmbedding` | function | `9d0db880a228` |
 | `updateUserPassword` | function | `7a5a254e0add` |
+| `upsertJudgmentPolicy` | function | `2156a8b49eff` |
 | `upsertRetrievalPolicy` | function | `3ab6384e96f8` |
 | `upsertUserProfileAttributes` | function | `d79d8631d638` |
 | `upsertWriteScopePolicy` | function | `bd36c6b2de4b` |
 | `userBudgets` | const | `f8f95111eeec` |
 | `userHasOauthToken` | function | `2e61b0e84846` |
+| `userJudgmentPolicy` | const | `fb5814164454` |
 | `userProfileAttributes` | const | `bc81f15c028a` |
 | `userRetrievalPolicy` | const | `cd2b164e8376` |
 | `userSessions` | const | `a6779f063c2e` |
@@ -1152,6 +1162,9 @@ its row here even when its name and kind are unchanged.
 | `ImportMemoryInput` | type | `4c9d8d2c948b` |
 | `IsoDateTimeOptions` | interface | `08eb6b3c3b90` |
 | `IssueApiKeyInput` | type | `cf1e734aba72` |
+| `JudgmentMode` | type | `1a735e2f75d9` |
+| `JudgmentPolicyBody` | type | `859d3eb9cfe2` |
+| `JudgmentPolicyResponse` | type | `a63181dab0d7` |
 | `LoginInput` | type | `80ad24a1c8e6` |
 | `MAX_BRIEFED_MEMORIES` | const | `a1a6ddbeaf28` |
 | `MAX_BRIEFING_SECTION_CEILING` | const | `9cc0a36f612c` |
@@ -1432,6 +1445,9 @@ its row here even when its name and kind are unchanged.
 | `invalidInputRestErrorResponseSchema` | const | `0667cb9d2d3d` |
 | `isoDateTime` | function | `738d868d7032` |
 | `issueApiKeyInputSchema` | const | `3e72d160312f` |
+| `judgmentModeSchema` | const | `f2d99fb6a2d4` |
+| `judgmentPolicyBodySchema` | const | `434aa42d9cda` |
+| `judgmentPolicyResponseSchema` | const | `87e427ceac0a` |
 | `legacyCursorPayloadSchema` | const | `013f4128701c` |
 | `loginInputSchema` | const | `8be1ee749cd1` |
 | `meResponseSchema` | const | `c77d3c3ef39b` |

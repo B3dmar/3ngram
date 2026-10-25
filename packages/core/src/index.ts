@@ -287,6 +287,14 @@ export {
   type TriageDebounceThresholds,
   type TriageEntryDecision,
 } from './session/index.js'
+// --- tenant settings: judgment opt-in (issue #225) ---
+export {
+  getJudgmentPolicy,
+  isJudgmentEnabled,
+  JUDGMENT_POLICY_AUDIT_ACTION,
+  type JudgmentPolicySetting,
+  setJudgmentPolicy,
+} from './settings/judgment.js'
 export {
   archiveMemory,
   BlockerNotFoundError,

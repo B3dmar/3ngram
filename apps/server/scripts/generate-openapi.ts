@@ -47,6 +47,9 @@ import {
   factsToolOutputSchema,
   invalidInputRestErrorResponseSchema,
   isoDateTime,
+  judgmentModeSchema,
+  judgmentPolicyBodySchema,
+  judgmentPolicyResponseSchema,
   memoriesFacetsResponseSchema,
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -85,6 +88,7 @@ const ROUTER_SOURCES = [
   resolve(HERE, '../src/rest/router.ts'),
   resolve(HERE, '../src/rest/search-router.ts'),
   resolve(HERE, '../src/rest/session-router.ts'),
+  resolve(HERE, '../src/rest/settings-router.ts'),
 ] as const
 const OUT_FILE = resolve(HERE, '../../../docs/api-reference/openapi.json')
 /** Export-time injection only — never declared in runtime code. */
@@ -354,6 +358,13 @@ const exportWriteScopePolicy = z
     updatedAt: isoDateTime(),
   })
   .strict()
+// Stored judgment opt-in in the portability archive (issue #225).
+const exportJudgmentPolicy = z
+  .object({
+    mode: judgmentModeSchema,
+    updatedAt: isoDateTime(),
+  })
+  .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
@@ -373,6 +384,7 @@ const accountExport = z
     profile: exportUserProfile.nullable(),
     retrievalPolicy: exportRetrievalPolicy.nullable(),
     writeScopePolicy: exportWriteScopePolicy.nullable(),
+    judgmentPolicy: exportJudgmentPolicy.nullable(),
     counts: z
       .object({
         memories: z.number().int().min(0),
@@ -418,7 +430,7 @@ const accountDeletion = z
   .strict()
 
 interface RouteDoc {
-  method: 'get' | 'post' | 'delete'
+  method: 'get' | 'post' | 'put' | 'delete'
   /** The Express path EXACTLY as registered in router.ts (coverage-checked). */
   path: string
   operationId: string
@@ -469,6 +481,8 @@ const ROUTES: readonly RouteDoc[] = [
   { method: 'get', path: '/api/v1/me', operationId: 'getMe', summary: 'The authenticated identity', status: 200, response: meResponseSchema },
   { method: 'get', path: '/api/v1/budget', operationId: 'getBudget', summary: 'The caller\'s current budget status (effective cap + spend this cycle)', status: 200, response: budgetStatusResponseSchema },
   { method: 'get', path: '/api/v1/version', operationId: 'getVersion', summary: 'The running server build (deploy verification)', status: 200, response: versionResponseSchema },
+  { method: 'get', path: '/api/v1/settings/judgment', operationId: 'getJudgmentPolicy', summary: 'The caller\'s judgment opt-in (off unless set): whether derived text may be sent to the judgment provider', status: 200, response: judgmentPolicyResponseSchema },
+  { method: 'put', path: '/api/v1/settings/judgment', operationId: 'setJudgmentPolicy', summary: 'Set the caller\'s judgment opt-in (off or on). The setting alone sends nothing; the deployment must also configure a judgment provider', body: judgmentPolicyBodySchema, status: 200, response: judgmentPolicyResponseSchema },
   { method: 'get', path: '/api/v1/export', operationId: 'exportAccount', summary: 'Download the caller\'s complete data archive (GDPR Art. 20 portability)', status: 200, response: accountExport },
   { method: 'delete', path: '/api/v1/account', operationId: 'deleteAccount', summary: 'Self-serve account deletion: erase PII in place and revoke credentials (GDPR Art. 17 erasure)', body: accountDeleteBodySchema, status: 200, response: accountDeletion },
 ]
