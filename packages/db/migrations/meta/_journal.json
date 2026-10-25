@@ -274,6 +274,13 @@
       "when": 1790321416141,
       "tag": "0038_memory_edges_target_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792929011126,
+      "tag": "0039_rate_limits",
+      "breakpoints": true
     }
   ]
 }

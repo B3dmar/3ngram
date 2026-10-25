@@ -4,7 +4,7 @@ description: "The v1 table layout, the append-and-supersede write path, and the 
 icon: "table"
 ---
 
-Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema (identity 10 · memory domain 9 · ops 3 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 27 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (25). `agent_sessions` (0032) is the 27th: JTBD "worth-keeping work is written without a human typing `/debrief`" cannot live on `memory_events` (needs a `memory_id` and a lifecycle kind).
+Shipped baseline: **28 physical tables** — **26** in the public Drizzle schema (identity 10 · memory domain 9 · ops 4 · budget 3) plus leftover `subscriptions` / `stripe_events` from the platform split, filtered out of Drizzle (`drizzle.config.ts` `tablesFilter`) and not part of the OSS inventory. The scope guard is the physical count: every table beyond 28 needs a one-line justification in the PR description referencing a JTBD. A new OSS-modeled table also raises the Drizzle count (26). `agent_sessions` (0032) is the 27th: JTBD "worth-keeping work is written without a human typing `/debrief`" cannot live on `memory_events` (needs a `memory_id` and a lifecycle kind). `rate_limits` (0039) is the 28th: JTBD "production rate limiting without Redis" (#315) needs counters shared across replicas, and no tenant table can hold per-IP keys.
 
 ## Design rules
 
@@ -47,13 +47,14 @@ Shipped baseline: **27 physical tables** — **25** in the public Drizzle schema
 | `scopes` | User scope config + aliases (personal/work/custom) | Unifies scope config and aliases in one table |
 | `agent_sessions` | Harness conversation/run bookkeeping: natural key `(user_id, agent, session_id)`, lease, triage, briefing stamp | **Not in the retrieval path.** UPDATE for lease/triage/close; no DELETE. Provenance payload on `memory_events` is `{ sessionRunId }` with expression index `(user_id, payload->>'sessionRunId', id)` |
 
-### Operations (3)
+### Operations (4)
 
 | Table | Purpose |
 |---|---|
 | `llm_usage` | Per-operation token/cost tracking |
 | `eval_runs` | Benchmark run results (golden set, LongMemEval scores) — benchmarks are first-class data |
 | `audit_log` | Security audit (actor, action, resource, IP) |
+| `rate_limits` | Rate-limit counters (`rate-limiter-flexible`), keyed `${keyPrefix}:${key}`. System table: no `user_id`, no RLS; rows are transient and never user content |
 
 ### Budget (3)
 

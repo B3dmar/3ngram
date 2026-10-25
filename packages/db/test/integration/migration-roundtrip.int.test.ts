@@ -22,7 +22,7 @@ describe('migration round-trip structure', () => {
     expect(r.rows[0].ok).toBe(true)
   })
 
-  it('all 27 tables exist', async () => {
+  it('all 28 tables exist', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
        WHERE table_schema = 'public' AND table_name NOT LIKE '\\_\\_%'`,
@@ -31,7 +31,8 @@ describe('migration round-trip structure', () => {
     // + the four 0022 cost/plan tables + budget_reservations (0023)
     // + user_profile_attributes (0026) = 24, + user_retrieval_policy (0030) = 25
     // + fact_proposals (0031) = 26, + agent_sessions (0032) = 27
-    expect(Number(r.rows[0].n)).toBe(27)
+    // + rate_limits (0039) = 28
+    expect(Number(r.rows[0].n)).toBe(28)
   })
 
   it('22 tenant_isolation policies, all with the NULLIF guard', async () => {

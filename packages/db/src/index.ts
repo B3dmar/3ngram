@@ -283,6 +283,12 @@ export {
   rejectProposal,
 } from './proposals-read.js'
 export { insertProposals, type ProposalWrite } from './proposals-write.js'
+// --- Postgres rate-limit store (#315) — rate_limits system table ---
+export {
+  createPostgresRateLimiter,
+  type PostgresRateLimiterOptions,
+  RATE_LIMIT_TABLE,
+} from './rate-limit-store.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {

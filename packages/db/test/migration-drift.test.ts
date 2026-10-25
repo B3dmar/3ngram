@@ -95,6 +95,11 @@ const sessionCloserIndexSql = readFileSync(
   join(import.meta.dirname, '../migrations/0033_session_closer_index.sql'),
   'utf8',
 )
+// 0039 adds the rate-limiter-flexible counter table (#315).
+const rateLimitsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0039_rate_limits.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -673,6 +678,23 @@ describe('session closer candidate index (0033, issue #166 step 6)', () => {
 
   it('adds no table — the table count is unchanged at 27', () => {
     expect(sessionCloserIndexSql).not.toMatch(/CREATE TABLE/i)
+  })
+})
+
+describe('rate_limits table (0039, issue #315)', () => {
+  it('columns are key, points, expire in the order rlflx INSERTs positionally', () => {
+    expect(rateLimitsSql).toMatch(
+      /CREATE TABLE "rate_limits" \(\s*"key" varchar\(255\) PRIMARY KEY NOT NULL,\s*"points" integer DEFAULT 0 NOT NULL,\s*"expire" bigint\s*\);/,
+    )
+  })
+
+  it('is a system table: no RLS anywhere, no GRANT in the migration', () => {
+    expect(tablesWith('ENABLE').has('rate_limits')).toBe(false)
+    expect(rateLimitsSql).not.toMatch(/GRANT/i)
+  })
+
+  it('runtime grant covers the upsert, read and expired-row DELETE', () => {
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limits TO app_user;')
   })
 })
 

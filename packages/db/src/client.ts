@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The ONE TRUE ACCESS PATH (docs/concepts/data-model.mdx, proven by spike S3).
-// Nothing else in this package — and nothing outside it — exports a pool,
-// client, or db handle. All tenant-scoped data access goes through
+// Nothing outside this package sees a pool, client, or db handle (getPool() is
+// package-internal, for rate-limit-store.ts). All tenant-scoped data access goes through
 // withTenant(); the no-raw-db lint plugin enforces this repo-wide.
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -13,13 +13,22 @@ export type TenantTx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[
 let db: NodePgDatabase | undefined
 let pool: pg.Pool | undefined
 
-function getDb(): NodePgDatabase {
-  if (!db) {
+/**
+ * The shared lazy pool. Package-internal (rate-limit-store.ts); NOT exported
+ * from the barrel. closeDb() ends and resets it, so callers must call this per
+ * query rather than capture the pool once.
+ */
+export function getPool(): pg.Pool {
+  if (!pool) {
     const url = process.env.DATABASE_URL
     if (!url) throw new Error('DATABASE_URL is not set')
     pool = new pg.Pool({ connectionString: url })
-    db = drizzle(pool)
   }
+  return pool
+}
+
+function getDb(): NodePgDatabase {
+  if (!db) db = drizzle(getPool())
   return db
 }
 
