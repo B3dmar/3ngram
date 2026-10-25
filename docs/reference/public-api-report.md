@@ -43,6 +43,7 @@ its row here even when its name and kind are unchanged.
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
 | `REDACTED` | const | `4a6e93923c89` |
 | `REDACTED_FIELDS` | const | `48e36111cfc1` |
+| `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `RequestContext` | interface | `7b9320e0e681` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
@@ -58,7 +59,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `3b83b111807f` |
+| `envSchema` | const | `6187120a369f` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -68,6 +69,7 @@ its row here even when its name and kind are unchanged.
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadRateLimitStoreConfig` | function | `5dce569bcc99` |
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
@@ -112,17 +114,19 @@ its row here even when its name and kind are unchanged.
 | `OAUTH_RESOURCE_PATH` | const | `baba9400b6c8` |
 | `OAuthConfig` | interface | `6f9291be795d` |
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
+| `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `3b83b111807f` |
+| `envSchema` | const | `6187120a369f` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
 | `loadOAuthConfig` | function | `0a57a1174a49` |
+| `loadRateLimitStoreConfig` | function | `5dce569bcc99` |
 | `loadSessionCloserConfig` | function | `10a476f22ba7` |
 | `loadSessionTriageConfig` | function | `8dc49badcc08` |
 | `loadSmtpConfig` | function | `cf9ae43e6245` |
@@ -1434,7 +1438,7 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
-| `AppOptions` | interface | `ae4a4c43e2d5` |
+| `AppOptions` | interface | `344cf79f3b63` |
 | `Extension` | interface | `7340dd0f768e` |
 | `RESOURCE_LIMITS_ENFORCED` | const | `3a196bd283fc` |
 | `createApp` | function | `b4fbf33cc40e` |
