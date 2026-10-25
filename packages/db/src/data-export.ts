@@ -50,6 +50,7 @@ import type {
 } from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { RESOLUTION_PROPOSAL_COLUMNS, type ResolutionProposalRow } from './resolution-proposals.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
 import {
@@ -67,6 +68,7 @@ import {
   memories,
   memoryEdges,
   memoryEvents,
+  resolutionProposals,
   scopes,
 } from './schema/memory.js'
 import { llmUsage } from './schema/ops.js'
@@ -249,6 +251,9 @@ export interface ExportWriteScopePolicyRow {
   updatedAt: Date
 }
 
+/** A resolution proposal (issue #229) for a portability export (minus tenant id). */
+export type ExportResolutionProposalRow = ResolutionProposalRow
+
 /** A stored judgment opt-in row for a portability export (issue #225). */
 export interface ExportJudgmentPolicyRow {
   mode: JudgmentMode
@@ -294,6 +299,7 @@ export interface UserDataExport {
   memoryEvents: ExportMemoryEventRow[]
   proposals: ExportProposalRow[]
   factProposals: ExportFactProposalRow[]
+  resolutionProposals: ExportResolutionProposalRow[]
   agentSessions: ExportAgentSessionRow[]
   userBudgets: ExportBudgetRow[]
   llmUsage: ExportLlmUsageRow[]
@@ -478,6 +484,12 @@ export async function readUserDataExport(
     .where(eq(factProposals.userId, userId))
     .orderBy(asc(factProposals.createdAt), asc(factProposals.id))
 
+  const resolutionProposalRows = await tx
+    .select(RESOLUTION_PROPOSAL_COLUMNS)
+    .from(resolutionProposals)
+    .where(eq(resolutionProposals.userId, userId))
+    .orderBy(asc(resolutionProposals.createdAt), asc(resolutionProposals.id))
+
   const agentSessionRows = await tx
     .select({
       id: agentSessions.id,
@@ -589,6 +601,7 @@ export async function readUserDataExport(
     memoryEvents: eventRows,
     proposals: proposalRows,
     factProposals: factProposalRows,
+    resolutionProposals: resolutionProposalRows,
     agentSessions: agentSessionRows,
     userBudgets: budgetRows,
     llmUsage: usageRows,

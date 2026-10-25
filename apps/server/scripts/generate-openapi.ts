@@ -270,6 +270,18 @@ const exportFactProposal = z
     createdAt: isoDateTime(),
   })
   .strict()
+// Resolution proposals in the archive (issue #229): ids, probability, lifecycle.
+const exportResolutionProposal = z
+  .object({
+    id: z.uuid(),
+    memoryId: z.uuid(),
+    sessionRunId: z.uuid(),
+    probability: z.number(),
+    status: z.string(),
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
+  })
+  .strict()
 const exportAgentSession = z
   .object({
     id: z.uuid(),
@@ -378,6 +390,7 @@ const accountExport = z
     memoryEvents: z.array(exportMemoryEvent),
     proposals: z.array(exportProposal),
     factProposals: z.array(exportFactProposal),
+    resolutionProposals: z.array(exportResolutionProposal),
     agentSessions: z.array(exportAgentSession),
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
@@ -395,6 +408,7 @@ const accountExport = z
         memoryEvents: z.number().int().min(0),
         proposals: z.number().int().min(0),
         factProposals: z.number().int().min(0),
+        resolutionProposals: z.number().int().min(0),
         agentSessions: z.number().int().min(0),
         userBudgets: z.number().int().min(0),
         llmUsage: z.number().int().min(0),

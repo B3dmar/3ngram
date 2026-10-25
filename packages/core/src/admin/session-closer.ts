@@ -7,12 +7,20 @@
 //
 // WHAT IT MAY WRITE, AND WHY THAT LIST IS SO SHORT.
 //   - `resolve` on a briefed commitment, via the existing transitionCommitment
-//     path. That is it.
+//     path.
+//   - On the typed-judgment path only (issue #229): a RESOLUTION PROPOSAL for a
+//     briefed commitment judged plausibly done (LOW <= p < HIGH). This revises
+//     the page's original "no third proposal kind": with a calibrated
+//     probability there is now a principled band that is neither safe to
+//     auto-resolve nor right to drop, and review_proposals is the existing defer
+//     surface. A proposal is not a corpus row — it lives in its own review table,
+//     one OPEN row per commitment (a retry re-inserts nothing), and a reviewer's
+//     accept is what resolves.
 //   - NEVER `remember`. A retried LLM pass that could insert memories is how an
 //     append-only corpus (hard rule 1: rows are never deleted) grows duplicates
 //     that nothing can clean up. The page rejects it by name, and rejects the
 //     machinery it would drag in with it — a claim table keyed
-//     `(attempt_id, ordinal)`, a third proposal kind, epochs per write.
+//     `(attempt_id, ordinal)`, epochs per write.
 //   - NEVER `revise`, `archive` or `unresolve`. Only the one verb the 0%
 //     commitment-recall hole is measured in.
 // `resolve` is REVERSIBLE (`unresolve` is a legal FSM edge back to `open`), and
@@ -24,7 +32,7 @@
 // #225) are classified by `gateway.decide()`, one typed Noul per briefed
 // commitment (session-closer-judgment.ts, issue #229); everyone else, and any
 // deployment without a judgment gateway, by the single `complete()` pass below.
-// Either way the only write is the same `resolve`.
+// Either way the only corpus write is the same `resolve`.
 //
 // DEFAULT-OFF. The worker only schedules this behind a config flag. The
 // validation bar for turning it on — a positive commitment-recall improvement
@@ -39,6 +47,7 @@ import {
   claimSessionTriage,
   finishSessionTriage,
   insertLlmUsage,
+  insertResolutionProposals,
   listSessionEvents,
   readCloserSession,
   recordCloserFailure,
@@ -116,6 +125,12 @@ export interface CloserResult {
   resolved: number
   /** Candidates skipped by the live re-read (already resolved, illegal, not a commitment). */
   skippedCandidates: number
+  /**
+   * Resolution proposals newly staged for review (typed-judgment mid band, issue
+   * #229). 0 on the complete() path, and for a commitment that already had an
+   * open proposal.
+   */
+  proposed?: number
 }
 
 /** One provenance event, narrowed to what the closer's prompt may see. */
@@ -149,6 +164,15 @@ export interface SessionCloserRepo {
     sessionRunId: string,
     expectedEpoch: number,
   ): Promise<ClosedRunResolveOutcome>
+  /**
+   * Stage resolution proposals for this run (issue #229): insert-only, one open
+   * row per commitment (an existing open one is a no-op). Returns rows inserted.
+   */
+  propose(
+    userId: string,
+    sessionRunId: string,
+    proposals: readonly { memoryId: string; probability: number }[],
+  ): Promise<number>
   /** Epoch-fenced write-back of the terminal status, watermark and excerpt clear. */
   finish(userId: string, finish: CloserFinish): Promise<boolean>
   /** Record one `llm_usage` row for the generation call. Best-effort by contract. */
@@ -558,64 +582,25 @@ async function runClosePass(
     eventKinds,
   })
   if (verdict === 'fenced') return skip('fenced')
-  const { candidates, rejected } = verdict
+  const { candidates, rejected, proposals } = verdict
 
-  let resolved = 0
-  let skippedCandidates = 0
-  for (const memoryId of candidates) {
-    // EPOCH PRE-CHECK before each resolve. A cheap best-effort read in its OWN
-    // transaction, separate from the write below — it narrows the window from
-    // "the whole generation" to "one statement" so a resurrection during a
-    // slow generation stops the batch at the next candidate rather than at the
-    // end, but it does not by itself CLOSE that one-statement window: the
-    // write in `repo.resolve` runs in a later, separate transaction of its
-    // own. That residual is what `expectedEpoch` below actually closes (issue
-    // #185) — this pre-check is the cheap early exit, the write-time guard is
-    // the authoritative one.
-    const epoch = await repo.currentEpoch(userId, request.sessionRunId)
-    if (epoch !== session.activationEpoch) {
-      return {
-        sessionRunId: request.sessionRunId,
-        skipped: 'fenced',
-        candidates: candidates.length,
-        rejected,
-        resolved,
-        skippedCandidates,
-      }
-    }
-    // THE RESOLVE-PATH EPOCH FENCE (issue #185). `expectedEpoch` threads
-    // through to `transitionCommitment`, which locks the commitment row THEN
-    // re-reads `activation_epoch` on a fresh statement inside the same
-    // transaction as the write, aborting instead of writing when it no longer
-    // matches. Against ERASURE this CLOSES the gap between the read above and
-    // the write, not just narrows it — erasure's own bulk commitments UPDATE
-    // takes the same row lock, forcing the two transactions to serialize.
-    // Against a plain RESURRECTION (a heartbeat or SessionStart resuming the
-    // row) it only NARROWS the gap to one fresh statement: resurrection never
-    // touches `commitments`, so nothing forces an ordering against it the way
-    // erasure's lock does. Harmless either way — a resolve is reversible
-    // (`unresolve`). A 'epoch-fenced' outcome means the write never happened,
-    // so this pass is ABANDONED exactly like every other epoch-fence hit —
-    // never counted as a per-candidate skip, and never retried.
-    const outcome = await repo.resolve(
-      userId,
-      memoryId,
-      request.sessionRunId,
-      session.activationEpoch,
-    )
-    if (outcome === 'epoch-fenced') {
-      return {
-        sessionRunId: request.sessionRunId,
-        skipped: 'fenced',
-        candidates: candidates.length,
-        rejected,
-        resolved,
-        skippedCandidates,
-      }
-    }
-    if (outcome === 'resolved') resolved += 1
-    else skippedCandidates += 1
+  const fence = {
+    repo,
+    userId,
+    sessionRunId: request.sessionRunId,
+    epoch: session.activationEpoch,
   }
+  const { resolved, skippedCandidates, fenced } = await resolveCandidates(fence, candidates)
+  const partial = {
+    sessionRunId: request.sessionRunId,
+    candidates: candidates.length,
+    rejected,
+    resolved,
+    skippedCandidates,
+  }
+  if (fenced) return { ...partial, skipped: 'fenced' }
+  const proposed = await stageProposals(fence, proposals)
+  if (proposed === 'fenced') return { ...partial, skipped: 'fenced' }
 
   // Re-list AFTER the resolves so the watermark covers the events they emitted.
   // Without this the closer's own `resolve` rows would sit outside
@@ -637,7 +622,82 @@ async function runClosePass(
     rejected,
     resolved,
     skippedCandidates,
+    ...(proposed > 0 ? { proposed } : {}),
   }
+}
+
+/** The run a pass is fenced at: whose rows it writes and the epoch it observed. */
+interface PassFence {
+  repo: SessionCloserRepo
+  userId: string
+  sessionRunId: string
+  epoch: number
+}
+
+/**
+ * Step 5, RESOLVE: per candidate, an epoch pre-check, then a live re-read +
+ * resolve. Skips are counted, not fatal; an epoch miss abandons the batch.
+ */
+async function resolveCandidates(
+  fence: PassFence,
+  candidates: readonly string[],
+): Promise<{ resolved: number; skippedCandidates: number; fenced: boolean }> {
+  let resolved = 0
+  let skippedCandidates = 0
+  for (const memoryId of candidates) {
+    // EPOCH PRE-CHECK before each resolve. A cheap best-effort read in its OWN
+    // transaction, separate from the write below — it narrows the window from
+    // "the whole generation" to "one statement" so a resurrection during a
+    // slow generation stops the batch at the next candidate rather than at the
+    // end, but it does not by itself CLOSE that one-statement window: the
+    // write in `repo.resolve` runs in a later, separate transaction of its
+    // own. That residual is what `expectedEpoch` below actually closes (issue
+    // #185) — this pre-check is the cheap early exit, the write-time guard is
+    // the authoritative one.
+    const epoch = await fence.repo.currentEpoch(fence.userId, fence.sessionRunId)
+    if (epoch !== fence.epoch) return { resolved, skippedCandidates, fenced: true }
+    // THE RESOLVE-PATH EPOCH FENCE (issue #185). `expectedEpoch` threads
+    // through to `transitionCommitment`, which locks the commitment row THEN
+    // re-reads `activation_epoch` on a fresh statement inside the same
+    // transaction as the write, aborting instead of writing when it no longer
+    // matches. Against ERASURE this CLOSES the gap between the read above and
+    // the write, not just narrows it — erasure's own bulk commitments UPDATE
+    // takes the same row lock, forcing the two transactions to serialize.
+    // Against a plain RESURRECTION (a heartbeat or SessionStart resuming the
+    // row) it only NARROWS the gap to one fresh statement: resurrection never
+    // touches `commitments`, so nothing forces an ordering against it the way
+    // erasure's lock does. Harmless either way — a resolve is reversible
+    // (`unresolve`). A 'epoch-fenced' outcome means the write never happened,
+    // so this pass is ABANDONED exactly like every other epoch-fence hit —
+    // never counted as a per-candidate skip, and never retried.
+    const outcome = await fence.repo.resolve(
+      fence.userId,
+      memoryId,
+      fence.sessionRunId,
+      fence.epoch,
+    )
+    if (outcome === 'epoch-fenced') return { resolved, skippedCandidates, fenced: true }
+    if (outcome === 'resolved') resolved += 1
+    else skippedCandidates += 1
+  }
+  return { resolved, skippedCandidates, fenced: false }
+}
+
+/**
+ * The mid band (issue #229): stage proposals AFTER the resolves, behind the same
+ * cheap epoch pre-check. A proposal carries ids and a probability only and is
+ * advisory, so the narrowing check is enough; an erasure that races it leaves a
+ * content-free review row over redacted memories. The db layer stages only
+ * still-open commitments and never one this run already proposed.
+ */
+async function stageProposals(
+  fence: PassFence,
+  proposals: readonly { memoryId: string; probability: number }[],
+): Promise<number | 'fenced'> {
+  if (proposals.length === 0) return 0
+  const epoch = await fence.repo.currentEpoch(fence.userId, fence.sessionRunId)
+  if (epoch !== fence.epoch) return 'fenced'
+  return fence.repo.propose(fence.userId, fence.sessionRunId, proposals)
 }
 
 /**
@@ -694,4 +754,6 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
   recordFailure: (userId, failure) =>
     withTenant(userId, (tx) => recordCloserFailure(tx, userId, failure)),
   isJudgmentEnabled: (userId) => isJudgmentEnabled(userId),
+  propose: (userId, sessionRunId, proposals) =>
+    withTenant(userId, (tx) => insertResolutionProposals(tx, userId, sessionRunId, proposals)),
 }

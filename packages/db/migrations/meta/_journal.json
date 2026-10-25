@@ -309,6 +309,13 @@
       "when": 1792952840164,
       "tag": "0043_user_judgment_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792953413378,
+      "tag": "0044_resolution_proposals",
+      "breakpoints": true
     }
   ]
 }

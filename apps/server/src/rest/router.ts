@@ -1062,6 +1062,15 @@ export function restRouter(options: RestRouterOptions): Router {
           decidedAt: proposal.decidedAt?.toISOString() ?? null,
           createdAt: proposal.createdAt.toISOString(),
         })),
+        resolutionProposals: data.resolutionProposals.map((proposal) => ({
+          id: proposal.id,
+          memoryId: proposal.memoryId,
+          sessionRunId: proposal.sessionRunId,
+          probability: proposal.probability,
+          status: proposal.status,
+          decidedAt: proposal.decidedAt?.toISOString() ?? null,
+          createdAt: proposal.createdAt.toISOString(),
+        })),
         agentSessions: data.agentSessions.map((session) => ({
           id: session.id,
           agent: session.agent,
@@ -1142,6 +1151,7 @@ export function restRouter(options: RestRouterOptions): Router {
           memoryEvents: data.memoryEvents.length,
           proposals: data.proposals.length,
           factProposals: data.factProposals.length,
+          resolutionProposals: data.resolutionProposals.length,
           agentSessions: data.agentSessions.length,
           userBudgets: data.userBudgets.length,
           llmUsage: data.llmUsage.length,

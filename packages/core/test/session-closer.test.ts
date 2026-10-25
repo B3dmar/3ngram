@@ -160,6 +160,7 @@ function fakeRepo(overrides: Partial<SessionCloserRepo> = {}): SessionCloserRepo
       failures.push(failure)
     },
     isJudgmentEnabled: async () => false,
+    propose: async () => 0,
   }
   const repo = { ...base, ...overrides }
   return {

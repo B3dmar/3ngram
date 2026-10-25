@@ -13,6 +13,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
+  PROBABILITY_BOUNDS,
   proposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
@@ -107,6 +108,11 @@ const writeScopePolicySql = readFileSync(
 // 0043 adds the judgment opt-in (issue #225).
 const judgmentPolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0043_user_judgment_policy.sql'),
+  'utf8',
+)
+// 0044 adds the closer's resolution proposals (issue #229).
+const resolutionProposalsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0044_resolution_proposals.sql'),
   'utf8',
 )
 // 0040 adds the commitment's latest-transition reason (issue #234).
@@ -850,5 +856,50 @@ describe('judgment opt-in table (0043, issue #225)', () => {
   it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
     expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON user_judgment_policy TO app_user;')
     expect(rolesSql).not.toMatch(/DELETE[^\n]*user_judgment_policy/)
+  })
+})
+
+describe('resolution proposals table (0044, issue #229)', () => {
+  it('derives the status and probability CHECKs from the schema', () => {
+    expect(resolutionProposalsSql).toContain(
+      `CHECK ("resolution_proposals"."status" IN (${proposalStatusSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      `"resolution_proposals"."probability" >= ${PROBABILITY_BOUNDS.min} AND "resolution_proposals"."probability" <= ${PROBABILITY_BOUNDS.max}`,
+    )
+  })
+
+  it('keys tenant-composite FKs to the memory and the session run, cascading', () => {
+    expect(resolutionProposalsSql).toContain(
+      'FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade',
+    )
+    expect(resolutionProposalsSql).toContain(
+      'FOREIGN KEY ("user_id","session_run_id") REFERENCES "public"."agent_sessions"("user_id","id") ON DELETE cascade',
+    )
+  })
+
+  it('allows one OPEN proposal per commitment and one proposal per (run, commitment)', () => {
+    expect(resolutionProposalsSql).toContain(
+      `CREATE UNIQUE INDEX "resolution_proposals_open_idx" ON "resolution_proposals" USING btree ("user_id","memory_id") WHERE status = 'proposed'`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      'CREATE UNIQUE INDEX "resolution_proposals_run_memory_uq" ON "resolution_proposals" USING btree ("user_id","session_run_id","memory_id")',
+    )
+    expect(resolutionProposalsSql).toContain('"probability" double precision NOT NULL')
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE and a no-DELETE grant', () => {
+    expect(resolutionProposalsSql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "resolution_proposals"',
+    )
+    expect(resolutionProposalsSql).toContain(
+      `NULLIF(current_setting('app.user_id', true), '')::uuid`,
+    )
+    expect(resolutionProposalsSql).toContain(
+      'ALTER TABLE "resolution_proposals" FORCE ROW LEVEL SECURITY',
+    )
+    expect(resolutionProposalsSql).not.toMatch(/DROP (TABLE|POLICY)/)
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON resolution_proposals TO app_user;')
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*resolution_proposals/)
   })
 })

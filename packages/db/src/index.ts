@@ -158,6 +158,7 @@ export {
   type ExportMemoryEventRow,
   type ExportMemoryRow,
   type ExportProposalRow,
+  type ExportResolutionProposalRow,
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
@@ -301,6 +302,7 @@ export {
   type KeyedProposal,
   listFactProposalsAfter,
   listProposalsAfter,
+  listResolutionProposalsAfter,
   type ProposalKeyset,
   type ProposalPageQuery,
 } from './proposals-page.js'
@@ -323,6 +325,17 @@ export {
   RATE_LIMIT_TABLE,
   readWindowCounter,
 } from './rate-limit-store.js'
+// --- resolution proposals: the closer's mid band (issue #229) ---
+export {
+  countResolutionProposals,
+  decideResolutionProposal,
+  getOpenResolutionProposal,
+  insertResolutionProposals,
+  RESOLUTION_PROPOSAL_COLUMNS,
+  type ResolutionProposalRow,
+  type ResolutionProposalWrite,
+  reopenResolutionProposal,
+} from './resolution-proposals.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {

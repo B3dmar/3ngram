@@ -524,6 +524,18 @@ export {
   reviewProposalsOutputV2Schema,
   reviewProposalsRegisterOutputShapeV2,
 } from './review-fact-proposals.js'
+// --- resolution proposals in review_proposals (issue #229) — appended block ---
+export type {
+  ProposalKindCountsV3,
+  ResolutionProposalRecordOutput,
+  ReviewProposalsOutputV3,
+} from './review-resolution-proposals.js'
+export {
+  PROBABILITY_BOUNDS,
+  proposalKindCountsV3Schema,
+  resolutionProposalRecordSchema,
+  reviewProposalsOutputV3Schema,
+} from './review-resolution-proposals.js'
 // --- revise dispositions (issue #216 umbrella) — appended block ---
 export {
   type ArchiveEventPayload,

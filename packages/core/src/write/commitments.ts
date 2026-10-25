@@ -220,6 +220,26 @@ export async function resolveByMemoryId(
 }
 
 /**
+ * Resolve the COMMITMENT riding a memory, and nothing else (issue #229: an
+ * accepted resolution proposal). Unlike {@link resolveByMemoryId} it never falls
+ * through to archiving a blocker: a memory with no commitment is
+ * {@link CommitmentNotFoundError}. Same FSM-checked, compare-and-set transition
+ * body; a commitment already resolved is a same-state no-op success.
+ *
+ * @throws {@link CommitmentNotFoundError} no commitment rides the memory.
+ * @throws {@link InvalidCommitmentTransitionError} e.g. the commitment expired.
+ */
+export async function resolveCommitmentByMemoryId(
+  userId: string,
+  memoryId: string,
+  actorKind: ActorKind,
+): Promise<{ id: string; status: CommitmentStatus }> {
+  const current = await getCommitmentByMemoryId(userId, memoryId)
+  if (!current) throw new CommitmentNotFoundError(memoryId, 'memory')
+  return applyTransition(userId, current, 'resolved', actorKind)
+}
+
+/**
  * Why a {@link resolveForClosedRun} candidate was skipped, or that it resolved.
  * The closer processes a batch, so each candidate reports its own outcome
  * instead of one bad id failing the pass (the page: *skip illegal transitions;

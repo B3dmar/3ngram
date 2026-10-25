@@ -885,7 +885,15 @@ carries the commitment topic as JSON-quoted data. The criteria state that an
 assertion of completion alone is not evidence; this is the "framed" arm of the
 2026-09-19 spike, the one with 0/21 adversarial flips. A commitment resolves
 through the same `resolveForClosedRun` path only when P(completed) is at least
-`CLOSER_RESOLVE_PROBABILITY` (0.9, a constant). Below that, nothing changes.
+`CLOSER_RESOLVE_PROBABILITY` (0.9, a constant). In the mid band, at or above
+`CLOSER_PROPOSE_PROBABILITY` (0.5) but below 0.9, the pass stages a
+**resolution proposal** (`resolution_proposals`, issue #229) after its
+resolves, behind the same epoch pre-check. A reviewer accepts or rejects it in
+`review_proposals`. Accept resolves through the shipped resolve path, recorded
+as the reviewer, and reject leaves the commitment open. Only a commitment that
+is still open or waiting at staging time gets a proposal. A commitment has at most one open proposal, and a
+run proposes a commitment at most once, so a retried pass cannot re-stage one a
+reviewer already decided. Below 0.5 nothing is written.
 The answer id space is the briefed set, so `CloserVerdictError` and the
 `rejected` count cannot occur on this path; both remain for the `complete()`
 path. The call is metered as `session.closer.decide`, with its own reservation.
@@ -947,7 +955,10 @@ enqueue into a void and never run the closer.
 and this-run events support it. `resolve` is reversible (`unresolve`). Do **not**
 `remember` new atoms in v1 — that is how a retried LLM pass becomes an
 append-only duplicate, which hard rule 1 cannot delete. No `(attempt_id, ordinal)`
-batch table. No third proposal kind. New decisions/notes stay on the Stop nudge
+batch table. The one proposal kind the closer may stage is a resolution proposal
+on the typed-judgment path (issue #229, above); that revises this page's original
+"no third proposal kind", because a calibrated probability gives a principled
+band that is neither safe to auto-resolve nor right to drop. New decisions/notes stay on the Stop nudge
 and on `/debrief`. Direct `remember` from the closer is a later promotion.
 
 **Live re-read before resolve.** `briefed_memories` is a startup stamp. Another

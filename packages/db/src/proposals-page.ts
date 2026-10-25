@@ -25,7 +25,8 @@ import type { PgColumn } from 'drizzle-orm/pg-core'
 import type { TenantTx } from './client.js'
 import { FACT_PROPOSAL_COLUMNS, type FactProposalRow } from './fact-proposals.js'
 import type { ProposalRow } from './proposals-read.js'
-import { consolidationProposals, factProposals } from './schema/memory.js'
+import { RESOLUTION_PROPOSAL_COLUMNS, type ResolutionProposalRow } from './resolution-proposals.js'
+import { consolidationProposals, factProposals, resolutionProposals } from './schema/memory.js'
 
 /** A position in the `created_at DESC, id DESC` order: full-microsecond ISO text + uuid. */
 export interface ProposalKeyset {
@@ -114,6 +115,28 @@ export async function listFactProposalsAfter(
   const t = factProposals
   const rows = await tx
     .select({ ...FACT_PROPOSAL_COLUMNS, createdAtIso: createdAtIso(t.createdAt) })
+    .from(t)
+    .where(
+      and(
+        eq(t.userId, userId),
+        query.status === undefined ? undefined : eq(t.status, query.status),
+        afterPredicate(t.createdAt, t.id, query.after),
+      ),
+    )
+    .orderBy(desc(t.createdAt), desc(t.id))
+    .limit(query.limit)
+  return rows.map(keyed)
+}
+
+/** Resolution proposals (issue #229) after `query.after`, most-recent first, at most `query.limit`. */
+export async function listResolutionProposalsAfter(
+  tx: TenantTx,
+  userId: string,
+  query: ProposalPageQuery,
+): Promise<KeyedProposal<ResolutionProposalRow>[]> {
+  const t = resolutionProposals
+  const rows = await tx
+    .select({ ...RESOLUTION_PROPOSAL_COLUMNS, createdAtIso: createdAtIso(t.createdAt) })
     .from(t)
     .where(
       and(
