@@ -132,9 +132,10 @@ export async function lockPasswordReset(tx: TenantTx, userId: string): Promise<v
 
 /**
  * Pool-scoped db handle WITHOUT tenant context, for the pre-tenant system
- * tables only (`users`, `oauth_clients`). These tables carry no `user_id` and
- * no RLS, so withTenant() does not apply — the identity must be created or
- * looked up before any tenant context can exist. Reuse via src/auth-admin.ts;
+ * tables only (`users`, `oauth_clients`, and the `rate_limits` counters). These
+ * tables carry no `user_id` and no RLS, so withTenant() does not apply — the
+ * identity must be created or looked up before any tenant context can exist
+ * (rate_limits keys are per-IP / per-client, never per-tenant). Reuse via src/auth-admin.ts;
  * do NOT touch user-owned tables through this handle (their RLS would fail
  * closed with no app.user_id set, which is the point).
  */
