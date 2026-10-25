@@ -235,11 +235,7 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // sentence), the outcome enum `reaffirmed`, and the rejection enum
       // `archived`. Description unchanged (no embeddings regen); CLI
       // unchanged. MEASURED on #217's branch over staging ac5469b, not summed.
-      // MCP +51/+408/+100 (#234/#217/#218 description follow-ups): the resolve
-      // description gains one sentence on the optional `reason`, the revise
-      // description one on the archive/reaffirm dispositions (embeddings
-      // regenerated). REST and CLI unchanged. MEASURED on staging bba5ba6, not summed.
-      mcp: [30008, 241880, 60332],
+      mcp: [29957, 241472, 60232],
       cli: [333, 1236, 1236],
       rest: [4636, 5653, 5653],
     },

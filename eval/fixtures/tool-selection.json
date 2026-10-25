@@ -2,9 +2,10 @@
   "_meta": {
     "description": "Agent-utterance -> MCP surface routing scenarios for the tool-selection advisory slice (docs/concepts/mcp-surface.mdx: the real constraint on the tool budget is model selection accuracy and description overlap, not the count).",
     "authoring": "Each utterance is phrased the way a coding or personal agent states an INTERNAL need mid-session, not as a tool invocation. Near-miss pairs are deliberate and dense: search vs get_facts vs get_memories, briefing vs handoff, revise vs resolve vs remember. An utterance never names its target tool.",
-    "toolScenarios": "expected_tool is one of the 11 registered tools (apps/server/src/mcp/tools.ts TOOLS). 5 per tool for its core job, plus 5 per extra capability a tool's description names, tagged with `capability` (revise: `disposition` — the archive/reaffirm memoryIds batch).",
+    "toolScenarios": "expected_tool is one of the 11 registered tools (apps/server/src/mcp/tools.ts TOOLS). 5 per tool.",
     "surfaceScenarios": "A SEPARATE array whose correct target is NOT a tool — the memory resource template or one of the 2 code-defined prompts. Kept distinct so the tool metrics stay clean; the slice scores these only as tool-attraction (how confidently a non-tool need is pulled onto a tool description), because prompt/resource descriptions are not in the committed registry capture.",
-    "synthetic": "Every utterance is synthetic. No production content, no real identifiers."
+    "synthetic": "Every utterance is synthetic. No production content, no real identifiers.",
+    "capabilityScenarios": "REPORT-ONLY, never gated: utterances for a second job one tool's description does not name but its input schema does (revise#disposition: the archive/reaffirm memoryIds batch, issues #217/#218). Scored per `expected_tool#capability` and printed beside the gated metrics; they never enter selection_accuracy_at_1/selection_margin, so the 5-per-tool rule and the floors are unchanged."
   },
   "toolScenarios": [
     {
@@ -106,36 +107,6 @@
       "id": "ts-revise-5",
       "utterance": "Update the deployment memory with what we actually shipped, linked as an update edge off the original.",
       "expected_tool": "revise"
-    },
-    {
-      "id": "ts-revise-disposition-1",
-      "utterance": "These six notes from the old migration are dead weight now; take all of them out of the active set in one go without writing replacements.",
-      "expected_tool": "revise",
-      "capability": "disposition"
-    },
-    {
-      "id": "ts-revise-disposition-2",
-      "utterance": "Retire this batch of superseded-in-spirit observations so they stop coming back in results, but keep them recoverable as archived.",
-      "expected_tool": "revise",
-      "capability": "disposition"
-    },
-    {
-      "id": "ts-revise-disposition-3",
-      "utterance": "I went through the stale list and these entries are still accurate; mark them as reviewed so they drop off the stale queue for a while.",
-      "expected_tool": "revise",
-      "capability": "disposition"
-    },
-    {
-      "id": "ts-revise-disposition-4",
-      "utterance": "Nothing about these three preferences has changed; record that I checked them and they still hold, without creating new versions.",
-      "expected_tool": "revise",
-      "capability": "disposition"
-    },
-    {
-      "id": "ts-revise-disposition-5",
-      "utterance": "Stamp this decision as re-checked and still valid today; its content and dates should stay exactly as they are.",
-      "expected_tool": "revise",
-      "capability": "disposition"
     },
     {
       "id": "ts-resolve-1",
@@ -343,6 +314,38 @@
       "id": "sf-prompt-debrief-2",
       "utterance": "Walk me through the wrap-up template the server defines for reviewing and persisting what happened.",
       "expected_surface": "prompt:debrief"
+    }
+  ],
+  "capabilityScenarios": [
+    {
+      "id": "ts-revise-disposition-1",
+      "utterance": "These six notes from the old migration are dead weight now; take all of them out of the active set in one go without writing replacements.",
+      "expected_tool": "revise",
+      "capability": "disposition"
+    },
+    {
+      "id": "ts-revise-disposition-2",
+      "utterance": "Retire this batch of superseded-in-spirit observations so they stop coming back in results, but keep them recoverable as archived.",
+      "expected_tool": "revise",
+      "capability": "disposition"
+    },
+    {
+      "id": "ts-revise-disposition-3",
+      "utterance": "I went through the stale list and these entries are still accurate; mark them as reviewed so they drop off the stale queue for a while.",
+      "expected_tool": "revise",
+      "capability": "disposition"
+    },
+    {
+      "id": "ts-revise-disposition-4",
+      "utterance": "Nothing about these three preferences has changed; record that I checked them and they still hold, without creating new versions.",
+      "expected_tool": "revise",
+      "capability": "disposition"
+    },
+    {
+      "id": "ts-revise-disposition-5",
+      "utterance": "Stamp this decision as re-checked and still valid today; its content and dates should stay exactly as they are.",
+      "expected_tool": "revise",
+      "capability": "disposition"
     }
   ]
 }

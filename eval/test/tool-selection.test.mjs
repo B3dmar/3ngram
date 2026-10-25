@@ -17,6 +17,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   assertFixtureMatchesRegistry,
+  capabilityRouting,
   computeToolSelection,
   cosine,
   descriptionOverlap,
@@ -277,36 +278,60 @@ test('every scenario in the committed fixture targets a REGISTERED tool', () => 
   // future tools alike (AGENTS.md hard rule 8): whoever adds tool #12 writes 5
   // scenarios for it. There is no lower allowance for a new arrival — a tool
   // measured over fewer utterances is the one whose routing nobody can vouch for.
-  // The same holds per CAPABILITY: a scenario tagged `capability` measures a
-  // second job one tool's description names (revise's archive/reaffirm
-  // disposition), and each such (tool, capability) pair also needs exactly 5,
-  // on top of the tool's untagged 5 for its core job.
   const PER_TOOL = 5
-  // Every capability a description names is seeded here, so deleting its
-  // scenarios (or misspelling the tag) fails as a count of 0 instead of passing.
-  const CAPABILITIES = ['revise#disposition']
-  const key = (s) =>
-    s.capability === undefined ? s.expected_tool : `${s.expected_tool}#${s.capability}`
-  const counts = new Map([...registered, ...CAPABILITIES].map((name) => [name, 0]))
-  for (const s of scenarios.toolScenarios) {
-    assert.ok(counts.has(key(s)), `${s.id} tags unknown capability ${key(s)}`)
-    counts.set(key(s), counts.get(key(s)) + 1)
-  }
+  const counts = new Map([...registered].map((name) => [name, 0]))
+  for (const s of scenarios.toolScenarios)
+    counts.set(s.expected_tool, counts.get(s.expected_tool) + 1)
   const offenders = [...counts.entries()].filter(([, n]) => n !== PER_TOOL)
   assert.deepEqual(
     offenders,
     [],
-    `every registered tool and tagged capability needs exactly ${PER_TOOL} scenarios; offenders: ${offenders
+    `every registered tool needs exactly ${PER_TOOL} scenarios; offenders: ${offenders
       .map(([name, n]) => `${name}=${n}`)
       .join(', ')}`,
   )
-  assert.equal(scenarios.toolScenarios.length, counts.size * PER_TOOL)
-  for (const s of scenarios.toolScenarios) {
-    if (s.capability !== undefined)
-      assert.match(s.capability, /^[a-z][a-z-]*$/, `${s.id} capability`)
-  }
+  assert.equal(scenarios.toolScenarios.length, registered.size * PER_TOOL)
   for (const s of scenarios.surfaceScenarios) {
     assert.match(s.expected_surface, /^(resource|prompt):/)
+  }
+})
+
+test('the capability slice is scored per tool#capability and never moves the gated metrics', () => {
+  const capability = [
+    { id: 'c1', utterance: 'a', expected_tool: 'alpha', capability: 'batch' },
+    { id: 'c2', utterance: 'b', expected_tool: 'alpha', capability: 'batch' },
+  ]
+  const vectors = { c1: [1, 0], c2: [0, 1] }
+  assert.deepEqual(capabilityRouting(capability, vectors, TOOL_VECTORS)['alpha#batch'], {
+    n: 2,
+    accuracy_at_1: 0.5,
+    margin: +(1 - HALF_ROOT_TWO).toFixed(4),
+  })
+  const base = {
+    scenarios: { toolScenarios: SCENARIOS, surfaceScenarios: [] },
+    registryDescriptions: DESCRIPTIONS,
+  }
+  const without = computeToolSelection({ ...base, fixture: fixtureFor() })
+  const withCaps = computeToolSelection({
+    ...base,
+    scenarios: { ...base.scenarios, capabilityScenarios: capability },
+    fixture: fixtureFor({ capabilityScenarios: scenarioEntries(capability, vectors) }),
+  })
+  assert.equal(withCaps.selection_accuracy_at_1, without.selection_accuracy_at_1)
+  assert.equal(withCaps.selection_margin, without.selection_margin)
+  assert.equal(withCaps.n, without.n)
+  assert.deepEqual(without.capability_slice, {})
+  assert.equal(withCaps.capability_slice['alpha#batch'].n, 2)
+})
+
+test('the committed capability scenarios are tagged, synthetic-shaped and id-unique', () => {
+  const scenarios = JSON.parse(readFileSync(join(fixturesDir, 'tool-selection.json'), 'utf8'))
+  const ids = new Set([...scenarios.toolScenarios, ...scenarios.surfaceScenarios].map((s) => s.id))
+  for (const s of scenarios.capabilityScenarios) {
+    assert.ok(!ids.has(s.id), `duplicate scenario id ${s.id}`)
+    ids.add(s.id)
+    assert.match(s.capability, /^[a-z][a-z-]*$/, `${s.id} capability`)
+    assert.ok(!s.utterance.includes(s.expected_tool), `${s.id} names its tool`)
   }
 })
 

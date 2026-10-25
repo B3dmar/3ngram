@@ -369,7 +369,7 @@ const reviseTool: ToolDefinition = {
   config: {
     title: 'Revise',
     description:
-      'Supersede an existing memory with a corrected successor, linked by a typed edge (supersedes or updates). Never edits in place; append-and-supersede. Without a successor, kind "archive" retires memoryIds from the active set and kind "reaffirm" confirms they were reviewed and still hold.',
+      'Supersede an existing memory with a corrected successor, linked by a typed edge (supersedes or updates). Never edits in place; append-and-supersede.',
     // FULL `.strict()` object (not `.shape`): the SDK parses strictly at the
     // boundary so a supplied `scope`/`project` reaches the handler and an unknown
     // key is rejected, never silently stripped.
@@ -448,7 +448,7 @@ const resolveTool: ToolDefinition = {
   config: {
     title: 'Resolve',
     description:
-      'Settle a memory by its id. A commitment transitions to a target status (open, waiting, resolved, expired) — serves resolve and unresolve (resolved -> open); illegal transitions are rejected. A blocker is archived (status active -> archived) and leaves the active-blocker briefing; the passed status is ignored for blockers and the result reports archived. A commitment may carry a reason (1-500 chars, read back over REST, never via MCP). Commitments AND blockers must be written WITH a project to be resolvable from a project-scoped briefing.',
+      'Settle a memory by its id. A commitment transitions to a target status (open, waiting, resolved, expired) — serves resolve and unresolve (resolved -> open); illegal transitions are rejected. A blocker is archived (status active -> archived) and leaves the active-blocker briefing; the passed status is ignored for blockers and the result reports archived. Commitments AND blockers must be written WITH a project to be resolvable from a project-scoped briefing.',
     inputSchema: resolveToolInputSchema,
     outputSchema: resolveToolOutputSchema,
     // A transition to a TARGET state, not a delta, so repeating it lands on the
