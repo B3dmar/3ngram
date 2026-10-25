@@ -306,7 +306,13 @@ async function carryCommitment(
       }
       const resolved = await tx
         .update(commitments)
-        .set({ status: 'resolved', resolvedAt: sql`now()`, updatedAt: sql`now()` })
+        // A reasonless transition clears any earlier reason (issue #234).
+        .set({
+          status: 'resolved',
+          resolvedAt: sql`now()`,
+          lastResolutionReason: null,
+          updatedAt: sql`now()`,
+        })
         .where(
           and(
             eq(commitments.userId, input.userId),
@@ -326,8 +332,8 @@ async function carryCommitment(
       return
     }
     // (a) carry: move the obligation onto the live successor. FSM
-    // status/resolved_at/due/surfacing all survive — only the memory pointer
-    // changes.
+    // status/resolved_at/due/surfacing and last_resolution_reason (issue #234)
+    // all survive — only the memory pointer changes.
     await tx
       .update(commitments)
       .set({ memoryId: successorId, updatedAt: sql`now()` })

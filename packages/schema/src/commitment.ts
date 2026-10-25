@@ -26,3 +26,20 @@ export const COMMITMENT_TRANSITIONS = {
 export function canTransition(from: CommitmentStatus, to: CommitmentStatus): boolean {
   return (COMMITMENT_TRANSITIONS[from] as readonly CommitmentStatus[]).includes(to)
 }
+
+/**
+ * Upper bound (characters) on the optional `reason` a `resolve` call may carry
+ * (issue #234) — "PR #123", "superseded by <id>". The DB length CHECK on
+ * `commitments.last_resolution_reason` is generated from this constant, so the
+ * two cannot drift.
+ */
+export const MAX_RESOLUTION_REASON_LENGTH = 500
+
+/**
+ * The evidence for ONE commitment transition (issue #234): trimmed, non-empty,
+ * at most {@link MAX_RESOLUTION_REASON_LENGTH} characters. It is memory CONTENT
+ * (hard rule 6): it is stored on the commitment row and read back only through
+ * the authenticated, tenant-scoped history read — never logged, traced or
+ * metered (only its length may be).
+ */
+export const resolutionReasonSchema = z.string().trim().min(1).max(MAX_RESOLUTION_REASON_LENGTH)

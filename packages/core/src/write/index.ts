@@ -11,6 +11,7 @@ export {
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
   NotCommitmentMemoryError,
+  ResolveReasonNotSupportedError,
   type ResolveStatus,
   resolveByMemoryId,
   // `resolveForClosedRun` is deliberately NOT re-exported — see its doc comment.

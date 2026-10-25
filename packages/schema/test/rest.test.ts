@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   invalidInputRestErrorResponseSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
   MAX_REST_ERROR_DETAIL_LENGTH,
   memoriesListQuerySchema,
   memoriesListResponseSchema,
@@ -79,6 +80,7 @@ describe('REST memory history contract', () => {
       ],
       eventsTruncated: false,
       createdBySessionRunId: null,
+      lastResolutionReason: null,
     })
 
     expect(parsed.lineage.nodes).toHaveLength(2)
@@ -94,6 +96,7 @@ describe('REST memory history contract', () => {
         auditEvents: [],
         eventsTruncated: false,
         createdBySessionRunId: null,
+        lastResolutionReason: null,
       }).success,
     ).toBe(false)
 
@@ -115,6 +118,7 @@ describe('REST memory history contract', () => {
         ],
         eventsTruncated: false,
         createdBySessionRunId: null,
+        lastResolutionReason: null,
       }).success,
     ).toBe(false)
   })
@@ -142,6 +146,7 @@ describe('REST memory history session provenance (#262)', () => {
       ],
       eventsTruncated: false,
       createdBySessionRunId,
+      lastResolutionReason: null,
     }
   }
 
@@ -173,6 +178,44 @@ describe('REST memory history session provenance (#262)', () => {
     expect(
       memoryHistoryResponseSchema.safeParse(
         envelope({ sessionRunId: RUN, reason: 'free text is not allowlisted' }, RUN),
+      ).success,
+    ).toBe(false)
+  })
+})
+
+// Issue #234: the commitment's latest-transition reason rides the envelope as a
+// required, bounded, nullable field — content, but only on this owner read.
+describe('REST memory history lastResolutionReason (#234)', () => {
+  function withReason(lastResolutionReason: unknown) {
+    const current = identity()
+    return {
+      memory: current,
+      lineage: { nodes: [current], edges: [], truncated: false },
+      directRelationships: { predecessors: [], successors: [], truncated: false },
+      auditEvents: [],
+      eventsTruncated: false,
+      createdBySessionRunId: null,
+      lastResolutionReason,
+    }
+  }
+
+  it('accepts a bounded reason or null', () => {
+    expect(memoryHistoryResponseSchema.parse(withReason('PR #234')).lastResolutionReason).toBe(
+      'PR #234',
+    )
+    expect(memoryHistoryResponseSchema.parse(withReason(null)).lastResolutionReason).toBeNull()
+    expect(
+      memoryHistoryResponseSchema.safeParse(withReason('x'.repeat(MAX_RESOLUTION_REASON_LENGTH)))
+        .success,
+    ).toBe(true)
+  })
+
+  it('requires the field and rejects empty or oversize values', () => {
+    expect(memoryHistoryResponseSchema.safeParse(withReason(undefined)).success).toBe(false)
+    expect(memoryHistoryResponseSchema.safeParse(withReason('')).success).toBe(false)
+    expect(
+      memoryHistoryResponseSchema.safeParse(
+        withReason('x'.repeat(MAX_RESOLUTION_REASON_LENGTH + 1)),
       ).success,
     ).toBe(false)
   })

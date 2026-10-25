@@ -156,7 +156,9 @@ export async function eraseAccountData(
     .returning({ id: facts.id })
   const erasedCommitments = await tx
     .update(commitments)
-    .set({ owner: null, updatedAt: now })
+    // last_resolution_reason (issue #234) is user-written evidence text: redact
+    // it with the owner, the same in-place treatment as memories.content.
+    .set({ owner: null, lastResolutionReason: null, updatedAt: now })
     .returning({ id: commitments.id })
   const erasedProposals = await tx
     .update(consolidationProposals)

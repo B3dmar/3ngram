@@ -1,5 +1,5 @@
 {
-  "id": "ed408b2d-31e0-4c3e-9b0c-a46e2e7485ea",
+  "id": "9859efd6-5dc9-4af3-9cf4-cb4b5a0aed48",
   "prevId": "3b6ccd44-7f7b-4b31-8cea-4b3b2ef7f5a7",
   "version": "7",
   "dialect": "postgresql",
@@ -1606,6 +1606,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_resolution_reason": {
+          "name": "last_resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1707,6 +1713,10 @@
         "commitments_status_check": {
           "name": "commitments_status_check",
           "value": "\"commitments\".\"status\" IN ('open', 'waiting', 'resolved', 'expired')"
+        },
+        "commitments_last_resolution_reason_length_check": {
+          "name": "commitments_last_resolution_reason_length_check",
+          "value": "char_length(\"commitments\".\"last_resolution_reason\") BETWEEN 1 AND 500"
         }
       },
       "isRLSEnabled": false
@@ -2365,12 +2375,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "last_reviewed_at": {
-          "name": "last_reviewed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -2858,7 +2862,7 @@
       "checkConstraints": {
         "memory_events_kind_check": {
           "name": "memory_events_kind_check",
-          "value": "\"memory_events\".\"event_kind\" IN ('create', 'revise', 'supersede', 'resolve', 'unresolve', 'archive', 'import', 'embed_failed', 'reaffirm')"
+          "value": "\"memory_events\".\"event_kind\" IN ('create', 'revise', 'supersede', 'resolve', 'unresolve', 'archive', 'import', 'embed_failed')"
         },
         "memory_events_actor_check": {
           "name": "memory_events_actor_check",

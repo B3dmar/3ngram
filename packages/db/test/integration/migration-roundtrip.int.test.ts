@@ -123,7 +123,7 @@ describe('migration round-trip structure', () => {
     await ownerPool.query(`DELETE FROM oauth_clients WHERE client_id LIKE 'probe-registration-%'`)
   })
 
-  it('memories.last_reviewed_at is a nullable timestamptz with no default (0040, issue #218)', async () => {
+  it('memories.last_reviewed_at is a nullable timestamptz with no default (0041, issue #218)', async () => {
     const r = await ownerPool.query(
       `SELECT data_type, is_nullable, column_default FROM information_schema.columns
        WHERE table_name = 'memories' AND column_name = 'last_reviewed_at'`,

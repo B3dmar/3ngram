@@ -8,6 +8,7 @@ import {
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
   proposalStatusSchema,
@@ -27,7 +28,7 @@ import {
   uuid,
   vector,
 } from 'drizzle-orm/pg-core'
-import { enumCheckSql, tenantPolicy } from './helpers.js'
+import { charLengthCheckSql, enumCheckSql, tenantPolicy } from './helpers.js'
 import { users } from './identity.js'
 
 const uuidv7 = () => sql`uuidv7()`
@@ -199,6 +200,12 @@ export const commitments = pgTable(
     recurrence: jsonb('recurrence'),
     nextSurfacingAt: timestamp('next_surfacing_at', { withTimezone: true }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    // Issue #234: the optional `reason` of the LATEST transition (memory
+    // content, hard rule 6). Every status change writes it — the reason when
+    // one was given, NULL otherwise — so it never outlives the transition it
+    // explains. Kept on the row (not the append-only memory_events payload) so
+    // account erasure can redact it in place.
+    lastResolutionReason: text('last_resolution_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -211,6 +218,10 @@ export const commitments = pgTable(
     uniqueIndex('commitments_memory_idx').on(t.userId, t.memoryId),
     index('commitments_surfacing_idx').on(t.userId, t.status, t.nextSurfacingAt),
     check('commitments_status_check', enumCheckSql(t.status, commitmentStatusSchema.options)),
+    check(
+      'commitments_last_resolution_reason_length_check',
+      charLengthCheckSql(t.lastResolutionReason, 1, MAX_RESOLUTION_REASON_LENGTH),
+    ),
     tenantPolicy(),
   ],
 )

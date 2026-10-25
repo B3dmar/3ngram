@@ -201,6 +201,16 @@ describe('ThreengramClient request shape', () => {
     expect(only(calls).body).toEqual({ status: 'resolved', sessionRunId: runId })
   })
 
+  it('resolve forwards an optional reason in the body (issue #234)', async () => {
+    const id = crypto.randomUUID()
+    const { fetch, calls } = stubFetch(200, { commitmentId: id, status: 'resolved' })
+    const client = new ThreengramClient(CONFIG, fetch)
+
+    await client.resolve(id, 'resolved', { reason: 'PR #234' })
+
+    expect(only(calls).body).toEqual({ status: 'resolved', reason: 'PR #234' })
+  })
+
   it('strips trailing slashes from baseUrl so paths never double up', async () => {
     const { fetch, calls } = stubFetch(200, { hits: [], count: 0 })
     const client = new ThreengramClient({ ...CONFIG, baseUrl: 'https://api.example.com///' }, fetch)

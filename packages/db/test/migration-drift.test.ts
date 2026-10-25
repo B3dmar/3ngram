@@ -8,6 +8,7 @@ import {
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
@@ -102,9 +103,14 @@ const writeScopePolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
   'utf8',
 )
-// 0040 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
+// 0040 adds the commitment's latest-transition reason (issue #234).
+const resolutionReasonSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0040_commitment_resolution_reason.sql'),
+  'utf8',
+)
+// 0041 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
 const reviewStampSql = readFileSync(
-  join(import.meta.dirname, '../migrations/0040_memory_last_reviewed_at.sql'),
+  join(import.meta.dirname, '../migrations/0041_memory_last_reviewed_at.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -712,7 +718,26 @@ describe('write-scope policy table (0039, issue #235)', () => {
   })
 })
 
-describe('reaffirm review stamp (0040, issue #218)', () => {
+describe('commitment resolution reason (0040, issue #234)', () => {
+  it('adds one nullable text column, no table and no backfill', () => {
+    expect(resolutionReasonSql).toContain(
+      'ALTER TABLE "commitments" ADD COLUMN "last_resolution_reason" text;',
+    )
+    expect(resolutionReasonSql).not.toMatch(/CREATE TABLE|NOT NULL|UPDATE "commitments"/i)
+  })
+
+  it('derives the length CHECK from the schema bound', () => {
+    expect(resolutionReasonSql).toContain(
+      `CONSTRAINT "commitments_last_resolution_reason_length_check" CHECK (char_length("commitments"."last_resolution_reason") BETWEEN 1 AND ${MAX_RESOLUTION_REASON_LENGTH})`,
+    )
+  })
+
+  it('needs no new grant: the runtime role already UPDATEs commitments', () => {
+    expect(rolesSql).toMatch(/GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments,/)
+  })
+})
+
+describe('reaffirm review stamp (0041, issue #218)', () => {
   it('adds a nullable, default-less column: no rewrite, no backfill', () => {
     expect(reviewStampSql).toContain(
       'ALTER TABLE "memories" ADD COLUMN "last_reviewed_at" timestamp with time zone;',
