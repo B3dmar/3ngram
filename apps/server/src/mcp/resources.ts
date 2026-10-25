@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// MCP RESOURCES — `threengram://memory/{id}` (issue #105).
+// MCP RESOURCES — `threengram://memory/{id}` (issue #105) and the
+// `threengram://facets` scope/project inventory (issue #168).
 //
 // Design and the reasoning behind every decision here: docs/concepts/mcp-resources.mdx.
 // Read it before changing this file; the payload rule below is load-bearing, not
@@ -22,8 +23,9 @@
 // schema boundary, asserts scope + access, calls the COMPLETE core service
 // (which runs withTenant internally), and projects the result.
 import { log } from '@3ngram/config'
-import { getMemoryById, MemoryNotFoundError } from '@3ngram/core'
+import { getMemoryById, listMemoryFacets, MemoryNotFoundError } from '@3ngram/core'
 import { MEMORY_READ_SCOPE } from '@3ngram/core/auth'
+import { memoriesFacetsResponseSchema } from '@3ngram/schema'
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import type { ToolContext } from './tools.js'
@@ -56,6 +58,24 @@ export const MEMORY_RESOURCE_TEMPLATE = 'threengram://memory/{id}'
  * cannot be reused by a caller whose token no longer authenticates.
  */
 export const MEMORY_RESOURCE_CACHE_TTL_MS = 24 * 60 * 60_000
+
+/**
+ * The tenant's scope/project inventory (issue #168): one FIXED uri, so unlike
+ * the memory template it IS listed on `resources/list` — an agent can discover
+ * it without already knowing a name. It enumerates labels, never memories, so
+ * listing it is not the corpus firehose the memory template refuses.
+ */
+export const FACETS_RESOURCE_URI = 'threengram://facets'
+
+/**
+ * TTL for the facets inventory. SHORT on purpose — the opposite of the memory
+ * body: every `remember` into a new scope or project, every `revise` move, and
+ * every supersede/archive of the last memory in a scope changes it. One minute
+ * bounds how stale a cached inventory can be while still sparing a client that
+ * re-reads it within a turn or two. Its own constant for the same reason as
+ * MEMORY_RESOURCE_CACHE_TTL_MS.
+ */
+export const FACETS_RESOURCE_CACHE_TTL_MS = 60_000
 
 /** Reject a non-uuid `{id}` before it reaches core (one validation boundary). */
 const memoryIdSchema = z.uuid()
@@ -101,6 +121,7 @@ const MEMORY_RESOURCE_FIELDS = [
  * rule exists to prevent, so `resources/list` returns nothing for this template.
  */
 export function registerResources(server: McpServer, ctx: ToolContext): void {
+  registerFacetsResource(server, ctx)
   server.registerResource(
     'memory',
     new ResourceTemplate(MEMORY_RESOURCE_TEMPLATE, { list: undefined }),
@@ -159,6 +180,50 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
             text: JSON.stringify(body),
           },
         ],
+      }
+    },
+  )
+}
+
+/**
+ * Register `threengram://facets` (issue #168): `{ scopes, projects }` — the
+ * DISTINCT scope and project labels on the tenant's live memories, the SAME
+ * payload as REST `GET /api/v1/memories/facets` and the `facets` field
+ * describe_environment inlines for hosts that never surface resources.
+ * Scopes registered with no live memory are not here (`configure_scope list`
+ * reports the registry). Same guards as the memory resource and the facet
+ * completer: tenant from the verified authInfo closure, memory:read
+ * fail-closed, access gate before the read.
+ */
+function registerFacetsResource(server: McpServer, ctx: ToolContext): void {
+  server.registerResource(
+    'facets',
+    FACETS_RESOURCE_URI,
+    {
+      title: 'Scope and project inventory',
+      description:
+        'The scope and project names your live memories are filed under, as { scopes, projects }. Read it to learn valid scope/project filters without guessing. Registered scopes with no live memories are listed by configure_scope instead. Names only, never memory content; an empty account returns empty arrays.',
+      mimeType: 'application/json',
+      // PRIVATE: the labels are tenant data — a `public` entry could be served
+      // to another authorization context. SHORT TTL: the inventory mutates.
+      cacheHint: { ttlMs: FACETS_RESOURCE_CACHE_TTL_MS, cacheScope: 'private' },
+    },
+    async (uri: URL) => {
+      if (!ctx.scopes.includes(MEMORY_READ_SCOPE)) {
+        throw new Error(`insufficient scope: ${MEMORY_READ_SCOPE} required`)
+      }
+      // ACCESS GUARD before the read — scope/project labels are memory-derived
+      // tenant data (the REST facets route and the completer guard them too).
+      if (ctx.access) await ctx.access.assertRead(ctx.userId)
+      const facets = await listMemoryFacets(ctx.userId)
+      // Parsed through the REST response schema: one shape for both transports.
+      const body = memoriesFacetsResponseSchema.parse({
+        scopes: facets.scopes,
+        projects: facets.projects,
+      })
+      log().debug({ resource: 'facets' }, 'mcp: resource read')
+      return {
+        contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(body) }],
       }
     },
   )

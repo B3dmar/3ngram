@@ -34,6 +34,8 @@ const HIT = {
   content: 'c',
   score: 0,
   superseded: false,
+  scope: 'work',
+  project: null,
 }
 const PAGE = {
   hits: [HIT],
@@ -155,9 +157,15 @@ describe('searchChronological — read-path content excerpting', () => {
 
   it('every returned hit parses against the shared searchHitSchema output contract', async () => {
     const id = crypto.randomUUID()
-    searchList.mockResolvedValue({ ...PAGE, hits: [{ ...HIT, id }] })
+    const resolved = { ...HIT, id, project: 'engine', commitmentStatus: 'resolved' as const }
+    searchList.mockResolvedValue({ ...PAGE, hits: [resolved, { ...HIT, id: crypto.randomUUID() }] })
     const page = await searchChronological('u1', {})
     expect(searchHitSchema.safeParse(page.hits[0]).success).toBe(true)
+    // Filing + commitment lifecycle ride through untouched; a non-commitment
+    // gets no fabricated status (#319).
+    expect(page.hits[0]).toMatchObject({ scope: 'work', project: 'engine' })
+    expect(page.hits[0]?.commitmentStatus).toBe('resolved')
+    expect(page.hits[1]).not.toHaveProperty('commitmentStatus')
   })
 })
 

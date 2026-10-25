@@ -306,7 +306,13 @@ async function carryCommitment(
       }
       const resolved = await tx
         .update(commitments)
-        .set({ status: 'resolved', resolvedAt: sql`now()`, updatedAt: sql`now()` })
+        // A reasonless transition clears any earlier reason (issue #234).
+        .set({
+          status: 'resolved',
+          resolvedAt: sql`now()`,
+          lastResolutionReason: null,
+          updatedAt: sql`now()`,
+        })
         .where(
           and(
             eq(commitments.userId, input.userId),
@@ -326,8 +332,8 @@ async function carryCommitment(
       return
     }
     // (a) carry: move the obligation onto the live successor. FSM
-    // status/resolved_at/due/surfacing all survive — only the memory pointer
-    // changes.
+    // status/resolved_at/due/surfacing and last_resolution_reason (issue #234)
+    // all survive — only the memory pointer changes.
     await tx
       .update(commitments)
       .set({ memoryId: successorId, updatedAt: sql`now()` })
@@ -393,7 +399,8 @@ export async function reviseMemory(input: ReviseWrite): Promise<RevisedMemory> {
 
       // LOCK ORDER (canonical for every write path that stamps provenance):
       // resolve provenance — which may take the tenant/project attach advisory
-      // lock — BEFORE any memory row lock. The archive helpers below mirror it;
+      // lock — BEFORE any memory row lock. archiveBlockerMemory below and the
+      // dispositions in memory-disposition.ts mirror it;
       // inverting it in one path is an AB-BA deadlock against this one.
       const runId = await resolveSessionProvenance(tx, input.userId, {
         sessionRunId: input.sessionRunId,
@@ -591,109 +598,6 @@ export async function archiveBlockerMemory(
       )
       .returning({ id: memories.id })
     if (archived.length === 0 || !archived[0]) throw new BlockerNotFoundError(memoryId)
-
-    await tx.insert(memoryEvents).values({
-      userId,
-      memoryId,
-      eventKind: 'archive',
-      actorKind,
-      payload: sessionPayload(runId),
-    })
-
-    return { id: archived[0].id, status: 'archived' }
-  })
-}
-
-/**
- * Thrown when no ACTIVE memory exists for this tenant under the given id (the
- * generic ARCHIVE lifecycle path). Under RLS a cross-tenant id returns zero rows,
- * so "not found", "not owned", "already archived", and "superseded" all collapse
- * to this one error — each is, from the tenant's view, "there is no active memory
- * by this id to archive". Carries the id (a uuid, never content).
- */
-export class ActiveMemoryNotFoundError extends Error {
-  readonly memoryId: string
-  constructor(memoryId: string) {
-    super('no active memory found for this tenant')
-    this.name = 'ActiveMemoryNotFoundError'
-    this.memoryId = memoryId
-  }
-}
-
-/**
- * Archive an ACTIVE memory of ANY type: transition its status
- * 'active' -> 'archived'. NEVER a row delete (append-only, hard rule 1) — the
- * row stays, it merely leaves the active set.
- *
- * DELIBERATELY UNLIKE {@link archiveBlockerMemory}, valid_to stays NULL. The
- * archived bucket every read surface keys on is `status='archived' AND valid_to
- * IS NULL` (docs/concepts/data-model.mdx: listMemories' status='archived' filter
- * in memory-read.ts and stats' archivedMemories count in scopes.ts both read
- * exactly that predicate) — setting valid_to here would drop the row into the
- * SUPERSEDED bucket instead and make the archive invisible to both. The known
- * trade (adoption-gate Decision D, locked): the row still holds its live-hash
- * slot in the partial-unique memories_hash_idx (WHERE valid_to IS NULL), so
- * re-remembering identical content stays a DuplicateMemoryError until the
- * archived row is superseded.
- *
- * The guard matches ONLY a currently-live row (status='active' AND valid_to IS
- * NULL) — no memoryType predicate: unlike the blocker-only resolve path, ARCHIVE
- * is a generic lifecycle op. A zero-row UPDATE (wrong id, wrong tenant, already
- * archived, or superseded) is a clean {@link ActiveMemoryNotFoundError} rather
- * than a silent success.
- *
- * Records an 'archive' lifecycle audit event in the SAME withTenant() tx: the
- * UPDATE and the audit event land or roll back together.
- *
- * @throws {@link ActiveMemoryNotFoundError} no active memory by this id for the tenant.
- */
-export async function archiveMemory(
-  userId: string,
-  memoryId: string,
-  actorKind: ActorKind,
-  sessionRunId?: string,
-  now?: Date,
-): Promise<{ id: string; status: 'archived' }> {
-  return withTenant(userId, async (tx) => {
-    // LOCK ORDER (must match reviseMemory): session provenance FIRST — it may
-    // take the tenant/project attach advisory lock — then the memory row lock.
-    // See archiveBlockerMemory for why the inverted order deadlocked.
-    const [target] = await tx
-      .select({ project: memories.project })
-      .from(memories)
-      .where(
-        and(
-          eq(memories.userId, userId),
-          eq(memories.id, memoryId),
-          eq(memories.status, 'active'),
-          isNull(memories.validTo),
-        ),
-      )
-      .limit(1)
-    if (!target) throw new ActiveMemoryNotFoundError(memoryId)
-
-    const runId = await resolveSessionProvenance(tx, userId, {
-      sessionRunId,
-      project: target.project,
-      now: now ?? new Date(),
-    })
-
-    // Guard re-asserted under the row lock: the SELECT above took none, so a
-    // concurrent archive may have won in between. Zero rows stays the same
-    // clean ActiveMemoryNotFoundError.
-    const archived = await tx
-      .update(memories)
-      .set({ status: 'archived', updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(memories.userId, userId),
-          eq(memories.id, memoryId),
-          eq(memories.status, 'active'),
-          isNull(memories.validTo),
-        ),
-      )
-      .returning({ id: memories.id })
-    if (archived.length === 0 || !archived[0]) throw new ActiveMemoryNotFoundError(memoryId)
 
     await tx.insert(memoryEvents).values({
       userId,

@@ -632,6 +632,12 @@ export interface CompleteTriageOptions {
    * else: the outcome decision is set arithmetic, not time.
    */
   now: Date
+  /**
+   * The caller displayed NO debrief for this attempt (issue #189): land
+   * `expired` and keep the begin stamp as the watermark. See
+   * {@link completeSessionTriage}, "DEFENSIVE".
+   */
+  defensive?: boolean | undefined
   /** Test-only per-run ceiling override; see {@link BeginTriageOptions.ceiling}. */
   ceiling?: number | undefined
 }
@@ -663,6 +669,23 @@ export interface CompleteTriageOptions {
  *
  * `last_message_excerpt` is NOT cleared. Retention is unchanged: only the closer
  * durably consumes it, or the TTL sweep drops it.
+ *
+ * DEFENSIVE (issue #189). The rule above reads "something was written since
+ * begin" as "the continuation answered the debrief" — true only when a debrief
+ * was shown. A hook that ARMED but never injected (a finalize-only Stop whose
+ * `begin` armed instead of declining `pending`; a debrief fetch that failed)
+ * completes at once expecting `expired`, but an async write committing between
+ * begin's listing and this one would make `since_begin` non-empty: the row
+ * would land `completed` with that write absorbed into the watermark — not
+ * closer-eligible, and never re-armed on, though no debrief ever covered it.
+ * `defensive` is the caller saying so: the outcome is `expired` whatever arrived,
+ * and the watermark is NOT advanced past the begin stamp, so such a write stays
+ * untriaged — the next Stop's entry rule re-arms on it and the closer still
+ * selects the run. Truncation still wins (`overflowed` is a capacity fact, not a
+ * coverage claim), but a defensive overflow keeps the begin-time watermark
+ * where an ordinary one stamps the visible set; both are terminal, so the two
+ * shapes differ only in what the row records. The fence is unchanged, so a repeat or stale defensive
+ * complete is the same 409.
  */
 export async function completeSessionTriage(
   tx: TenantTx,
@@ -684,17 +707,22 @@ export async function completeSessionTriage(
   )
   const accounted = new Set(row.lastTriagedEventIds)
   const sinceBegin = visible.ids.filter((id) => !accounted.has(id))
+  const defensive = options.defensive === true
   const triageStatus: TriageOutcomeStatus = visible.truncated
     ? 'overflowed'
-    : sinceBegin.length === 0
+    : defensive || sinceBegin.length === 0
       ? 'expired'
       : 'completed'
+  // A defensive complete accounts for nothing beyond what begin already did.
+  const watermark = defensive
+    ? row.lastTriagedEventIds
+    : visible.ids.slice(0, MAX_SESSION_EVENT_IDS)
 
   const stamped = await tx
     .update(agentSessions)
     .set({
       triageStatus,
-      lastTriagedEventIds: visible.ids.slice(0, MAX_SESSION_EVENT_IDS),
+      lastTriagedEventIds: watermark,
       // Stamp the outcome onto the attempt's log entry (issue #203). Safe under
       // the same fence as the status: the row lock has held since
       // lockTriageRow, so `row.triageAttemptLog` is the array this replaces.
@@ -728,12 +756,14 @@ export async function completeSessionTriage(
   // closer's EXISTS probe. `lockTriageRow` has held the row since before the
   // listing, so nothing can have slipped in between — but the flag is an
   // invariant of the watermark, and the statement that moves one owes the other.
+  // After a DEFENSIVE complete that left a write outside the watermark, this is
+  // a RAISE instead, which is exactly the point.
   await settleNeedsLook(tx, userId, row.id)
 
   return {
     sessionRunId: row.id,
     triageStatus,
-    eventCount: Math.min(visible.ids.length, MAX_SESSION_EVENT_IDS),
+    eventCount: watermark.length,
     sinceBeginCount: sinceBegin.length,
     truncated: visible.truncated,
   }

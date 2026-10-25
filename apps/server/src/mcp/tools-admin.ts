@@ -34,7 +34,7 @@ import {
   deleteScope,
   describeEnvironment,
   type FactProposalRecord,
-  listAllProposals,
+  listProposalsPage,
   listScopes,
   type ProposalRecord,
   rejectProposalAnyKind,
@@ -42,19 +42,21 @@ import {
   type ScopeRecord,
   setRetrievalDefault,
   setScopeAliases,
+  setWriteDefault,
 } from '@3ngram/core'
 import { MEMORY_READ_SCOPE, MEMORY_WRITE_SCOPE, type MemoryScope } from '@3ngram/core/auth'
 import {
-  type ConfigureScopeInputV2,
-  configureScopeInputV2Schema,
-  configureScopeOutputV2Schema,
+  type ConfigureScopeInputV3,
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputV2Schema,
+  describeEnvironmentOutputV5Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
+import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
 import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
@@ -129,7 +131,7 @@ function toProposalOutput(p: ProposalRecord) {
  * before any core call: list → memory:read, mutations → memory:write.
  */
 async function runConfigureScope(
-  input: ConfigureScopeInputV2,
+  input: ConfigureScopeInputV3,
   ctx: ToolContext,
 ): Promise<ToolResult> {
   if (input.action === 'list') {
@@ -140,7 +142,7 @@ async function runConfigureScope(
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
     const scopes = await listScopes(ctx.userId)
     return ok(
-      parseOutput('configure_scope', configureScopeOutputV2Schema, {
+      parseOutput('configure_scope', configureScopeOutputV3Schema, {
         action: 'list',
         scopes: scopes.map(toScopeOutput),
         count: scopes.length,
@@ -150,8 +152,8 @@ async function runConfigureScope(
   const denied = requireScope('configure_scope', ctx, MEMORY_WRITE_SCOPE)
   if (denied !== undefined) return denied
   // ACCESS GUARD: every mutating scope action (create/rename/set_aliases/delete/
-  // set_retrieval_default) is a WRITE — write access is asserted BEFORE the db op
-  // (self-host allowAllAccess allows all).
+  // set_retrieval_default/set_write_default) is a WRITE — write access is
+  // asserted BEFORE the db op (self-host allowAllAccess allows all).
   if (ctx.access) await ctx.access.assertWrite(ctx.userId)
 
   switch (input.action) {
@@ -170,7 +172,7 @@ async function runConfigureScope(
     case 'delete': {
       await deleteScope(ctx.userId, input.name)
       return ok(
-        parseOutput('configure_scope', configureScopeOutputV2Schema, {
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
           action: 'deleted',
           name: input.name,
         }),
@@ -186,8 +188,20 @@ async function runConfigureScope(
         scope: input.scope,
       })
       return ok(
-        parseOutput('configure_scope', configureScopeOutputV2Schema, {
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
           action: 'retrieval_default_set',
+          policy,
+        }),
+      )
+    }
+    case 'set_write_default': {
+      // Same split as set_retrieval_default (issue #235): shape at the schema
+      // boundary, registry existence in core (ScopeNotFoundError for an
+      // unregistered name or an alias), stored policy echoed back.
+      const policy = await setWriteDefault(ctx.userId, { mode: input.mode, scope: input.scope })
+      return ok(
+        parseOutput('configure_scope', configureScopeOutputV3Schema, {
+          action: 'write_default_set',
           policy,
         }),
       )
@@ -201,7 +215,7 @@ async function runConfigureScope(
 
 function upserted(scope: ScopeRecord): ToolResult {
   return ok(
-    parseOutput('configure_scope', configureScopeOutputV2Schema, {
+    parseOutput('configure_scope', configureScopeOutputV3Schema, {
       action: 'upserted',
       scope: toScopeOutput(scope),
     }),
@@ -225,22 +239,37 @@ async function runReviewProposals(
     // ACCESS GUARD: proposals are memory-derived, so listing them is a READ — read
     // access is asserted BEFORE the db op (self-host allowAllAccess allows all).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    const { proposals, factProposals } = await listAllProposals(ctx.userId, {
+    // The continuation is bound to this surface's kinds, the status filter and
+    // the tenant (hashed): a mismatched cursor is a typed invalid-input error.
+    const fp = proposalsFingerprint({
+      surface: 'mcp',
+      kinds: ['edge', 'fact'],
+      status: input.status,
+      tenant: ctx.userId,
+    })
+    const after = input.cursor === undefined ? undefined : decodeProposalsCursor(input.cursor, fp)
+    const page = await listProposalsPage(ctx.userId, {
       status: input.status,
       limit: input.limit,
+      after,
     })
+    const { proposals, factProposals } = page
     return ok(
       parseOutput('review_proposals', reviewProposalsOutputV2Schema, {
         action: 'list',
         proposals: proposals.map(toProposalOutput),
-        // `count` stays the EDGE count: it is the shipped field, and a tenant
-        // with no fact proposals must see the identical response it always has.
+        // `count` stays the EDGE count ON THIS PAGE: it is the shipped field,
+        // never reinterpreted as a total (`totals` carries those).
         count: proposals.length,
-        // Key OMITTED when there are none, so an edge-only tenant's response is
-        // byte-identical to V1 rather than growing an empty array.
+        // Key OMITTED when there are none, so an edge-only page never grows an
+        // empty array.
         ...(factProposals.length > 0
           ? { factProposals: factProposals.map(toFactProposalOutput) }
           : {}),
+        counts: { edge: proposals.length, fact: factProposals.length },
+        totals: page.totals,
+        hasMore: page.hasMore,
+        ...(page.next === undefined ? {} : { nextCursor: encodeProposalsCursor(page.next, fp) }),
       }),
     )
   }
@@ -319,8 +348,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       title: 'Configure Scope',
       description:
         'Manage your memory scopes: list, create, rename, set aliases, or delete (registry only — existing memories keep their scope). set_retrieval_default binds your READS to a scope: mode "default" narrows unscoped search/briefing/handoff calls to the given scope (results report appliedScope), "require" rejects unscoped reads until a scope is passed, "off" restores unrestricted reads (scope must be null for require/off). Mutating actions require the write scope.',
-      inputSchema: configureScopeInputV2Schema,
-      outputSchema: configureScopeOutputV2Schema,
+      inputSchema: configureScopeInputV3Schema,
+      outputSchema: configureScopeOutputV3Schema,
       // Per-action tool, so the hints describe the WORST action it can take —
       // that is how a client uses them (deciding whether to prompt). `delete`
       // removes a scope registry entry, hence destructiveHint: true. It does NOT
@@ -335,7 +364,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       },
     },
     async handler(args, ctx) {
-      const input = configureScopeInputV2Schema.parse(args)
+      const input = configureScopeInputV3Schema.parse(args)
       return runConfigureScope(input, ctx)
     },
   }
@@ -348,7 +377,8 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      outputSchema: describeEnvironmentOutputV2Schema,
+      // V4 (account identity #321, capped facets #168) + writeScopePolicy (#235).
+      outputSchema: describeEnvironmentOutputV5Schema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -360,12 +390,25 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput('describe_environment', describeEnvironmentOutputV2Schema, {
+      const output = parseOutput('describe_environment', describeEnvironmentOutputV5Schema, {
+        // The authenticated account (issue #321): its users.id, read by core from
+        // the live users row — identity, distinct from scopes and the policies.
+        account: { id: report.account.id },
         capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
         scopes: report.scopes.map(toScopeOutput),
+        // The live scope/project inventory (issue #168), inlined for hosts that
+        // never surface the threengram://facets resource to the model. Core
+        // already capped it per array and flagged what it cut.
+        facets: {
+          scopes: report.facets.scopes,
+          projects: report.facets.projects,
+          truncated: report.facets.truncated,
+        },
         // The active retrieval-scope policy (issue #47): a bounded mode enum +
         // a registered scope NAME — the redaction posture is unchanged.
         retrievalScopePolicy: report.retrievalScopePolicy,
+        // The effective write-scope policy (issue #235), same redaction posture.
+        writeScopePolicy: report.writeScopePolicy,
         stats: {
           memoriesByType: report.stats.memoriesByType,
           activeMemories: report.stats.activeMemories,

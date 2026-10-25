@@ -70,7 +70,12 @@ export type BriefingSelector =
   | { kind: 'project'; project: string }
   | { kind: 'scope_project'; scope: string; project: string; includeUnscoped: boolean }
 
-/** A commitment row for the briefing (ids/status/timestamps only — no content). */
+/**
+ * A commitment row for the briefing (ids/status/timestamps/filing — no content).
+ * `owner` is the commitment's recorded owner label, NULL when none was recorded;
+ * `scope`/`project` are the riding memory's filing (issue #261), read in the same
+ * join so a caller can label a row without a per-row memory read.
+ */
 export interface BriefingCommitmentRow {
   id: string
   memoryId: string
@@ -78,6 +83,9 @@ export interface BriefingCommitmentRow {
   status: string
   dueAt: Date | null
   nextSurfacingAt: Date | null
+  owner: string | null
+  scope: string
+  project: string | null
 }
 
 /** A memory row for the briefing list sections (decision/blocker/preference). */
@@ -114,6 +122,20 @@ export interface BriefingPage<T> {
  * from any returned row yields the total; zero rows means total 0.
  */
 const TOTAL_COUNT = sql<number>`count(*) over()`.mapWith(Number)
+
+/** The commitment-section projection shared by the open and overdue reads. */
+const COMMITMENT_COLUMNS = {
+  id: commitments.id,
+  memoryId: commitments.memoryId,
+  topic: memories.topic,
+  status: commitments.status,
+  dueAt: commitments.dueAt,
+  nextSurfacingAt: commitments.nextSurfacingAt,
+  owner: commitments.owner,
+  scope: memories.scope,
+  project: memories.project,
+  totalCount: TOTAL_COUNT,
+}
 
 /**
  * Read `totalCount` from a window-count result. The window value is identical on
@@ -198,15 +220,7 @@ export async function openCommitments(
   limit: number,
 ): Promise<BriefingPage<BriefingCommitmentRow>> {
   const rows = await tx
-    .select({
-      id: commitments.id,
-      memoryId: commitments.memoryId,
-      topic: memories.topic,
-      status: commitments.status,
-      dueAt: commitments.dueAt,
-      nextSurfacingAt: commitments.nextSurfacingAt,
-      totalCount: TOTAL_COUNT,
-    })
+    .select(COMMITMENT_COLUMNS)
     .from(commitments)
     .innerJoin(
       memories,
@@ -265,15 +279,7 @@ export async function overdueCommitments(
   limit: number,
 ): Promise<BriefingPage<BriefingCommitmentRow>> {
   const rows = await tx
-    .select({
-      id: commitments.id,
-      memoryId: commitments.memoryId,
-      topic: memories.topic,
-      status: commitments.status,
-      dueAt: commitments.dueAt,
-      nextSurfacingAt: commitments.nextSurfacingAt,
-      totalCount: TOTAL_COUNT,
-    })
+    .select(COMMITMENT_COLUMNS)
     .from(commitments)
     .innerJoin(
       memories,
@@ -387,8 +393,20 @@ export function activePreferences(
 }
 
 /**
+ * A row's freshness for staleness: the later of its last write (updated_at) and
+ * its last review (last_reviewed_at, issue #218). GREATEST skips a NULL, so a
+ * never-reviewed row is judged by updated_at alone, exactly as before the
+ * column existed. Note that updated_at also moves on the embedding write-back
+ * (memory-embedding.ts), not only on a user-visible change: a backfilled row
+ * restarts its window. A reaffirm stamps last_reviewed_at and never updated_at,
+ * so a review does not masquerade as an edit.
+ */
+const staleFreshness = sql`GREATEST(${memories.updatedAt}, ${memories.lastReviewedAt})`
+
+/**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
- * memories of an ALLOWLISTED type untouched (updated_at) since `staleBefore`,
+ * memories of an ALLOWLISTED type neither touched (updated_at) nor reaffirmed
+ * (last_reviewed_at) since `staleBefore` — see {@link staleFreshness} —
  * scope/project-narrowed. The type filter is an ALLOWLIST (`memory_type IN
  * (...)`) supplied by core, NOT a NOT-IN exclusion: which types are worth a
  * staleness review is briefing POLICY (hard rule 5), owned by
@@ -414,7 +432,7 @@ function staleCandidatePredicate(
     eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
-    lt(memories.updatedAt, staleBefore),
+    sql`${staleFreshness} < ${staleBefore}::timestamptz`,
     memoryTypes === undefined
       ? ne(memories.memoryType, 'commitment')
       : inArray(memories.memoryType, [...memoryTypes]),
@@ -426,8 +444,9 @@ function staleCandidatePredicate(
 
 /**
  * Stale candidates: LIVE, active memories of an ALLOWLISTED `memoryTypes` type
- * not touched (updated_at) since `staleBefore`, scope/project-narrowed, ordered
- * OLDEST-first (the most-stale first) and BOUNDED by `limit`.
+ * neither touched (updated_at) nor reaffirmed (last_reviewed_at) since
+ * `staleBefore`, scope/project-narrowed, ordered least-fresh first (the
+ * most-stale first) and BOUNDED by `limit`.
  *
  * `staleBefore` is computed by core from the injected `now` minus the stale
  * window, and `memoryTypes` is core's STALE_CANDIDATE_TYPES allowlist (no
@@ -473,8 +492,8 @@ export async function staleCandidates(
     })
     .from(memories)
     .where(staleCandidatePredicate(userId, selector, staleBefore, memoryTypes))
-    // Oldest-touched first: the most-stale memory leads.
-    .orderBy(asc(memories.updatedAt), asc(memories.id))
+    // Least-fresh first: the most-stale memory leads.
+    .orderBy(asc(staleFreshness), asc(memories.id))
     .limit(limit)
   return { items: rows.map(stripMemoryCount), totalCount: totalFrom(rows) }
 }

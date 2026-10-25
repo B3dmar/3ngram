@@ -614,9 +614,12 @@ describe('/mcp D3 admin tools end-to-end (real transport, runtime role)', () => 
     const result = await client.callTool({ name: 'describe_environment', arguments: {} })
     expect(result.isError).toBeFalsy()
     const report = result.structuredContent as {
+      account: { id: string }
       capabilities: { tools: string[]; toolCount: number; version: string }
       stats: { activeMemories: number }
     }
+    // The token's account (issue #321), never another tenant's.
+    expect(report.account.id).toBe(userA)
     expect(report.capabilities.toolCount).toBe(11)
     expect(report.capabilities.tools).toContain('describe_environment')
     // REDACTION sentinel: the configured DB URL password (a real secret in this

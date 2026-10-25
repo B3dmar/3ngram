@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Unit coverage for retrieval-scope policy enforcement across core read surfaces.
 import { EMBEDDING_DIMENSIONS } from '@3ngram/llm'
+import { MAX_INLINE_FACET_LABELS } from '@3ngram/schema'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type {
   DashboardPageOptions,
@@ -19,10 +20,16 @@ const staleCandidates = vi.fn()
 const recentDecisions = vi.fn()
 const activePreferences = vi.fn()
 const getRetrievalPolicy = vi.fn()
+const getWriteScopePolicy = vi.fn()
 const upsertRetrievalPolicy = vi.fn()
 const listScopes = vi.fn()
 const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const getEnvironmentStats = vi.fn()
+const getLiveAccountId = vi.fn()
+const listMemoryFacets = vi.fn(async (_tx: unknown, _userId: string, _opts?: unknown) => ({
+  scopes: [] as string[],
+  projects: [] as string[],
+}))
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({} as unknown),
 )
@@ -31,6 +38,12 @@ class InvalidEmbeddingError extends Error {
   constructor(actual: number) {
     super(`embedding must have exactly ${EMBEDDING_DIMENSIONS} dimensions, got ${actual}`)
     this.name = 'InvalidEmbeddingError'
+  }
+}
+class AccountDeletedError extends Error {
+  constructor() {
+    super('account_deleted')
+    this.name = 'AccountDeletedError'
   }
 }
 class ScopeNotFoundError extends Error {
@@ -53,10 +66,15 @@ vi.mock('@3ngram/db', () => ({
   recentDecisions: (...a: unknown[]) => recentDecisions(...a),
   activePreferences: (...a: unknown[]) => activePreferences(...a),
   getRetrievalPolicy: (...a: unknown[]) => getRetrievalPolicy(...a),
+  getWriteScopePolicy: (...a: unknown[]) => getWriteScopePolicy(...a),
   upsertRetrievalPolicy: (...a: unknown[]) => upsertRetrievalPolicy(...a),
   listScopes: (...a: unknown[]) => listScopes(...a),
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   getEnvironmentStats: (...a: unknown[]) => getEnvironmentStats(...a),
+  getLiveAccountId: (...a: unknown[]) => getLiveAccountId(...a),
+  listMemoryFacets: (tx: unknown, userId: string, opts?: unknown) =>
+    listMemoryFacets(tx, userId, opts),
+  AccountDeletedError,
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   InvalidEmbeddingError,
   ScopeNotFoundError,
@@ -485,18 +503,82 @@ describe('describeEnvironment report mapping', () => {
   }
 
   it('reports the off default when no row is stored', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    getWriteScopePolicy.mockResolvedValue(null)
+    const report = await describeEnvironment(USER)
+    expect(report.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
+    expect(report.writeScopePolicy).toEqual({ mode: 'off', scope: null })
+  })
+
+  it('reports the stored policy verbatim', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    getWriteScopePolicy.mockResolvedValue({ mode: 'require', defaultScope: null })
+    const report = await describeEnvironment(USER)
+    expect(report.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+    // The two policies are independent rows, reported side by side (issue #235).
+    expect(report.writeScopePolicy).toEqual({ mode: 'require', scope: null })
+  })
+
+  it('reports the account id the live users row returns, inside the same tenant tx (#321)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
     getRetrievalPolicy.mockResolvedValue(null)
     const report = await describeEnvironment(USER)
-    expect(report.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
+    expect(report.account).toEqual({ id: USER })
+    expect(getLiveAccountId).toHaveBeenCalledWith(expect.anything(), USER)
+    expect(withTenant).toHaveBeenCalledTimes(1)
   })
 
-  it('reports the stored policy verbatim', async () => {
+  it('inlines the live scope/project inventory from the same tenant tx (#168)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
-    getRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    getRetrievalPolicy.mockResolvedValue(null)
+    listMemoryFacets.mockResolvedValueOnce({ scopes: ['work'], projects: ['3ngram'] })
     const report = await describeEnvironment(USER)
-    expect(report.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+    expect(report.facets).toEqual({
+      scopes: ['work'],
+      projects: ['3ngram'],
+      truncated: { scopes: false, projects: false },
+    })
+    // The LIMIT cap+1 probe runs in SQL, not in the transport.
+    expect(listMemoryFacets).toHaveBeenCalledWith(expect.anything(), USER, {
+      limit: MAX_INLINE_FACET_LABELS + 1,
+    })
+    expect(withTenant).toHaveBeenCalledTimes(1)
+  })
+
+  it('caps the inline inventory per array and flags what the probe cut (#168 review)', async () => {
+    getLiveAccountId.mockResolvedValue(USER)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    // The probe returns cap+1 projects (more exist) and exactly cap scopes (complete).
+    const label = (prefix: string, i: number) => `${prefix}-${String(i).padStart(3, '0')}`
+    const projects = Array.from({ length: MAX_INLINE_FACET_LABELS + 1 }, (_, i) => label('p', i))
+    const scopes = Array.from({ length: MAX_INLINE_FACET_LABELS }, (_, i) => label('s', i))
+    listMemoryFacets.mockResolvedValueOnce({ scopes, projects })
+    const report = await describeEnvironment(USER)
+    expect(report.facets.projects).toEqual(projects.slice(0, MAX_INLINE_FACET_LABELS))
+    expect(report.facets.scopes).toEqual(scopes)
+    expect(report.facets.truncated).toEqual({ scopes: false, projects: true })
+  })
+
+  it('FAILS rather than reporting an identity for an erased or missing account (#321)', async () => {
+    // getLiveAccountId answers undefined for an absent row AND a tombstone; the
+    // report must not fall back to echoing the caller's id.
+    getLiveAccountId.mockResolvedValue(undefined)
+    listScopes.mockResolvedValue([])
+    getEnvironmentStats.mockResolvedValue(STATS)
+    getRetrievalPolicy.mockResolvedValue(null)
+    await expect(describeEnvironment(USER)).rejects.toBeInstanceOf(AccountDeletedError)
+    expect(listScopes).not.toHaveBeenCalled()
   })
 })

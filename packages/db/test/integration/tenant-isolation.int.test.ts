@@ -237,11 +237,12 @@ describe('assertRlsInForce runtime guard', () => {
       expect(forced, `${t} missing from migration-derived forced set`).toContain(t)
     }
     // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy;
-    // 0031 adds fact_proposals; 0032 adds agent_sessions. The names are
-    // asserted individually because a count alone would let a swap (one table
-    // gained, another dropped) pass.
-    expect(forced.length).toBe(15)
+    // 0031 adds fact_proposals; 0032 adds agent_sessions; 0039 adds
+    // user_write_scope_policy. The names are asserted individually because a
+    // count alone would let a swap (one table gained, another dropped) pass.
+    expect(forced.length).toBe(16)
     expect(forced).toContain('user_retrieval_policy')
+    expect(forced).toContain('user_write_scope_policy')
     expect(forced).toContain('fact_proposals')
     expect(forced).toContain('agent_sessions')
   })

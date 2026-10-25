@@ -1,5 +1,40 @@
 # @3ngram/cli
 
+## 1.9.1
+
+### Patch Changes
+
+- 48b8972: Security: zod 4.6.6 (CVE-2023-54404, denial of service via unbounded array validation) on every package that pins it, and body-parser 2.4.0 under express (CVE-2026-111181, denial of service via an unhandled decompression stream error) through the workspace advisory override. The v1.9.0 release image scan blocked publication on both. body-parser 2.4.0 is newer than the 7-day registry cooldown, so it is a reviewed exact-version `minimumReleaseAgeExclude` entry until it matures. No API or behaviour change.
+- Updated dependencies [48b8972]
+  - @3ngram/schema@0.12.1
+  - @3ngram/sdk@1.9.1
+
+## 1.9.0
+
+### Minor Changes
+
+- 3222da4: Native `remember` can now record a commitment's deadline and owner (issue #165). A `commitment` write over MCP, REST (`POST /api/v1/memories`), the SDK or the CLI (`--due`, `--owner`) accepts an optional explicit `dueAt` (ISO-8601 instant, at most millisecond precision) and `owner`. Both are written onto the auto-created commitment row in the same transaction, so briefing reports the commitment overdue once the deadline passes and the surfacing sweep expires it after the grace window, exactly as for imported commitments. Either field on a non-commitment is rejected rather than dropped, and nothing is inferred from the content: an undated commitment stays undated. A `revise` keeps the deadline, owner and commitment identity with the successor. No migration; the columns already existed.
+- de8ad09: `resolve` accepts an optional `reason` (issue #234) on MCP, `POST /api/v1/memories/:id/resolve` and the SDK (`client.resolve(id, status, { reason })`), so whoever settles a commitment can say what settled it — a PR number, "superseded by X" — in the same call. The reason is trimmed and must be 1–500 characters; an empty or longer one is rejected as invalid input before anything is written. It is stored on the commitment row (new nullable column `commitments.last_resolution_reason`, migration 0040, with a length CHECK generated from the schema bound) in the same transaction as the status change, never in the append-only audit event payload, which keeps carrying only `sessionRunId`. A reason explains one transition: any later status change without one clears it (including the surfacing sweep's expiry and a revise that demotes the commitment), a same-state no-op stores nothing, and a revise that keeps the commitment carries it with the row. A blocker has no commitment row, so a blocker resolve with a `reason` is rejected as invalid input (MCP error, REST 400 with a recovery detail) instead of being dropped. The reason is memory content: it is returned only by the authenticated, tenant-scoped `GET /api/v1/memories/:id/history` (new top-level `lastResolutionReason: string | null`) and by the owner's account export, never by briefing or search, never logged (its stored and core spellings join the log redaction list), and account erasure nulls it in place alongside `owner`. The tool description is unchanged.
+- 959ce85: Search hits now carry their filing (`scope`, nullable `project`) and, for commitments only, the lifecycle `commitmentStatus` (#319). The fields ride both MCP `search` projections (`full` and `compact`) in relevance and chronological order, the public REST `POST /api/v1/search` response, and the SDK types; the CLI labels each hit with `scope/project` and `commitment:<status>`. Memory status and commitment lifecycle are separate axes, so a resolved commitment stays a valid historical hit, now labelled instead of reading as an active instruction. Ordering, candidate sets, supersession demotion and cursors are unchanged.
+- 9e3bd98: A `remember` without `scope` now lands where the account's write-scope policy says (issue #235), instead of always landing in `personal`. `configure_scope` gains a `set_write_default` action with the same shape as `set_retrieval_default`: `mode: "off"` (the default, so nothing changes until an account opts in) keeps writing `personal`, `mode: "default"` fills an omitted scope with a registered scope, and `mode: "require"` rejects an unscoped `remember` as invalid input (MCP error, REST 400 with a recovery detail) before anything is written, access- or budget-checked, or embedded. An explicit `scope` always wins. The `remember` response over MCP and REST now echoes the scope the memory was actually written to. `describe_environment` reports the effective policy as `writeScopePolicy` next to `retrievalScopePolicy`. Renaming a registry scope carries the write default along; deleting it moves the policy to `require`. Aliases are not resolved, so an alias passed to `set_write_default` is rejected as not found. New table `user_write_scope_policy` (migration 0039, RLS + FORCE RLS), included in the account export and reset by account erasure. On the native remember schema `scope` no longer carries a `personal` default, so an omitted scope survives the parse; the base remember schema used by import keeps it.
+
+### Patch Changes
+
+- Updated dependencies [545fb26]
+- Updated dependencies [2fc6fbf]
+- Updated dependencies [eef068b]
+- Updated dependencies [96c5e01]
+- Updated dependencies [b3d705d]
+- Updated dependencies [3222da4]
+- Updated dependencies [0d70e7c]
+- Updated dependencies [de8ad09]
+- Updated dependencies [a550395]
+- Updated dependencies [38b83c9]
+- Updated dependencies [959ce85]
+- Updated dependencies [9e3bd98]
+  - @3ngram/schema@0.12.0
+  - @3ngram/sdk@1.9.0
+
 ## 1.8.7
 
 ### Patch Changes

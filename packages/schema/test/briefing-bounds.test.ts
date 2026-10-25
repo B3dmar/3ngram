@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   BRIEFING_SECTION_NAMES,
+  briefingCommitmentSchema,
   briefingToolInputSchema,
   briefingToolInputV2Schema,
   briefingToolOutputV2Schema,
@@ -118,6 +119,31 @@ const commitmentItem = () => ({
   status: 'open',
   dueAt: null,
   overdue: false,
+  owner: null,
+  scope: 'work',
+  project: null,
+})
+
+describe('briefingCommitmentSchema — owner and filing (issue #261)', () => {
+  it('carries a nullable owner, the scope and a nullable project', () => {
+    const owned = { ...commitmentItem(), owner: 'release-captain', project: '3ngram' }
+    expect(briefingCommitmentSchema.parse(owned)).toMatchObject({
+      owner: 'release-captain',
+      scope: 'work',
+      project: '3ngram',
+    })
+    expect(briefingCommitmentSchema.parse(commitmentItem())).toMatchObject({
+      owner: null,
+      project: null,
+    })
+  })
+
+  it('requires the filing fields so a server cannot silently omit them', () => {
+    const { scope: _scope, ...noScope } = commitmentItem()
+    const { owner: _owner, ...noOwner } = commitmentItem()
+    expect(briefingCommitmentSchema.safeParse(noScope).success).toBe(false)
+    expect(briefingCommitmentSchema.safeParse(noOwner).success).toBe(false)
+  })
 })
 
 const memoryItem = (memoryType = 'decision') => ({

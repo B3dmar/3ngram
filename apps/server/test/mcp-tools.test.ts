@@ -15,8 +15,8 @@ import { fakeEmbedding } from '@3ngram/llm'
 import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
-  configureScopeOutputV2Schema,
-  describeEnvironmentOutputV2Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputV5Schema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -26,12 +26,19 @@ import {
   resolveToolOutputSchema,
   reviewProposalsOutputV2Schema,
   reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   searchQueryV3Schema,
   searchToolOutputV2Schema,
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import {
+  decodeCursor,
+  encodeCursor,
+  encodeProposalsCursor,
+  proposalsFingerprint,
+  searchFingerprint,
+} from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
@@ -39,6 +46,7 @@ const searchDashboardPage = vi.fn()
 const searchChronological = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
+const reviseDisposition = vi.fn()
 const resolveByMemoryId = vi.fn()
 const briefing = vi.fn()
 const handoff = vi.fn()
@@ -52,10 +60,11 @@ const setScopeAliases = vi.fn()
 const deleteScope = vi.fn()
 const describeEnvironment = vi.fn()
 const setRetrievalDefault = vi.fn()
+const setWriteDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
-const listAllProposals = vi.fn()
+const listProposalsPage = vi.fn()
 const rejectProposalAnyKind = vi.fn()
 const acceptProposalAnyKind = vi.fn()
 
@@ -214,6 +223,24 @@ function applyPolicyToScopeFilter(
   if (policy?.mode === 'require') throw new UnscopedRetrievalError(policy.registeredScopes ?? [])
   return { scope: undefined, appliedScope: null }
 }
+// Write-scope policy typed error (issue #235) — mirrors @3ngram/core: fixed,
+// content-free text naming the fix.
+class UnscopedWriteError extends Error {
+  constructor() {
+    super(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
+    )
+    this.name = 'UnscopedWriteError'
+  }
+}
+class ResolveReasonNotSupportedError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a resolve reason is stored only on a commitment; omit reason to resolve a blocker')
+    this.name = 'ResolveReasonNotSupportedError'
+    this.memoryId = memoryId
+  }
+}
 // D3 admin typed errors — mirror @3ngram/core (id/name fields only, never content).
 class ScopeNameConflictError extends Error {
   readonly scopeName: string
@@ -276,6 +303,7 @@ vi.mock('@3ngram/core', () => ({
   searchChronological,
   getFacts,
   revise,
+  reviseDisposition,
   resolveByMemoryId,
   briefing,
   handoff,
@@ -299,9 +327,12 @@ vi.mock('@3ngram/core', () => ({
   MissingSelectorError,
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
+  UnscopedWriteError,
+  ResolveReasonNotSupportedError,
   // D3 admin tools
   listScopes,
   setRetrievalDefault,
+  setWriteDefault,
   createScope,
   renameScope,
   setScopeAliases,
@@ -310,7 +341,7 @@ vi.mock('@3ngram/core', () => ({
   listProposals,
   rejectProposal,
   applyProposal,
-  listAllProposals,
+  listProposalsPage,
   rejectProposalAnyKind,
   acceptProposalAnyKind,
   ScopeNameConflictError,
@@ -528,6 +559,7 @@ describe('remember tool', () => {
     // A settle handle that NEVER resolves: if the handler awaited it the call
     // would hang. It returns immediately because ack-before-embed does not await.
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       embed: { settled: new Promise<boolean>(() => undefined) },
     })
@@ -547,12 +579,16 @@ describe('remember tool', () => {
       (result as { structuredContent: unknown }).structuredContent,
     )
     expect(parsed.memory.id).toBe(MEMO_ID)
-    expect(parsed.memory.scope).toBe('personal') // default applied
+    expect(parsed.memory.scope).toBe('personal') // the scope core wrote, echoed
     expect(parsed.embedded).toBe('pending') // gateway configured: embed in flight
   })
 
   it('reports `off` when no embedding gateway is configured', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'decision', topic: 'pin sdk', content: 'pin mcp sdk at 1.29.0' },
@@ -566,6 +602,7 @@ describe('remember tool', () => {
   it('surfaces the auto-created commitmentId for a commitment-type memory', async () => {
     const commitmentId = crypto.randomUUID()
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       commitmentId,
       embed: { settled: Promise.resolve(false) },
@@ -581,7 +618,11 @@ describe('remember tool', () => {
   })
 
   it('omits commitmentId for a non-commitment memory', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'note', topic: 'x', content: 'y' },
@@ -599,7 +640,12 @@ describe('remember tool', () => {
 
   it('threads facts to core and echoes the written factIds', async () => {
     const factIds = [crypto.randomUUID(), crypto.randomUUID()]
-    remember.mockResolvedValue({ id: MEMO_ID, factIds, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      factIds,
+      embed: { settled: Promise.resolve(false) },
+    })
     const facts = [
       { subject: 'lift.back_squat', predicate: 'top_set.weight_kg', value: '98' },
       { subject: 'lift.back_squat', predicate: 'top_set.reps', value: '3' },
@@ -621,6 +667,7 @@ describe('remember tool', () => {
 
   it('accepts an ISO validFrom on a fact (JSON carries no date type)', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: MEMO_ID,
       factIds: [crypto.randomUUID()],
       embed: { settled: Promise.resolve(false) },
@@ -648,7 +695,11 @@ describe('remember tool', () => {
   })
 
   it('omits factIds entirely when no facts were written (V1 response unchanged)', async () => {
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       { memoryType: 'note', topic: 'x', content: 'y' },
@@ -685,7 +736,11 @@ describe('remember tool', () => {
     // it non-strict and strips supplied keys before the handler runs: an explicit
     // scope:'work'/project:'3ngram' reaches core and is echoed in the structured
     // output — NOT the scope:'personal'/project:null defaults of an omitted axis.
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     const result = await call(
       'remember',
       {
@@ -705,6 +760,38 @@ describe('remember tool', () => {
     const parsed = rememberToolOutputSchema.parse(result.structuredContent)
     expect(parsed.memory.scope).toBe('work')
     expect(parsed.memory.project).toBe('3ngram')
+  })
+
+  it('passes an omitted scope to core as omitted and echoes the scope core WROTE (#235)', async () => {
+    // The tenant's write policy filled 'work'; the echo must not be the request's
+    // (absent) scope nor a schema default.
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'x', content: 'y' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBeFalsy()
+    const coreInput = remember.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('scope' in coreInput).toBe(false)
+    expect(rememberToolOutputSchema.parse(result.structuredContent).memory.scope).toBe('work')
+  })
+
+  it('maps UnscopedWriteError to invalid input naming the fix, never content (#235)', async () => {
+    remember.mockRejectedValue(new UnscopedWriteError())
+    const result = await call(
+      'remember',
+      { memoryType: 'note', topic: 'secret topic', content: 'secret content' },
+      ctx({ gateway: undefined }),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content as { text: string }[])[0]?.text ?? ''
+    expect(text).toMatch(/^invalid input: .*pass scope; registered scopes: personal, work$/)
+    expect(text).not.toContain('secret')
   })
 
   it('still rejects an UNKNOWN key rather than silently dropping it (strict, #284)', async () => {
@@ -783,6 +870,8 @@ describe('search tool', () => {
     truncated: false,
     score: 0.9,
     superseded: false,
+    scope: 'work',
+    project: null,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -818,8 +907,41 @@ describe('search tool', () => {
       topic: 'pin',
       score: 0.9,
       superseded: false,
+      scope: 'work',
+      project: null,
     })
   })
+
+  // #319: commitment lifecycle is a separate axis from memory status — every
+  // projection x order labels a commitment hit, and never fabricates one.
+  const RESOLVED = {
+    ...HIT,
+    id: '22222222-2222-4222-8222-222222222222',
+    project: 'engine',
+    commitmentStatus: 'resolved' as const,
+  }
+  for (const order of ['relevance', 'chronological'] as const) {
+    for (const projection of ['full', 'compact'] as const) {
+      it(`labels filing + commitment lifecycle (${order}, ${projection}, #319)`, async () => {
+        const page = { ...pageOf([RESOLVED, HIT]), nextCursor: undefined, appliedScope: null }
+        searchDashboardPage.mockResolvedValue(page)
+        searchChronological.mockResolvedValue(page)
+        const args =
+          order === 'relevance' ? { query: 'sdk pin' } : { order, scope: 'work' as const }
+        const result = await call('search', { ...args, projection }, ctx())
+        expect(result.isError).toBeFalsy()
+        const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+        expect(parsed.hits[0]).toMatchObject({
+          scope: 'work',
+          project: 'engine',
+          commitmentStatus: 'resolved',
+        })
+        expect(parsed.hits[1]).toMatchObject({ scope: 'work', project: null })
+        expect(parsed.hits[1]).not.toHaveProperty('commitmentStatus')
+        expect('content' in (parsed.hits[0] ?? {})).toBe(projection === 'full')
+      })
+    }
+  }
 
   it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
@@ -1487,6 +1609,45 @@ describe('revise tool', () => {
     expect(parsed.embedded).toBe('off')
   })
 
+  it('archive disposition: routes to reviseDisposition, returns per-id outcomes (#217)', async () => {
+    const OTHER = crypto.randomUUID()
+    reviseDisposition.mockResolvedValue({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: MEMO_ID, outcome: 'archived' },
+        { memoryId: OTHER, outcome: 'rejected', reason: 'open_commitment' },
+      ],
+    })
+    const result = await call('revise', { kind: 'archive', memoryIds: [MEMO_ID, OTHER] }, ctx())
+    expect(result.isError).toBeFalsy()
+    expect(revise).not.toHaveBeenCalled()
+    expect(reviseDisposition.mock.calls[0]?.slice(0, 3)).toEqual([
+      UID,
+      { kind: 'archive', memoryIds: [MEMO_ID, OTHER] },
+      'user_mcp',
+    ])
+    expect(reviseToolOutputV2Schema.parse(result.structuredContent)).toEqual({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: MEMO_ID, outcome: 'archived' },
+        { memoryId: OTHER, outcome: 'rejected', reason: 'open_commitment' },
+      ],
+    })
+  })
+
+  it('rejects a malformed archive batch without calling core (#217)', async () => {
+    for (const args of [
+      { kind: 'archive', memoryIds: [] },
+      { kind: 'archive', memoryIds: [MEMO_ID, MEMO_ID] },
+      { kind: 'archive', predecessorId: MEMO_ID },
+    ]) {
+      const result = await call('revise', args, ctx())
+      expect(result.isError).toBe(true)
+    }
+    expect(reviseDisposition).not.toHaveBeenCalled()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
   it('rejects a move with nothing to change without calling core (#233)', async () => {
     const result = await call('revise', { kind: 'move', predecessorId: MEMO_ID }, ctx())
     expect(result.isError).toBe(true)
@@ -1606,6 +1767,49 @@ describe('resolve tool', () => {
     const result = await call('resolve', { memoryId: 'not-a-uuid', status: 'resolved' }, ctx())
     expect(result.isError).toBe(true)
     expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('forwards a trimmed reason to core as the sixth argument (issue #234)', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: crypto.randomUUID(), status: 'resolved' })
+    const result = await call(
+      'resolve',
+      { memoryId: MEMO_ID, status: 'resolved', reason: '  PR #234  ' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(resolveByMemoryId.mock.calls[0]?.[5]).toBe('PR #234')
+  })
+
+  it('omits the reason (undefined) when the caller passes none', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: crypto.randomUUID(), status: 'resolved' })
+    await call('resolve', { memoryId: MEMO_ID, status: 'resolved' }, ctx())
+    expect(resolveByMemoryId.mock.calls[0]?.[5]).toBeUndefined()
+  })
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '  '],
+    ['oversize', 'x'.repeat(501)],
+  ])('rejects a %s reason as invalid input without calling core', async (_label, reason) => {
+    const result = await call('resolve', { memoryId: MEMO_ID, status: 'resolved', reason }, ctx())
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('invalid input')
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('maps a blocker reason rejection to invalid input with fixed text', async () => {
+    resolveByMemoryId.mockRejectedValue(new ResolveReasonNotSupportedError(MEMO_ID))
+    const result = await call(
+      'resolve',
+      { memoryId: MEMO_ID, status: 'resolved', reason: 'private-evidence-text' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toBe(
+      'invalid input: a resolve reason is stored only on a commitment; omit reason to resolve a blocker',
+    )
+    expect(text).not.toContain('private-evidence-text')
   })
 
   it('maps CommitmentNotFoundError to not_found, naming the id only', async () => {
@@ -2006,7 +2210,11 @@ describe('per-tool OAuth scope enforcement (fail-closed)', () => {
 
   it('a write-scoped token can do both', async () => {
     const full = ctx({ scopes: ['memory:read', 'memory:write'] })
-    remember.mockResolvedValue({ id: MEMO_ID, embed: { settled: Promise.resolve(false) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: MEMO_ID,
+      embed: { settled: Promise.resolve(false) },
+    })
     searchDashboardPage.mockResolvedValue({
       hits: [],
       frozen: { ids: [], scores: [] },
@@ -2081,6 +2289,21 @@ function factProposalRecord(status = 'proposed') {
   }
 }
 
+/** A core proposals page (issue #320): the rows plus the pagination envelope. */
+function proposalsPage(
+  proposals: unknown[],
+  factProposals: unknown[] = [],
+  extra: { hasMore?: boolean; next?: { createdAt: string; id: string } } = {},
+) {
+  return {
+    proposals,
+    factProposals,
+    totals: { edge: proposals.length, fact: factProposals.length },
+    hasMore: extra.hasMore ?? false,
+    next: extra.next,
+  }
+}
+
 describe('configure_scope tool', () => {
   it('list: read-only token validates, calls core, returns schema-valid records', async () => {
     listScopes.mockResolvedValue([scopeRecord('work', ['job'])])
@@ -2090,7 +2313,7 @@ describe('configure_scope tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -2107,7 +2330,7 @@ describe('configure_scope tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('upserted')
     if (parsed.action === 'upserted') expect(parsed.scope.name).toBe('research')
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
@@ -2130,7 +2353,7 @@ describe('configure_scope tool', () => {
 
     const deleted = await call('configure_scope', { action: 'delete', name: 'work' }, ctx())
     expect(deleteScope).toHaveBeenCalledWith(UID, 'work')
-    const parsed = configureScopeOutputV2Schema.parse(deleted.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(deleted.structuredContent)
     expect(parsed.action).toBe('deleted')
     if (parsed.action === 'deleted') expect(parsed.name).toBe('work')
   })
@@ -2170,26 +2393,31 @@ describe('configure_scope tool', () => {
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
   })
 
-  it('list: an edge-only tenant gets NO factProposals key (byte-stable V1 response)', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+  it('list: a page with no fact proposals gets NO factProposals key (never an empty array)', async () => {
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
       ctx({ scopes: ['memory:read'] }),
     )
 
-    // KEY ABSENCE, not `undefined`: a tenant with no fact proposals must see
-    // the response it always saw, with no new field appearing at all.
+    // KEY ABSENCE, not `undefined`: a page with no fact proposals carries no
+    // factProposals field; the only additions are the pagination envelope
+    // (issue #320), and a final page carries no nextCursor.
     const structured = result.structuredContent as Record<string, unknown>
     expect('factProposals' in structured).toBe(false)
-    expect(Object.keys(structured).sort()).toEqual(['action', 'count', 'proposals'])
+    expect(Object.keys(structured).sort()).toEqual([
+      'action',
+      'count',
+      'counts',
+      'hasMore',
+      'proposals',
+      'totals',
+    ])
   })
 
   it('list: surfaces fact proposals alongside edge ones, count stays the edge count', async () => {
-    listAllProposals.mockResolvedValue({
-      proposals: [proposalRecord()],
-      factProposals: [factProposalRecord()],
-    })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()], [factProposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2325,8 +2553,11 @@ describe('configure_scope tool', () => {
 describe('describe_environment tool', () => {
   it('reports capabilities (tool names/count), scopes, and bounded stats', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: { decision: 3, fact: 5 },
         activeMemories: 8,
@@ -2337,7 +2568,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2351,6 +2582,80 @@ describe('describe_environment tool', () => {
     expect(parsed.stats.supersededMemories).toBe(2)
     expect(parsed.stats.archivedMemories).toBe(1)
     expect(parsed.stats.commitmentsByStatus.resolved).toBe(4)
+    // The authenticated account (issue #321): core's users.id, verbatim.
+    expect(parsed.account).toEqual({ id: UID })
+    // The inlined inventory (issue #168): empty arrays, never omitted.
+    expect(parsed.facets).toEqual({
+      scopes: [],
+      projects: [],
+      truncated: { scopes: false, projects: false },
+    })
+  })
+
+  it('inlines the live scope/project inventory core reported (#168)', async () => {
+    describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: {
+        scopes: ['personal', 'work'],
+        projects: ['3ngram', 'garden'],
+        truncated: { scopes: false, projects: false },
+      },
+      scopes: [scopeRecord('work'), scopeRecord('personal'), scopeRecord('client-acme')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'off', scope: null },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 2,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
+    // The inventory is the LIVE-memory facets, distinct from the registry list:
+    // `client-acme` is registered but holds nothing, so it is not a facet.
+    expect(parsed.facets).toEqual({
+      scopes: ['personal', 'work'],
+      projects: ['3ngram', 'garden'],
+      truncated: { scopes: false, projects: false },
+    })
+    expect(parsed.scopes.map((s) => s.name)).toContain('client-acme')
+  })
+
+  it('reports the account id core read, not one derived from a scope name (#321)', async () => {
+    // core is the source of the id (the live users row); the transport neither
+    // substitutes ctx.userId nor derives anything from the scope registry.
+    const coreId = crypto.randomUUID()
+    describeEnvironment.mockResolvedValue({
+      account: { id: coreId },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
+      scopes: [scopeRecord('work'), scopeRecord('personal')],
+      retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      writeScopePolicy: { mode: 'off', scope: null },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
+    expect(parsed.account.id).toBe(coreId)
+    expect(describeEnvironment).toHaveBeenCalledWith(UID)
+    // Identity only: no email, label, or OAuth client id rides on the account.
+    expect(Object.keys(parsed.account)).toEqual(['id'])
+  })
+
+  it('an erased account yields account_deleted and NO identity (#321)', async () => {
+    describeEnvironment.mockRejectedValueOnce(new AccountDeletedError())
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('account_deleted')
+    expect(result.structuredContent).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain(UID)
   })
 
   it('REDACTION: the response never carries a configured secret (sentinel)', async () => {
@@ -2362,8 +2667,11 @@ describe('describe_environment tool', () => {
     process.env.OAUTH_PRIVATE_KEYS = SENTINEL
     try {
       describeEnvironment.mockResolvedValue({
+        account: { id: UID },
+        facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
         scopes: [scopeRecord('work')],
         retrievalScopePolicy: { mode: 'off', scope: null },
+        writeScopePolicy: { mode: 'off', scope: null },
         stats: {
           memoriesByType: {},
           activeMemories: 0,
@@ -2396,7 +2704,7 @@ describe('describe_environment tool', () => {
 
 describe('review_proposals tool', () => {
   it('list: read-only token returns bounded schema-valid records', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2410,17 +2718,108 @@ describe('review_proposals tool', () => {
       expect(parsed.proposals[0]?.status).toBe('proposed')
     }
     // The schema default limit is forwarded (no-firehose).
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
   })
 
   it('list: forwards a status filter and a caller limit', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([]))
     await call(
       'review_proposals',
       { action: 'list', status: 'rejected', limit: 10 },
       ctx({ scopes: ['memory:read'] }),
     )
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+  })
+
+  describe('list pagination (issue #320)', () => {
+    const POSITION = { createdAt: '2026-01-01T00:00:00.123456Z', id: PROPOSAL_ID }
+    const mcpFp = (status?: string, tenant = UID) =>
+      proposalsFingerprint({ surface: 'mcp', kinds: ['edge', 'fact'], status, tenant })
+    const readCtx = () => ctx({ scopes: ['memory:read'] })
+    const errorText = (result: Awaited<ReturnType<typeof call>>) =>
+      (result.content[0] as { text: string }).text
+
+    it('a page with more rows carries counts, live totals, hasMore and a nextCursor', async () => {
+      listProposalsPage.mockResolvedValue({
+        ...proposalsPage([proposalRecord()], [factProposalRecord()], {
+          hasMore: true,
+          next: POSITION,
+        }),
+        totals: { edge: 140, fact: 120 },
+      })
+      const result = await call('review_proposals', { action: 'list', limit: 2 }, readCtx())
+      const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+      if (parsed.action !== 'list') throw new Error('expected list')
+      // `count` keeps its shipped meaning: EDGE rows on this page, not a total.
+      expect(parsed.count).toBe(1)
+      expect(parsed.counts).toEqual({ edge: 1, fact: 1 })
+      expect(parsed.totals).toEqual({ edge: 140, fact: 120 })
+      expect(parsed.hasMore).toBe(true)
+      expect(parsed.nextCursor).toBe(encodeProposalsCursor(POSITION, mcpFp()))
+    })
+
+    it('a continuation resumes strictly after the cursor position, under the same filter', async () => {
+      listProposalsPage.mockResolvedValue(proposalsPage([]))
+      const cursor = encodeProposalsCursor(POSITION, mcpFp('proposed'))
+      const result = await call(
+        'review_proposals',
+        { action: 'list', status: 'proposed', cursor },
+        readCtx(),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(listProposalsPage).toHaveBeenCalledWith(UID, {
+        status: 'proposed',
+        limit: 25,
+        after: POSITION,
+      })
+    })
+
+    it.each([
+      ['garbled base64/JSON', 'not-a-cursor'],
+      [
+        'a search cursor',
+        encodeCursor({ v: 3, recordedAt: POSITION.createdAt, id: PROPOSAL_ID, fp: 'a'.repeat(16) }),
+      ],
+      [
+        'over-precise createdAt',
+        Buffer.from(
+          JSON.stringify({
+            v: 4,
+            kind: 'proposals',
+            createdAt: '2026-01-01T00:00:00.1234567Z',
+            id: PROPOSAL_ID,
+            fp: mcpFp(),
+          }),
+        ).toString('base64url'),
+      ],
+    ])('a malformed cursor (%s) is invalid input and never reaches core', async (_label, cursor) => {
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toContain('invalid input')
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['a different status filter', mcpFp('rejected')],
+      ['another tenant', mcpFp(undefined, crypto.randomUUID())],
+      [
+        'the REST edge-only walk',
+        proposalsFingerprint({ surface: 'rest', kinds: ['edge'], status: undefined, tenant: UID }),
+      ],
+    ])('a cursor minted for %s is a typed mismatch, never a silent re-page', async (_label, fp) => {
+      const cursor = encodeProposalsCursor(POSITION, fp)
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toBe(
+        'invalid input: cursor was issued for a different proposals listing — omit the cursor to start a new walk',
+      )
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it('the token never carries the tenant id', () => {
+      const token = encodeProposalsCursor(POSITION, mcpFp())
+      expect(Buffer.from(token, 'base64url').toString('utf8')).not.toContain(UID)
+    })
   })
 
   it('reject: write token transitions and echoes the updated record', async () => {
@@ -2505,7 +2904,7 @@ describe('review_proposals tool', () => {
     const result = await call('review_proposals', { action: 'list' }, writeOnly)
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
-    expect(listAllProposals).not.toHaveBeenCalled()
+    expect(listProposalsPage).not.toHaveBeenCalled()
   })
 
   it('TWO-LAYER SCOPE: a read-only token may list but NOT reject/accept', async () => {
@@ -2677,7 +3076,7 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     ['describe_environment', {}, 'read', describeEnvironment],
     ['configure_scope', { action: 'list' }, 'read', listScopes],
     ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],
-    ['review_proposals', { action: 'list' }, 'read', listProposals],
+    ['review_proposals', { action: 'list' }, 'read', listProposalsPage],
     ['review_proposals', { action: 'reject', proposalId: MEMO_ID }, 'write', rejectProposal],
   ]
 
@@ -2689,6 +3088,84 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     expect((result.content[0] as { text: string }).text).toContain('access_denied')
     // The gate blocked BEFORE the db op — core was never invoked.
     expect(coreSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Write-scope policy wiring (issue #235)
+// ---------------------------------------------------------------------------
+
+describe('write-scope policy wiring', () => {
+  it('configure_scope set_write_default stores the policy and echoes it', async () => {
+    setWriteDefault.mockResolvedValue({ mode: 'default', scope: 'work' })
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: 'work', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(configureScopeOutputV3Schema.parse(result.structuredContent)).toEqual({
+      action: 'write_default_set',
+      policy: { mode: 'default', scope: 'work' },
+    })
+    expect(setWriteDefault).toHaveBeenCalledWith(UID, { mode: 'default', scope: 'work' })
+    expect(setRetrievalDefault).not.toHaveBeenCalled()
+  })
+
+  it('set_write_default is a WRITE action: a read-only token is rejected before core', async () => {
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: null, mode: 'require' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('memory:write')
+    expect(setWriteDefault).not.toHaveBeenCalled()
+  })
+
+  it('rejects a drifting mode/scope pair or a missing field at the boundary', async () => {
+    for (const args of [
+      { action: 'set_write_default', scope: null, mode: 'default' },
+      { action: 'set_write_default', scope: 'work', mode: 'require' },
+      { action: 'set_write_default', mode: 'off' },
+    ]) {
+      const result = await call('configure_scope', args, ctx())
+      expect(result.isError, JSON.stringify(args)).toBe(true)
+    }
+    expect(setWriteDefault).not.toHaveBeenCalled()
+  })
+
+  it('an unregistered scope or an alias maps to the typed not_found', async () => {
+    setWriteDefault.mockRejectedValue(new ScopeNotFoundError('job'))
+    const result = await call(
+      'configure_scope',
+      { action: 'set_write_default', scope: 'job', mode: 'default' },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('not_found')
+  })
+
+  it('describe_environment reports the write policy next to the retrieval policy', async () => {
+    describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
+      scopes: [scopeRecord('work')],
+      retrievalScopePolicy: { mode: 'off', scope: null },
+      writeScopePolicy: { mode: 'default', scope: 'work' },
+      stats: {
+        memoriesByType: {},
+        activeMemories: 0,
+        supersededMemories: 0,
+        archivedMemories: 0,
+        commitmentsByStatus: {},
+      },
+    })
+    const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
+    expect(result.isError).toBeFalsy()
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
+    expect(parsed.writeScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+    expect(parsed.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
   })
 })
 
@@ -2710,7 +3187,7 @@ describe('retrieval-scope policy wiring', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = configureScopeOutputV2Schema.parse(result.structuredContent)
+    const parsed = configureScopeOutputV3Schema.parse(result.structuredContent)
     expect(parsed).toEqual({
       action: 'retrieval_default_set',
       policy: { mode: 'default', scope: 'work' },
@@ -2754,8 +3231,11 @@ describe('retrieval-scope policy wiring', () => {
 
   it('describe_environment reports the active policy', async () => {
     describeEnvironment.mockResolvedValue({
+      account: { id: UID },
+      facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
       scopes: [scopeRecord('work')],
       retrievalScopePolicy: { mode: 'default', scope: 'work' },
+      writeScopePolicy: { mode: 'off', scope: null },
       stats: {
         memoriesByType: {},
         activeMemories: 0,
@@ -2766,7 +3246,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV2Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputV5Schema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 
