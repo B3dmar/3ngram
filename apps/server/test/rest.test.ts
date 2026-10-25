@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
-import { searchRestResponseV2Schema } from '@3ngram/schema'
+import { memoryHistoryResponseSchema, searchRestResponseV2Schema } from '@3ngram/schema'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 // The REAL ZodError: the triage routes no longer pre-parse, so a rejected body
@@ -1777,6 +1777,8 @@ describe('GET /api/v1/memories/facets (issue #342)', () => {
   })
 })
 
+const RUN_ID_262 = '01890b6e-0000-7000-8000-000000000262'
+
 describe('GET /api/v1/memories/:id/history', () => {
   it('happy path: returns identity-only lineage and audit metadata', async () => {
     const predecessorId = crypto.randomUUID()
@@ -1833,9 +1835,11 @@ describe('GET /api/v1/memories/:id/history', () => {
           actorKind: 'user_api',
           createdAt: new Date('2026-06-01T00:00:00Z'),
           payloadMetadata: { present: true, jsonType: 'object', byteLength: 20 },
+          sessionRunId: RUN_ID_262,
         },
       ],
       eventsTruncated: false,
+      createdBySessionRunId: RUN_ID_262,
       sections: { lineage: 'ok', events: 'ok' },
     })
 
@@ -1844,7 +1848,12 @@ describe('GET /api/v1/memories/:id/history', () => {
     const body = (await res.json()) as {
       memory: { id: string; content?: string; recordedAt: string }
       lineage: { edges: Array<{ createdAt: string }> }
-      auditEvents: Array<{ payloadMetadata: { byteLength: number }; payload?: unknown }>
+      auditEvents: Array<{
+        payloadMetadata: { byteLength: number }
+        payload?: unknown
+        sessionRunId: string | null
+      }>
+      createdBySessionRunId: string | null
       sections: { lineage: string; events: string }
     }
     expect(body.memory.id).toBe(NEW_ID)
@@ -1853,6 +1862,10 @@ describe('GET /api/v1/memories/:id/history', () => {
     expect(body.lineage.edges[0]?.createdAt).toBe('2026-06-02T00:00:00.000Z')
     expect(body.auditEvents[0]?.payloadMetadata.byteLength).toBe(20)
     expect(body.auditEvents[0]).not.toHaveProperty('payload')
+    // Issue #262: the allowlisted provenance id rides beside payloadMetadata.
+    expect(body.auditEvents[0]?.sessionRunId).toBe(RUN_ID_262)
+    expect(body.createdBySessionRunId).toBe(RUN_ID_262)
+    expect(memoryHistoryResponseSchema.safeParse(body).success).toBe(true)
     expect(body.sections).toEqual({ lineage: 'ok', events: 'ok' })
     expect(getMemoryHistory).toHaveBeenCalledWith(TENANT, NEW_ID)
   })
@@ -1896,6 +1909,7 @@ describe('GET /api/v1/memories/:id/history', () => {
       directRelationships: { predecessors: [], successors: [], truncated: false },
       auditEvents: [],
       eventsTruncated: false,
+      createdBySessionRunId: null,
       sections: { lineage: 'ok', events: 'unavailable' },
       sectionErrors: { events: 'Error' },
     })
@@ -1906,10 +1920,12 @@ describe('GET /api/v1/memories/:id/history', () => {
     const body = (await res.json()) as {
       lineage: { nodes: Array<{ id: string }> }
       auditEvents: unknown[]
+      createdBySessionRunId: string | null
       sections: { lineage: string; events: string }
       sectionErrors?: unknown
     }
     expect(body.sections).toEqual({ lineage: 'ok', events: 'unavailable' })
+    expect(body.createdBySessionRunId).toBeNull()
     expect(body.lineage.nodes).toHaveLength(1)
     expect(body.auditEvents).toEqual([])
     // The content-free diagnostic stays server-side; it is not on the wire body.

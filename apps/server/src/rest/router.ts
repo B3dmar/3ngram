@@ -443,7 +443,11 @@ export function restRouter(options: RestRouterOptions): Router {
   // GET /api/v1/memories/:id/history — identity-only lineage + audit trail for
   // dashboard detail. Registered before /:id for route clarity. Returns no
   // content and no raw audit payload values: only identity fields, typed edges,
-  // event kind/actor/time, and payload metadata.
+  // event kind/actor/time, payload metadata, and ALLOWLISTED payload keys as
+  // sibling fields — today only `sessionRunId` (issue #262), projected and
+  // re-parsed in packages/db the same way the agent-sessions events route
+  // narrows it, plus `createdBySessionRunId` (the run on this memory's own
+  // native `create` event). Both are ids, not content.
   router.get('/api/v1/memories/:id/history', (req, res) => {
     void guard('memories.history', res, async () => {
       const id = pathIdSchema.safeParse(req.params.id)
@@ -488,8 +492,10 @@ export function restRouter(options: RestRouterOptions): Router {
           actorKind: event.actorKind,
           createdAt: event.createdAt.toISOString(),
           payloadMetadata: event.payloadMetadata,
+          sessionRunId: event.sessionRunId,
         })),
         eventsTruncated: history.eventsTruncated,
+        createdBySessionRunId: history.createdBySessionRunId,
         sections: history.sections,
       })
     })
