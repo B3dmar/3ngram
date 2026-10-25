@@ -16,10 +16,10 @@ set -euo pipefail
 # (a) a known provider HOST in a URL literal, or (b) an import/require of a
 # provider SDK package. Anchored loosely enough to catch the realistic bypasses,
 # tight enough to avoid matching prose.
-HOST_PATTERN='(api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.cohere\.ai|api\.mistral\.ai)'
+HOST_PATTERN='(api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.cohere\.ai|api\.mistral\.ai|api\.typesafe\.ai)'
 # Static `from '<sdk>'`, CommonJS `require('<sdk>')`, AND dynamic `import('<sdk>')`
 # — a dynamic import would otherwise bypass the gate.
-SDK_PATTERN="(from|require[[:space:]]*\\(|import[[:space:]]*\\()[[:space:]]*[\"'](openai|@anthropic-ai/|@google/generative-ai|cohere-ai|@mistralai/)"
+SDK_PATTERN="(from|require[[:space:]]*\\(|import[[:space:]]*\\()[[:space:]]*[\"'](openai|@anthropic-ai/|@google/generative-ai|cohere-ai|@mistralai/|@typesafe-ai/)"
 PATTERN="${HOST_PATTERN}|${SDK_PATTERN}"
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -37,6 +37,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
     "import MistralClient from '@mistralai/mistralai'"
     "const { default: OpenAI } = await import('openai')"
     'const sdk = await import("@anthropic-ai/sdk")'
+    "await fetch('https://api.typesafe.ai/v1/systemone')"
+    "import { TypeSafeClient } from '@typesafe-ai/sdk'"
   )
   for form in "${breaches[@]}"; do
     printf '%s\n' "$form" > "$tmp/f.ts"
@@ -48,6 +50,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     "const { createApp } = await import('./app.js')"
     "const { assertSigningKeysUsable } = await import('@3ngram/core/auth')"
     "import { createOpenAIGateway } from '@3ngram/llm'"
+    "import { createJevGateway } from '@3ngram/llm'"
     "const url = \`\${baseUrl}/embeddings\`"
     "import { z } from 'zod'"
   )

@@ -23,6 +23,8 @@
 import {
   type CompleteOptions,
   type CompletionResult,
+  type DecideRequest,
+  type DecideResult,
   EMBEDDING_DIMENSIONS,
   type EmbedResult,
   type Gateway,
@@ -55,11 +57,10 @@ export interface OpenAIGatewayConfig {
 }
 
 /**
- * Raised when a not-yet-implemented gateway operation is invoked. No operation
- * on this gateway raises it today ({@link createOpenAIGateway} implements both
- * `embed` and `complete`); it is kept as the typed shape a future operation
- * declares itself unimplemented with, and because callers already discriminate
- * on it.
+ * Raised when a gateway lacks an operation. {@link createOpenAIGateway} raises
+ * it from `decide` (typed judgments are the Jev gateway's job, `jev.ts`); the
+ * Jev gateway raises it from `embed` and `complete`. Callers discriminate on it
+ * to tell "no provider for this capability" from a failed call.
  */
 export class NotImplementedError extends Error {
   constructor(operation: string) {
@@ -290,5 +291,9 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
     }
   }
 
-  return { embed, complete }
+  function decide(_request: DecideRequest, _operation: string): Promise<DecideResult> {
+    return Promise.reject(new NotImplementedError('decide'))
+  }
+
+  return { embed, complete, decide }
 }

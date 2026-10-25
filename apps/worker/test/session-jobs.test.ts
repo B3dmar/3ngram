@@ -91,6 +91,7 @@ async function bootQueues(closerEnabled: boolean) {
   vi.doMock('@3ngram/config', () => ({
     log: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
     loadLlmGatewayConfig: () => undefined,
+    loadJevGatewayConfig: () => undefined,
     loadSessionCloserConfig: () => ({ enabled: closerEnabled }),
     loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
   }))

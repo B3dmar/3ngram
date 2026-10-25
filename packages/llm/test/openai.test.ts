@@ -9,6 +9,7 @@ import {
   createOpenAIGateway,
   GatewayRequestError,
   InvalidEmbeddingResponseError,
+  NotImplementedError,
 } from '../src/openai.js'
 import { EMBEDDING_DIMENSIONS } from '../src/types.js'
 
@@ -138,5 +139,17 @@ describe('createOpenAIGateway embed() HTTP failure', () => {
     expect((err as GatewayRequestError).status).toBe(400)
     // Message names the status only — never the response body or request text.
     expect((err as Error).message).toBe('gateway embed failed with status 400')
+  })
+})
+
+describe('createOpenAIGateway decide()', () => {
+  it('throws NotImplementedError without a network call', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const gw = createOpenAIGateway(CONFIG)
+    await expect(
+      gw.decide({ state: 's', questions: { q: { type: 'noul', instructions: 'i' } } }, 'op'),
+    ).rejects.toBeInstanceOf(NotImplementedError)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

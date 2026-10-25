@@ -28,6 +28,7 @@ vi.mock('bullmq', async () => {
 vi.mock('@3ngram/config', () => ({
   log: () => ({ info: vi.fn(), warn, error: vi.fn() }),
   loadLlmGatewayConfig: () => undefined,
+  loadJevGatewayConfig: () => undefined,
   loadSessionCloserConfig: () => ({ enabled: false }),
   loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
 }))
