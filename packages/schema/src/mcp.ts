@@ -297,7 +297,9 @@ export type SearchInput = z.infer<typeof searchInputSchema>
  * can fetch the full memory by id when it needs the body. `superseded` marks a
  * demoted predecessor row (docs/concepts/memory-model.mdx: ranked below its
  * successor, never filtered) so a caller can label it rather than receive it
- * unmarked.
+ * unmarked. `scope`/`project` are the hit's filing. `commitmentStatus` is the
+ * commitment lifecycle, a separate axis from memory status: present only when a
+ * commitment row rides the memory, so a resolved commitment reads as history.
  */
 export const searchHitSchema = z
   .object({
@@ -309,6 +311,9 @@ export const searchHitSchema = z
     truncated: z.boolean(),
     score: z.number(),
     superseded: z.boolean(),
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+    commitmentStatus: commitmentStatusSchema.optional(),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

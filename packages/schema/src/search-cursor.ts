@@ -69,8 +69,9 @@ export type SearchQueryV3Args = z.input<typeof searchQueryV3Schema>
 /**
  * A compact-projection hit: the shipped {@link searchHitSchema} MINUS the
  * excerpt triple (`content`/`contentLength`/`truncated`). id/type/topic/score/
- * superseded are enough to decide what to read (and whether a hit is a
- * demoted predecessor); get_memories fetches the bodies.
+ * superseded plus the filing (`scope`/`project`) and optional `commitmentStatus`
+ * are enough to decide what to read (and whether a hit is a demoted predecessor
+ * or a resolved commitment); get_memories fetches the bodies.
  *
  * The openness marker is REAPPLIED (issue #154): `.omit()` builds a fresh object
  * that does not inherit the base's metadata.
