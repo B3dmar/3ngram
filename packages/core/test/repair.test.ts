@@ -64,6 +64,7 @@ describe('retryFailedEmbeds (#232 repair path)', () => {
     updateMemoryEmbedding.mockResolvedValue(true)
     let first = true
     const gateway: Gateway = {
+      decide: () => Promise.reject(new Error('decide is not exercised here')),
       embed: async (texts) => {
         if (first) {
           first = false

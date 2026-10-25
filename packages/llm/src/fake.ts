@@ -7,6 +7,10 @@
 import {
   type CompleteOptions,
   type CompletionResult,
+  type DecideAnswer,
+  type DecideQuestion,
+  type DecideRequest,
+  type DecideResult,
   EMBEDDING_DIMENSIONS,
   type EmbedResult,
   type Gateway,
@@ -55,15 +59,42 @@ export function fakeEmbedding(text: string, dims: number = EMBEDDING_DIMENSIONS)
  * cost-rate lookups resolve in tests. */
 export const FAKE_COMPLETION_MODEL = 'gpt-4o-mini'
 
+/** Model name the fake reports for decide(). Deliberately not a real model: no
+ * judgment price is registered for it, so a priced-path test cannot pass by
+ * accident on the fake. */
+export const FAKE_DECIDE_MODEL = 'fake-judgment'
+
+/**
+ * The probability (and confidence) the fake answers with when no canned answer
+ * is registered. LOW on purpose: a test that forgets to register an answer must
+ * see "not confident", so any threshold-gated write stays unwritten (fail closed).
+ */
+export const FAKE_DEFAULT_PROBABILITY = 0.05
+
 export interface FakeGatewayOptions {
   /** Canned completion per operation key; default echoes the operation. */
   completions?: Record<string, string>
+  /** Canned decide() answers: operation → question name → answer. Any question
+   * without one gets the fail-closed default ({@link FAKE_DEFAULT_PROBABILITY}). */
+  decisions?: Record<string, Record<string, DecideAnswer>>
+}
+
+/** The fail-closed answer for a question with no canned answer. */
+function defaultAnswer(question: DecideQuestion): DecideAnswer {
+  const p = FAKE_DEFAULT_PROBABILITY
+  if (question.type === 'noul') return { type: 'noul', probability: p }
+  if (question.type === 'choice') {
+    const choice = Object.keys(question.criteria)[0] ?? ''
+    return { type: 'choice', choice, confidence: p, probabilities: { [choice]: p } }
+  }
+  return { type: 'score', score: 0, confidence: p, probabilities: { '0': p } }
 }
 
 export function createFakeGateway(opts: FakeGatewayOptions = {}): Gateway & {
   calls: {
     embed: Array<{ texts: readonly string[]; operation: string }>
     complete: Array<{ prompt: string; operation: string; options?: CompleteOptions | undefined }>
+    decide: Array<{ request: DecideRequest; operation: string }>
   }
 } {
   const calls = {
@@ -73,6 +104,7 @@ export function createFakeGateway(opts: FakeGatewayOptions = {}): Gateway & {
       operation: string
       options?: CompleteOptions | undefined
     }>,
+    decide: [] as Array<{ request: DecideRequest; operation: string }>,
   }
   return {
     calls,
@@ -94,6 +126,21 @@ export function createFakeGateway(opts: FakeGatewayOptions = {}): Gateway & {
           outputTokens: fakeTokenCount([text]),
         },
         model: FAKE_COMPLETION_MODEL,
+      })
+    },
+    decide(request, operation): Promise<DecideResult> {
+      calls.decide.push({ request, operation })
+      const canned = opts.decisions?.[operation] ?? {}
+      const answers = Object.fromEntries(
+        Object.entries(request.questions).map(([name, q]) => [
+          name,
+          canned[name] ?? defaultAnswer(q),
+        ]),
+      )
+      return Promise.resolve({
+        answers,
+        usage: { inputTokens: fakeTokenCount([request.state]), outputTokens: 0 },
+        model: FAKE_DECIDE_MODEL,
       })
     },
   }

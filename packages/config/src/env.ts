@@ -156,6 +156,23 @@ export interface OAuthConfig {
  * (OAUTH_JWKS, REDIS_URL) are applied by parseEnv/loadEnv for the server role
  * only, so validate through those rather than parsing envSchema directly.
  */
+/**
+ * A usable Jev API root: https, no userinfo (a fetch error can echo the URL,
+ * which would put a credential in an error message), no query or fragment, and
+ * no trailing `/v1` (the client appends `/v1/systemone` itself).
+ */
+function isJevApiRoot(value: string): boolean {
+  const url = new URL(value)
+  return (
+    url.protocol === 'https:' &&
+    url.username === '' &&
+    url.password === '' &&
+    url.search === '' &&
+    url.hash === '' &&
+    !/\/v1\/*$/.test(url.pathname)
+  )
+}
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -262,6 +279,49 @@ export const envSchema = z
       .string()
       .optional()
       .transform((value) => (value === undefined || value === '' ? undefined : value)),
+    // Judgment gateway (Jev, issue #225). All optional and env-GATED, like the
+    // LLM gateway above: decide() is available only when JEV_API_KEY AND
+    // JEV_MODEL are both set (and the LLM gateway is configured too — see
+    // composeGateway in @3ngram/llm). Empty-string-is-unset. JEV_MODEL is an
+    // explicit pin: a `-latest` alias would let the judged distribution move
+    // under fixed thresholds, so it is refused. JEV_API_URL defaults to the
+    // vendor's API root and must be https. JEV_API_KEY is a credential — it
+    // MUST NOT enter any log line (hard rule 6). Enabling this sends the
+    // closer's bounded state for OPTED-IN tenants to a subprocessor.
+    JEV_API_URL: z
+      .string()
+      .optional()
+      .transform((value) => (value === undefined || value === '' ? undefined : value))
+      .pipe(
+        z
+          .url()
+          .refine(
+            isJevApiRoot,
+            'JEV_API_URL must be an https API root with no credentials, query or /v1 path',
+          )
+          .optional(),
+      ),
+    // Trimmed: a trailing newline from a secrets file would otherwise make every
+    // Authorization header invalid; whitespace-only reads as unset.
+    JEV_API_KEY: z
+      .string()
+      .optional()
+      .transform((value) =>
+        value === undefined || value.trim() === '' ? undefined : value.trim(),
+      ),
+    JEV_MODEL: z
+      .string()
+      .optional()
+      .transform((value) => (value === undefined || value.trim() === '' ? undefined : value.trim()))
+      .pipe(
+        z
+          .string()
+          .refine(
+            (value) => !/(^|[-_.@:])latest$/i.test(value),
+            'JEV_MODEL must pin a model version, not a -latest alias',
+          )
+          .optional(),
+      ),
     // Redis connection string for the rate limiter — and
     // the shared store for the BullMQ workers. Optional locally so the
     // skeleton boots with an in-memory limiter (RateLimiterMemory), but REQUIRED
@@ -816,6 +876,38 @@ export function loadLlmGatewayConfig(): LlmGatewayConfig | undefined {
     return undefined
   }
   return { baseUrl: env.LLM_GATEWAY_URL, apiKey: env.LLM_GATEWAY_API_KEY }
+}
+
+/**
+ * Resolved judgment-gateway config (issue #225). The key NEVER enters a log
+ * line. `baseUrl` is absent when JEV_API_URL is unset: the vendor default lives
+ * in @3ngram/llm alone, the one package allowed to name a provider host
+ * (scripts/check-no-direct-provider.sh).
+ */
+export interface JevGatewayConfig {
+  baseUrl?: string
+  apiKey: string
+  model: string
+}
+
+/**
+ * Resolve the judgment-gateway config IFF JEV_API_KEY and JEV_MODEL are both
+ * set; neither set means "not configured" (`undefined`). A key WITHOUT a model
+ * is a configuration error and throws: silently falling back to the vendor's
+ * default model is exactly the unpinned drift the pin exists to prevent. The
+ * message names the variable, never its value.
+ */
+export function loadJevGatewayConfig(): JevGatewayConfig | undefined {
+  const env = loadEnv()
+  if (env.JEV_API_KEY === undefined && env.JEV_MODEL === undefined) return undefined
+  if (env.JEV_API_KEY === undefined || env.JEV_MODEL === undefined) {
+    throw new Error('JEV_API_KEY and JEV_MODEL must be set together (JEV_MODEL pins the model)')
+  }
+  return {
+    ...(env.JEV_API_URL === undefined ? {} : { baseUrl: env.JEV_API_URL }),
+    apiKey: env.JEV_API_KEY,
+    model: env.JEV_MODEL,
+  }
 }
 
 export type RateLimitStoreKind = 'redis' | 'postgres' | 'memory'

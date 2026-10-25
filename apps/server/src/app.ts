@@ -2,6 +2,7 @@
 import {
   budgetGateLookupFailure,
   loadBudgetConfig,
+  loadJevGatewayConfig,
   loadLlmGatewayConfig,
   loadRateLimitStoreConfig,
   log,
@@ -9,7 +10,7 @@ import {
 import { crashSafeError } from '@3ngram/config/otel'
 import { allowAllAccess, type BudgetEnforcement, SELFHOST_LIMITS } from '@3ngram/core'
 import { ClientMetadataResolver } from '@3ngram/core/auth'
-import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
+import { composeGateway, createJevGateway, createOpenAIGateway, type Gateway } from '@3ngram/llm'
 import express, { type Express, type NextFunction, type Request, type Response } from 'express'
 import type { Redis } from 'ioredis'
 import { baseCapabilities, type Extension, noOpExtension } from './composition/extension.js'
@@ -158,11 +159,22 @@ const OAUTH_IP_POINTS = 30
 const API_KEY_POINTS = 300
 const RATE_WINDOW_SECONDS = 60
 
-/** Resolve the embedding gateway: an explicit override, else the env-gated client. */
+/**
+ * Resolve the gateway: an explicit override, else the env-gated clients composed
+ * into one — embed/complete from the OpenAI-compatible gateway, decide from the
+ * Jev gateway when JEV_API_KEY + JEV_MODEL are set (issue #225).
+ */
 function resolveGateway(override: Gateway | undefined): Gateway | undefined {
   if (override !== undefined) return override
-  const config = loadLlmGatewayConfig()
-  return config === undefined ? undefined : createOpenAIGateway(config)
+  const base = loadLlmGatewayConfig()
+  const judgment = loadJevGatewayConfig()
+  if (judgment !== undefined && base === undefined) {
+    log().warn({}, 'JEV_* set without LLM_GATEWAY_URL/LLM_GATEWAY_API_KEY: decide() unavailable')
+  }
+  return composeGateway({
+    base: base === undefined ? undefined : createOpenAIGateway(base),
+    judgment: judgment === undefined ? undefined : createJevGateway(judgment),
+  })
 }
 
 /**

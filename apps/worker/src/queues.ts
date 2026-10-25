@@ -18,12 +18,13 @@
 // and stops billing generation as soon as it restarts with the flag off.
 import {
   loadBudgetConfig,
+  loadJevGatewayConfig,
   loadLlmGatewayConfig,
   loadSessionCloserConfig,
   log,
 } from '@3ngram/config'
 import { type BudgetEnforcement, type CloserEnqueueRequest, SELFHOST_LIMITS } from '@3ngram/core'
-import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
+import { composeGateway, createJevGateway, createOpenAIGateway, type Gateway } from '@3ngram/llm'
 import { type Job, Queue, Worker } from 'bullmq'
 import type { Redis } from 'ioredis'
 import { CONSOLIDATION_JOB, runConsolidation } from './jobs/consolidation.js'
@@ -269,8 +270,17 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   // Absent config → undefined → every closer pass reports `no-gateway` and
   // writes nothing, which is the correct degraded behaviour for a self-host
   // deployment with no LLM configured.
+  // decide() routes to Jev only when JEV_API_KEY + JEV_MODEL are set (issue
+  // #225); otherwise it rejects with a typed NotImplementedError.
   const gatewayConfig = loadLlmGatewayConfig()
-  const gateway = gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig)
+  const jevConfig = loadJevGatewayConfig()
+  if (jevConfig !== undefined && gatewayConfig === undefined) {
+    log().warn({}, 'JEV_* set without LLM_GATEWAY_URL/LLM_GATEWAY_API_KEY: decide() unavailable')
+  }
+  const gateway = composeGateway({
+    base: gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig),
+    judgment: jevConfig === undefined ? undefined : createJevGateway(jevConfig),
+  })
   const closer = loadSessionCloserConfig()
   // Budget enforcement for the ONE metered operation the worker owns. Mirrors
   // apps/server's composition root: self-host resolves empty limits and falls

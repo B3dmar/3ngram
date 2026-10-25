@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
-import { createFakeGateway, fakeEmbedding } from '../src/fake.js'
+import { createFakeGateway, FAKE_DEFAULT_PROBABILITY, fakeEmbedding } from '../src/fake.js'
 
 describe('FakeGateway', () => {
   it('embeddings are deterministic and unit-norm', () => {
@@ -34,5 +34,28 @@ describe('FakeGateway', () => {
     expect((await gw.complete('p', 'other')).text).toBe('fake:other')
     expect(gw.calls.embed[0]?.operation).toBe('memory_embed')
     expect(gw.calls.complete).toHaveLength(2)
+  })
+
+  it('records decide calls and fails closed with a low default probability', async () => {
+    const gw = createFakeGateway({
+      decisions: { 'session.closer.decide': { done: { type: 'noul', probability: 0.97 } } },
+    })
+    const result = await gw.decide(
+      {
+        state: 's',
+        questions: {
+          done: { type: 'noul', instructions: 'i' },
+          other: { type: 'noul', instructions: 'i' },
+          pick: { type: 'choice', instructions: 'i', criteria: { a: null, b: null } },
+        },
+      },
+      'session.closer.decide',
+    )
+    expect(result.answers.done).toEqual({ type: 'noul', probability: 0.97 })
+    // Unregistered answers are LOW, so a threshold-gated write stays unwritten.
+    expect(result.answers.other).toEqual({ type: 'noul', probability: FAKE_DEFAULT_PROBABILITY })
+    expect(result.answers.pick).toMatchObject({ choice: 'a', confidence: FAKE_DEFAULT_PROBABILITY })
+    expect(gw.calls.decide).toHaveLength(1)
+    expect(gw.calls.decide[0]?.operation).toBe('session.closer.decide')
   })
 })
