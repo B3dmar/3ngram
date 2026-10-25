@@ -523,10 +523,25 @@ describe('agentSessionTriageCompleteBodySchema', () => {
     expect(agentSessionTriageCompleteBodySchema.safeParse(KEY).success).toBe(false)
   })
 
+  it('takes an optional boolean `defensive` (issue #189), absent by default', () => {
+    expect(
+      agentSessionTriageCompleteBodySchema.parse({ ...KEY, attemptId: RUN, defensive: true }),
+    ).toEqual({ ...KEY, attemptId: RUN, defensive: true })
+    expect(
+      agentSessionTriageCompleteBodySchema.parse({ ...KEY, attemptId: RUN, defensive: false })
+        .defensive,
+    ).toBe(false)
+    expect(
+      agentSessionTriageCompleteBodySchema.parse({ ...KEY, attemptId: RUN }),
+    ).not.toHaveProperty('defensive')
+  })
+
   it('rejects a malformed attempt id and unknown keys', () => {
     for (const body of [
       { ...KEY, attemptId: 'not-a-uuid' },
       { ...KEY, attemptId: null },
+      { ...KEY, attemptId: RUN, defensive: 'true' },
+      { ...KEY, attemptId: RUN, defensive: 1 },
       { ...KEY, attemptId: RUN, triageStatus: 'completed' },
       { ...KEY, attemptId: RUN, turnCount: 4 },
       { ...KEY, attemptid: RUN },

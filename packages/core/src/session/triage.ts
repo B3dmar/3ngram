@@ -109,6 +109,11 @@ export async function beginAgentSessionTriage(
  * ceiling. The watermark it stamps is the CUMULATIVE visible set, not the
  * since-begin slice.
  *
+ * `defensive: true` (issue #189) is the hook declaring it displayed no debrief
+ * for this attempt: the outcome is `expired` and the watermark stays at the
+ * begin stamp, so a write that raced the attempt stays untriaged and
+ * closer-eligible rather than absorbed by a debrief nobody saw.
+ *
  * Throws {@link AgentSessionTriageConflictError} when the attempt named is no
  * longer the current one — a crashed hook retrying, a second Stop, or a closer
  * that re-claimed the row after the lease expired mid-handshake.
@@ -127,7 +132,11 @@ export async function completeAgentSessionTriage(
       tx,
       userId,
       { agent: parsed.agent, sessionId: parsed.sessionId },
-      { attemptId: parsed.attemptId, now },
+      {
+        attemptId: parsed.attemptId,
+        now,
+        ...(parsed.defensive === undefined ? {} : { defensive: parsed.defensive }),
+      },
     ),
   )
 }

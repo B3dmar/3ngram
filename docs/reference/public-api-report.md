@@ -601,7 +601,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
 | `CommitmentTransition` | interface | `1697152a1177` |
 | `CommitmentWrite` | interface | `dd9c21233475` |
-| `CompleteTriageOptions` | interface | `8f2c4d86eeda` |
+| `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
@@ -1263,7 +1263,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageBeginBodySchema` | const | `7747702f51cb` |
 | `agentSessionTriageBeginResponseSchema` | const | `f65b36887b5a` |
-| `agentSessionTriageCompleteBodySchema` | const | `b137f7cac20c` |
+| `agentSessionTriageCompleteBodySchema` | const | `37bd94cfb2df` |
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |

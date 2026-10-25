@@ -566,8 +566,13 @@ export async function heartbeatSession(
   // session-attach — the opposite order from {@link openSession}, which now
   // holds account-lifecycle SHARED while it waits for session-attach. With an
   // erasure queued exclusively in between, Postgres makes a new shared request
-  // wait behind that waiter, and the two orders close a cycle. Taking it here
-  // keeps every account-lifecycle holder ahead of every attach holder. Only when
+  // wait behind that waiter, and the two orders close a cycle. It is a SOFT
+  // deadlock (the shared request conflicts with no granted lock, only with the
+  // queued erasure), so after deadlock_timeout (1s default) Postgres reorders
+  // the queue rather than raising 40P01: the cost is a full stall per
+  // heartbeat under contention, inside the Stop hook's 2s budget, not an
+  // abort. Taking it here keeps every account-lifecycle holder ahead of every
+  // attach holder, so the cycle never forms. Only when
   // the hook actually carries content: an excerpt-free heartbeat writes nothing
   // erasure touches and must not pay for the lock.
   if (input.lastMessageExcerpt !== undefined) await lockAccountLifecycleShared(tx, userId)

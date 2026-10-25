@@ -115,6 +115,12 @@ route at all.
    the continuation wrote. No local state file is involved — the attempt id
    round-trips through the server, because Stop is a fresh process every time.
 
+An attempt the hook armed but showed no debrief for — a finalize-only Stop whose
+`begin` armed, or a failed prompt fetch — is released with `defensive: true`, so
+it lands `expired` and nothing written meanwhile counts as covered (issue #189).
+A server older than that field rejects it with a 400, and the hook then sends the
+plain complete.
+
 No turn-count hint is sent: neither harness puts a turn count in the Stop
 payload, and the transcript is not a stable interface. The server's elapsed-time
 and untriaged-event disjuncts cover the debounce without it.

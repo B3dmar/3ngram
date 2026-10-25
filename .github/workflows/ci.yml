@@ -632,6 +632,7 @@ jobs:
               test/integration/session-provenance.int.test.ts
               test/integration/session-events-read.int.test.ts
               test/integration/session-closer.int.test.ts
+              test/integration/session-contention.int.test.ts
               test/integration/session-lifecycle.int.test.ts
               test/integration/session-triage.int.test.ts
               test/integration/session-triage-backfill.int.test.ts
