@@ -45,12 +45,18 @@ import type {
   BriefingSelectorV2Input,
   RetrievalScopeMode,
   TriageAttemptLogEntry,
+  WriteScopeMode,
 } from '@3ngram/schema'
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
-import { userProfileAttributes, userRetrievalPolicy, users } from './schema/identity.js'
+import {
+  userProfileAttributes,
+  userRetrievalPolicy,
+  users,
+  userWriteScopePolicy,
+} from './schema/identity.js'
 import {
   commitments,
   consolidationProposals,
@@ -229,6 +235,14 @@ export interface ExportRetrievalPolicyRow {
   updatedAt: Date
 }
 
+/** A stored write-scope policy row for a portability export (issue #235). */
+export interface ExportWriteScopePolicyRow {
+  mode: WriteScopeMode
+  defaultScope: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
 /** An agent_sessions row for a portability export (minus tenant id). */
 export interface ExportAgentSessionRow {
   id: string
@@ -274,6 +288,8 @@ export interface UserDataExport {
   profile: ExportUserProfileRow | null
   /** Stored retrieval policy; null if the user never configured one. */
   retrievalPolicy: ExportRetrievalPolicyRow | null
+  /** Stored write-scope policy; null if the user never configured one. */
+  writeScopePolicy: ExportWriteScopePolicyRow | null
 }
 
 /**
@@ -525,6 +541,17 @@ export async function readUserDataExport(
     .where(eq(userRetrievalPolicy.userId, userId))
     .limit(1)
 
+  const [writeScopePolicyRow] = await tx
+    .select({
+      mode: userWriteScopePolicy.mode,
+      defaultScope: userWriteScopePolicy.defaultScope,
+      createdAt: userWriteScopePolicy.createdAt,
+      updatedAt: userWriteScopePolicy.updatedAt,
+    })
+    .from(userWriteScopePolicy)
+    .where(eq(userWriteScopePolicy.userId, userId))
+    .limit(1)
+
   const base: UserDataExport = {
     account,
     memories: memoryRows,
@@ -540,6 +567,7 @@ export async function readUserDataExport(
     llmUsage: usageRows,
     profile: profileRow ?? null,
     retrievalPolicy: retrievalPolicyRow ?? null,
+    writeScopePolicy: writeScopePolicyRow ?? null,
   }
   if (enrich === undefined) return base
   // Merge the platform hook's extra user-owned rows over the base archive in the

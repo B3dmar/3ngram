@@ -173,9 +173,18 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // request surface once. The CLI surface is unchanged. The tool
       // description is unchanged (no embeddings regen). MEASURED on this PR's
       // actual base (staging b1731b7), not summed.
-      mcp: [28009, 225888, 56434],
+      // MCP +352/+2816/+686, REST +20/+20/+20 (issue #235, write-scope
+      // policy): the remember `scope` field drops its `personal` default for a
+      // one-line description (omission now follows the tenant's write policy),
+      // configure_scope gains the `set_write_default` input branch and the
+      // `write_default_set` output branch, and describe_environment's output
+      // gains `writeScopePolicy`. MCP pays all three on tools/list per turn;
+      // REST only carries the remember request surface. CLI unchanged. No tool
+      // description changed (no embeddings regen). MEASURED on this PR's actual
+      // base (feat/165-commitment-due-dates), not summed.
+      mcp: [28361, 228704, 57120],
       cli: [333, 1236, 1236],
-      rest: [4125, 5142, 5142],
+      rest: [4145, 5162, 5162],
     },
   )
 })

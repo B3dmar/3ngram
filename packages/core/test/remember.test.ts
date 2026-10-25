@@ -13,9 +13,16 @@ const expectZodRejection = (promise: Promise<unknown>) =>
   expect(promise).rejects.toMatchObject({ name: 'ZodError' })
 
 const writeMemory = vi.fn()
+// Write-scope policy read (issue #235): null = no stored row = mode 'off'.
+const getWriteScopePolicy = vi.fn(async (_tx: unknown, _userId: string): Promise<unknown> => null)
+const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
+  fn({ kind: 'tenant-tx' }),
+)
 
 vi.mock('@3ngram/db', () => ({
   writeMemory: (...args: unknown[]) => writeMemory(...args),
+  getWriteScopePolicy: (tx: unknown, userId: string) => getWriteScopePolicy(tx, userId),
+  withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   // remember.ts re-exports DuplicateMemoryError from @3ngram/db; the real class
   // is needed so `instanceof` and `.name` assertions hold.
   DuplicateMemoryError: class DuplicateMemoryError extends Error {
@@ -37,6 +44,7 @@ vi.mock('@3ngram/db', () => ({
 }))
 
 const { DuplicateMemoryError, remember } = await import('../src/write/remember.js')
+const { UnscopedWriteError } = await import('../src/scope/write-policy.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
 const ACTOR = 'user_api' as const
@@ -52,6 +60,9 @@ const mockWrite = writeMemory as unknown as Mock
 
 afterEach(() => {
   mockWrite.mockReset()
+  getWriteScopePolicy.mockReset()
+  getWriteScopePolicy.mockResolvedValue(null)
+  withTenant.mockClear()
 })
 
 describe('remember (validation boundary)', () => {
@@ -86,8 +97,10 @@ describe('remember (validation boundary)', () => {
     expect(call.actorKind).toBe(ACTOR)
     expect(call.tags).toEqual(['ops', 'ci'])
     expect(call.contentHash).toBe(createHash('sha256').update(input.content).digest('hex'))
-    // scope defaults at the schema boundary, not in core
+    // No scope and no stored write policy: the shipped 'personal' literal,
+    // applied by core's write-scope resolution (issue #235), echoed on the result.
     expect(call.scope).toBe('personal')
+    expect(result.scope).toBe('personal')
   })
 
   it('forwards sessionRunId on the native write', async () => {
@@ -256,5 +269,100 @@ describe('remember (typed duplicate error)', () => {
     mockWrite.mockRejectedValue(new DuplicateMemoryError('abc123'))
 
     await expect(remember(USER, validInput(), ACTOR)).rejects.toBeInstanceOf(DuplicateMemoryError)
+  })
+})
+
+describe('remember (write-scope policy, issue #235)', () => {
+  const policy = (mode: string, defaultScope: string | null) => ({
+    mode,
+    defaultScope,
+    updatedAt: new Date('2026-10-01T00:00:00.000Z'),
+  })
+  // Every injected guard a write can charge or consult, as spies.
+  const guards = () => ({
+    access: {
+      assertRead: vi.fn(async (_userId: string) => undefined),
+      assertWrite: vi.fn(async (_userId: string) => undefined),
+    },
+    budget: {
+      config: { defaultCapUsd: 1, defaultWindowDays: 30 },
+      resolveLimits: vi.fn(async (_userId: string) => ({})),
+    },
+    limits: vi.fn(async (_userId: string) => ({})),
+  })
+
+  it("mode 'off' (stored row) writes the shipped 'personal' literal", async () => {
+    getWriteScopePolicy.mockResolvedValue(policy('off', null))
+    mockWrite.mockResolvedValue({ id: 'mem-off' })
+
+    const result = await remember(USER, validInput(), ACTOR)
+
+    expect(mockWrite.mock.calls[0]?.[0].scope).toBe('personal')
+    expect(result.scope).toBe('personal')
+  })
+
+  it("mode 'default' fills an omitted scope with the configured scope", async () => {
+    getWriteScopePolicy.mockResolvedValue(policy('default', 'work'))
+    mockWrite.mockResolvedValue({ id: 'mem-default' })
+
+    const result = await remember(USER, validInput(), ACTOR)
+
+    expect(mockWrite.mock.calls[0]?.[0].scope).toBe('work')
+    expect(result.scope).toBe('work')
+    // One tenant-scoped read, keyed by the authenticated user id.
+    expect(withTenant).toHaveBeenCalledExactlyOnceWith(USER, expect.any(Function))
+    expect(getWriteScopePolicy).toHaveBeenCalledExactlyOnceWith({ kind: 'tenant-tx' }, USER)
+  })
+
+  it.each([
+    ['default', 'work'],
+    ['require', null],
+  ])("an explicit scope wins under mode '%s' and skips the policy read", async (mode, scope) => {
+    getWriteScopePolicy.mockResolvedValue(policy(mode, scope))
+    mockWrite.mockResolvedValue({ id: 'mem-explicit' })
+
+    const result = await remember(USER, { ...validInput(), scope: 'client-x' }, ACTOR)
+
+    expect(mockWrite.mock.calls[0]?.[0].scope).toBe('client-x')
+    expect(result.scope).toBe('client-x')
+    expect(getWriteScopePolicy).not.toHaveBeenCalled()
+  })
+
+  it("an explicit 'personal' under mode 'default' stays 'personal' (omission is not explicit input)", async () => {
+    getWriteScopePolicy.mockResolvedValue(policy('default', 'work'))
+    mockWrite.mockResolvedValue({ id: 'mem-personal' })
+
+    await remember(USER, { ...validInput(), scope: 'personal' }, ACTOR)
+
+    expect(mockWrite.mock.calls[0]?.[0].scope).toBe('personal')
+  })
+
+  it("mode 'require' rejects an omitted scope before access, budget, limits, or any write", async () => {
+    getWriteScopePolicy.mockResolvedValue(policy('require', null))
+    const opts = guards()
+
+    const rejection = remember(USER, validInput(), ACTOR, opts)
+
+    await expect(rejection).rejects.toBeInstanceOf(UnscopedWriteError)
+    await expect(rejection).rejects.toThrow(/pass scope, or change the policy/)
+    expect(opts.access.assertWrite).not.toHaveBeenCalled()
+    expect(opts.budget.resolveLimits).not.toHaveBeenCalled()
+    expect(opts.limits).not.toHaveBeenCalled()
+    expect(mockWrite).not.toHaveBeenCalled()
+  })
+
+  it('the rejection message carries no memory content', async () => {
+    getWriteScopePolicy.mockResolvedValue(policy('require', null))
+
+    const error = await remember(USER, validInput(), ACTOR).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(UnscopedWriteError)
+    expect((error as Error).message).not.toContain(validInput().content)
+    expect((error as Error).message).not.toContain(validInput().topic)
+  })
+
+  it('a malformed payload is rejected before the policy is read', async () => {
+    await expectZodRejection(remember(USER, { ...validInput(), topic: '' }, ACTOR))
+    expect(getWriteScopePolicy).not.toHaveBeenCalled()
   })
 })

@@ -14,3 +14,11 @@ export {
   type ScopeRecord,
   setScopeAliases,
 } from './scopes.js'
+export {
+  resolveWriteScope,
+  resolveWriteScopePolicy,
+  setWriteDefault,
+  UNPOLICIED_WRITE_SCOPE,
+  UnscopedWriteError,
+  type WriteScopePolicySetting,
+} from './write-policy.js'

@@ -547,3 +547,21 @@ export {
   reviseRequestSchema,
   tagSchema,
 } from './write.js'
+// --- write-scope policy (issue #235) — appended block ---
+export type {
+  ConfigureScopeInputV3,
+  ConfigureScopeOutputV3,
+  DescribeEnvironmentOutputV3,
+  SetWriteDefaultInput,
+  WriteScopeMode,
+  WriteScopePolicy,
+} from './write-scope.js'
+export {
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputV3Schema,
+  setWriteDefaultInputSchema,
+  writeScopeModeSchema,
+  writeScopePolicySchema,
+  writeScopePolicyScopeRequirements,
+} from './write-scope.js'

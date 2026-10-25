@@ -23,6 +23,7 @@ import {
 } from '@3ngram/db'
 import { type ActorKind, type FactWriteInput, nativeRememberInputSchema } from '@3ngram/schema'
 import { assertWithinBudget, resolveResourceLimits } from '../budget/index.js'
+import { resolveWriteScope } from '../scope/write-policy.js'
 import { EMBED_OPERATION, type EmbedOptions, kickEmbed } from './embed.js'
 
 export { DuplicateMemoryError, UnknownSessionRunError, type WrittenMemory } from '@3ngram/db'
@@ -38,6 +39,16 @@ export type { EmbedOptions } from './embed.js'
  */
 export interface WriteResult extends WrittenMemory {
   embed: { settled: Promise<boolean> }
+}
+
+/**
+ * A completed `remember`: {@link WriteResult} plus the scope the memory was
+ * written to — the explicit `scope`, or the one the tenant's write-scope policy
+ * chose for an omitted scope (issue #235). Transports echo this, never the
+ * request's scope.
+ */
+export interface RememberResult extends WriteResult {
+  scope: string
 }
 
 /**
@@ -69,6 +80,26 @@ function contentHash(content: string): string {
 }
 
 /**
+ * PRE-PERSIST GUARDS (before writeMemory so a denied write never lands a row):
+ *   1. ACCESS: the injected access gate denies a write when the platform policy
+ *      forbids it (self-host allowAllAccess allows all). It is resolved
+ *      INDEPENDENTLY of the budget so this runs on EVERY write — including the
+ *      embeddings-off path, where transports pass an access-only options object
+ *      (no budget) — closing the bypass where a denied write could still land a
+ *      row. Throws AccessDeniedError → 403/denial.
+ *   2. BUDGET CAP: asserted BEFORE writeMemory (the shared seam in
+ *      kickEmbed runs only after the row is written), only when a budget is wired
+ *      (an embed will incur cost). Throws BudgetExceededError.
+ * Access is checked first: a denied user is blocked regardless of budget.
+ */
+async function assertWriteGuards(userId: string, embedOptions: EmbedOptions): Promise<void> {
+  if (embedOptions.access) await embedOptions.access.assertWrite(userId)
+  if (embedOptions.budget) {
+    await assertWithinBudget(embedOptions.budget, userId, embedOptions.operation ?? EMBED_OPERATION)
+  }
+}
+
+/**
  * Persist a new memory for `userId`.
  *
  * This is the single validation boundary for the write path (the same
@@ -94,7 +125,14 @@ function contentHash(content: string): string {
  * gateway, no embed is attempted and behaviour is identical to before
  * (embedding stays NULL).
  *
+ * Scope (issue #235): an explicit `scope` is written as given. An omitted one
+ * is resolved from the tenant's write-scope policy FIRST, before the access
+ * and budget guards and before any insert, so a `require` rejection writes
+ * nothing and charges nothing.
+ *
  * @throws ZodError if `input` violates the write contract (validation boundary).
+ * @throws {@link UnscopedWriteError} if `scope` is omitted and the tenant's
+ *   write-scope policy is `require`.
  * @throws {@link DuplicateMemoryError} if active content with the same hash
  *   already exists for the tenant.
  */
@@ -103,23 +141,11 @@ export async function remember(
   input: unknown,
   actorKind: ActorKind,
   embedOptions: EmbedOptions = {},
-): Promise<WriteResult> {
+): Promise<RememberResult> {
   const parsed = nativeRememberInputSchema.parse(input)
-  // PRE-PERSIST GUARDS (before writeMemory so a denied write never lands a row):
-  //   1. ACCESS: the injected access gate denies a write when the platform policy
-  //      forbids it (self-host allowAllAccess allows all). It is resolved
-  //      INDEPENDENTLY of the budget so this runs on EVERY write — including the
-  //      embeddings-off path, where transports pass an access-only options object
-  //      (no budget) — closing the bypass where a denied write could still land a
-  //      row. Throws AccessDeniedError → 403/denial.
-  //   2. BUDGET CAP: asserted BEFORE writeMemory (the shared seam in
-  //      kickEmbed runs only after the row is written), only when a budget is wired
-  //      (an embed will incur cost). Throws BudgetExceededError.
-  // Access is checked first: a denied user is blocked regardless of budget.
-  if (embedOptions.access) await embedOptions.access.assertWrite(userId)
-  if (embedOptions.budget) {
-    await assertWithinBudget(embedOptions.budget, userId, embedOptions.operation ?? EMBED_OPERATION)
-  }
+  // SCOPE FIRST: a policy rejection must land before any guard or write.
+  const scope = await resolveWriteScope(userId, parsed.scope)
+  await assertWriteGuards(userId, embedOptions)
   const { maxLiveMemories } = await resolveResourceLimits(embedOptions.limits, userId)
   // ACK FIRST: the write transaction commits and we hold the id before any
   // embedding round-trip (ack-before-embed).
@@ -129,7 +155,7 @@ export async function remember(
       memoryType: parsed.memoryType,
       topic: parsed.topic,
       content: parsed.content,
-      scope: parsed.scope,
+      scope,
       project: parsed.project,
       tags: parsed.tags,
       contentHash: contentHash(parsed.content),
@@ -150,5 +176,5 @@ export async function remember(
   )
   // THEN kick the (best-effort, non-throwing, awaitable) embed.
   const embed = kickEmbed(userId, written.id, parsed.content, actorKind, embedOptions)
-  return { ...written, embed }
+  return { ...written, embed, scope }
 }

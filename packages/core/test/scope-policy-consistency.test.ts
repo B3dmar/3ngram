@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Scope-registry mutations keep the denormalized retrieval default coherent.
+// Scope-registry mutations keep the denormalized retrieval and write defaults
+// coherent.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const tx = { kind: 'tenant-tx' }
@@ -21,7 +22,22 @@ const replaceRetrievalPolicyDefault = vi.fn(
   ) => undefined,
 )
 
+const replaceWriteScopePolicyDefault = vi.fn(
+  async (
+    _tx: unknown,
+    _userId: string,
+    _oldDefault: string,
+    _policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => undefined,
+)
+
 vi.mock('@3ngram/db', () => ({
+  replaceWriteScopePolicyDefault: (
+    tx: unknown,
+    userId: string,
+    oldDefault: string,
+    policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => replaceWriteScopePolicyDefault(tx, userId, oldDefault, policy),
   withTenant: (userId: string, fn: (value: unknown) => Promise<unknown>) => withTenant(userId, fn),
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
   renameScope: (tx: unknown, userId: string, oldName: string, newName: string) =>
@@ -61,6 +77,14 @@ describe('scope and retrieval-policy consistency', () => {
       mode: 'default',
       defaultScope: 'client',
     })
+    // The write default follows the rename too (issue #235).
+    expect(replaceWriteScopePolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
+      mode: 'default',
+      defaultScope: 'client',
+    })
+    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
+    )
     expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
       renameScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
@@ -78,6 +102,15 @@ describe('scope and retrieval-policy consistency', () => {
       mode: 'require',
       defaultScope: null,
     })
+    // A deleted write default fails closed as well: unscoped writes are
+    // rejected, never silently routed back to 'personal' (issue #235).
+    expect(replaceWriteScopePolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
+      mode: 'require',
+      defaultScope: null,
+    })
+    expect(deleteScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
+      replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
+    )
     expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
       deleteScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
@@ -92,5 +125,6 @@ describe('scope and retrieval-policy consistency', () => {
     await expect(renameScope(USER, 'missing', 'client')).rejects.toThrow('missing')
 
     expect(replaceRetrievalPolicyDefault).not.toHaveBeenCalled()
+    expect(replaceWriteScopePolicyDefault).not.toHaveBeenCalled()
   })
 })
