@@ -216,18 +216,20 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // unchanged; REST and CLI unchanged. MEASURED, not summed.
       // Re-measured after composing onto #235 (describe_environment V5 =
       // V4 + writeScopePolicy), re-measured on staging 0a6cdf3: the three deltas still hold.
-      // MCP +664/+5312/+1295, REST +417/+417/+417 (issues #217 + #218, the
-      // revise archive and reaffirm dispositions). #217: the revise input
-      // union gains a third branch (`kind` + a bounded `memoryIds` batch, with
-      // field descriptions) and the registered output becomes a two-branch
-      // union adding the per-id outcome list. #218: the `kind` enum gains
-      // `reaffirm` (one more description sentence), the outcome enum
-      // `reaffirmed`, the rejection enum `archived`. MCP pays both on
-      // tools/list per turn; REST pays the request body (URL id, so no
-      // memoryIds) and the response once. CLI has no revise command. The tool
-      // description is unchanged (no embeddings regen). Measured separately
-      // on staging ab8b193 as +622/+4976/+1213 / REST +385 (#217) and
-      // +42/+336/+82 / REST +32 (#218). MEASURED on staging 054315b, not summed.
+      // MCP +622/+4976/+1213, REST +385/+385/+385 (issue #217, revise archive
+      // disposition): the revise input union gains a third branch
+      // (`kind: "archive"` + a bounded `memoryIds` batch, with field
+      // descriptions) and the registered output becomes a two-branch union
+      // that adds the per-id outcome list. MCP pays both on tools/list per
+      // turn; REST pays the request body (URL id, so no memoryIds) and the
+      // response once. CLI has no revise command. The tool description is
+      // unchanged (no embeddings regen). MEASURED on staging
+      // 054315b, not summed.
+      // MCP +42/+336/+82, REST +32/+32/+32 (issue #218, revise reaffirm
+      // disposition): the `kind` enum gains `reaffirm` (one more description
+      // sentence), the outcome enum `reaffirmed`, and the rejection enum
+      // `archived`. Description unchanged (no embeddings regen); CLI
+      // unchanged. MEASURED on #217's branch over staging 054315b, not summed.
       mcp: [29883, 240880, 60088],
       cli: [333, 1236, 1236],
       rest: [4562, 5579, 5579],
