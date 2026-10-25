@@ -24,7 +24,7 @@ describe('migration round-trip structure', () => {
 
   // PHYSICAL TABLE COUNT: bump EXPECTED_TABLES (and the ledger below) when a
   // migration adds a table, RLS or not.
-  const EXPECTED_TABLES = 29
+  const EXPECTED_TABLES = 30
   it(`all ${EXPECTED_TABLES} tables exist`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
@@ -34,7 +34,9 @@ describe('migration round-trip structure', () => {
     // + the four 0022 cost/plan tables + budget_reservations (0023)
     // + user_profile_attributes (0026) = 24, + user_retrieval_policy (0030) = 25
     // + fact_proposals (0031) = 26, + agent_sessions (0032) = 27
-    // + user_write_scope_policy (0039) = 28, + user_judgment_policy (0042) = 29
+    // + user_write_scope_policy (0039) = 28
+    // + rate_limits (0042) = 29
+    // + user_judgment_policy (0043) = 30
     expect(Number(r.rows[0].n)).toBe(EXPECTED_TABLES)
   })
 
@@ -51,7 +53,7 @@ describe('migration round-trip structure', () => {
     // + user_profile_attributes (0026) = 18, + audit_log (0029) = 19,
     // + user_retrieval_policy (0030) = 20, + fact_proposals (0031) = 21
     // + agent_sessions (0032) = 22, + user_write_scope_policy (0039) = 23
-    // + user_judgment_policy (0042) = 24
+    // + user_judgment_policy (0043) = 24
     // (the two 0022 service/global tables have no RLS)
     expect(Number(r.rows[0].n)).toBe(EXPECTED_TENANT_POLICIES)
   })

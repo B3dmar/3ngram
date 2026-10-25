@@ -151,6 +151,10 @@ export interface OAuthConfig {
  *   red line: memory content never enters logs outside local dev).
  * - `LOG_HASH_SALT` is required in production and the public self-host example
  *   placeholder is rejected (hashed user_id correlation, §1).
+ *
+ * This is the role-agnostic base: the server-only production rules
+ * (OAUTH_JWKS, REDIS_URL) are applied by parseEnv/loadEnv for the server role
+ * only, so validate through those rather than parsing envSchema directly.
  */
 /**
  * A usable Jev API root: https, no userinfo (a fetch error can echo the URL,
@@ -520,21 +524,6 @@ export const envSchema = z
         message: 'BASE_URL must use https in production (OAuth issuer requirement)',
       })
     }
-    if (env.NODE_ENV === 'production' && env.OAUTH_JWKS === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['OAUTH_JWKS'],
-        message: 'OAUTH_JWKS is required in production (RS256 signing keys)',
-      })
-    }
-    if (env.NODE_ENV === 'production' && env.REDIS_URL === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['REDIS_URL'],
-        message:
-          'REDIS_URL is required in production (cross-instance rate limiting; an in-memory bucket per replica is no limit)',
-      })
-    }
     if (env.NODE_ENV === 'production' && env.DATABASE_URL === undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -635,16 +624,69 @@ export const envSchema = z
 
 export type Env = z.infer<typeof envSchema>
 
-export function parseEnv(source: Record<string, string | undefined> = process.env): Env {
-  return envSchema.parse(source)
+/**
+ * The process an env is validated for. `'server'` (the default) enforces every
+ * production requirement. `'worker'` skips the server-only ones: OAUTH_JWKS
+ * (the worker signs no tokens) and REDIS_URL (only the server's rate limiter
+ * needs it; the resident BullMQ worker still fails fast in createRedis).
+ * Everything else, including BASE_URL, LOG_HASH_SALT and the DATABASE_URL
+ * role/password checks, applies to both. Refs #204, #315.
+ */
+export type EnvRole = 'server' | 'worker'
+
+export interface LoadEnvOptions {
+  role?: EnvRole
 }
 
-let cached: Env | undefined
+/** Production requirements only the server process has. */
+function serverOnlyRules(env: Env, ctx: z.RefinementCtx): void {
+  if (env.NODE_ENV !== 'production') return
+  if (env.OAUTH_JWKS === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['OAUTH_JWKS'],
+      message: 'OAUTH_JWKS is required in production (RS256 signing keys)',
+    })
+  }
+  if (env.REDIS_URL === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['REDIS_URL'],
+      message:
+        'REDIS_URL is required in production (cross-instance rate limiting; an in-memory bucket per replica is no limit)',
+    })
+  }
+}
 
-/** Parse-once accessor; all runtime code reads env through this. */
-export function loadEnv(): Env {
-  cached ??= parseEnv()
-  return cached
+const workerEnvSchema = envSchema
+const serverEnvSchema = envSchema.superRefine(serverOnlyRules)
+
+export function parseEnv(
+  source: Record<string, string | undefined> = process.env,
+  options: LoadEnvOptions = {},
+): Env {
+  const schema = (options.role ?? 'server') === 'worker' ? workerEnvSchema : serverEnvSchema
+  return schema.parse(source)
+}
+
+let cached: { role: EnvRole; env: Env } | undefined
+
+/**
+ * Parse-once accessor; all runtime code reads env through this. The entrypoint
+ * resolves it first with its role; later no-argument callers (logger,
+ * redaction, the sub-loaders) get that same env. Asking for a different role
+ * once resolved is a programming error and throws.
+ */
+export function loadEnv(options?: LoadEnvOptions): Env {
+  if (cached) {
+    if (options?.role === undefined || options.role === cached.role) return cached.env
+    throw new Error(
+      `loadEnv: env already resolved for role '${cached.role}', cannot re-resolve as '${options.role}'`,
+    )
+  }
+  const role = options?.role ?? 'server'
+  cached = { role, env: parseEnv(process.env, { role }) }
+  return cached.env
 }
 
 /** Test seam — drops the memoized env so the next loadEnv() re-parses. */

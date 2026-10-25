@@ -1,5 +1,5 @@
 {
-  "id": "80cc7951-8e53-4679-a4c9-29be4eaeffaa",
+  "id": "fbc5f78e-ccfd-40db-80d5-a421cd1fca41",
   "prevId": "aa27aaf0-5ccb-4797-8af9-f9e5cd52b2d7",
   "version": "7",
   "dialect": "postgresql",
@@ -1163,70 +1163,6 @@
         }
       },
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.user_judgment_policy": {
-      "name": "user_judgment_policy",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'off'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "user_judgment_policy_user_id_users_id_fk": {
-          "name": "user_judgment_policy_user_id_users_id_fk",
-          "tableFrom": "user_judgment_policy",
-          "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "tenant_isolation": {
-          "name": "tenant_isolation",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": ["public"],
-          "using": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid",
-          "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
-        }
-      },
-      "checkConstraints": {
-        "user_judgment_policy_mode_check": {
-          "name": "user_judgment_policy_mode_check",
-          "value": "\"user_judgment_policy\".\"mode\" IN ('off', 'on')"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.user_profile_attributes": {
@@ -3325,6 +3261,38 @@
           "withCheck": "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid"
         }
       },
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rate_limits": {
+      "name": "rate_limits",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "varchar(255)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "points": {
+          "name": "points",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "expire": {
+          "name": "expire",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
     }

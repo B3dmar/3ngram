@@ -104,9 +104,9 @@ const writeScopePolicySql = readFileSync(
   join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
   'utf8',
 )
-// 0042 adds the judgment opt-in (issue #225).
+// 0043 adds the judgment opt-in (issue #225).
 const judgmentPolicySql = readFileSync(
-  join(import.meta.dirname, '../migrations/0042_user_judgment_policy.sql'),
+  join(import.meta.dirname, '../migrations/0043_user_judgment_policy.sql'),
   'utf8',
 )
 // 0040 adds the commitment's latest-transition reason (issue #234).
@@ -117,6 +117,11 @@ const resolutionReasonSql = readFileSync(
 // 0041 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
 const reviewStampSql = readFileSync(
   join(import.meta.dirname, '../migrations/0041_memory_last_reviewed_at.sql'),
+  'utf8',
+)
+// 0042 adds the rate-limiter-flexible counter table (#315).
+const rateLimitsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0042_rate_limits.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -781,6 +786,23 @@ describe('session closer candidate index (0033, issue #166 step 6)', () => {
   })
 })
 
+describe('rate_limits table (0042, issue #315)', () => {
+  it('columns are key, points, expire in the order rlflx INSERTs positionally', () => {
+    expect(rateLimitsSql).toMatch(
+      /CREATE TABLE "rate_limits" \(\s*"key" varchar\(255\) PRIMARY KEY NOT NULL,\s*"points" integer DEFAULT 0 NOT NULL,\s*"expire" bigint\s*\);/,
+    )
+  })
+
+  it('is a system table: no RLS anywhere, no GRANT in the migration', () => {
+    expect(tablesWith('ENABLE').has('rate_limits')).toBe(false)
+    expect(rateLimitsSql).not.toMatch(/GRANT/i)
+  })
+
+  it('runtime grant covers the upsert, read and expired-row DELETE', () => {
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON rate_limits TO app_user;')
+  })
+})
+
 describe('provision-roles.sql append-and-supersede grants', () => {
   it('memory_events and audit_log are INSERT-only for the runtime role', () => {
     expect(rolesSql).toMatch(/GRANT SELECT, INSERT ON memory_events, audit_log/)
@@ -799,7 +821,7 @@ describe('provision-roles.sql append-and-supersede grants', () => {
   })
 })
 
-describe('judgment opt-in table (0042, issue #225)', () => {
+describe('judgment opt-in table (0043, issue #225)', () => {
   it('derives the mode CHECK from the schema and defaults to off', () => {
     expect(judgmentPolicySql).toContain(
       `CHECK ("user_judgment_policy"."mode" IN (${judgmentModeSchema.options.map((m) => `'${m}'`).join(', ')}))`,

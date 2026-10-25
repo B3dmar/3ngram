@@ -7,7 +7,7 @@
 //   - upsert round-trip: on -> read -> off
 //   - the DB CHECK rejects an unknown mode
 //   - tenant isolation through the accessors AND raw SQL bound to the other tenant
-//   - RLS fails closed with no tenant bound, and the table is FORCE RLS (0042)
+//   - RLS fails closed with no tenant bound, and the table is FORCE RLS (0043)
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import { getJudgmentPolicy, upsertJudgmentPolicy } from '../../src/judgment-policy.js'
