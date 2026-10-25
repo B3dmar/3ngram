@@ -891,10 +891,15 @@ The answer id space is the briefed set, so `CloserVerdictError` and the
 path. The call is metered as `session.closer.decide`, with its own reservation.
 Its `llm_usage` row is recorded unpriced because no judgment list price is
 pinned, so the budget gate charges the max registered cost. Opted-out tenants
-keep the `complete()` path unchanged. When the deployment has no judgment
-gateway, `decide()` rejects with the typed `NotImplementedError` before any
-network call, the judgment reservation is released unbilled, and the pass takes
-the `complete()` path. The threshold is deliberately high: the spike's fixtures
+keep the `complete()` path unchanged. The opt-in is read again as the last
+step before the send, after the reservation and the epoch re-check, because the
+reservation can block on a per-user lock. A tenant who opts out during that wait
+gets the `complete()` path. When the deployment has no judgment gateway,
+`decide()` rejects with the typed `NotImplementedError` before any network call.
+That rejection is caught only around the `decide()` await, the judgment
+reservation is released unbilled, and the pass takes the `complete()` path. The
+judgment ceiling is registered at or below the completion ceiling, so the
+fallback never fails a cap check that the judgment reservation passed. The threshold is deliberately high: the spike's fixtures
 were bimodal, so the real-corpus replay owed by #166 sets it before any
 default-on.
 
