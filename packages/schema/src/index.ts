@@ -185,17 +185,19 @@ export {
   cursorPayloadV3Schema,
   legacyCursorPayloadSchema,
 } from './cursor.js'
-// --- describe_environment successors: account identity (#321), facets inventory (#168) ---
+// --- describe_environment successors: account identity (#321), facets inventory (#168), write policy (#235) ---
 export type {
   AccountIdentity,
   DescribeEnvironmentOutputV3,
   DescribeEnvironmentOutputV4,
+  DescribeEnvironmentOutputV5,
   EnvironmentFacets,
 } from './describe-environment.js'
 export {
   accountIdentitySchema,
   describeEnvironmentOutputV3Schema,
   describeEnvironmentOutputV4Schema,
+  describeEnvironmentOutputV5Schema,
   environmentFacetsSchema,
   MAX_INLINE_FACET_LABELS,
 } from './describe-environment.js'
@@ -533,6 +535,7 @@ export type {
   Tag,
 } from './write.js'
 export {
+  commitmentOwnerSchema,
   edgeInputSchema,
   factWriteSchema,
   MAX_CONTENT_LENGTH,
@@ -560,3 +563,22 @@ export {
   reviseRequestSchema,
   tagSchema,
 } from './write.js'
+// --- write-scope policy (issue #235) — appended block ---
+export type {
+  ConfigureScopeInputV3,
+  ConfigureScopeOutputV3,
+  DescribeEnvironmentOutputWithWritePolicy,
+  SetWriteDefaultInput,
+  WriteScopeMode,
+  WriteScopePolicy,
+} from './write-scope.js'
+export {
+  configureScopeInputV3Schema,
+  configureScopeOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentWritePolicyFields,
+  setWriteDefaultInputSchema,
+  writeScopeModeSchema,
+  writeScopePolicySchema,
+  writeScopePolicyScopeRequirements,
+} from './write-scope.js'

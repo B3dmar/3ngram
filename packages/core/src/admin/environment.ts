@@ -23,6 +23,7 @@ import {
   getEnvironmentStats,
   getLiveAccountId,
   getRetrievalPolicy,
+  getWriteScopePolicy,
   listMemoryFacets,
   listScopes,
   type ScopeRow,
@@ -30,6 +31,7 @@ import {
 } from '@3ngram/db'
 import { MAX_INLINE_FACET_LABELS } from '@3ngram/schema'
 import type { RetrievalPolicySetting } from '../scope/retrieval-settings.js'
+import { toWriteScopeSetting, type WriteScopePolicySetting } from '../scope/write-policy.js'
 
 export type { EnvironmentStats } from '@3ngram/db'
 
@@ -53,8 +55,9 @@ function capLabels(labels: string[], cap: number): { kept: string[]; truncated: 
   return { kept: labels.slice(0, cap), truncated: labels.length > cap }
 }
 
-/** The tenant-scoped half of a describe_environment report (account identity +
- * scopes + stats + the active retrieval-scope policy, issue #47). */
+/** The tenant-scoped half of a describe_environment report (account identity,
+ * #321 + scopes + the capped facets, #168 + stats + the active retrieval-scope
+ * policy, #47 + the write-scope policy, #235). */
 export interface EnvironmentReport {
   /** The authenticated account (issue #321). Not a scope, not a secret. */
   account: AccountIdentity
@@ -68,6 +71,9 @@ export interface EnvironmentReport {
    * `off` default, so a session can always rely on the field. A mode enum +
    * a registered scope name only — the redaction posture is unchanged. */
   retrievalScopePolicy: RetrievalPolicySetting
+  /** The effective write-scope policy (issue #235): where a `remember`
+   * without `scope` lands. No stored row reports the `off` default. */
+  writeScopePolicy: WriteScopePolicySetting
 }
 
 /**
@@ -97,6 +103,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
       projects: projectLabels.kept,
       truncated: { scopes: scopeLabels.truncated, projects: projectLabels.truncated },
     }
+    const writeScopePolicy = toWriteScopeSetting(await getWriteScopePolicy(tx, userId))
     return {
       account: { id: accountId },
       scopes,
@@ -106,6 +113,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
         policy === null
           ? { mode: 'off' as const, scope: null }
           : { mode: policy.mode, scope: policy.defaultScope },
+      writeScopePolicy,
     }
   })
 }

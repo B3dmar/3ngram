@@ -11,6 +11,7 @@ import {
   describeEnvironmentOutputV2Schema,
   describeEnvironmentOutputV3Schema,
   describeEnvironmentOutputV4Schema,
+  describeEnvironmentOutputV5Schema,
   MAX_INLINE_FACET_LABELS,
   memoriesFacetsResponseSchema,
 } from '../src/index.js'
@@ -199,5 +200,29 @@ describe('describeEnvironmentOutputV4Schema (inlined facets inventory, issue #16
     expect(json.properties.facets.properties.projects.maxItems).toBe(MAX_INLINE_FACET_LABELS)
     expect(json.properties.facets.properties.truncated.additionalProperties).toBe(true)
     expect(json.properties.facets.properties.truncated.description).toContain('threengram://facets')
+  })
+})
+
+describe('describeEnvironmentOutputV5Schema (V4 + write-scope policy, issues #321/#168/#235)', () => {
+  const V4_REPORT = {
+    ...V2_REPORT,
+    account: { id: ACCOUNT_ID },
+    facets: { scopes: [], projects: [], truncated: { scopes: false, projects: false } },
+  }
+
+  it('requires account, facets and writeScopePolicy together', () => {
+    const wsp = { mode: 'default', scope: 'work' } as const
+    expect(describeEnvironmentOutputV5Schema.safeParse(V4_REPORT).success).toBe(false)
+    const { account: _a, ...noAccount } = V4_REPORT
+    const { facets: _f, ...noFacets } = V4_REPORT
+    expect(
+      describeEnvironmentOutputV5Schema.safeParse({ ...noAccount, writeScopePolicy: wsp }).success,
+    ).toBe(false)
+    expect(
+      describeEnvironmentOutputV5Schema.safeParse({ ...noFacets, writeScopePolicy: wsp }).success,
+    ).toBe(false)
+    const parsed = describeEnvironmentOutputV5Schema.parse({ ...V4_REPORT, writeScopePolicy: wsp })
+    expect(parsed.writeScopePolicy).toEqual(wsp)
+    expect(parsed.account.id).toBe(ACCOUNT_ID)
   })
 })

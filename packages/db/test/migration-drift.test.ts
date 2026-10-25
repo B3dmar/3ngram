@@ -14,6 +14,8 @@ import {
   proposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
+  writeScopeModeSchema,
+  writeScopePolicyScopeRequirements,
 } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
 
@@ -93,6 +95,11 @@ const agentSessionsSql = readFileSync(
 // 0032's lease index, which is why that one cannot serve it.
 const sessionCloserIndexSql = readFileSync(
   join(import.meta.dirname, '../migrations/0033_session_closer_index.sql'),
+  'utf8',
+)
+// 0039 adds the write-scope policy (issue #235), the write-side twin of 0030.
+const writeScopePolicySql = readFileSync(
+  join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -654,6 +661,49 @@ describe('agent_sessions table (0032, issue #166)', () => {
       /GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes, agent_sessions/,
     )
     expect(rolesSql).not.toMatch(/GRANT DELETE ON agent_sessions/)
+  })
+})
+
+describe('write-scope policy table (0039, issue #235)', () => {
+  it('derives the mode CHECK and every scope-consistency branch from the schema', () => {
+    expect(writeScopePolicySql).toContain(
+      `CHECK ("user_write_scope_policy"."mode" IN (${writeScopeModeSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    for (const [mode, requirement] of Object.entries(writeScopePolicyScopeRequirements)) {
+      const nullability = requirement === 'required' ? 'IS NOT NULL' : 'IS NULL'
+      expect(writeScopePolicySql).toContain(
+        `"user_write_scope_policy"."mode" = '${mode}' AND "user_write_scope_policy"."default_scope" ${nullability}`,
+      )
+    }
+  })
+
+  it("defaults to mode 'off' and keys one row per user, cascading with the user", () => {
+    expect(writeScopePolicySql).toContain('"user_id" uuid PRIMARY KEY NOT NULL')
+    expect(writeScopePolicySql).toContain(`"mode" text DEFAULT 'off' NOT NULL`)
+    expect(writeScopePolicySql).toContain(
+      'FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade',
+    )
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE', () => {
+    expect(writeScopePolicySql).toContain(
+      'ALTER TABLE "user_write_scope_policy" ENABLE ROW LEVEL SECURITY',
+    )
+    expect(writeScopePolicySql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "user_write_scope_policy"',
+    )
+    expect(writeScopePolicySql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(writeScopePolicySql).toContain(
+      'ALTER TABLE "user_write_scope_policy" FORCE ROW LEVEL SECURITY',
+    )
+    expect(writeScopePolicySql).not.toMatch(/DROP (TABLE|POLICY)/)
+  })
+
+  it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
+    expect(rolesSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON user_write_scope_policy TO app_user;',
+    )
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*user_write_scope_policy/)
   })
 })
 

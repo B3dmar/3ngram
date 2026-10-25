@@ -28,9 +28,11 @@ import {
   resetDomainTables,
   seedUser,
 } from '../../../db/test/integration/helpers.js'
+import { dbSurfacingRepo, type SurfacingRepo, surface } from '../../src/admin/surfacing.js'
 import { briefing } from '../../src/read/briefing.js'
 import { resolveByMemoryId } from '../../src/write/commitments.js'
 import { remember } from '../../src/write/remember.js'
+import { revise } from '../../src/write/revise.js'
 
 let userA: string
 
@@ -252,5 +254,122 @@ describe('remember -> briefing -> resolve loop, project-scoped (issue #244)', ()
 
     const resolved = await resolveByMemoryId(userA, id, 'resolved', ACTOR)
     expect(resolved.status).toBe('resolved')
+  })
+})
+
+// Issue #165 (with #322's capture-to-action matrix): a deadline written through
+// the NATIVE write path drives overdue and expiry exactly like an imported one.
+// Synthetic rows only; time is injected, never slept on.
+describe('native commitment deadline -> overdue -> expiry (issue #165)', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const GRACE = { expiryGraceDays: 14 }
+  const at = (days: number) => new Date(NOW.getTime() + days * DAY)
+  // The real db sweep, narrowed to the tenant under test.
+  const repoFor = (userId: string): SurfacingRepo => ({
+    listTenantIds: async () => [userId],
+    sweepCommitments: dbSurfacingRepo.sweepCommitments,
+  })
+  const projectBriefing = (now: Date) =>
+    briefing(userA, { selector: { kind: 'project', project: PROJECT }, mode: 'full', now })
+  const dated = (dueAt: Date) => ({
+    memoryType: 'commitment',
+    topic: 'cut the v1.9 release',
+    content: 'cut and tag the v1.9 release from staging',
+    project: PROJECT,
+    dueAt: dueAt.toISOString(),
+    owner: 'release-captain',
+  })
+
+  it('persists the explicit deadline and owner on the auto-created commitment row', async () => {
+    const { id, commitmentId } = await remember(userA, dated(at(1)), ACTOR)
+
+    const row = await ownerPool.query(
+      'SELECT id, due_at, owner, status FROM commitments WHERE memory_id = $1',
+      [id],
+    )
+    expect(row.rows[0]).toMatchObject({
+      id: commitmentId,
+      owner: 'release-captain',
+      status: 'open',
+    })
+    expect(new Date(row.rows[0].due_at).toISOString()).toBe(at(1).toISOString())
+  })
+
+  it('reads overdue in the project briefing once past due, expires only after the grace', async () => {
+    const { id } = await remember(userA, dated(at(1)), ACTOR)
+
+    const beforeDue = await projectBriefing(at(0))
+    expect(beforeDue.overdue.items.map((c) => c.memoryId)).not.toContain(id)
+    const listed = beforeDue.commitments.items.find((c) => c.memoryId === id)
+    expect(listed).toMatchObject({ dueAt: at(1).toISOString(), overdue: false })
+
+    // Past due, inside the grace: overdue, and the sweep leaves it open (#221).
+    const pastDue = at(5)
+    expect((await surface(repoFor(userA), pastDue, GRACE)).expired).toBe(0)
+    const overdue = await projectBriefing(pastDue)
+    expect(overdue.overdue.items.map((c) => c.memoryId)).toContain(id)
+    expect(overdue.overdue.items.find((c) => c.memoryId === id)?.overdue).toBe(true)
+
+    // Past the grace: the sweep expires it and it leaves both sections.
+    const pastGrace = at(1 + GRACE.expiryGraceDays + 1)
+    expect((await surface(repoFor(userA), pastGrace, GRACE)).expired).toBe(1)
+    const status = await ownerPool.query('SELECT status FROM commitments WHERE memory_id = $1', [
+      id,
+    ])
+    expect(status.rows[0].status).toBe('expired')
+    const after = await projectBriefing(pastGrace)
+    expect(after.overdue.items.map((c) => c.memoryId)).not.toContain(id)
+    expect(after.commitments.items.map((c) => c.memoryId)).not.toContain(id)
+  })
+
+  it('never makes an undated commitment overdue or expires it, whatever the prose says', async () => {
+    const { id } = await remember(
+      userA,
+      {
+        memoryType: 'commitment',
+        topic: 'undated pickup',
+        content: 'finish the docs pass by next Friday',
+        project: PROJECT,
+      },
+      ACTOR,
+    )
+
+    const farFuture = at(365)
+    expect((await surface(repoFor(userA), farFuture, GRACE)).expired).toBe(0)
+    const view = await projectBriefing(farFuture)
+    expect(view.overdue.items.map((c) => c.memoryId)).not.toContain(id)
+    expect(view.commitments.items.find((c) => c.memoryId === id)).toMatchObject({
+      dueAt: null,
+      overdue: false,
+    })
+  })
+
+  it('keeps the deadline, owner and commitment identity across a revise', async () => {
+    const first = await remember(userA, dated(at(1)), ACTOR)
+
+    const successor = await revise(
+      userA,
+      {
+        predecessorId: first.id,
+        memoryType: 'commitment',
+        topic: 'cut the v1.9 release',
+        content: 'cut and tag the v1.9 release from staging, with notes',
+      },
+      ACTOR,
+    )
+
+    const row = await ownerPool.query(
+      'SELECT id, memory_id, due_at, owner FROM commitments WHERE user_id = $1',
+      [userA],
+    )
+    expect(row.rowCount).toBe(1)
+    expect(row.rows[0]).toMatchObject({
+      id: first.commitmentId,
+      memory_id: successor.id,
+      owner: 'release-captain',
+    })
+    expect(new Date(row.rows[0].due_at).toISOString()).toBe(at(1).toISOString())
+    const overdue = await projectBriefing(at(5))
+    expect(overdue.overdue.items.map((c) => c.memoryId)).toEqual([successor.id])
   })
 })

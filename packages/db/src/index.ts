@@ -160,6 +160,7 @@ export {
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
+  type ExportWriteScopePolicyRow,
   readUserDataExport,
   type UserDataExport,
 } from './data-export.js'
@@ -260,6 +261,7 @@ export {
   reviseMemory,
 } from './memory-revise.js'
 export {
+  type CommitmentWrite,
   DuplicateMemoryError,
   insertMemoryWithEvent,
   type MemoryEventWrite,
@@ -289,6 +291,7 @@ export { ResourceLimitExceededError } from './resource-limits.js'
 export {
   getRetrievalPolicy,
   lockRetrievalScopePolicy,
+  lockScopePolicies,
   type RetrievalPolicyRow,
   replaceRetrievalPolicyDefault,
   upsertRetrievalPolicy,
@@ -400,3 +403,10 @@ export {
 } from './user-profile-attributes.js'
 // --- /me identity read: keyed id+email lookup, no credential ---
 export { getUserIdentityById, type UserIdentityRow } from './users-read.js'
+// --- write-scope policy store (issue #235) ---
+export {
+  getWriteScopePolicy,
+  replaceWriteScopePolicyDefault,
+  upsertWriteScopePolicy,
+  type WriteScopePolicyRow,
+} from './write-scope-policy.js'

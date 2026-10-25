@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// Scope-registry mutations keep the denormalized retrieval default coherent.
+// Scope-registry mutations keep the denormalized retrieval and write defaults
+// coherent.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const tx = { kind: 'tenant-tx' }
 const withTenant = vi.fn(async (_userId: string, fn: (value: unknown) => Promise<unknown>) =>
   fn(tx),
 )
-const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
+const lockScopePolicies = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const renameScopeDb = vi.fn(
   async (_tx: unknown, _userId: string, _oldName: string, _newName: string): Promise<unknown> =>
     undefined,
@@ -21,9 +22,24 @@ const replaceRetrievalPolicyDefault = vi.fn(
   ) => undefined,
 )
 
+const replaceWriteScopePolicyDefault = vi.fn(
+  async (
+    _tx: unknown,
+    _userId: string,
+    _oldDefault: string,
+    _policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => undefined,
+)
+
 vi.mock('@3ngram/db', () => ({
+  replaceWriteScopePolicyDefault: (
+    tx: unknown,
+    userId: string,
+    oldDefault: string,
+    policy: { mode: 'default' | 'require'; defaultScope: string | null },
+  ) => replaceWriteScopePolicyDefault(tx, userId, oldDefault, policy),
   withTenant: (userId: string, fn: (value: unknown) => Promise<unknown>) => withTenant(userId, fn),
-  lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
+  lockScopePolicies: (tx: unknown, userId: string) => lockScopePolicies(tx, userId),
   renameScope: (tx: unknown, userId: string, oldName: string, newName: string) =>
     renameScopeDb(tx, userId, oldName, newName),
   deleteScope: (tx: unknown, userId: string, name: string) => deleteScopeDb(tx, userId, name),
@@ -55,13 +71,21 @@ describe('scope and retrieval-policy consistency', () => {
 
     await expect(renameScope(USER, 'work', 'client')).resolves.toEqual(SCOPE)
 
-    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(tx, USER)
+    expect(lockScopePolicies).toHaveBeenCalledWith(tx, USER)
     expect(renameScopeDb).toHaveBeenCalledWith(tx, USER, 'work', 'client')
     expect(replaceRetrievalPolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
       mode: 'default',
       defaultScope: 'client',
     })
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    // The write default follows the rename too (issue #235).
+    expect(replaceWriteScopePolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
+      mode: 'default',
+      defaultScope: 'client',
+    })
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
+      replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
+    )
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       renameScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
     expect(renameScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
@@ -72,13 +96,22 @@ describe('scope and retrieval-policy consistency', () => {
   it('moves a deleted active default to fail-closed require', async () => {
     await expect(deleteScope(USER, 'work')).resolves.toBeUndefined()
 
-    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(tx, USER)
+    expect(lockScopePolicies).toHaveBeenCalledWith(tx, USER)
     expect(deleteScopeDb).toHaveBeenCalledWith(tx, USER, 'work')
     expect(replaceRetrievalPolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
       mode: 'require',
       defaultScope: null,
     })
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    // A deleted write default fails closed as well: unscoped writes are
+    // rejected, never silently routed back to 'personal' (issue #235).
+    expect(replaceWriteScopePolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
+      mode: 'require',
+      defaultScope: null,
+    })
+    expect(deleteScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
+      replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
+    )
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       deleteScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
     expect(deleteScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
@@ -92,5 +125,6 @@ describe('scope and retrieval-policy consistency', () => {
     await expect(renameScope(USER, 'missing', 'client')).rejects.toThrow('missing')
 
     expect(replaceRetrievalPolicyDefault).not.toHaveBeenCalled()
+    expect(replaceWriteScopePolicyDefault).not.toHaveBeenCalled()
   })
 })

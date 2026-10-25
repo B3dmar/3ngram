@@ -192,8 +192,9 @@ export interface WrittenCommitment {
  * does not enforce type or liveness, so a note-typed or superseded memory raises
  * {@link NotCommitmentMemoryError}.
  *
- * remember() does NOT auto-create this (rememberInputSchema models no commitment
- * metadata) — auto-create would invent policy. This is the standalone surface.
+ * A native remember() of a commitment auto-creates its row in the write
+ * transaction (memory-write.ts, with an explicit dueAt/owner since issue #165),
+ * so this standalone surface only applies to a commitment memory without one.
  */
 export async function createCommitment(input: CommitmentCreate): Promise<WrittenCommitment> {
   try {

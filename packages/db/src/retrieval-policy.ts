@@ -38,16 +38,24 @@ const POLICY_COLUMNS = {
 } as const
 
 /**
- * Serialize retrieval-policy changes with scope renames/deletes for one user.
- * All callers take this transaction lock before touching either side of the
- * denormalized scope-name relationship, so a concurrent setter cannot restore
- * an obsolete default after a registry mutation commits.
+ * Serialize changes to EITHER per-user scope policy (retrieval, issue #47;
+ * write, issue #235) with scope renames/deletes for one user. Every caller
+ * takes this transaction lock before touching any side of the denormalized
+ * scope-name relationship, so a concurrent setter cannot restore an obsolete
+ * default after a registry mutation commits. The advisory-lock key is
+ * unchanged from when it guarded the retrieval policy alone.
  */
-export async function lockRetrievalScopePolicy(tx: TenantTx, userId: string): Promise<void> {
+export async function lockScopePolicies(tx: TenantTx, userId: string): Promise<void> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext('retrieval_scope_policy'), hashtext(${userId}::uuid::text))`,
   )
 }
+
+/**
+ * @deprecated Use {@link lockScopePolicies}: the same lock (same key), renamed
+ * once it began guarding the write-scope policy too (issue #235).
+ */
+export const lockRetrievalScopePolicy = lockScopePolicies
 
 /**
  * Read the caller's retrieval policy, or null when none was ever set (the

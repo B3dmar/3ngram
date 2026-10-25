@@ -74,9 +74,11 @@ describe('REST memory history contract', () => {
           actorKind: 'user_api',
           createdAt: iso,
           payloadMetadata: { present: true, jsonType: 'object', byteLength: 20 },
+          sessionRunId: null,
         },
       ],
       eventsTruncated: false,
+      createdBySessionRunId: null,
     })
 
     expect(parsed.lineage.nodes).toHaveLength(2)
@@ -91,6 +93,7 @@ describe('REST memory history contract', () => {
         directRelationships: { predecessors: [], successors: [], truncated: false },
         auditEvents: [],
         eventsTruncated: false,
+        createdBySessionRunId: null,
       }).success,
     ).toBe(false)
 
@@ -106,11 +109,71 @@ describe('REST memory history contract', () => {
             actorKind: 'user_api',
             createdAt: iso,
             payloadMetadata: { present: true, jsonType: 'object', byteLength: 10 },
+            sessionRunId: null,
             payload: { source: 'raw value' },
           },
         ],
         eventsTruncated: false,
+        createdBySessionRunId: null,
       }).success,
+    ).toBe(false)
+  })
+})
+
+// Issue #262: the creating run is exposed as an allowlisted sibling field, an id
+// in its canonical spelling — never an arbitrary payload key or a non-uuid.
+describe('REST memory history session provenance (#262)', () => {
+  const RUN = '01890b6e-0000-7000-8000-000000000262'
+  function envelope(event: Record<string, unknown>, createdBySessionRunId: unknown) {
+    const current = identity()
+    return {
+      memory: current,
+      lineage: { nodes: [current], edges: [], truncated: false },
+      directRelationships: { predecessors: [], successors: [], truncated: false },
+      auditEvents: [
+        {
+          id: crypto.randomUUID(),
+          eventKind: 'create',
+          actorKind: 'user_mcp',
+          createdAt: iso,
+          payloadMetadata: { present: true, jsonType: 'object', byteLength: 55 },
+          ...event,
+        },
+      ],
+      eventsTruncated: false,
+      createdBySessionRunId,
+    }
+  }
+
+  it('accepts a uuid or null on the event and the envelope, canonicalized to lowercase', () => {
+    const parsed = memoryHistoryResponseSchema.parse(
+      envelope({ sessionRunId: RUN.toUpperCase() }, RUN.toUpperCase()),
+    )
+    expect(parsed.auditEvents[0]?.sessionRunId).toBe(RUN)
+    expect(parsed.createdBySessionRunId).toBe(RUN)
+    expect(
+      memoryHistoryResponseSchema.safeParse(envelope({ sessionRunId: null }, null)).success,
+    ).toBe(true)
+  })
+
+  it('requires both fields (null means "not recorded", absence is not a value)', () => {
+    expect(memoryHistoryResponseSchema.safeParse(envelope({}, null)).success).toBe(false)
+    expect(
+      memoryHistoryResponseSchema.safeParse(envelope({ sessionRunId: null }, undefined)).success,
+    ).toBe(false)
+  })
+
+  it('rejects a non-uuid value and any other payload key beside it', () => {
+    expect(
+      memoryHistoryResponseSchema.safeParse(envelope({ sessionRunId: 'not-a-run' }, null)).success,
+    ).toBe(false)
+    expect(
+      memoryHistoryResponseSchema.safeParse(envelope({ sessionRunId: null }, 'x')).success,
+    ).toBe(false)
+    expect(
+      memoryHistoryResponseSchema.safeParse(
+        envelope({ sessionRunId: RUN, reason: 'free text is not allowlisted' }, RUN),
+      ).success,
     ).toBe(false)
   })
 })

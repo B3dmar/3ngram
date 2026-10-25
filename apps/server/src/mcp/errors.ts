@@ -34,6 +34,7 @@ import {
   SuccessorNotLiveError,
   UnknownSessionRunError,
   UnscopedRetrievalError,
+  UnscopedWriteError,
 } from '@3ngram/core'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { ZodError } from 'zod'
@@ -99,6 +100,14 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: unscoped read rejected by policy')
     return fail(`invalid input: ${formatUnscopedRetrievalDetail(err.registeredScopes)}`)
+  }
+  // A `remember` without scope rejected by the caller's own write-scope policy
+  // (mode 'require', issue #235): the write-side sibling above, same
+  // invalid_input reason. The message is fixed text naming the fix; no content.
+  if (err instanceof UnscopedWriteError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'invalid_input' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: unscoped write rejected by policy')
+    return fail(`invalid input: ${err.message}`)
   }
   // A continuation cursor replayed against a DIFFERENT query/filter set than
   // the one that issued it — the caller's mistake, named honestly with the

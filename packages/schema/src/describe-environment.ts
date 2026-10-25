@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { memoriesFacetsResponseSchema } from './rest.js'
 import { describeEnvironmentOutputV2Schema } from './retrieval-scope.js'
+import { describeEnvironmentWritePolicyFields } from './write-scope.js'
 
 /**
  * The authenticated account's identity (issue #321).
@@ -97,7 +98,7 @@ export type EnvironmentFacets = z.infer<typeof environmentFacetsSchema>
 /**
  * `describe_environment` output V4: V3 (account identity) plus the inlined,
  * capped `facets` inventory. ALWAYS present (empty arrays when there is
- * nothing). A later field (issue #235) composes a V5 from this one.
+ * nothing). V5 adds the write-scope policy (issue #235).
  */
 export const describeEnvironmentOutputV4Schema = describeEnvironmentOutputV3Schema
   .safeExtend({
@@ -105,3 +106,14 @@ export const describeEnvironmentOutputV4Schema = describeEnvironmentOutputV3Sche
   })
   .meta(OPEN_OUTPUT_META)
 export type DescribeEnvironmentOutputV4 = z.infer<typeof describeEnvironmentOutputV4Schema>
+
+/**
+ * `describe_environment` output V5 — the shipped tool output: V4 (account
+ * identity, capped facets) plus the effective `writeScopePolicy` (issue #235),
+ * composed from the field fragment `write-scope.ts` exports so both changes
+ * reach one schema rather than two sibling successors of V2.
+ */
+export const describeEnvironmentOutputV5Schema = describeEnvironmentOutputV4Schema
+  .safeExtend(describeEnvironmentWritePolicyFields)
+  .meta(OPEN_OUTPUT_META)
+export type DescribeEnvironmentOutputV5 = z.infer<typeof describeEnvironmentOutputV5Schema>

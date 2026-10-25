@@ -166,6 +166,36 @@ describe('remember command', () => {
     })
   })
 
+  it('forwards --due and --owner for a commitment, leaving validation to the server', async () => {
+    const { client, calls } = stubClient({ remember: REMEMBER_OUT })
+    const { io } = captureIo(client)
+
+    await run(
+      [
+        'remember',
+        '--type',
+        'commitment',
+        '--topic',
+        't',
+        '--content',
+        'c',
+        '--due',
+        '2026-11-30T17:00:00Z',
+        '--owner',
+        'release-captain',
+      ],
+      io,
+    )
+
+    expect(calls[0]?.payload).toEqual({
+      memoryType: 'commitment',
+      topic: 't',
+      content: 'c',
+      dueAt: '2026-11-30T17:00:00Z',
+      owner: 'release-captain',
+    })
+  })
+
   it('--json prints the raw SDK response', async () => {
     const { client } = stubClient({ remember: REMEMBER_OUT })
     const { io, out } = captureIo(client)
