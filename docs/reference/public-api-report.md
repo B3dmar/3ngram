@@ -1444,7 +1444,7 @@ its row here even when its name and kind are unchanged.
 
 | Export | Kind | Signature |
 |---|---|---|
-| `AppOptions` | interface | `344cf79f3b63` |
+| `AppOptions` | interface | `dfea1b083f73` |
 | `Extension` | interface | `7340dd0f768e` |
 | `RESOURCE_LIMITS_ENFORCED` | const | `3a196bd283fc` |
 | `createApp` | function | `b4fbf33cc40e` |
