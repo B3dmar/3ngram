@@ -15,7 +15,7 @@
 // detail (inspect) read carries content because that is its JTBD, bounded by the
 // same write-time content cap.
 import { z } from 'zod'
-import { commitmentStatusSchema } from './commitment.js'
+import { commitmentStatusSchema, MAX_RESOLUTION_REASON_LENGTH } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
 import { MAX_MEMORY_TYPES_FILTER, proposalRecordSchema, searchFiltersSchema } from './mcp.js'
@@ -399,6 +399,16 @@ export const memoryHistoryResponseSchema = z
      * recorded: the read does not re-validate it against `agent_sessions`.
      */
     createdBySessionRunId: sessionRunIdSchema.nullable(),
+    /**
+     * The `reason` passed with the LATEST transition of the commitment riding
+     * this memory (issue #234), read from `commitments.last_resolution_reason`
+     * in the same tenant-scoped transaction. `null` for a non-commitment, a
+     * memory whose commitment moved to its successor on revise, and a
+     * commitment whose latest transition carried no reason (a reason explains
+     * one transition and is cleared by the next). It is memory CONTENT: this
+     * authenticated, tenant-scoped read is the only surface that returns it.
+     */
+    lastResolutionReason: z.string().min(1).max(MAX_RESOLUTION_REASON_LENGTH).nullable(),
     // Additive + optional-tolerant: older servers that omit it are treated as
     // all-`ok` by consumers; the web client casts the body and never re-validates.
     sections: memoryHistorySectionsSchema.optional(),

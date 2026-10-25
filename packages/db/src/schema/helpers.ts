@@ -16,6 +16,17 @@ export function enumCheckSql(column: PgColumn, values: readonly string[]): SQL {
 }
 
 /**
+ * Length CHECK generated from a @3ngram/schema string bound (issue #234). The
+ * Zod schema owns the bound; the DB backstop is built from the same exported
+ * constant. NULL passes (a CHECK is satisfied by NULL), so an optional column
+ * needs no extra clause. `char_length` counts code points, which never exceeds
+ * the UTF-16 length Zod's `.max()` counts, so a Zod-valid value always passes.
+ */
+export function charLengthCheckSql(column: PgColumn, min: number, max: number): SQL {
+  return sql`char_length(${column}) BETWEEN ${sql.raw(String(min))} AND ${sql.raw(String(max))}`
+}
+
+/**
  * CHECK generated from a schema-owned mode-to-nullability contract. Each mode
  * is paired with either a required or forbidden nullable value, so the DB does
  * not restate a Zod refinement with independently maintained literals.

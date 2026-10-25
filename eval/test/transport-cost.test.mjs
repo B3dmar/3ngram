@@ -216,9 +216,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // unchanged; REST and CLI unchanged. MEASURED, not summed.
       // Re-measured after composing onto #235 (describe_environment V5 =
       // V4 + writeScopePolicy), re-measured on staging 0a6cdf3: the three deltas still hold.
-      mcp: [29219, 235568, 58793],
+      // MCP +74/+592/+145, REST +74/+74/+74 (issue #234): the resolve input
+      // gains an optional, described `reason` (1-500 chars). MCP pays it on
+      // tools/list per turn, REST on the resolve request surface once. CLI
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging 054315b, not summed.
+      mcp: [29293, 236160, 58937],
       cli: [333, 1236, 1236],
-      rest: [4145, 5162, 5162],
+      rest: [4219, 5236, 5236],
     },
   )
 })

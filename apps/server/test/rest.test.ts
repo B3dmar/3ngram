@@ -121,6 +121,14 @@ class UnscopedWriteError extends Error {
     this.name = 'UnscopedWriteError'
   }
 }
+class ResolveReasonNotSupportedError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a resolve reason is stored only on a commitment; omit reason to resolve a blocker')
+    this.name = 'ResolveReasonNotSupportedError'
+    this.memoryId = memoryId
+  }
+}
 class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
   constructor(registeredScopes: readonly string[]) {
@@ -287,6 +295,7 @@ vi.mock('@3ngram/core', async () => ({
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
   UnscopedWriteError,
+  ResolveReasonNotSupportedError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -1486,7 +1495,57 @@ describe('POST /api/v1/memories/:id/resolve', () => {
       'resolved',
       'user_api',
       undefined,
+      undefined,
     )
+  })
+
+  it('passes a trimmed reason through to core (issue #234)', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: COMMIT_ID, status: 'resolved' })
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason: '  shipped in PR #234  ' },
+    })
+    expect(res.status).toBe(200)
+    expect(resolveByMemoryId).toHaveBeenCalledWith(
+      TENANT,
+      NEW_ID,
+      'resolved',
+      'user_api',
+      undefined,
+      'shipped in PR #234',
+    )
+  })
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   '],
+    ['oversize', 'x'.repeat(501)],
+  ])('400s a %s reason at the schema boundary, before core', async (_label, reason) => {
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason },
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('400s a reason on a blocker with fixed recovery text, never the reason', async () => {
+    resolveByMemoryId.mockRejectedValue(new ResolveReasonNotSupportedError(NEW_ID))
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason: 'private-evidence-text' },
+    })
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body).toEqual({
+      error: 'invalid_input',
+      detail: 'a resolve reason is stored only on a commitment; omit reason to resolve a blocker',
+    })
+    expect(JSON.stringify(body)).not.toContain('private-evidence-text')
   })
 
   it('409s an illegal FSM transition (invalid_transition -> HTTP)', async () => {
@@ -1846,6 +1905,7 @@ describe('GET /api/v1/memories/:id/history', () => {
       ],
       eventsTruncated: false,
       createdBySessionRunId: RUN_ID_262,
+      lastResolutionReason: 'shipped in PR #234',
       sections: { lineage: 'ok', events: 'ok' },
     })
 
@@ -1860,9 +1920,12 @@ describe('GET /api/v1/memories/:id/history', () => {
         sessionRunId: string | null
       }>
       createdBySessionRunId: string | null
+      lastResolutionReason: string | null
       sections: { lineage: string; events: string }
     }
     expect(body.memory.id).toBe(NEW_ID)
+    // Issue #234: the commitment's latest-transition reason, top level.
+    expect(body.lastResolutionReason).toBe('shipped in PR #234')
     expect(body.memory).not.toHaveProperty('content')
     expect(body.memory.recordedAt).toBe('2026-05-01T00:00:00.000Z')
     expect(body.lineage.edges[0]?.createdAt).toBe('2026-06-02T00:00:00.000Z')
@@ -1916,6 +1979,7 @@ describe('GET /api/v1/memories/:id/history', () => {
       auditEvents: [],
       eventsTruncated: false,
       createdBySessionRunId: null,
+      lastResolutionReason: null,
       sections: { lineage: 'ok', events: 'unavailable' },
       sectionErrors: { events: 'Error' },
     })

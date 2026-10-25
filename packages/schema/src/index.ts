@@ -175,7 +175,13 @@ export {
   capabilityKindSchema,
 } from './capabilities.js'
 export type { CommitmentStatus } from './commitment.js'
-export { COMMITMENT_TRANSITIONS, canTransition, commitmentStatusSchema } from './commitment.js'
+export {
+  COMMITMENT_TRANSITIONS,
+  canTransition,
+  commitmentStatusSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
+  resolutionReasonSchema,
+} from './commitment.js'
 export type { ConsolidationPolicy, ProposalStatus } from './consolidation.js'
 export { CONSOLIDATION_POLICIES, proposalStatusSchema } from './consolidation.js'
 export type {
