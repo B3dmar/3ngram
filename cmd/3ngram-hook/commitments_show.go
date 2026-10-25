@@ -117,8 +117,9 @@ type commitmentDetail struct {
 }
 
 // commitmentSource says what is known about where the commitment came from.
-// The session it was written in is not exposed by any read route (history
-// payloads are redacted), so it is always null with that reason.
+// The history read exposes the creating session run since #262
+// (createdBySessionRunId), but the hook does not consume it yet, so Session is
+// always null with that reason.
 type commitmentSource struct {
 	CreatedBy     *string `json:"createdBy"`
 	CreatedAt     *string `json:"createdAt"`

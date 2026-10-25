@@ -222,7 +222,11 @@ export async function readAuditEvents(tx: TenantTx, memoryId: string): Promise<R
  * events, so a memory with more than MEMORY_HISTORY_EVENT_LIMIT events would
  * otherwise lose its create. `actor_kind <> 'importer'` keeps an imported
  * historical `create` (importEvent) from ever standing in for a native one —
- * imported provenance is never inferred. Served by memory_events_memory_idx.
+ * imported provenance is never inferred. "Earliest" is load-bearing, not just
+ * a tie-break: createCommitment (commitments.ts) appends a second, payload-less
+ * native `create` event when a commitment row is attached later, and
+ * `ORDER BY created_at, id` keeps the memory's own first create. Served by
+ * memory_events_memory_idx.
  */
 export async function readCreatingSessionRunId(
   tx: TenantTx,
