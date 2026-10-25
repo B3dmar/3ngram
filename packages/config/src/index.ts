@@ -10,10 +10,12 @@ export {
 export {
   type BudgetConfig,
   type Env,
+  type EnvRole,
   envSchema,
   isAllowedMcpOrigin,
   type LlmGatewayConfig,
   LOG_LEVELS,
+  type LoadEnvOptions,
   loadBudgetConfig,
   loadEnv,
   loadLlmGatewayConfig,

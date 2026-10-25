@@ -7,8 +7,8 @@
 import { loadEnv, log } from '@3ngram/config'
 import { initObservability } from '@3ngram/config/otel'
 
-initObservability()
-loadEnv() // refuse-by-construction: a misconfigured process dies at boot
+initObservability({ role: 'worker' })
+loadEnv({ role: 'worker' }) // refuse-by-construction: a misconfigured process dies at boot
 
 // Dynamic import keeps the bullmq/ioredis module graph behind initObservability
 // (the entrypoint load-order contract). createRedis throws MissingRedisUrlError
