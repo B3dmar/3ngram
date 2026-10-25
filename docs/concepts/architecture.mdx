@@ -10,7 +10,7 @@ Turborepo + pnpm workspaces. The license boundary follows the package boundary.
 3ngram/
 ├── apps/
 │   ├── server/            # express: REST API + MCP — one deployable
-│   ├── worker/            # BullMQ consumers: consolidation, surfacing, gc-clients
+│   ├── worker/            # BullMQ consumers + one-shot entrypoint: consolidation, surfacing, gc-clients, session closer
 │   └── cli/               # 3ngram (bare npm name) — thin SDK client; the coding-agent default transport
 ├── packages/
 │   ├── schema/            # Zod v4: THE single source of truth (enums, constraints, tool I/O, API DTOs)

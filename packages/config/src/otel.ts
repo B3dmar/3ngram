@@ -3,7 +3,7 @@
 // in every app entrypoint — Sentry's OTel auto-instrumentation must load
 // before http/pg/etc. Never import it from library code; apps only.
 import * as Sentry from '@sentry/node'
-import { type Env, loadEnv } from './env.js'
+import { type Env, type EnvRole, loadEnv } from './env.js'
 import { logger } from './logger.js'
 import { contentDigest, REDACTED, REDACTED_FIELDS } from './redaction.js'
 
@@ -95,6 +95,7 @@ export function resolveSentryEnvironment(
 }
 
 let initialized = false
+let sentryEnabled = false
 
 /**
  * Error tracking + tracing, DSN-gated: an empty SENTRY_DSN means fully
@@ -114,11 +115,12 @@ let initialized = false
  * and the provider-rebind test in metrics.test.ts proves instruments pick up
  * a provider installed after first use.
  */
-export function initObservability(options: { release?: string } = {}): void {
+export function initObservability(options: { release?: string; role?: EnvRole } = {}): void {
   if (initialized) return
   initialized = true
 
-  const env = loadEnv()
+  // The first loadEnv caller in an entrypoint: it fixes the role for the process.
+  const env = loadEnv(options.role === undefined ? undefined : { role: options.role })
   if (env.SENTRY_DSN === '') {
     logger.info('observability: telemetry disabled (no SENTRY_DSN)')
     registerCrashHandlers(false)
@@ -136,8 +138,22 @@ export function initObservability(options: { release?: string } = {}): void {
     beforeSend: (event) => scrubSentryEvent(event),
     beforeSendTransaction: (event) => scrubEvent(event),
   })
+  sentryEnabled = true
   registerCrashHandlers(true)
   logger.info({ release, environment }, 'observability: Sentry + OTel enabled')
+}
+
+/**
+ * Drains queued Sentry events before a deliberate exit (one-shot entrypoints).
+ * A no-op when Sentry is disabled; never throws, so it cannot change an exit code.
+ */
+export async function flushObservability(timeoutMs = 2000): Promise<void> {
+  if (!sentryEnabled) return
+  try {
+    await Sentry.flush(timeoutMs)
+  } catch {
+    // Best effort: a failed flush must not mask the pass's own outcome.
+  }
 }
 
 function registerCrashHandlers(sentryEnabled: boolean): void {

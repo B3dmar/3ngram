@@ -4,7 +4,17 @@
 // block below.
 // --- account lifecycle: self-serve deletion ---
 
-export { assertRlsInForce, ResourceLimitExceededError, RlsGuardError } from '@3ngram/db'
+// closeDb: pool teardown for one-shot entrypoints (apps reach db through core).
+// createPostgresRateLimiter: Postgres-backed rate limits without Redis (#315).
+export {
+  assertRlsInForce,
+  closeDb,
+  createPostgresRateLimiter,
+  type PostgresRateLimiterOptions,
+  RATE_LIMIT_TABLE,
+  ResourceLimitExceededError,
+  RlsGuardError,
+} from '@3ngram/db'
 // --- budget: access gate port + Apache budget gate ---
 export type {
   ResourceLimitKind,
