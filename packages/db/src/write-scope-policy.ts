@@ -9,7 +9,7 @@
 // null here (the off default is core policy, not a fabricated row).
 //
 // Concurrency: callers serialize changes to this row with scope renames and
-// deletes by taking lockRetrievalScopePolicy (retrieval-policy.ts) first. That
+// deletes by taking lockScopePolicies (retrieval-policy.ts) first. That
 // one per-user lock guards every denormalized copy of a scope name the
 // policies hold, so a concurrent setter cannot restore a renamed or deleted
 // default after the registry mutation commits.

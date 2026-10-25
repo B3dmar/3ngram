@@ -15,6 +15,7 @@ const expectZodRejection = (promise: Promise<unknown>) =>
 const writeMemory = vi.fn()
 // Write-scope policy read (issue #235): null = no stored row = mode 'off'.
 const getWriteScopePolicy = vi.fn(async (_tx: unknown, _userId: string): Promise<unknown> => null)
+const listScopes = vi.fn(async (_tx: unknown, _userId: string): Promise<unknown[]> => [])
 const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<unknown>) =>
   fn({ kind: 'tenant-tx' }),
 )
@@ -22,6 +23,7 @@ const withTenant = vi.fn(async (_userId: string, fn: (tx: unknown) => Promise<un
 vi.mock('@3ngram/db', () => ({
   writeMemory: (...args: unknown[]) => writeMemory(...args),
   getWriteScopePolicy: (tx: unknown, userId: string) => getWriteScopePolicy(tx, userId),
+  listScopes: (tx: unknown, userId: string) => listScopes(tx, userId),
   withTenant: (userId: string, fn: (tx: unknown) => Promise<unknown>) => withTenant(userId, fn),
   // remember.ts re-exports DuplicateMemoryError from @3ngram/db; the real class
   // is needed so `instanceof` and `.name` assertions hold.
@@ -339,12 +341,18 @@ describe('remember (write-scope policy, issue #235)', () => {
 
   it("mode 'require' rejects an omitted scope before access, budget, limits, or any write", async () => {
     getWriteScopePolicy.mockResolvedValue(policy('require', null))
+    listScopes.mockResolvedValue([{ name: 'personal' }, { name: 'work' }])
     const opts = guards()
 
     const rejection = remember(USER, validInput(), ACTOR, opts)
 
     await expect(rejection).rejects.toBeInstanceOf(UnscopedWriteError)
-    await expect(rejection).rejects.toThrow(/pass scope, or change the policy/)
+    // Transport-neutral recovery: "pass scope" plus the registered names, so
+    // the fix is actionable over REST as well as MCP.
+    await expect(rejection).rejects.toThrow(/pass scope; registered scopes: personal, work$/)
+    // Same tenant transaction as the policy read, keyed by the caller.
+    expect(listScopes).toHaveBeenCalledExactlyOnceWith({ kind: 'tenant-tx' }, USER)
+    expect(withTenant).toHaveBeenCalledOnce()
     expect(opts.access.assertWrite).not.toHaveBeenCalled()
     expect(opts.budget.resolveLimits).not.toHaveBeenCalled()
     expect(opts.limits).not.toHaveBeenCalled()

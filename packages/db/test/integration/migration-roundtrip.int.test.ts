@@ -22,7 +22,10 @@ describe('migration round-trip structure', () => {
     expect(r.rows[0].ok).toBe(true)
   })
 
-  it('all 28 tables exist', async () => {
+  // PHYSICAL TABLE COUNT: bump EXPECTED_TABLES (and the ledger below) when a
+  // migration adds a table, RLS or not.
+  const EXPECTED_TABLES = 28
+  it(`all ${EXPECTED_TABLES} tables exist`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
        WHERE table_schema = 'public' AND table_name NOT LIKE '\\_\\_%'`,
@@ -32,10 +35,13 @@ describe('migration round-trip structure', () => {
     // + user_profile_attributes (0026) = 24, + user_retrieval_policy (0030) = 25
     // + fact_proposals (0031) = 26, + agent_sessions (0032) = 27
     // + user_write_scope_policy (0039) = 28
-    expect(Number(r.rows[0].n)).toBe(28)
+    expect(Number(r.rows[0].n)).toBe(EXPECTED_TABLES)
   })
 
-  it('23 tenant_isolation policies, all with the NULLIF guard', async () => {
+  // TENANT POLICY COUNT: bump only for a table that gets a tenant_isolation
+  // policy (a system table without RLS leaves this unchanged).
+  const EXPECTED_TENANT_POLICIES = 23
+  it(`${EXPECTED_TENANT_POLICIES} tenant_isolation policies, all with the NULLIF guard`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM pg_policies WHERE policyname = 'tenant_isolation'
        AND qual LIKE '%NULLIF%'`,
@@ -46,7 +52,7 @@ describe('migration round-trip structure', () => {
     // + user_retrieval_policy (0030) = 20, + fact_proposals (0031) = 21
     // + agent_sessions (0032) = 22, + user_write_scope_policy (0039) = 23
     // (the two 0022 service/global tables have no RLS)
-    expect(Number(r.rows[0].n)).toBe(23)
+    expect(Number(r.rows[0].n)).toBe(EXPECTED_TENANT_POLICIES)
   })
 
   it('FSM trigger is armed on commitments', async () => {

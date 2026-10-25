@@ -217,6 +217,7 @@ export {
 export {
   createScope,
   deleteScope,
+  formatUnscopedWriteDetail,
   listScopes,
   type RetrievalPolicySetting,
   renameScope,
@@ -229,6 +230,7 @@ export {
   setRetrievalDefault,
   setScopeAliases,
   setWriteDefault,
+  toWriteScopeSetting,
   UNPOLICIED_WRITE_SCOPE,
   UnscopedWriteError,
   type WriteScopePolicySetting,

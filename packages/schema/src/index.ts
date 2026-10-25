@@ -551,7 +551,7 @@ export {
 export type {
   ConfigureScopeInputV3,
   ConfigureScopeOutputV3,
-  DescribeEnvironmentOutputV3,
+  DescribeEnvironmentOutputWithWritePolicy,
   SetWriteDefaultInput,
   WriteScopeMode,
   WriteScopePolicy,
@@ -559,7 +559,8 @@ export type {
 export {
   configureScopeInputV3Schema,
   configureScopeOutputV3Schema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentWritePolicyFields,
   setWriteDefaultInputSchema,
   writeScopeModeSchema,
   writeScopePolicySchema,

@@ -55,7 +55,7 @@ Memories also carry an optional `project` label, which subdivides within a scope
 
 `scope` is required for `default` and must be `null` for `off` and `require`. An explicit `scope` on the write always wins and is used as given; it is not checked against the registry. The response's `memory.scope` reports where the memory actually landed. The rejection under `require` happens before any write, access, or budget check, so a rejected call stores nothing and spends nothing.
 
-The policy is stored per account (one row, tenant-isolated like every other user table) and only ever read for the authenticated caller: a scope name in a request never selects another account. `describe_environment` reports it as `writeScopePolicy`, next to `retrievalScopePolicy`; an account that never configured one reports `{ "mode": "off", "scope": null }`. `revise` does not use the write policy: a successor that omits `scope` inherits its predecessor's.
+The policy is stored per account (one row, tenant-isolated like every other user table) and only ever read for the authenticated caller: a scope name in a request never selects another account. `describe_environment` reports it as `writeScopePolicy`, next to `retrievalScopePolicy`; an account that never configured one reports `{ "mode": "off", "scope": null }`. `revise` does not use the write policy: a successor that omits `scope` inherits its predecessor's. Import does not consult it either: an imported memory without a scope keeps the `personal` default.
 
 ## Binding sessions to a scope
 

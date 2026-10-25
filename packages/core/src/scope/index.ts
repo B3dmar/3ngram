@@ -15,9 +15,11 @@ export {
   setScopeAliases,
 } from './scopes.js'
 export {
+  formatUnscopedWriteDetail,
   resolveWriteScope,
   resolveWriteScopePolicy,
   setWriteDefault,
+  toWriteScopeSetting,
   UNPOLICIED_WRITE_SCOPE,
   UnscopedWriteError,
   type WriteScopePolicySetting,

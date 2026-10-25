@@ -16,7 +16,7 @@ import {
   briefingToolOutputV2Schema,
   briefingToolOutputV3Schema,
   configureScopeOutputV3Schema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
   factsToolOutputSchema,
   getMemoriesOutputSchema,
   handoffToolOutputV2Schema,
@@ -220,7 +220,7 @@ function applyPolicyToScopeFilter(
 class UnscopedWriteError extends Error {
   constructor() {
     super(
-      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope, or change the policy with configure_scope set_write_default",
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
     )
     this.name = 'UnscopedWriteError'
   }
@@ -772,7 +772,7 @@ describe('remember tool', () => {
     )
     expect(result.isError).toBe(true)
     const text = (result.content as { text: string }[])[0]?.text ?? ''
-    expect(text).toMatch(/^invalid input: .*pass scope, or change the policy/)
+    expect(text).toMatch(/^invalid input: .*pass scope; registered scopes: personal, work$/)
     expect(text).not.toContain('secret')
   })
 
@@ -2411,7 +2411,7 @@ describe('describe_environment tool', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
     // Capabilities reflect the FULL registry (merged surface: 11 tools, names included).
     expect(parsed.capabilities.toolCount).toBe(11)
     expect(parsed.capabilities.tools).toContain('describe_environment')
@@ -2837,7 +2837,7 @@ describe('write-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
     expect(parsed.writeScopePolicy).toEqual({ mode: 'default', scope: 'work' })
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
   })
@@ -2918,7 +2918,7 @@ describe('retrieval-scope policy wiring', () => {
     })
     const result = await call('describe_environment', {}, ctx({ scopes: ['memory:read'] }))
     expect(result.isError).toBeFalsy()
-    const parsed = describeEnvironmentOutputV3Schema.parse(result.structuredContent)
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse(result.structuredContent)
     expect(parsed.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
   })
 

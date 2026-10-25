@@ -355,7 +355,7 @@ its row here even when its name and kind are unchanged.
 | `UNPOLICIED_WRITE_SCOPE` | const | `14407d6fd486` |
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
-| `UnscopedWriteError` | class | `f95b3dc0a303` |
+| `UnscopedWriteError` | class | `836d2ad0275b` |
 | `UserDataExport` | interface | `fb4950dae828` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WriteScopePolicySetting` | interface | `ab65eda55f36` |
@@ -390,6 +390,7 @@ its row here even when its name and kind are unchanged.
 | `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
+| `formatUnscopedWriteDetail` | function | `458c8da8d442` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
 | `getAgentSession` | function | `340a1f97bda6` |
 | `getAgentSessionRun` | function | `8c021ae41931` |
@@ -440,6 +441,7 @@ its row here even when its name and kind are unchanged.
 | `setWriteDefault` | function | `8f06eefe3633` |
 | `surface` | function | `3f6d72f3d59f` |
 | `sweepSessions` | function | `2a9d3ff6860e` |
+| `toWriteScopeSetting` | function | `019554016828` |
 | `transition` | function | `5311082e3cc6` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
@@ -800,7 +802,8 @@ its row here even when its name and kind are unchanged.
 | `listSessionEvents` | function | `38bf91400471` |
 | `listTenantIds` | function | `71356a9ecac7` |
 | `llmUsage` | const | `084a998527f0` |
-| `lockRetrievalScopePolicy` | function | `1048c1340fef` |
+| `lockRetrievalScopePolicy` | const | `6f2be42f44de` |
+| `lockScopePolicies` | function | `ce3797a1bc52` |
 | `materializeClientMetadata` | function | `7f108ca801ea` |
 | `memories` | const | `27508428e230` |
 | `memoryEdges` | const | `52088e26ee30` |
@@ -1023,7 +1026,7 @@ its row here even when its name and kind are unchanged.
 | `DescribeEnvironmentInput` | type | `ccbb4620ed2f` |
 | `DescribeEnvironmentOutput` | type | `0b7acee1f097` |
 | `DescribeEnvironmentOutputV2` | type | `a84de5a9077c` |
-| `DescribeEnvironmentOutputV3` | type | `083fcacc5c9d` |
+| `DescribeEnvironmentOutputWithWritePolicy` | type | `71c3fdf7a369` |
 | `EDGE_TYPES` | const | `2123ce5046a8` |
 | `EXCERPT_MARKER` | const | `c94c597ad8df` |
 | `EdgeInput` | type | `148a30e60bcc` |
@@ -1285,7 +1288,8 @@ its row here even when its name and kind are unchanged.
 | `describeEnvironmentInputSchema` | const | `38dfd6c1a221` |
 | `describeEnvironmentOutputSchema` | const | `1e33be57b630` |
 | `describeEnvironmentOutputV2Schema` | const | `7f7e94249db9` |
-| `describeEnvironmentOutputV3Schema` | const | `78d6b410363e` |
+| `describeEnvironmentOutputWithWritePolicySchema` | const | `71c839521984` |
+| `describeEnvironmentWritePolicyFields` | const | `3b8caf59ecce` |
 | `edgeInputSchema` | const | `56912f6f68d8` |
 | `edgeTypeSchema` | const | `86414d0a3335` |
 | `embedStatusSchema` | const | `ac5117a08996` |

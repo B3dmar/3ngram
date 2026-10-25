@@ -290,6 +290,7 @@ export { ResourceLimitExceededError } from './resource-limits.js'
 export {
   getRetrievalPolicy,
   lockRetrievalScopePolicy,
+  lockScopePolicies,
   type RetrievalPolicyRow,
   replaceRetrievalPolicyDefault,
   upsertRetrievalPolicy,

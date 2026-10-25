@@ -16,7 +16,7 @@ import {
   createScope as createScopeDb,
   deleteScope as deleteScopeDb,
   listScopes as listScopesDb,
-  lockRetrievalScopePolicy,
+  lockScopePolicies,
   renameScope as renameScopeDb,
   replaceRetrievalPolicyDefault,
   replaceWriteScopePolicyDefault,
@@ -47,7 +47,7 @@ export function createScope(
 /** Rename a scope. Missing -> ScopeNotFoundError; new name taken -> conflict. */
 export function renameScope(userId: string, from: string, to: string): Promise<ScopeRecord> {
   return withTenant(userId, async (tx) => {
-    await lockRetrievalScopePolicy(tx, userId)
+    await lockScopePolicies(tx, userId)
     const scope = await renameScopeDb(tx, userId, from, to)
     const renamed = { mode: 'default', defaultScope: to } as const
     await replaceRetrievalPolicyDefault(tx, userId, from, renamed)
@@ -73,7 +73,7 @@ export function setScopeAliases(
  */
 export function deleteScope(userId: string, name: string): Promise<void> {
   return withTenant(userId, async (tx) => {
-    await lockRetrievalScopePolicy(tx, userId)
+    await lockScopePolicies(tx, userId)
     await deleteScopeDb(tx, userId, name)
     const failClosed = { mode: 'require', defaultScope: null } as const
     await replaceRetrievalPolicyDefault(tx, userId, name, failClosed)

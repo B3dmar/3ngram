@@ -17,7 +17,7 @@ const upsertWriteScopePolicy = vi.fn(
   }),
 )
 const listScopes = vi.fn(async (_tx: unknown, _userId: string): Promise<unknown[]> => [])
-const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
+const lockScopePolicies = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 
 class ScopeNotFoundError extends Error {
   readonly scopeName: string
@@ -37,15 +37,21 @@ vi.mock('@3ngram/db', () => ({
     policy: { mode: string; defaultScope: string | null },
   ) => upsertWriteScopePolicy(t, userId, policy),
   listScopes: (t: unknown, userId: string) => listScopes(t, userId),
-  lockRetrievalScopePolicy: (t: unknown, userId: string) => lockRetrievalScopePolicy(t, userId),
+  lockScopePolicies: (t: unknown, userId: string) => lockScopePolicies(t, userId),
   ScopeNotFoundError,
 }))
 
-const { resolveWriteScope, resolveWriteScopePolicy, setWriteDefault, UnscopedWriteError } =
-  await import('../src/scope/write-policy.js')
+const {
+  formatUnscopedWriteDetail,
+  resolveWriteScope,
+  resolveWriteScopePolicy,
+  setWriteDefault,
+  toWriteScopeSetting,
+  UnscopedWriteError,
+} = await import('../src/scope/write-policy.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
-const row = (mode: string, defaultScope: string | null) => ({
+const row = (mode: 'off' | 'default' | 'require', defaultScope: string | null) => ({
   mode,
   defaultScope,
   updatedAt: new Date('2026-10-01T00:00:00.000Z'),
@@ -102,10 +108,46 @@ describe('resolveWriteScope', () => {
 
   it("throws UnscopedWriteError for an omitted scope under 'require'", async () => {
     getWriteScopePolicy.mockResolvedValue(row('require', null))
+    listScopes.mockResolvedValue([scope('personal'), scope('work', ['job'])])
     const error = await resolveWriteScope(USER, undefined).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(UnscopedWriteError)
     expect((error as Error).name).toBe('UnscopedWriteError')
-    expect((error as Error).message).toMatch(/set_write_default/)
+    // Canonical names only (aliases are not resolved), read in the same tx.
+    expect((error as { registeredScopes: readonly string[] }).registeredScopes).toEqual([
+      'personal',
+      'work',
+    ])
+    expect((error as Error).message).toBe(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
+    )
+    expect(listScopes).toHaveBeenCalledExactlyOnceWith(tx, USER)
+    expect(withTenant).toHaveBeenCalledOnce()
+  })
+})
+
+describe('formatUnscopedWriteDetail', () => {
+  it('says any scope name works when none is registered (explicit scopes are not registry-checked)', () => {
+    expect(formatUnscopedWriteDetail([])).toBe(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; any kebab-case scope name is accepted",
+    )
+  })
+
+  it('stays bounded: at most 8 names, then a count of the rest, within the REST detail cap', () => {
+    const many = Array.from({ length: 20 }, (_, i) => `scope-${i}`)
+    const detail = formatUnscopedWriteDetail(many)
+    expect(detail).toContain('scope-7; +12 more omitted')
+    expect(detail).not.toContain('scope-8,')
+    const long = Array.from({ length: 8 }, (_, i) => `${'x'.repeat(60)}-${i}`)
+    expect(formatUnscopedWriteDetail(long).length).toBeLessThanOrEqual(512)
+  })
+})
+
+describe('toWriteScopeSetting', () => {
+  it('is the one row-to-setting mapping (remember and describe_environment share it)', () => {
+    expect(toWriteScopeSetting(null)).toEqual({ mode: 'off', scope: null })
+    expect(toWriteScopeSetting(row('default', 'work'))).toEqual({ mode: 'default', scope: 'work' })
+    expect(toWriteScopeSetting(row('require', null))).toEqual({ mode: 'require', scope: null })
+    expect(toWriteScopeSetting(row('default', null))).toEqual({ mode: 'off', scope: null })
   })
 })
 
@@ -118,12 +160,12 @@ describe('setWriteDefault', () => {
       scope: 'work',
     })
 
-    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(tx, USER)
+    expect(lockScopePolicies).toHaveBeenCalledWith(tx, USER)
     expect(upsertWriteScopePolicy).toHaveBeenCalledWith(tx, USER, {
       mode: 'default',
       defaultScope: 'work',
     })
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       upsertWriteScopePolicy.mock.invocationCallOrder[0] ?? 0,
     )
   })

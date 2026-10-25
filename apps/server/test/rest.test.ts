@@ -109,7 +109,7 @@ function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): str
 class UnscopedWriteError extends Error {
   constructor() {
     super(
-      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope, or change the policy with configure_scope set_write_default",
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
     )
     this.name = 'UnscopedWriteError'
   }
@@ -608,7 +608,7 @@ describe('POST /api/v1/memories (remember)', () => {
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string; detail?: string }
     expect(body.error).toBe('invalid_input')
-    expect(body.detail).toMatch(/pass scope, or change the policy/)
+    expect(body.detail).toMatch(/pass scope; registered scopes: personal, work$/)
     expect(JSON.stringify(body)).not.toContain('secret')
   })
 

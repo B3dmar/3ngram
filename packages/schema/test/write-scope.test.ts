@@ -11,7 +11,8 @@ import {
   configureScopeOutputV2Schema,
   configureScopeOutputV3Schema,
   describeEnvironmentOutputV2Schema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
+  describeEnvironmentWritePolicyFields,
   retrievalScopeModeSchema,
   setWriteDefaultInputSchema,
   writeScopeModeSchema,
@@ -143,10 +144,12 @@ describe('writeScopePolicySchema + configureScopeOutputV3Schema', () => {
   })
 })
 
-describe('describeEnvironmentOutputV3Schema', () => {
+describe('describeEnvironmentOutputWithWritePolicySchema', () => {
   it('requires writeScopePolicy next to retrievalScopePolicy', () => {
-    expect(describeEnvironmentOutputV3Schema.safeParse(ENV_REPORT_V2).success).toBe(false)
-    const parsed = describeEnvironmentOutputV3Schema.parse({
+    expect(describeEnvironmentOutputWithWritePolicySchema.safeParse(ENV_REPORT_V2).success).toBe(
+      false,
+    )
+    const parsed = describeEnvironmentOutputWithWritePolicySchema.parse({
       ...ENV_REPORT_V2,
       writeScopePolicy: { mode: 'off', scope: null },
     })
@@ -156,11 +159,22 @@ describe('describeEnvironmentOutputV3Schema', () => {
 
   it('rejects an inconsistent write policy inside the report', () => {
     expect(
-      describeEnvironmentOutputV3Schema.safeParse({
+      describeEnvironmentOutputWithWritePolicySchema.safeParse({
         ...ENV_REPORT_V2,
         writeScopePolicy: { mode: 'default', scope: null },
       }).success,
     ).toBe(false)
+  })
+
+  it('exports the field fragment so a later report successor composes it in one line', () => {
+    expect(Object.keys(describeEnvironmentWritePolicyFields)).toEqual(['writeScopePolicy'])
+    const composed = describeEnvironmentOutputV2Schema.safeExtend(
+      describeEnvironmentWritePolicyFields,
+    )
+    expect(
+      composed.parse({ ...ENV_REPORT_V2, writeScopePolicy: { mode: 'require', scope: null } })
+        .writeScopePolicy,
+    ).toEqual({ mode: 'require', scope: null })
   })
 
   it('the V2 report schema stays byte-identical: it must NOT admit the field', () => {

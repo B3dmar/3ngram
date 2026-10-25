@@ -22,7 +22,7 @@ import {
   withTenant,
 } from '@3ngram/db'
 import type { RetrievalPolicySetting } from '../scope/retrieval-settings.js'
-import type { WriteScopePolicySetting } from '../scope/write-policy.js'
+import { toWriteScopeSetting, type WriteScopePolicySetting } from '../scope/write-policy.js'
 
 export type { EnvironmentStats } from '@3ngram/db'
 
@@ -51,7 +51,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
     const scopes = await listScopes(tx, userId)
     const stats = await getEnvironmentStats(tx, userId)
     const policy = await getRetrievalPolicy(tx, userId)
-    const writePolicy = await getWriteScopePolicy(tx, userId)
+    const writeScopePolicy = toWriteScopeSetting(await getWriteScopePolicy(tx, userId))
     return {
       scopes,
       stats,
@@ -59,10 +59,7 @@ export function describeEnvironment(userId: string): Promise<EnvironmentReport> 
         policy === null
           ? { mode: 'off' as const, scope: null }
           : { mode: policy.mode, scope: policy.defaultScope },
-      writeScopePolicy:
-        writePolicy === null
-          ? { mode: 'off' as const, scope: null }
-          : { mode: writePolicy.mode, scope: writePolicy.defaultScope },
+      writeScopePolicy,
     }
   })
 }

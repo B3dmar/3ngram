@@ -7,7 +7,7 @@ const tx = { kind: 'tenant-tx' }
 const withTenant = vi.fn(async (_userId: string, fn: (value: unknown) => Promise<unknown>) =>
   fn(tx),
 )
-const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
+const lockScopePolicies = vi.fn(async (_tx: unknown, _userId: string) => undefined)
 const renameScopeDb = vi.fn(
   async (_tx: unknown, _userId: string, _oldName: string, _newName: string): Promise<unknown> =>
     undefined,
@@ -39,7 +39,7 @@ vi.mock('@3ngram/db', () => ({
     policy: { mode: 'default' | 'require'; defaultScope: string | null },
   ) => replaceWriteScopePolicyDefault(tx, userId, oldDefault, policy),
   withTenant: (userId: string, fn: (value: unknown) => Promise<unknown>) => withTenant(userId, fn),
-  lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
+  lockScopePolicies: (tx: unknown, userId: string) => lockScopePolicies(tx, userId),
   renameScope: (tx: unknown, userId: string, oldName: string, newName: string) =>
     renameScopeDb(tx, userId, oldName, newName),
   deleteScope: (tx: unknown, userId: string, name: string) => deleteScopeDb(tx, userId, name),
@@ -71,7 +71,7 @@ describe('scope and retrieval-policy consistency', () => {
 
     await expect(renameScope(USER, 'work', 'client')).resolves.toEqual(SCOPE)
 
-    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(tx, USER)
+    expect(lockScopePolicies).toHaveBeenCalledWith(tx, USER)
     expect(renameScopeDb).toHaveBeenCalledWith(tx, USER, 'work', 'client')
     expect(replaceRetrievalPolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
       mode: 'default',
@@ -82,10 +82,10 @@ describe('scope and retrieval-policy consistency', () => {
       mode: 'default',
       defaultScope: 'client',
     })
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
     )
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       renameScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
     expect(renameScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
@@ -96,7 +96,7 @@ describe('scope and retrieval-policy consistency', () => {
   it('moves a deleted active default to fail-closed require', async () => {
     await expect(deleteScope(USER, 'work')).resolves.toBeUndefined()
 
-    expect(lockRetrievalScopePolicy).toHaveBeenCalledWith(tx, USER)
+    expect(lockScopePolicies).toHaveBeenCalledWith(tx, USER)
     expect(deleteScopeDb).toHaveBeenCalledWith(tx, USER, 'work')
     expect(replaceRetrievalPolicyDefault).toHaveBeenCalledWith(tx, USER, 'work', {
       mode: 'require',
@@ -111,7 +111,7 @@ describe('scope and retrieval-policy consistency', () => {
     expect(deleteScopeDb.mock.invocationCallOrder[0]).toBeLessThan(
       replaceWriteScopePolicyDefault.mock.invocationCallOrder[0] ?? 0,
     )
-    expect(lockRetrievalScopePolicy.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(lockScopePolicies.mock.invocationCallOrder[0]).toBeLessThan(
       deleteScopeDb.mock.invocationCallOrder[0] ?? 0,
     )
     expect(deleteScopeDb.mock.invocationCallOrder[0]).toBeLessThan(

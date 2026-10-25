@@ -20,12 +20,14 @@
 import {
   getWriteScopePolicy as getWriteScopePolicyDb,
   listScopes as listScopesDb,
-  lockRetrievalScopePolicy,
+  lockScopePolicies,
   ScopeNotFoundError,
   upsertWriteScopePolicy as upsertWriteScopePolicyDb,
+  type WriteScopePolicyRow,
   withTenant,
 } from '@3ngram/db'
 import type { WriteScopeMode } from '@3ngram/schema'
+import { formatScopeRecoveryDetail } from '../read/retrieval-policy.js'
 
 /**
  * The scope an unscoped write lands in under mode `off`: the shipped literal,
@@ -40,36 +42,61 @@ export interface WriteScopePolicySetting {
   scope: string | null
 }
 
+const UNSCOPED_WRITE_PREFIX =
+  "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; "
+
 /**
- * Thrown when the caller's write policy is `require` and a `remember` omitted
- * `scope`. Content-free: the message names the fix only.
+ * Build the bounded, transport-neutral recovery detail for a rejected unscoped
+ * write: it names a prefix of the REGISTERED scopes (the retrieval precedent,
+ * {@link formatScopeRecoveryDetail}), so "pass scope" is actionable over MCP
+ * and REST alike. With nothing registered it says any scope name works, since
+ * an explicit scope is never registry-checked. Labels only, never content.
  */
-export class UnscopedWriteError extends Error {
-  constructor() {
-    super(
-      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope, or change the policy with configure_scope set_write_default",
-    )
-    this.name = 'UnscopedWriteError'
+export function formatUnscopedWriteDetail(registeredScopes: readonly string[]): string {
+  if (registeredScopes.length === 0) {
+    return `${UNSCOPED_WRITE_PREFIX}any kebab-case scope name is accepted`
   }
+  return formatScopeRecoveryDetail(UNSCOPED_WRITE_PREFIX, registeredScopes)
 }
 
 /**
- * Read the caller's effective write policy. No stored row reports the `off`
- * default; a `default` row whose scope is somehow null (the DB CHECK forbids
- * it) is also reported as `off` rather than as an unusable default.
+ * Thrown when the caller's write policy is `require` and a `remember` omitted
+ * `scope`. Content-free: the message is {@link formatUnscopedWriteDetail}.
  */
+export class UnscopedWriteError extends Error {
+  readonly registeredScopes: readonly string[]
+  constructor(registeredScopes: readonly string[]) {
+    super(formatUnscopedWriteDetail(registeredScopes))
+    this.name = 'UnscopedWriteError'
+    this.registeredScopes = registeredScopes
+  }
+}
+
+const OFF_SETTING: WriteScopePolicySetting = { mode: 'off', scope: null }
+
+/**
+ * Map a stored row (or its absence) to the effective setting. The ONE mapping
+ * both `remember` and `describe_environment` use, so they cannot disagree: no
+ * row is `off`, and a `default` row whose scope is somehow null (the DB CHECK
+ * forbids it) is also `off` rather than an unusable default.
+ */
+export function toWriteScopeSetting(row: WriteScopePolicyRow | null): WriteScopePolicySetting {
+  if (row === null) return OFF_SETTING
+  if (row.mode === 'default' && row.defaultScope === null) return OFF_SETTING
+  return { mode: row.mode, scope: row.defaultScope }
+}
+
+/** Read the caller's effective write policy (see {@link toWriteScopeSetting}). */
 export function resolveWriteScopePolicy(userId: string): Promise<WriteScopePolicySetting> {
-  return withTenant(userId, async (tx): Promise<WriteScopePolicySetting> => {
-    const row = await getWriteScopePolicyDb(tx, userId)
-    if (row === null) return { mode: 'off', scope: null }
-    if (row.mode === 'default' && row.defaultScope === null) return { mode: 'off', scope: null }
-    return { mode: row.mode, scope: row.defaultScope }
-  })
+  return withTenant(userId, async (tx) =>
+    toWriteScopeSetting(await getWriteScopePolicyDb(tx, userId)),
+  )
 }
 
 /**
  * Resolve the scope a `remember` writes to. Explicit wins without a policy
- * read; an omitted scope reads the policy once.
+ * read; an omitted scope reads the policy in one tenant transaction (plus the
+ * registry, under `require`, so the error can name the registered scopes).
  *
  * @throws {@link UnscopedWriteError} mode `require` and no explicit scope.
  */
@@ -78,18 +105,22 @@ export async function resolveWriteScope(
   explicitScope: string | undefined,
 ): Promise<string> {
   if (explicitScope !== undefined) return explicitScope
-  const policy = await resolveWriteScopePolicy(userId)
-  switch (policy.mode) {
-    case 'off':
-      return UNPOLICIED_WRITE_SCOPE
-    case 'default':
-      // Non-null by resolveWriteScopePolicy (a null default reports as off).
-      return policy.scope ?? UNPOLICIED_WRITE_SCOPE
-    case 'require':
-      throw new UnscopedWriteError()
-    default:
-      return policy.mode satisfies never
-  }
+  return withTenant(userId, async (tx): Promise<string> => {
+    const policy = toWriteScopeSetting(await getWriteScopePolicyDb(tx, userId))
+    switch (policy.mode) {
+      case 'off':
+        return UNPOLICIED_WRITE_SCOPE
+      case 'default':
+        // Non-null by toWriteScopeSetting (a null default maps to off).
+        return policy.scope ?? UNPOLICIED_WRITE_SCOPE
+      case 'require': {
+        const scopes = await listScopesDb(tx, userId)
+        throw new UnscopedWriteError(scopes.map((scope) => scope.name))
+      }
+      default:
+        return policy.mode satisfies never
+    }
+  })
 }
 
 /**
@@ -107,7 +138,7 @@ export function setWriteDefault(
   policy: WriteScopePolicySetting,
 ): Promise<WriteScopePolicySetting> {
   return withTenant(userId, async (tx): Promise<WriteScopePolicySetting> => {
-    await lockRetrievalScopePolicy(tx, userId)
+    await lockScopePolicies(tx, userId)
     if (policy.mode === 'default' && policy.scope !== null) {
       const scopes = await listScopesDb(tx, userId)
       if (!scopes.some((s) => s.name === policy.scope)) {

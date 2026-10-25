@@ -108,13 +108,28 @@ export const configureScopeOutputV3Schema = z.discriminatedUnion('action', [
 export type ConfigureScopeOutputV3 = z.infer<typeof configureScopeOutputV3Schema>
 
 /**
- * `describe_environment` output V3: V2 plus the effective write policy. ALWAYS
- * present: a tenant that never configured one reports `{ mode: 'off', scope:
- * null }`. A mode enum and a scope name only, so the redaction posture holds.
+ * The `describe_environment` field fragment this module adds: the effective
+ * write policy, ALWAYS present (a tenant that never configured one reports
+ * `{ mode: 'off', scope: null }`). A mode enum and a scope name only, so the
+ * redaction posture holds. Exported as a fragment so it composes onto whichever
+ * report successor is current in one line.
  */
-export const describeEnvironmentOutputV3Schema = describeEnvironmentOutputV2Schema
-  .safeExtend({
-    writeScopePolicy: writeScopePolicySchema,
-  })
+export const describeEnvironmentWritePolicyFields = {
+  writeScopePolicy: writeScopePolicySchema,
+} as const
+
+/**
+ * `describe_environment` output with the write policy: V2 (retrievalScopePolicy)
+ * plus {@link describeEnvironmentWritePolicyFields}. Named by content, not by a
+ * version number, so it cannot collide with another report successor.
+ *
+ * Once the account/facets successors land (PR #335: V3 = V2 + account, V4 = V3
+ * + facets), the tool's output becomes
+ * `describeEnvironmentOutputV4Schema.safeExtend(describeEnvironmentWritePolicyFields)`.
+ */
+export const describeEnvironmentOutputWithWritePolicySchema = describeEnvironmentOutputV2Schema
+  .safeExtend(describeEnvironmentWritePolicyFields)
   .meta(OPEN_OUTPUT_META)
-export type DescribeEnvironmentOutputV3 = z.infer<typeof describeEnvironmentOutputV3Schema>
+export type DescribeEnvironmentOutputWithWritePolicy = z.infer<
+  typeof describeEnvironmentOutputWithWritePolicySchema
+>

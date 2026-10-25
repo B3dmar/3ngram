@@ -50,7 +50,7 @@ import {
   configureScopeInputV3Schema,
   configureScopeOutputV3Schema,
   describeEnvironmentInputSchema,
-  describeEnvironmentOutputV3Schema,
+  describeEnvironmentOutputWithWritePolicySchema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
   reviewProposalsOutputV2Schema,
@@ -361,7 +361,10 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'Report server capabilities (tool names, count, version), your registered scopes, your active retrieval-scope policy (retrievalScopePolicy), and bounded memory/commitment counts. Exposes no secrets or configuration values.',
       inputSchema: describeEnvironmentInputSchema,
-      outputSchema: describeEnvironmentOutputV3Schema,
+      // V2 + writeScopePolicy (issue #235). Once PR #335's account/facets
+      // successors land, this becomes
+      // describeEnvironmentOutputV4Schema.safeExtend(describeEnvironmentWritePolicyFields).
+      outputSchema: describeEnvironmentOutputWithWritePolicySchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async handler(args, ctx) {
@@ -373,22 +376,26 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       if (ctx.access) await ctx.access.assertRead(ctx.userId)
       const report = await describeEnvironment(ctx.userId)
       const names = toolNames()
-      const output = parseOutput('describe_environment', describeEnvironmentOutputV3Schema, {
-        capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
-        scopes: report.scopes.map(toScopeOutput),
-        // The active retrieval-scope policy (issue #47): a bounded mode enum +
-        // a registered scope NAME — the redaction posture is unchanged.
-        retrievalScopePolicy: report.retrievalScopePolicy,
-        // The effective write-scope policy (issue #235), same redaction posture.
-        writeScopePolicy: report.writeScopePolicy,
-        stats: {
-          memoriesByType: report.stats.memoriesByType,
-          activeMemories: report.stats.activeMemories,
-          supersededMemories: report.stats.supersededMemories,
-          archivedMemories: report.stats.archivedMemories,
-          commitmentsByStatus: report.stats.commitmentsByStatus,
+      const output = parseOutput(
+        'describe_environment',
+        describeEnvironmentOutputWithWritePolicySchema,
+        {
+          capabilities: { tools: [...names], toolCount: names.length, version: SERVER_VERSION },
+          scopes: report.scopes.map(toScopeOutput),
+          // The active retrieval-scope policy (issue #47): a bounded mode enum +
+          // a registered scope NAME — the redaction posture is unchanged.
+          retrievalScopePolicy: report.retrievalScopePolicy,
+          // The effective write-scope policy (issue #235), same redaction posture.
+          writeScopePolicy: report.writeScopePolicy,
+          stats: {
+            memoriesByType: report.stats.memoriesByType,
+            activeMemories: report.stats.activeMemories,
+            supersededMemories: report.stats.supersededMemories,
+            archivedMemories: report.stats.archivedMemories,
+            commitmentsByStatus: report.stats.commitmentsByStatus,
+          },
         },
-      })
+      )
       return ok(output)
     },
   }
