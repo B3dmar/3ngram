@@ -34,7 +34,7 @@ import {
   deleteScope,
   describeEnvironment,
   type FactProposalRecord,
-  listAllProposals,
+  listProposalsPage,
   listScopes,
   type ProposalRecord,
   rejectProposalAnyKind,
@@ -56,6 +56,7 @@ import {
   reviewProposalsOutputV2Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
+import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
 import { READ_ONLY_ANNOTATIONS } from './tool-annotations.js'
@@ -238,22 +239,37 @@ async function runReviewProposals(
     // ACCESS GUARD: proposals are memory-derived, so listing them is a READ — read
     // access is asserted BEFORE the db op (self-host allowAllAccess allows all).
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
-    const { proposals, factProposals } = await listAllProposals(ctx.userId, {
+    // The continuation is bound to this surface's kinds, the status filter and
+    // the tenant (hashed): a mismatched cursor is a typed invalid-input error.
+    const fp = proposalsFingerprint({
+      surface: 'mcp',
+      kinds: ['edge', 'fact'],
+      status: input.status,
+      tenant: ctx.userId,
+    })
+    const after = input.cursor === undefined ? undefined : decodeProposalsCursor(input.cursor, fp)
+    const page = await listProposalsPage(ctx.userId, {
       status: input.status,
       limit: input.limit,
+      after,
     })
+    const { proposals, factProposals } = page
     return ok(
       parseOutput('review_proposals', reviewProposalsOutputV2Schema, {
         action: 'list',
         proposals: proposals.map(toProposalOutput),
-        // `count` stays the EDGE count: it is the shipped field, and a tenant
-        // with no fact proposals must see the identical response it always has.
+        // `count` stays the EDGE count ON THIS PAGE: it is the shipped field,
+        // never reinterpreted as a total (`totals` carries those).
         count: proposals.length,
-        // Key OMITTED when there are none, so an edge-only tenant's response is
-        // byte-identical to V1 rather than growing an empty array.
+        // Key OMITTED when there are none, so an edge-only page never grows an
+        // empty array.
         ...(factProposals.length > 0
           ? { factProposals: factProposals.map(toFactProposalOutput) }
           : {}),
+        counts: { edge: proposals.length, fact: factProposals.length },
+        totals: page.totals,
+        hasMore: page.hasMore,
+        ...(page.next === undefined ? {} : { nextCursor: encodeProposalsCursor(page.next, fp) }),
       }),
     )
   }

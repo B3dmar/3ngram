@@ -182,6 +182,23 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // REST only carries the remember request surface. CLI unchanged. No tool
       // description changed (no embeddings regen). MEASURED on this PR's actual
       // base (feat/165-commitment-due-dates), not summed.
+      // MCP +170/+1360/+331 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
+      // MCP +154/+1232/+300 (issue #261, owner/scope/project on briefing
+      // commitment items): three output fields ride the briefing output
+      // schema, paid on tools/list per turn. REST and CLI request surfaces are
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging ab8b193, not summed.
+      // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
+      // list input gains an optional opaque `cursor` (with a field
+      // description) and the list OUTPUT variant gains `counts`/`totals`
+      // ({ edge, fact }), `hasMore` and `nextCursor`; both schemas ride
+      // tools/list every MCP turn. The tool description is unchanged (no
+      // embeddings regen). REST and CLI are unchanged: the REST surface does
+      // not carry the proposals list and the CLI has no proposals command.
+      // MEASURED on staging a21c604, not summed.
       // MCP +156/+1248/+304 (issue #321): describe_environment's output schema
       // gains the required `account: { id }` object (a uuid with its field
       // description) that MCP pays on tools/list per turn. The tool description
@@ -198,8 +215,8 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // { scopes, projects }` object with its description. Tool description
       // unchanged; REST and CLI unchanged. MEASURED, not summed.
       // Re-measured after composing onto #235 (describe_environment V5 =
-      // V4 + writeScopePolicy) on staging d86c839: the three deltas still hold.
-      mcp: [28701, 231424, 57783],
+      // V4 + writeScopePolicy), re-measured on staging 0a6cdf3: the three deltas still hold.
+      mcp: [29219, 235568, 58793],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },

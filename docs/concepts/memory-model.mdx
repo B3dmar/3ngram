@@ -36,7 +36,7 @@ Every memory carries a `memory_type`, and each type keeps its own lifecycle inst
 - **`note`** — general knowledge worth keeping
 - **`event`** — dated, episodic entries (session debriefs, digests)
 
-Commitments have an explicit state machine — `open → waiting → resolved | expired` — driven by the `resolve` tool. Blockers are deliberately simpler: resolving one archives the blocker memory (`active → archived`, whatever status you pass), dropping it from the briefing's active blockers. The `briefing` tool surfaces what is open, overdue, or going stale. A due date comes from the caller, never from the prose: a native `remember` sets it with an explicit `dueAt` (and optionally `owner`), import carries it over from the source system, and a `revise` keeps the commitment row, deadline and owner with the successor. A commitment past its due date stays open (or waiting), and therefore overdue in the briefing, for a grace window (`COMMITMENT_EXPIRY_GRACE_DAYS`, default 14 days) before the worker's surfacing sweep expires it: expiry is housekeeping for items nobody acted on, not the first thing that happens when a date passes.
+Commitments have an explicit state machine — `open → waiting → resolved | expired` — driven by the `resolve` tool. That lifecycle is a separate axis from memory `status`: resolving a commitment leaves its memory `active`, so a resolved commitment stays a valid historical `search` hit, labelled with `commitmentStatus: "resolved"` rather than hidden. Blockers are deliberately simpler: resolving one archives the blocker memory (`active → archived`, whatever status you pass), dropping it from the briefing's active blockers. The `briefing` tool surfaces what is open, overdue, or going stale. A due date comes from the caller, never from the prose: a native `remember` sets it with an explicit `dueAt` (and optionally `owner`), import carries it over from the source system, and a `revise` keeps the commitment row, deadline and owner with the successor. A commitment past its due date stays open (or waiting), and therefore overdue in the briefing, for a grace window (`COMMITMENT_EXPIRY_GRACE_DAYS`, default 14 days) before the worker's surfacing sweep expires it: expiry is housekeeping for items nobody acted on, not the first thing that happens when a date passes.
 
 ## Bi-temporal facts
 
@@ -52,5 +52,14 @@ This separation matters because corrections arrive late: you might learn today t
 ## Consolidation is advisory
 
 A background worker detects candidate duplicates and contradictions and **proposes** edges with a rationale — it does not apply them by default. Proposals surface through the `review_proposals` tool, where you accept or reject them. A decision is final for that pair: a rejected pair is not proposed again, and neither is a pair already joined by an edge. Only a new memory (a successor written by `revise`, or a fresh `remember`) can put the question back on the table.
+
+Reviewing is separate from deciding: listing proposals is a read-only transaction and never changes a proposal or a memory, and a queue of any size can be enumerated completely by following `nextCursor` (MCP `review_proposals` list over edge and fact proposals; REST `GET /api/v1/proposals` over edge proposals). The walk is a keyset over the **live** tables in one merged `created_at DESC, id DESC` order — proposal ids are uuidv7 and disjoint across tables, so the id breaks ties, including a batch written in one transaction that shares one timestamp. That gives four guarantees:
+
+- No proposal is returned twice in one walk.
+- A proposal accepted or rejected mid-walk, and so no longer matching a `status` filter, is simply not returned if the walk has not reached it yet; no other proposal is skipped or repeated because of it. Without a filter it is returned once, with its current status.
+- A proposal created after the walk started sorts newer than every cursor position, so it appears only in a fresh walk.
+- `totals` is read in the same snapshot as its page, so a page agrees with its own totals, but totals are live: they can change between pages.
+
+A future proposal kind (resolution proposals, issue #229) joins the same contract as one more source in the merge and one more key in `counts`/`totals`; the cursor, which stores only the last `(created_at, id)` position, does not change.
 
 Event-type memories are never auto-linked, regardless of similarity: recurring episodic entries (daily digests, session debriefs) are textually near-identical by construction, which makes automatic merging the most dangerous exactly where it looks most confident.

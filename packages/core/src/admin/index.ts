@@ -43,6 +43,16 @@ export {
   SuccessorNotLiveError,
 } from './proposals.js'
 export {
+  type EdgeProposalsPage,
+  listEdgeProposalsPage,
+  listProposalsPage,
+  type MergedPage,
+  mergeProposalStreams,
+  type ProposalPosition,
+  type ProposalsPage,
+  type ProposalsPageQuery,
+} from './proposals-page.js'
+export {
   CLOSER_ACTOR_KIND,
   CLOSER_EVENTS_PAGE_SIZE,
   CLOSER_MAX_OUTPUT_TOKENS,

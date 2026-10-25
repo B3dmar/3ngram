@@ -626,6 +626,7 @@ jobs:
               test/integration/briefing-read.int.test.ts
               test/integration/commitments.int.test.ts
               test/integration/fact-proposals.int.test.ts
+              test/integration/proposals-page.int.test.ts
               test/integration/facts-read.int.test.ts
               test/integration/facts-write.int.test.ts
               test/integration/session-provenance.int.test.ts

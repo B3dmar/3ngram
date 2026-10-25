@@ -31,7 +31,13 @@ import {
 } from '@3ngram/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import {
+  decodeCursor,
+  encodeCursor,
+  encodeProposalsCursor,
+  proposalsFingerprint,
+  searchFingerprint,
+} from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 const remember = vi.fn()
@@ -56,7 +62,7 @@ const setWriteDefault = vi.fn()
 const listProposals = vi.fn()
 const rejectProposal = vi.fn()
 const applyProposal = vi.fn()
-const listAllProposals = vi.fn()
+const listProposalsPage = vi.fn()
 const rejectProposalAnyKind = vi.fn()
 const acceptProposalAnyKind = vi.fn()
 
@@ -323,7 +329,7 @@ vi.mock('@3ngram/core', () => ({
   listProposals,
   rejectProposal,
   applyProposal,
-  listAllProposals,
+  listProposalsPage,
   rejectProposalAnyKind,
   acceptProposalAnyKind,
   ScopeNameConflictError,
@@ -852,6 +858,8 @@ describe('search tool', () => {
     truncated: false,
     score: 0.9,
     superseded: false,
+    scope: 'work',
+    project: null,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -887,8 +895,41 @@ describe('search tool', () => {
       topic: 'pin',
       score: 0.9,
       superseded: false,
+      scope: 'work',
+      project: null,
     })
   })
+
+  // #319: commitment lifecycle is a separate axis from memory status — every
+  // projection x order labels a commitment hit, and never fabricates one.
+  const RESOLVED = {
+    ...HIT,
+    id: '22222222-2222-4222-8222-222222222222',
+    project: 'engine',
+    commitmentStatus: 'resolved' as const,
+  }
+  for (const order of ['relevance', 'chronological'] as const) {
+    for (const projection of ['full', 'compact'] as const) {
+      it(`labels filing + commitment lifecycle (${order}, ${projection}, #319)`, async () => {
+        const page = { ...pageOf([RESOLVED, HIT]), nextCursor: undefined, appliedScope: null }
+        searchDashboardPage.mockResolvedValue(page)
+        searchChronological.mockResolvedValue(page)
+        const args =
+          order === 'relevance' ? { query: 'sdk pin' } : { order, scope: 'work' as const }
+        const result = await call('search', { ...args, projection }, ctx())
+        expect(result.isError).toBeFalsy()
+        const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+        expect(parsed.hits[0]).toMatchObject({
+          scope: 'work',
+          project: 'engine',
+          commitmentStatus: 'resolved',
+        })
+        expect(parsed.hits[1]).toMatchObject({ scope: 'work', project: null })
+        expect(parsed.hits[1]).not.toHaveProperty('commitmentStatus')
+        expect('content' in (parsed.hits[0] ?? {})).toBe(projection === 'full')
+      })
+    }
+  }
 
   it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
@@ -2154,6 +2195,21 @@ function factProposalRecord(status = 'proposed') {
   }
 }
 
+/** A core proposals page (issue #320): the rows plus the pagination envelope. */
+function proposalsPage(
+  proposals: unknown[],
+  factProposals: unknown[] = [],
+  extra: { hasMore?: boolean; next?: { createdAt: string; id: string } } = {},
+) {
+  return {
+    proposals,
+    factProposals,
+    totals: { edge: proposals.length, fact: factProposals.length },
+    hasMore: extra.hasMore ?? false,
+    next: extra.next,
+  }
+}
+
 describe('configure_scope tool', () => {
   it('list: read-only token validates, calls core, returns schema-valid records', async () => {
     listScopes.mockResolvedValue([scopeRecord('work', ['job'])])
@@ -2243,26 +2299,31 @@ describe('configure_scope tool', () => {
     expect(createScope).toHaveBeenCalledWith(UID, 'research', ['r'])
   })
 
-  it('list: an edge-only tenant gets NO factProposals key (byte-stable V1 response)', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+  it('list: a page with no fact proposals gets NO factProposals key (never an empty array)', async () => {
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
       ctx({ scopes: ['memory:read'] }),
     )
 
-    // KEY ABSENCE, not `undefined`: a tenant with no fact proposals must see
-    // the response it always saw, with no new field appearing at all.
+    // KEY ABSENCE, not `undefined`: a page with no fact proposals carries no
+    // factProposals field; the only additions are the pagination envelope
+    // (issue #320), and a final page carries no nextCursor.
     const structured = result.structuredContent as Record<string, unknown>
     expect('factProposals' in structured).toBe(false)
-    expect(Object.keys(structured).sort()).toEqual(['action', 'count', 'proposals'])
+    expect(Object.keys(structured).sort()).toEqual([
+      'action',
+      'count',
+      'counts',
+      'hasMore',
+      'proposals',
+      'totals',
+    ])
   })
 
   it('list: surfaces fact proposals alongside edge ones, count stays the edge count', async () => {
-    listAllProposals.mockResolvedValue({
-      proposals: [proposalRecord()],
-      factProposals: [factProposalRecord()],
-    })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()], [factProposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2549,7 +2610,7 @@ describe('describe_environment tool', () => {
 
 describe('review_proposals tool', () => {
   it('list: read-only token returns bounded schema-valid records', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [proposalRecord()], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([proposalRecord()]))
     const result = await call(
       'review_proposals',
       { action: 'list' },
@@ -2563,17 +2624,108 @@ describe('review_proposals tool', () => {
       expect(parsed.proposals[0]?.status).toBe('proposed')
     }
     // The schema default limit is forwarded (no-firehose).
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ limit: 25 })
   })
 
   it('list: forwards a status filter and a caller limit', async () => {
-    listAllProposals.mockResolvedValue({ proposals: [], factProposals: [] })
+    listProposalsPage.mockResolvedValue(proposalsPage([]))
     await call(
       'review_proposals',
       { action: 'list', status: 'rejected', limit: 10 },
       ctx({ scopes: ['memory:read'] }),
     )
-    expect(listAllProposals.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+    expect(listProposalsPage.mock.calls[0]?.[1]).toMatchObject({ status: 'rejected', limit: 10 })
+  })
+
+  describe('list pagination (issue #320)', () => {
+    const POSITION = { createdAt: '2026-01-01T00:00:00.123456Z', id: PROPOSAL_ID }
+    const mcpFp = (status?: string, tenant = UID) =>
+      proposalsFingerprint({ surface: 'mcp', kinds: ['edge', 'fact'], status, tenant })
+    const readCtx = () => ctx({ scopes: ['memory:read'] })
+    const errorText = (result: Awaited<ReturnType<typeof call>>) =>
+      (result.content[0] as { text: string }).text
+
+    it('a page with more rows carries counts, live totals, hasMore and a nextCursor', async () => {
+      listProposalsPage.mockResolvedValue({
+        ...proposalsPage([proposalRecord()], [factProposalRecord()], {
+          hasMore: true,
+          next: POSITION,
+        }),
+        totals: { edge: 140, fact: 120 },
+      })
+      const result = await call('review_proposals', { action: 'list', limit: 2 }, readCtx())
+      const parsed = reviewProposalsOutputV2Schema.parse(result.structuredContent)
+      if (parsed.action !== 'list') throw new Error('expected list')
+      // `count` keeps its shipped meaning: EDGE rows on this page, not a total.
+      expect(parsed.count).toBe(1)
+      expect(parsed.counts).toEqual({ edge: 1, fact: 1 })
+      expect(parsed.totals).toEqual({ edge: 140, fact: 120 })
+      expect(parsed.hasMore).toBe(true)
+      expect(parsed.nextCursor).toBe(encodeProposalsCursor(POSITION, mcpFp()))
+    })
+
+    it('a continuation resumes strictly after the cursor position, under the same filter', async () => {
+      listProposalsPage.mockResolvedValue(proposalsPage([]))
+      const cursor = encodeProposalsCursor(POSITION, mcpFp('proposed'))
+      const result = await call(
+        'review_proposals',
+        { action: 'list', status: 'proposed', cursor },
+        readCtx(),
+      )
+      expect(result.isError).toBeFalsy()
+      expect(listProposalsPage).toHaveBeenCalledWith(UID, {
+        status: 'proposed',
+        limit: 25,
+        after: POSITION,
+      })
+    })
+
+    it.each([
+      ['garbled base64/JSON', 'not-a-cursor'],
+      [
+        'a search cursor',
+        encodeCursor({ v: 3, recordedAt: POSITION.createdAt, id: PROPOSAL_ID, fp: 'a'.repeat(16) }),
+      ],
+      [
+        'over-precise createdAt',
+        Buffer.from(
+          JSON.stringify({
+            v: 4,
+            kind: 'proposals',
+            createdAt: '2026-01-01T00:00:00.1234567Z',
+            id: PROPOSAL_ID,
+            fp: mcpFp(),
+          }),
+        ).toString('base64url'),
+      ],
+    ])('a malformed cursor (%s) is invalid input and never reaches core', async (_label, cursor) => {
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toContain('invalid input')
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['a different status filter', mcpFp('rejected')],
+      ['another tenant', mcpFp(undefined, crypto.randomUUID())],
+      [
+        'the REST edge-only walk',
+        proposalsFingerprint({ surface: 'rest', kinds: ['edge'], status: undefined, tenant: UID }),
+      ],
+    ])('a cursor minted for %s is a typed mismatch, never a silent re-page', async (_label, fp) => {
+      const cursor = encodeProposalsCursor(POSITION, fp)
+      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+      expect(result.isError).toBe(true)
+      expect(errorText(result)).toBe(
+        'invalid input: cursor was issued for a different proposals listing — omit the cursor to start a new walk',
+      )
+      expect(listProposalsPage).not.toHaveBeenCalled()
+    })
+
+    it('the token never carries the tenant id', () => {
+      const token = encodeProposalsCursor(POSITION, mcpFp())
+      expect(Buffer.from(token, 'base64url').toString('utf8')).not.toContain(UID)
+    })
   })
 
   it('reject: write token transitions and echoes the updated record', async () => {
@@ -2658,7 +2810,7 @@ describe('review_proposals tool', () => {
     const result = await call('review_proposals', { action: 'list' }, writeOnly)
     expect(result.isError).toBe(true)
     expect((result.content[0] as { text: string }).text).toContain('insufficient scope')
-    expect(listAllProposals).not.toHaveBeenCalled()
+    expect(listProposalsPage).not.toHaveBeenCalled()
   })
 
   it('TWO-LAYER SCOPE: a read-only token may list but NOT reject/accept', async () => {
@@ -2830,7 +2982,7 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     ['describe_environment', {}, 'read', describeEnvironment],
     ['configure_scope', { action: 'list' }, 'read', listScopes],
     ['configure_scope', { action: 'create', name: 'work' }, 'write', createScope],
-    ['review_proposals', { action: 'list' }, 'read', listProposals],
+    ['review_proposals', { action: 'list' }, 'read', listProposalsPage],
     ['review_proposals', { action: 'reject', proposalId: MEMO_ID }, 'write', rejectProposal],
   ]
 

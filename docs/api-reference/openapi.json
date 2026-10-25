@@ -1687,6 +1687,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1706,7 +1730,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -1773,6 +1800,30 @@
                               "overdue": {
                                 "type": "boolean"
                               },
+                              "owner": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "project": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 256,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "scope": {
+                                "maxLength": 64,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                                "type": "string"
+                              },
                               "status": {
                                 "enum": [
                                   "open",
@@ -1792,7 +1843,10 @@
                               "topic",
                               "status",
                               "dueAt",
-                              "overdue"
+                              "overdue",
+                              "owner",
+                              "scope",
+                              "project"
                             ],
                             "type": "object"
                           },
@@ -5905,6 +5959,17 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "description": "Opaque continuation token from a previous page’s nextCursor. Omit for the first page. Keep status identical across pages of one walk.",
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5918,6 +5983,13 @@
                       "maximum": 9007199254740991,
                       "minimum": 0,
                       "type": "integer"
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    },
+                    "nextCursor": {
+                      "minLength": 1,
+                      "type": "string"
                     },
                     "proposals": {
                       "items": {
@@ -6010,11 +6082,27 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "totals": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "edge": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "edge"
+                      ],
+                      "type": "object"
                     }
                   },
                   "required": [
                     "proposals",
-                    "count"
+                    "count",
+                    "totals",
+                    "hasMore"
                   ],
                   "type": "object"
                 }
@@ -6023,7 +6111,7 @@
             "description": "Success"
           }
         },
-        "summary": "List consolidation proposals (bounded)"
+        "summary": "List consolidation proposals (bounded, cursor-paginated)"
       }
     },
     "/api/v1/proposals/{id}/apply": {
@@ -6307,6 +6395,15 @@
                       "items": {
                         "additionalProperties": true,
                         "properties": {
+                          "commitmentStatus": {
+                            "enum": [
+                              "open",
+                              "waiting",
+                              "resolved",
+                              "expired"
+                            ],
+                            "type": "string"
+                          },
                           "content": {
                             "maxLength": 600,
                             "type": "string"
@@ -6322,6 +6419,24 @@
                             "type": "string"
                           },
                           "memoryType": {
+                            "type": "string"
+                          },
+                          "project": {
+                            "anyOf": [
+                              {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "scope": {
+                            "maxLength": 64,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$",
                             "type": "string"
                           },
                           "score": {
@@ -6345,7 +6460,9 @@
                           "contentLength",
                           "truncated",
                           "score",
-                          "superseded"
+                          "superseded",
+                          "scope",
+                          "project"
                         ],
                         "type": "object"
                       },
