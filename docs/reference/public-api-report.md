@@ -306,7 +306,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryBatchItem` | interface | `0b8a8abf044f` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
-| `MemoryHistoryRead` | interface | `863fd20534bd` |
+| `MemoryHistoryRead` | interface | `7bcd95df97dc` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryNotFoundError` | class | `91f7c6ef54ac` |
 | `MissingSelectorError` | class | `a60398202990` |
@@ -653,11 +653,11 @@ its row here even when its name and kind are unchanged.
 | `MemoryFacets` | interface | `e6538468d5f2` |
 | `MemoryFactWrite` | type | `1ed668a7262e` |
 | `MemoryHistoryEdgeRow` | interface | `0b72fde39b8f` |
-| `MemoryHistoryEventRow` | interface | `b9a04ed0d51c` |
+| `MemoryHistoryEventRow` | interface | `6156bcf877b5` |
 | `MemoryHistoryIdentityRow` | interface | `ced9be5713ea` |
 | `MemoryHistoryLifecycleState` | type | `f5cbe15b0f8d` |
 | `MemoryHistoryPayloadMetadataRow` | interface | `89c224a9fb77` |
-| `MemoryHistoryRead` | interface | `863fd20534bd` |
+| `MemoryHistoryRead` | interface | `7bcd95df97dc` |
 | `MemoryHistoryRelationshipRow` | interface | `b7b05240aed2` |
 | `MemoryHistorySectionStatus` | type | `8637fbf356e5` |
 | `MemoryHistorySections` | interface | `78d75c51eb34` |
@@ -1339,11 +1339,11 @@ its row here even when its name and kind are unchanged.
 | `memoryDetailSchema` | const | `5146a276dc36` |
 | `memoryHistoryEdgeSchema` | const | `c6963e79dcf5` |
 | `memoryHistoryEventPayloadMetadataSchema` | const | `605d325a27ab` |
-| `memoryHistoryEventSchema` | const | `4715201faff6` |
+| `memoryHistoryEventSchema` | const | `bd4fd15bc3e1` |
 | `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
 | `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
-| `memoryHistoryResponseSchema` | const | `7be081cc12da` |
+| `memoryHistoryResponseSchema` | const | `fd6607935ca1` |
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |

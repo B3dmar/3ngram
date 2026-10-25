@@ -2,8 +2,11 @@
 // Memory history read model for the dashboard detail surface.
 // This module is read-only and identity-only: it never selects memory content,
 // tags, content hashes, embeddings, raw event payloads, or arbitrary payload
-// keys. It runs inside withTenant(); RLS scopes all rows to the caller. The raw
-// SQL reads + raw row shapes live in ./memory-history-queries.ts (500-line cap).
+// keys — the one allowlisted payload key, `sessionRunId`, is re-parsed through
+// its strict payload schema. It runs inside withTenant(); RLS scopes all rows to
+// the caller. The raw SQL reads + raw row shapes live in
+// ./memory-history-queries.ts (500-line cap).
+import { sessionProvenancePayloadSchema } from '@3ngram/schema'
 import type { TenantTx } from './client.js'
 import {
   MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT,
@@ -16,6 +19,7 @@ import {
   type RawIdentityRow,
   type RawLineageNodeRow,
   readAuditEvents,
+  readCreatingSessionRunId,
   readDirectRelationships,
   readInspectedMemory,
   readLineageEdges,
@@ -73,6 +77,8 @@ export interface MemoryHistoryEventRow {
   actorKind: string
   createdAt: Date
   payloadMetadata: MemoryHistoryPayloadMetadataRow
+  /** Allowlisted payload key (issue #262): the recording run, or null. */
+  sessionRunId: string | null
 }
 
 export type MemoryHistorySectionStatus = 'ok' | 'unavailable'
@@ -96,6 +102,12 @@ export interface MemoryHistoryRead {
   }
   auditEvents: MemoryHistoryEventRow[]
   eventsTruncated: boolean
+  /**
+   * `sessionRunId` of this memory's own native `create` event (issue #262);
+   * null for an import, a create without provenance, or an unavailable events
+   * section. Never inherited from a predecessor or inferred from neighbours.
+   */
+  createdBySessionRunId: string | null
   /** Per-section load status. A readable identity never aborts the whole read. */
   sections: MemoryHistorySections
   /**
@@ -223,7 +235,20 @@ function assembleDirectRelationships(
   return { predecessors, successors, truncated }
 }
 
-/** Map bounded event rows to identity + payload-metadata-only audit events. */
+/**
+ * Re-parse a projected `payload->>'sessionRunId'` through the provenance payload
+ * contract (the listSessionEvents precedent). Unlike that reader, a value that
+ * fails the parse is reported as null rather than thrown: one corrupt row must
+ * not take down the whole events section, and the raw text never reaches the
+ * caller either way.
+ */
+function allowlistedSessionRunId(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null
+  const parsed = sessionProvenancePayloadSchema.safeParse({ sessionRunId: raw })
+  return parsed.success ? parsed.data.sessionRunId : null
+}
+
+/** Map bounded event rows to identity + payload-metadata + allowlisted-key audit events. */
 function mapAuditEvents(boundedAuditRows: RawEventRow[]): MemoryHistoryEventRow[] {
   return boundedAuditRows.map((row) => ({
     id: row.id,
@@ -235,7 +260,20 @@ function mapAuditEvents(boundedAuditRows: RawEventRow[]): MemoryHistoryEventRow[
       jsonType: payloadJsonType(row.payload_json_type),
       byteLength: Number(row.payload_byte_length ?? 0),
     },
+    sessionRunId: allowlistedSessionRunId(row.session_run_id),
   }))
+}
+
+/** The audit-event group (`sections.events`): the bounded window + the creating run. */
+interface EventsGroupRead {
+  rows: RawEventRow[]
+  creatingSessionRunId: string | null | undefined
+}
+
+async function readEventsGroup(tx: TenantTx, memoryId: string): Promise<EventsGroupRead> {
+  const rows = await readAuditEvents(tx, memoryId)
+  const creatingSessionRunId = await readCreatingSessionRunId(tx, memoryId)
+  return { rows, creatingSessionRunId }
 }
 
 /** Bounded raw rows + derived flags for the lineage group, read as one unit. */
@@ -313,7 +351,8 @@ function errorName(error: unknown): string {
 /**
  * Read the history view for one memory id. Returns undefined for absent or
  * cross-tenant ids (RLS collapses those cases). Output is bounded and
- * identity-only except for audit payload metadata.
+ * identity-only except for audit payload metadata and the allowlisted
+ * `sessionRunId` provenance key.
  *
  * Graceful degradation: the lineage group and the events group are
  * read independently; a failure in one is captured as `sections.<x> =
@@ -343,10 +382,10 @@ export async function getMemoryHistory(
     sectionErrors.lineage = errorName(error)
   }
 
-  let auditRows: RawEventRow[] | undefined
+  let eventsGroup: EventsGroupRead | undefined
   let eventsStatus: MemoryHistorySectionStatus = 'ok'
   try {
-    auditRows = await withSavepoint(tx, 'history_events', () => readAuditEvents(tx, memoryId))
+    eventsGroup = await withSavepoint(tx, 'history_events', () => readEventsGroup(tx, memoryId))
   } catch (error) {
     eventsStatus = 'unavailable'
     sectionErrors.events = errorName(error)
@@ -358,6 +397,7 @@ export async function getMemoryHistory(
     lineageGroup !== undefined
       ? assembleLineageSection(lineageGroup, memory)
       : emptyLineageSection()
+  const auditRows = eventsGroup?.rows
   const boundedAuditRows = auditRows?.slice(0, MEMORY_HISTORY_EVENT_LIMIT) ?? []
 
   return {
@@ -366,6 +406,7 @@ export async function getMemoryHistory(
     directRelationships: lineageView.directRelationships,
     auditEvents: mapAuditEvents(boundedAuditRows),
     eventsTruncated: auditRows !== undefined && auditRows.length > MEMORY_HISTORY_EVENT_LIMIT,
+    createdBySessionRunId: allowlistedSessionRunId(eventsGroup?.creatingSessionRunId),
     sections: { lineage: lineageStatus, events: eventsStatus },
     ...(sectionErrors.lineage !== undefined || sectionErrors.events !== undefined
       ? { sectionErrors }
