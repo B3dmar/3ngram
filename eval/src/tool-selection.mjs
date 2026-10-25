@@ -250,6 +250,28 @@ export function surfaceAttraction(surfaceScenarios, utteranceVectors, toolVector
 }
 
 /**
+ * The REPORT-ONLY capability slice: utterances for a second job a tool does
+ * (revise's archive/reaffirm disposition) that its description does not name.
+ * Scored per `expected_tool#capability` with the same routing metric, but kept
+ * out of the gated aggregate, so the floors and the 5-per-tool rule measure the
+ * core jobs only. It exists to show whether a schema-only capability still
+ * routes, never to pass or fail the gate.
+ */
+export function capabilityRouting(capabilityScenarios, utteranceVectors, toolVectors) {
+  const groups = new Map()
+  for (const scenario of capabilityScenarios) {
+    const key = `${scenario.expected_tool}#${scenario.capability}`
+    groups.set(key, [...(groups.get(key) ?? []), scenario])
+  }
+  return Object.fromEntries(
+    [...groups.entries()].map(([key, group]) => {
+      const m = selectionMetrics(group, utteranceVectors, toolVectors)
+      return [key, { n: m.n, accuracy_at_1: m.selection_accuracy_at_1, margin: m.selection_margin }]
+    }),
+  )
+}
+
+/**
  * Read + parse a fixture, naming the FILE on a parse failure. A bare
  * `Unexpected end of JSON input` says nothing about which of three fixtures is
  * corrupt, and this error is the one a reader sees inside an otherwise-green gate.
@@ -312,6 +334,13 @@ export function computeToolSelection({ scenarios, fixture, registryDescriptions 
     fixture.surfaceScenarios,
     'surface',
   )
+  // Optional: a fixture without capability scenarios scores an empty slice.
+  const capabilityScenarios = scenarios.capabilityScenarios ?? []
+  const capabilityUtterances = resolveScenarioVectors(
+    capabilityScenarios,
+    fixture.capabilityScenarios ?? {},
+    'capability',
+  )
   const toolVectors = Object.fromEntries(
     Object.entries(fixture.tools).map(([name, entry]) => {
       assertUsableVector(entry.vector, `tool ${name} description`)
@@ -324,6 +353,7 @@ export function computeToolSelection({ scenarios, fixture, registryDescriptions 
     ...selectionMetrics(scenarios.toolScenarios, toolUtterances, toolVectors),
     ...descriptionOverlap(toolVectors),
     surface_slice: surfaceAttraction(scenarios.surfaceScenarios, surfaceUtterances, toolVectors),
+    capability_slice: capabilityRouting(capabilityScenarios, capabilityUtterances, toolVectors),
   }
 }
 
@@ -374,6 +404,11 @@ export function formatToolSelection(slice) {
     `  max_description_overlap=${r.max_description_overlap} (${r.max_overlap_pair.join(' ~ ')})`,
     `  surface slice (non-tool targets, n=${r.surface_slice.n}): mean nearest-tool cosine=${r.surface_slice.mean_top_tool_cosine}, max=${r.surface_slice.max_top_tool_cosine}`,
   ]
+  for (const [key, c] of Object.entries(r.capability_slice ?? {})) {
+    lines.push(
+      `  capability slice ${key} (report-only, not gated, n=${c.n}): accuracy_at_1=${c.accuracy_at_1} margin=${c.margin}`,
+    )
+  }
   if (r.confusions.length) {
     // Only the worst few: a degenerate run produces a confusion pair per scenario,
     // and a screenful of them would bury the gated metrics printed above. The
