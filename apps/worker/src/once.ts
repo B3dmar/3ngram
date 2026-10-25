@@ -5,10 +5,10 @@
 // job modules and the pg graph behind them are DYNAMIC imports.
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadEnv, log } from '@3ngram/config'
+import { loadEnv, loadSessionCloserConfig, log } from '@3ngram/config'
 import { flushObservability, initObservability } from '@3ngram/config/otel'
 
-export const ONCE_JOBS = ['consolidation', 'surfacing', 'gc-clients'] as const
+export const ONCE_JOBS = ['consolidation', 'surfacing', 'gc-clients', 'session-sweep'] as const
 export type OnceJob = (typeof ONCE_JOBS)[number]
 
 export class UnknownOnceJobError extends Error {
@@ -23,6 +23,37 @@ export function parseOnceJob(arg: string | undefined): OnceJob {
   return job
 }
 
+/** Some closer passes failed; their rows are stamped, the next sweep tick retries. */
+export class CloserDrainError extends Error {
+  override name = 'CloserDrainError'
+  constructor(readonly failed: number) {
+    super(`${failed} session closer pass(es) failed`)
+  }
+}
+
+/**
+ * The one-shot sweep: closers drain in-process, one at a time, strictly after
+ * sweepSessions resolves. A sweep that throws drains nothing. isLastAttempt is
+ * true because there is no in-process retry: each failure stamps
+ * closer_next_attempt_at once (#184) and the next sweep tick is the retry.
+ */
+async function runSessionSweepOnce(job: OnceJob): Promise<unknown> {
+  if (!loadSessionCloserConfig().enabled) {
+    log().info({ job, skipped: 'closer-disabled' }, 'worker once: session closer disabled')
+    return { skipped: 'closer-disabled' }
+  }
+  const { buildCloserDeps, createCloserCollector } = await import('./once-closer.js')
+  const { runSessionSweep } = await import('./jobs/session-sweep.js')
+  const { runSessionCloser } = await import('./jobs/session-closer.js')
+  const { gateway, budget } = buildCloserDeps()
+  const collector = createCloserCollector()
+  const sweep = await runSessionSweep(collector.enqueue)
+  const drained = await collector.drain((req) => runSessionCloser(req, gateway, budget, true))
+  log().info({ job, ...drained }, 'worker once: closers drained')
+  if (drained.failed > 0) throw new CloserDrainError(drained.failed)
+  return { sweep, ...drained }
+}
+
 export async function runOnce(job: OnceJob): Promise<unknown> {
   switch (job) {
     case 'consolidation':
@@ -31,6 +62,8 @@ export async function runOnce(job: OnceJob): Promise<unknown> {
       return (await import('./jobs/surfacing.js')).runSurfacing()
     case 'gc-clients':
       return (await import('./jobs/gc-clients.js')).runGcClients()
+    case 'session-sweep':
+      return runSessionSweepOnce(job)
   }
 }
 
