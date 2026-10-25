@@ -317,8 +317,11 @@ export { insertProposals, type ProposalWrite } from './proposals-write.js'
 // --- Postgres rate-limit store (#315) — rate_limits system table ---
 export {
   createPostgresRateLimiter,
+  deleteWindowCounter,
+  incrementWindowCounter,
   type PostgresRateLimiterOptions,
   RATE_LIMIT_TABLE,
+  readWindowCounter,
 } from './rate-limit-store.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retrieval-scope policy store (issue #47) ---
