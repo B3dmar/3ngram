@@ -151,6 +151,10 @@ export interface OAuthConfig {
  *   red line: memory content never enters logs outside local dev).
  * - `LOG_HASH_SALT` is required in production and the public self-host example
  *   placeholder is rejected (hashed user_id correlation, §1).
+ *
+ * This is the role-agnostic base: the server-only production rules
+ * (OAUTH_JWKS, REDIS_URL) are applied by parseEnv/loadEnv for the server role
+ * only, so validate through those rather than parsing envSchema directly.
  */
 export const envSchema = z
   .object({
