@@ -24,6 +24,14 @@ const applyProposal = vi.fn()
 const applyFactProposal = vi.fn()
 const listProposals = vi.fn()
 const listFactProposals = vi.fn()
+const decideResolutionProposal = vi.fn()
+const getOpenResolutionProposal = vi.fn()
+const resolveByMemoryId = vi.fn()
+
+// The resolve path an accepted resolution proposal goes through (issue #229).
+vi.mock('../src/write/commitments.js', () => ({
+  resolveByMemoryId: (...args: unknown[]) => resolveByMemoryId(...args),
+}))
 
 vi.mock('@3ngram/db', () => ({
   ProposalNotFoundError,
@@ -37,6 +45,8 @@ vi.mock('@3ngram/db', () => ({
   applyFactProposal: (...args: unknown[]) => applyFactProposal(...args),
   listProposals: (...args: unknown[]) => listProposals(...args),
   listFactProposals: (...args: unknown[]) => listFactProposals(...args),
+  decideResolutionProposal: (...args: unknown[]) => decideResolutionProposal(...args),
+  getOpenResolutionProposal: (...args: unknown[]) => getOpenResolutionProposal(...args),
 }))
 
 const { acceptProposalAnyKind, listAllProposals, rejectProposalAnyKind } = await import(
@@ -57,6 +67,9 @@ const reset = () => {
     applyFactProposal,
     listProposals,
     listFactProposals,
+    decideResolutionProposal,
+    getOpenResolutionProposal,
+    resolveByMemoryId,
   ] as Mock[]) {
     m.mockReset()
   }
@@ -84,13 +97,27 @@ describe('rejectProposalAnyKind', () => {
     expect(rejectProposal).toHaveBeenCalled()
   })
 
-  it('reports not-found only after BOTH tables miss', async () => {
+  it('falls through to the resolution table when edge and fact both miss (#229)', async () => {
     reset()
     rejectProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     rejectFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideResolutionProposal.mockResolvedValue({ id: ID, status: 'rejected' })
+
+    const decided = await rejectProposalAnyKind(USER, ID)
+
+    expect(decided).toEqual({ kind: 'resolution', proposal: { id: ID, status: 'rejected' } })
+    expect(decideResolutionProposal).toHaveBeenCalledWith('tx', USER, ID, 'rejected')
+  })
+
+  it('reports not-found only after EVERY table misses', async () => {
+    reset()
+    rejectProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    rejectFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
 
     await expect(rejectProposalAnyKind(USER, ID)).rejects.toBeInstanceOf(ProposalNotFoundError)
     expect(rejectFactProposal).toHaveBeenCalledOnce()
+    expect(decideResolutionProposal).toHaveBeenCalledOnce()
   })
 
   it('propagates a NON-not-found edge failure instead of probing the fact table', async () => {
@@ -170,5 +197,37 @@ describe('listAllProposals', () => {
     // No undefined `status` key: the db helper lists every status when the
     // filter is absent, and an explicit undefined would not be the same thing.
     expect(listProposals).toHaveBeenCalledWith('tx', { limit: 10 })
+  })
+
+  it('accepts a resolution proposal by resolving its commitment as the reviewer (#229)', async () => {
+    reset()
+    applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    const memoryId = '019fecaa-0000-7000-8000-0000000000a1'
+    getOpenResolutionProposal.mockResolvedValue({ id: ID, memoryId, status: 'proposed' })
+    resolveByMemoryId.mockResolvedValue({ id: 'c-1', status: 'resolved' })
+    decideResolutionProposal.mockResolvedValue({ id: ID, memoryId, status: 'applied' })
+
+    const decided = await acceptProposalAnyKind(USER, ID, 'user_mcp')
+
+    expect(resolveByMemoryId).toHaveBeenCalledWith(USER, memoryId, 'resolved', 'user_mcp')
+    expect(decideResolutionProposal).toHaveBeenCalledWith('tx', USER, ID, 'applied')
+    expect(decided).toMatchObject({
+      kind: 'resolution_applied',
+      commitmentId: 'c-1',
+      commitmentStatus: 'resolved',
+    })
+  })
+
+  it('leaves the resolution proposal open when the resolve is refused', async () => {
+    reset()
+    applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    getOpenResolutionProposal.mockResolvedValue({ id: ID, memoryId: 'm', status: 'proposed' })
+    const refusal = new Error('illegal transition expired -> resolved')
+    resolveByMemoryId.mockRejectedValue(refusal)
+
+    await expect(acceptProposalAnyKind(USER, ID, 'user_mcp')).rejects.toBe(refusal)
+    expect(decideResolutionProposal).not.toHaveBeenCalled()
   })
 })

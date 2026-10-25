@@ -235,7 +235,13 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // sentence), the outcome enum `reaffirmed`, and the rejection enum
       // `archived`. Description unchanged (no embeddings regen); CLI
       // unchanged. MEASURED on #217's branch over staging ac5469b, not summed.
-      mcp: [29957, 241472, 60232],
+      // MCP +2588/+20704/+5047 (issue #229, resolution proposals): the
+      // review_proposals output becomes V3 — `resolutionProposals` on the list
+      // variant, a `resolution` key in counts/totals, and two decision variants
+      // (`rejected_resolution`, `applied_resolution`). Input and description
+      // unchanged (no embeddings regen); CLI and REST unchanged. MEASURED on
+      // staging 0d32dd9 plus #349/#352/#354, not summed.
+      mcp: [32545, 262176, 65279],
       cli: [333, 1236, 1236],
       rest: [4636, 5653, 5653],
     },

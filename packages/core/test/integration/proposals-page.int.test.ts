@@ -196,7 +196,7 @@ describe('listProposalsPage — complete enumeration', () => {
     expect(pages).toHaveLength(Math.ceil(expected.size / limit))
     for (const page of pages) {
       expect(pageIds(page).length).toBeLessThanOrEqual(limit)
-      expect(page.totals).toEqual({ edge: EDGE_TOTAL, fact: FACT_TOTAL })
+      expect(page.totals).toEqual({ edge: EDGE_TOTAL, fact: FACT_TOTAL, resolution: 0 })
     }
     // Strictly descending (createdAt, id) across the whole walk.
     const ordered = pages.flatMap((page) =>
@@ -227,7 +227,8 @@ describe('listProposalsPage — complete enumeration', () => {
       {
         proposals: [],
         factProposals: [],
-        totals: { edge: 0, fact: 0 },
+        resolutionProposals: [],
+        totals: { edge: 0, fact: 0, resolution: 0 },
         hasMore: false,
         next: undefined,
       },
@@ -288,8 +289,12 @@ describe('listProposalsPage — live-view semantics', () => {
     const remaining = new Set([...expected].filter((id) => !decided.has(id)))
     expectExactlyOnce(pages, remaining)
     // Totals are live per page: page 1 saw the full queue, later pages see it shrunk by 5.
-    expect(pages[0]?.totals).toEqual({ edge: EDGE_TOTAL, fact: FACT_TOTAL })
-    expect(pages[1]?.totals).toEqual({ edge: EDGE_TOTAL - 2, fact: FACT_TOTAL - 2 - 1 })
+    expect(pages[0]?.totals).toEqual({ edge: EDGE_TOTAL, fact: FACT_TOTAL, resolution: 0 })
+    expect(pages[1]?.totals).toEqual({
+      edge: EDGE_TOTAL - 2,
+      fact: FACT_TOTAL - 2 - 1,
+      resolution: 0,
+    })
     expect(pages.at(-1)?.totals).toEqual(pages[1]?.totals)
   })
 
@@ -317,7 +322,11 @@ describe('listProposalsPage — live-view semantics', () => {
     })
     expectExactlyOnce(pages, expected)
     // Totals moved live once the new rows existed.
-    expect(pages.at(-1)?.totals).toEqual({ edge: EDGE_TOTAL + 3, fact: FACT_TOTAL + 4 })
+    expect(pages.at(-1)?.totals).toEqual({
+      edge: EDGE_TOTAL + 3,
+      fact: FACT_TOTAL + 4,
+      resolution: 0,
+    })
     // A fresh walk sees all of them.
     const fresh = await walk(userId, 100)
     expect(fresh.flatMap(pageIds)).toHaveLength(EDGE_TOTAL + FACT_TOTAL + 7)

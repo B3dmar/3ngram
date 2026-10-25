@@ -11,9 +11,9 @@
 // `limit + 1` rows from EVERY source under the same filter and strictly-after
 // predicate — the union's first `limit + 1` rows are guaranteed to be among
 // them — merges, and emits the first `limit`. More than `limit` rows in the
-// union means `hasMore`, and the last EMITTED row is the next position. A
-// future kind (resolution proposals, issue #229) joins by adding one more source
-// to {@link mergeProposalStreams}; the position type does not change.
+// union means `hasMore`, and the last EMITTED row is the next position. The MCP
+// list merges THREE sources — edge, fact and resolution proposals (issue #229)
+// — and the position type is the same for all of them.
 //
 // SNAPSHOT: the page rows and `totals` are read in ONE `repeatable read`,
 // `read only` transaction, so a page agrees with its own totals and listing
@@ -23,14 +23,16 @@
 import {
   countFactProposals,
   countProposals,
+  countResolutionProposals,
   type KeyedProposal,
   listFactProposalsAfter,
   listProposalsAfter,
+  listResolutionProposalsAfter,
   type ProposalKeyset,
   type TenantTx,
   withTenant,
 } from '@3ngram/db'
-import type { FactProposalRecord, ProposalRecord } from './proposals.js'
+import type { FactProposalRecord, ProposalRecord, ResolutionProposalRecord } from './proposals.js'
 
 /** A position in the merged `created_at DESC, id DESC` proposal order. */
 export type ProposalPosition = ProposalKeyset
@@ -50,12 +52,13 @@ export interface MergedPage<R> {
   next: ProposalPosition | undefined
 }
 
-/** Both kinds (MCP `review_proposals` list). */
+/** Every kind (MCP `review_proposals` list). */
 export interface ProposalsPage {
   proposals: ProposalRecord[]
   factProposals: FactProposalRecord[]
+  resolutionProposals: ResolutionProposalRecord[]
   /** Live per-kind count of rows matching the status filter, as of this page's read. */
-  totals: { edge: number; fact: number }
+  totals: { edge: number; fact: number; resolution: number }
   hasMore: boolean
   next: ProposalPosition | undefined
 }
@@ -97,6 +100,7 @@ export function mergeProposalStreams<R extends { position: ProposalPosition }>(
 type Tagged =
   | { kind: 'edge'; position: ProposalPosition; record: ProposalRecord }
   | { kind: 'fact'; position: ProposalPosition; record: FactProposalRecord }
+  | { kind: 'resolution'; position: ProposalPosition; record: ResolutionProposalRecord }
 
 const tag =
   <K extends Tagged['kind']>(kind: K) =>
@@ -107,7 +111,7 @@ function sourceQuery(query: ProposalsPageQuery) {
   return { status: query.status, limit: query.limit + 1, after: query.after }
 }
 
-async function readBothKinds(
+async function readAllKinds(
   tx: TenantTx,
   userId: string,
   query: ProposalsPageQuery,
@@ -115,23 +119,32 @@ async function readBothKinds(
   const dbQuery = sourceQuery(query)
   const edges = (await listProposalsAfter(tx, dbQuery)).map(tag('edge'))
   const facts = (await listFactProposalsAfter(tx, userId, dbQuery)).map(tag('fact'))
-  const { page, hasMore, next } = mergeProposalStreams<Tagged>([edges, facts], query.limit)
+  const resolutions = (await listResolutionProposalsAfter(tx, userId, dbQuery)).map(
+    tag('resolution'),
+  )
+  const { page, hasMore, next } = mergeProposalStreams<Tagged>(
+    [edges, facts, resolutions],
+    query.limit,
+  )
   const proposals: ProposalRecord[] = []
   const factProposals: FactProposalRecord[] = []
+  const resolutionProposals: ResolutionProposalRecord[] = []
   for (const row of page) {
     if (row.kind === 'edge') proposals.push(row.record)
-    else factProposals.push(row.record)
+    else if (row.kind === 'fact') factProposals.push(row.record)
+    else resolutionProposals.push(row.record)
   }
   const totals = {
     edge: await countProposals(tx, query.status),
     fact: await countFactProposals(tx, userId, query.status),
+    resolution: await countResolutionProposals(tx, userId, query.status),
   }
-  return { proposals, factProposals, totals, hasMore, next }
+  return { proposals, factProposals, resolutionProposals, totals, hasMore, next }
 }
 
 /**
- * One page of the tenant's edge AND fact proposals in the merged
- * `created_at DESC, id DESC` order, at most `query.limit` rows across both
+ * One page of the tenant's edge, fact AND resolution proposals in the merged
+ * `created_at DESC, id DESC` order, at most `query.limit` rows across all
  * kinds, resuming strictly after `query.after`. Runs under withTenant/RLS in a
  * read-only repeatable-read transaction.
  */
@@ -139,7 +152,7 @@ export function listProposalsPage(
   userId: string,
   query: ProposalsPageQuery,
 ): Promise<ProposalsPage> {
-  return withTenant(userId, (tx) => readBothKinds(tx, userId, query), READ_ONLY_SNAPSHOT)
+  return withTenant(userId, (tx) => readAllKinds(tx, userId, query), READ_ONLY_SNAPSHOT)
 }
 
 /**

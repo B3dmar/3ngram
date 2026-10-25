@@ -176,8 +176,12 @@ describe('review_proposals list pagination (#320, real MCP transport)', () => {
       const page = result.structuredContent as McpListPage
       const factIds = page.factProposals?.map((p) => p.id) ?? []
       expect(page.count).toBe(page.proposals.length)
-      expect(page.counts).toEqual({ edge: page.proposals.length, fact: factIds.length })
-      expect(page.totals).toEqual({ edge: EDGES, fact: FACTS })
+      expect(page.counts).toEqual({
+        edge: page.proposals.length,
+        fact: factIds.length,
+        resolution: 0,
+      })
+      expect(page.totals).toEqual({ edge: EDGES, fact: FACTS, resolution: 0 })
       seen.push(...page.proposals.map((p) => p.id), ...factIds)
       if (!page.hasMore) {
         expect(page.nextCursor).toBeUndefined()

@@ -227,7 +227,7 @@ its row here even when its name and kind are unchanged.
 | `CloserEventSummary` | interface | `db5d75a9adca` |
 | `CloserFinish` | interface | `7cecec3fd92c` |
 | `CloserOptions` | interface | `0b91d92bdcd8` |
-| `CloserResult` | interface | `6f1996e181d0` |
+| `CloserResult` | interface | `e5ab8a7c8e47` |
 | `CloserSessionInput` | interface | `8f8f533b59f2` |
 | `CloserSkipReason` | type | `c378f5605331` |
 | `CloserVerdictError` | class | `644008da0f76` |
@@ -248,7 +248,7 @@ its row here even when its name and kind are unchanged.
 | `DashboardSearchPage` | interface | `77168fc773d5` |
 | `DebriefBriefedMemory` | interface | `82f24b49a983` |
 | `DebriefPromptContext` | interface | `8ca9a0260c74` |
-| `DecidedProposal` | type | `86ca009e9275` |
+| `DecidedProposal` | type | `b868911d64a4` |
 | `DeleteAccountOptions` | interface | `fd986a00ec9a` |
 | `DuplicateEmailError` | class | `4f7a078f9631` |
 | `DuplicateMemoryError` | class | `93f0fe6bc97d` |
@@ -327,10 +327,11 @@ its row here even when its name and kind are unchanged.
 | `ProposalPosition` | type | `6f6bf52d77ac` |
 | `ProposalRecord` | type | `7ef93d00e3ad` |
 | `ProposalsListQuery` | interface | `cd92940b612e` |
-| `ProposalsPage` | interface | `dacd6828e940` |
+| `ProposalsPage` | interface | `8e2513277fce` |
 | `ProposalsPageQuery` | interface | `443bc668abd5` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
 | `RememberResult` | interface | `9cca2f28c36c` |
+| `ResolutionProposalRecord` | type | `528540e820ae` |
 | `ResolveReasonNotSupportedError` | class | `d28ecb2bd083` |
 | `ResolveStatus` | type | `7accd0c80ed5` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
@@ -353,7 +354,7 @@ its row here even when its name and kind are unchanged.
 | `SearchHit` | interface | `a97cb971fec7` |
 | `SearchOptions` | interface | `2749d3c6156f` |
 | `SessionClockOptions` | interface | `93ae54bf425c` |
-| `SessionCloserRepo` | interface | `eed0625d3298` |
+| `SessionCloserRepo` | interface | `e94170d8a1fb` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SessionSweepOptions` | interface | `2a8490ec42eb` |
@@ -370,7 +371,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
 | `UnscopedWriteError` | class | `836d2ad0275b` |
-| `UserDataExport` | interface | `ba559f63fad0` |
+| `UserDataExport` | interface | `59f762ceb045` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WriteScopePolicySetting` | interface | `ab65eda55f36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
@@ -645,6 +646,7 @@ its row here even when its name and kind are unchanged.
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
 | `ExportProposalRow` | interface | `bfdfabd2f739` |
+| `ExportResolutionProposalRow` | type | `75f251182ce5` |
 | `ExportRetrievalPolicyRow` | interface | `2c15c6c22150` |
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
@@ -709,8 +711,11 @@ its row here even when its name and kind are unchanged.
 | `ProposalRow` | interface | `118db521ee36` |
 | `ProposalWrite` | interface | `303e63b2723b` |
 | `ProposalsQuery` | interface | `60bf10951af6` |
+| `RESOLUTION_PROPOSAL_COLUMNS` | const | `1f54c0a1aca2` |
 | `ReaffirmOutcome` | type | `3f19d3b45ae0` |
 | `ReaffirmWrite` | type | `932c546d55f0` |
+| `ResolutionProposalRow` | interface | `80b6b1ed0256` |
+| `ResolutionProposalWrite` | interface | `4770cf8725bb` |
 | `ResolvedApiKey` | interface | `8af9600d6f10` |
 | `ResolvedOauthToken` | interface | `476671b8cf0e` |
 | `ResolvedSession` | interface | `b94d810c770d` |
@@ -739,7 +744,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
 | `UserBudgetWrite` | interface | `8e6b2933fc5b` |
-| `UserDataExport` | interface | `ba559f63fad0` |
+| `UserDataExport` | interface | `59f762ceb045` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `UserRow` | interface | `0d5553e9b368` |
 | `WriteScopePolicyRow` | interface | `982129ab2c36` |
@@ -775,8 +780,10 @@ its row here even when its name and kind are unchanged.
 | `countMemories` | function | `c61756cb455f` |
 | `countProposals` | function | `7c68fb735bcd` |
 | `countProposalsByStatus` | function | `83536379eed5` |
+| `countResolutionProposals` | function | `732fbcf08ef4` |
 | `createCommitment` | function | `fb2e38368ac8` |
 | `createScope` | function | `f1efc67b328e` |
+| `decideResolutionProposal` | function | `6b38198b213a` |
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
 | `deleteScope` | function | `d948256373ca` |
@@ -802,6 +809,7 @@ its row here even when its name and kind are unchanged.
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `f98653cf2421` |
+| `getOpenResolutionProposal` | function | `71b0e818dc73` |
 | `getRetrievalPolicy` | function | `80728d8897ec` |
 | `getUserBudget` | function | `e6ac3952f049` |
 | `getUserByEmail` | function | `4ee1ec0002c4` |
@@ -824,6 +832,7 @@ its row here even when its name and kind are unchanged.
 | `insertOauthTokenPair` | function | `754dfc0ccf35` |
 | `insertPasswordResetToken` | function | `97640b502405` |
 | `insertProposals` | function | `d9da67f8e0da` |
+| `insertResolutionProposals` | function | `a6e1fa5ab1c1` |
 | `insertSession` | function | `3952aa8da8b9` |
 | `insertUnverifiedUserWithEmailVerificationToken` | function | `6891a4ff6db3` |
 | `insertUser` | function | `1526ee55b233` |
@@ -838,6 +847,7 @@ its row here even when its name and kind are unchanged.
 | `listMemoryFacets` | function | `0511d249e150` |
 | `listProposals` | function | `ca00070826cc` |
 | `listProposalsAfter` | function | `6d212688eabe` |
+| `listResolutionProposalsAfter` | function | `935db4d96a7e` |
 | `listScopes` | function | `38d9a9aee782` |
 | `listSessionEvents` | function | `38bf91400471` |
 | `listTenantIds` | function | `71356a9ecac7` |
@@ -879,6 +889,7 @@ its row here even when its name and kind are unchanged.
 | `replaceWriteScopePolicyDefault` | function | `c8b6f656773c` |
 | `reserveBudget` | function | `c74c7491a05c` |
 | `resetPasswordAtomic` | function | `49bed7f16d4b` |
+| `resolutionProposals` | const | `d124bfdc9f3d` |
 | `resolveApiKey` | function | `d219083527a2` |
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
@@ -1208,6 +1219,7 @@ its row here even when its name and kind are unchanged.
 | `Project` | type | `103a467180da` |
 | `ProposalEdgeTotals` | type | `a20b221efc92` |
 | `ProposalKindCounts` | type | `28e7864043af` |
+| `ProposalKindCountsV3` | type | `2410ed9cbacd` |
 | `ProposalRecordOutput` | type | `8a269415e658` |
 | `ProposalRejectBody` | type | `2fb4de60f87a` |
 | `ProposalStatus` | type | `184c3cc32f4f` |
@@ -1226,6 +1238,7 @@ its row here even when its name and kind are unchanged.
 | `RememberWithFactsInput` | type | `267a1093806c` |
 | `ResendVerificationInput` | type | `3cb71b81740c` |
 | `ResetPasswordInput` | type | `a7be98dd7ae9` |
+| `ResolutionProposalRecordOutput` | type | `431358b3e11a` |
 | `ResolveOutcomeStatus` | type | `e8fc806e3a78` |
 | `ResolveToolInput` | type | `6da007a0eead` |
 | `ResolveToolOutput` | type | `cdcef8d259e3` |
@@ -1237,6 +1250,7 @@ its row here even when its name and kind are unchanged.
 | `ReviewProposalsInput` | type | `869d9b031012` |
 | `ReviewProposalsOutput` | type | `9775221bd01d` |
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
+| `ReviewProposalsOutputV3` | type | `cfaadd706087` |
 | `ReviseDispositionKind` | type | `94d9ffd08b65` |
 | `ReviseDispositionOutcome` | type | `4191aeeac157` |
 | `ReviseDispositionOutcomeKind` | type | `ac0a6e1f1c44` |
@@ -1459,6 +1473,7 @@ its row here even when its name and kind are unchanged.
 | `projectSchema` | const | `bcb00934b8c6` |
 | `proposalEdgeTotalsSchema` | const | `3b06e6383471` |
 | `proposalKindCountsSchema` | const | `5d10c63012dd` |
+| `proposalKindCountsV3Schema` | const | `b41c4f35455f` |
 | `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |
@@ -1477,6 +1492,7 @@ its row here even when its name and kind are unchanged.
 | `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |
 | `resendVerificationInputSchema` | const | `258740cf44b0` |
 | `resetPasswordInputSchema` | const | `33f21153f1c1` |
+| `resolutionProposalRecordSchema` | const | `4b0cc3664f2d` |
 | `resolutionReasonSchema` | const | `88e35aabe373` |
 | `resolveOutcomeStatusSchema` | const | `ea02c06327dd` |
 | `resolveToolInputSchema` | const | `b5efdf38f74f` |
@@ -1490,6 +1506,7 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsInputSchema` | const | `c2ed7293542a` |
 | `reviewProposalsOutputSchema` | const | `9b97544b2f22` |
 | `reviewProposalsOutputV2Schema` | const | `c44e9b2087ea` |
+| `reviewProposalsOutputV3Schema` | const | `518e02ae1007` |
 | `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
 | `reviewProposalsRegisterOutputShapeV2` | const | `a43afb37177a` |
 | `reviewProposalsRegisterShape` | const | `c147835e9d4d` |

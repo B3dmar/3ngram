@@ -7,12 +7,20 @@
 //
 // WHAT IT MAY WRITE, AND WHY THAT LIST IS SO SHORT.
 //   - `resolve` on a briefed commitment, via the existing transitionCommitment
-//     path. That is it.
+//     path.
+//   - On the typed-judgment path only (issue #229): a RESOLUTION PROPOSAL for a
+//     briefed commitment judged plausibly done (LOW <= p < HIGH). This revises
+//     the page's original "no third proposal kind": with a calibrated
+//     probability there is now a principled band that is neither safe to
+//     auto-resolve nor right to drop, and review_proposals is the existing defer
+//     surface. A proposal is not a corpus row — it lives in its own review table,
+//     one OPEN row per commitment (a retry re-inserts nothing), and a reviewer's
+//     accept is what resolves.
 //   - NEVER `remember`. A retried LLM pass that could insert memories is how an
 //     append-only corpus (hard rule 1: rows are never deleted) grows duplicates
 //     that nothing can clean up. The page rejects it by name, and rejects the
 //     machinery it would drag in with it — a claim table keyed
-//     `(attempt_id, ordinal)`, a third proposal kind, epochs per write.
+//     `(attempt_id, ordinal)`, epochs per write.
 //   - NEVER `revise`, `archive` or `unresolve`. Only the one verb the 0%
 //     commitment-recall hole is measured in.
 // `resolve` is REVERSIBLE (`unresolve` is a legal FSM edge back to `open`), and
@@ -24,7 +32,7 @@
 // #225) are classified by `gateway.decide()`, one typed Noul per briefed
 // commitment (session-closer-judgment.ts, issue #229); everyone else, and any
 // deployment without a judgment gateway, by the single `complete()` pass below.
-// Either way the only write is the same `resolve`.
+// Either way the only corpus write is the same `resolve`.
 //
 // DEFAULT-OFF. The worker only schedules this behind a config flag. The
 // validation bar for turning it on — a positive commitment-recall improvement
@@ -39,6 +47,7 @@ import {
   claimSessionTriage,
   finishSessionTriage,
   insertLlmUsage,
+  insertResolutionProposals,
   listSessionEvents,
   readCloserSession,
   recordCloserFailure,
@@ -116,6 +125,12 @@ export interface CloserResult {
   resolved: number
   /** Candidates skipped by the live re-read (already resolved, illegal, not a commitment). */
   skippedCandidates: number
+  /**
+   * Resolution proposals newly staged for review (typed-judgment mid band, issue
+   * #229). 0 on the complete() path, and for a commitment that already had an
+   * open proposal.
+   */
+  proposed?: number
 }
 
 /** One provenance event, narrowed to what the closer's prompt may see. */
@@ -149,6 +164,15 @@ export interface SessionCloserRepo {
     sessionRunId: string,
     expectedEpoch: number,
   ): Promise<ClosedRunResolveOutcome>
+  /**
+   * Stage resolution proposals for this run (issue #229): insert-only, one open
+   * row per commitment (an existing open one is a no-op). Returns rows inserted.
+   */
+  propose(
+    userId: string,
+    sessionRunId: string,
+    proposals: readonly { memoryId: string; probability: number }[],
+  ): Promise<number>
   /** Epoch-fenced write-back of the terminal status, watermark and excerpt clear. */
   finish(userId: string, finish: CloserFinish): Promise<boolean>
   /** Record one `llm_usage` row for the generation call. Best-effort by contract. */
@@ -558,7 +582,7 @@ async function runClosePass(
     eventKinds,
   })
   if (verdict === 'fenced') return skip('fenced')
-  const { candidates, rejected } = verdict
+  const { candidates, rejected, proposals } = verdict
 
   let resolved = 0
   let skippedCandidates = 0
@@ -617,6 +641,26 @@ async function runClosePass(
     else skippedCandidates += 1
   }
 
+  // The mid band (issue #229): stage proposals AFTER the resolves, behind the
+  // same cheap epoch pre-check. A proposal carries ids and a probability only
+  // and is advisory, so the narrowing check is enough; an erasure that races it
+  // leaves a content-free review row over redacted memories.
+  let proposed = 0
+  if (proposals.length > 0) {
+    const epoch = await repo.currentEpoch(userId, request.sessionRunId)
+    if (epoch !== session.activationEpoch) {
+      return {
+        sessionRunId: request.sessionRunId,
+        skipped: 'fenced',
+        candidates: candidates.length,
+        rejected,
+        resolved,
+        skippedCandidates,
+      }
+    }
+    proposed = await repo.propose(userId, request.sessionRunId, proposals)
+  }
+
   // Re-list AFTER the resolves so the watermark covers the events they emitted.
   // Without this the closer's own `resolve` rows would sit outside
   // `last_triaged_event_ids` and re-arm the run it just closed.
@@ -637,6 +681,7 @@ async function runClosePass(
     rejected,
     resolved,
     skippedCandidates,
+    ...(proposed > 0 ? { proposed } : {}),
   }
 }
 
@@ -694,4 +739,6 @@ export const dbSessionCloserRepo: SessionCloserRepo = {
   recordFailure: (userId, failure) =>
     withTenant(userId, (tx) => recordCloserFailure(tx, userId, failure)),
   isJudgmentEnabled: (userId) => isJudgmentEnabled(userId),
+  propose: (userId, sessionRunId, proposals) =>
+    withTenant(userId, (tx) => insertResolutionProposals(tx, userId, sessionRunId, proposals)),
 }

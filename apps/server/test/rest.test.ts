@@ -2519,6 +2519,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-04T00:00:00.000Z'),
     },
+    resolutionProposals: [],
     judgmentPolicy: {
       mode: 'on',
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -2620,6 +2621,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       memoryEvents: 1,
       proposals: 1,
       factProposals: 1,
+      resolutionProposals: 0,
       agentSessions: 1,
       userBudgets: 1,
       llmUsage: 1,

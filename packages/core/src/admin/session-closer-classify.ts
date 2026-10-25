@@ -78,8 +78,17 @@ export function completionCostUsd(
   return inputTokens * rate.input + outputTokens * rate.output
 }
 
-/** Candidates to resolve, or `fenced` when the epoch moved before dispatch. */
-export type CloserVerdict = { candidates: string[]; rejected: number } | 'fenced'
+/**
+ * Candidates to resolve and mid-band proposals to stage (judgment path only),
+ * or `fenced` when the epoch moved before dispatch.
+ */
+export type CloserVerdict =
+  | {
+      candidates: string[]
+      rejected: number
+      proposals: { memoryId: string; probability: number }[]
+    }
+  | 'fenced'
 
 /** Everything one GENERATE step needs. */
 export interface ClassifyCall {
@@ -166,12 +175,13 @@ async function classifyByCompletion(call: ClassifyCall): Promise<CloserVerdict> 
     return result
   })
   if (completion === 'fenced') return 'fenced'
-  return selectResolvable(completion.text, session.briefedMemories)
+  return { ...selectResolvable(completion.text, session.briefedMemories), proposals: [] }
 }
 
 /**
  * The typed judgment path (issue #229). `rejected` is always 0: the answer id
- * space is the briefed set. Usage is recorded UNPRICED — no judgment list price
+ * space is the briefed set. High-band answers resolve; mid-band answers become
+ * proposals. Usage is recorded UNPRICED — no judgment list price
  * is pinned in this repo — so the budget gate charges the max registered cost.
  */
 async function classifyByJudgment(call: ClassifyCall): Promise<CloserVerdict | typeof FALLBACK> {
@@ -204,6 +214,6 @@ async function classifyByJudgment(call: ClassifyCall): Promise<CloserVerdict | t
     return result
   })
   if (decided === 'fenced' || decided === FALLBACK) return decided
-  const { resolve } = selectByJudgment(decided.answers, session.briefedMemories)
-  return { candidates: resolve, rejected: 0 }
+  const { resolve, propose } = selectByJudgment(decided.answers, session.briefedMemories)
+  return { candidates: resolve, rejected: 0, proposals: propose }
 }

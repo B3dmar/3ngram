@@ -10,6 +10,8 @@ const listProposalsAfter = vi.fn()
 const listFactProposalsAfter = vi.fn()
 const countProposals = vi.fn()
 const countFactProposals = vi.fn()
+const listResolutionProposalsAfter = vi.fn()
+const countResolutionProposals = vi.fn()
 const withTenant = vi.fn((_userId: string, fn: (tx: unknown) => unknown, _config?: unknown) =>
   fn('tx'),
 )
@@ -21,6 +23,8 @@ vi.mock('@3ngram/db', () => ({
   listFactProposalsAfter: (...args: unknown[]) => listFactProposalsAfter(...args),
   countProposals: (...args: unknown[]) => countProposals(...args),
   countFactProposals: (...args: unknown[]) => countFactProposals(...args),
+  listResolutionProposalsAfter: (...args: unknown[]) => listResolutionProposalsAfter(...args),
+  countResolutionProposals: (...args: unknown[]) => countResolutionProposals(...args),
 }))
 
 const { listEdgeProposalsPage, listProposalsPage, mergeProposalStreams } = await import(
@@ -90,12 +94,14 @@ describe('mergeProposalStreams', () => {
 })
 
 describe('listProposalsPage', () => {
-  it('reads limit + 1 from both kinds after the position, in one read-only snapshot', async () => {
+  it('reads limit + 1 from every kind after the position, in one read-only snapshot', async () => {
     vi.clearAllMocks()
     listProposalsAfter.mockResolvedValue([row(T1, 'a2'), row(T0, 'a1')])
     listFactProposalsAfter.mockResolvedValue([row(T1, 'b1')])
+    listResolutionProposalsAfter.mockResolvedValue([row(T0, 'c1')])
     countProposals.mockResolvedValue(7)
     countFactProposals.mockResolvedValue(4)
+    countResolutionProposals.mockResolvedValue(2)
     const after = { createdAt: T1, id: 'ff' }
 
     const page = await listProposalsPage(USER, { status: 'proposed', limit: 2, after })
@@ -105,13 +111,16 @@ describe('listProposalsPage', () => {
     expect(listFactProposalsAfter).toHaveBeenCalledWith('tx', USER, expected)
     expect(countProposals).toHaveBeenCalledWith('tx', 'proposed')
     expect(countFactProposals).toHaveBeenCalledWith('tx', USER, 'proposed')
+    expect(listResolutionProposalsAfter).toHaveBeenCalledWith('tx', USER, expected)
+    expect(countResolutionProposals).toHaveBeenCalledWith('tx', USER, 'proposed')
     expect(withTenant.mock.calls[0]?.[2]).toEqual({
       isolationLevel: 'repeatable read',
       accessMode: 'read only',
     })
     expect(page.proposals.map((p) => p.id)).toEqual(['a2'])
     expect(page.factProposals.map((p) => p.id)).toEqual(['b1'])
-    expect(page.totals).toEqual({ edge: 7, fact: 4 })
+    expect(page.resolutionProposals).toEqual([])
+    expect(page.totals).toEqual({ edge: 7, fact: 4, resolution: 2 })
     expect(page.hasMore).toBe(true)
     expect(page.next).toEqual({ createdAt: T1, id: 'a2' })
   })
@@ -137,5 +146,24 @@ describe('listEdgeProposalsPage', () => {
       hasMore: false,
       next: undefined,
     })
+  })
+})
+
+describe('listProposalsPage — the resolution kind (issue #229)', () => {
+  it('merges resolution proposals into the same order and partitions them', async () => {
+    vi.clearAllMocks()
+    listProposalsAfter.mockResolvedValue([row(T0, 'a1')])
+    listFactProposalsAfter.mockResolvedValue([])
+    listResolutionProposalsAfter.mockResolvedValue([row(T1, 'c2'), row(T0, 'c1')])
+    countProposals.mockResolvedValue(1)
+    countFactProposals.mockResolvedValue(0)
+    countResolutionProposals.mockResolvedValue(2)
+
+    const page = await listProposalsPage(USER, { limit: 2 })
+
+    expect(page.resolutionProposals.map((p) => p.id)).toEqual(['c2', 'c1'])
+    expect(page.proposals).toEqual([])
+    expect(page.hasMore).toBe(true)
+    expect(page.next).toEqual({ createdAt: T0, id: 'c1' })
   })
 })

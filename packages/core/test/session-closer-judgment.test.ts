@@ -33,6 +33,7 @@ import {
 } from '../src/admin/session-closer.js'
 import {
   CLOSER_DECIDE_OPERATION,
+  CLOSER_PROPOSE_PROBABILITY,
   CLOSER_RESOLVE_PROBABILITY,
   renderCloserJudgment,
   selectByJudgment,
@@ -77,6 +78,7 @@ function session(overrides: Partial<CloserSessionInput> = {}): CloserSessionInpu
 function repo(judgment: boolean, overrides: Partial<SessionCloserRepo> = {}) {
   const resolved: string[] = []
   const usages: CloserUsage[] = []
+  const proposed: { sessionRunId: string; memoryId: string; probability: number }[] = []
   const r: SessionCloserRepo = {
     readSession: async () => session(),
     listEvents: async () => ({ items: [{ id: 'e1', eventKind: 'create' }], truncated: false }),
@@ -92,9 +94,13 @@ function repo(judgment: boolean, overrides: Partial<SessionCloserRepo> = {}) {
     currentEpoch: async () => 3,
     recordFailure: async () => undefined,
     isJudgmentEnabled: async () => judgment,
+    propose: async (_u, sessionRunId, proposals) => {
+      for (const p of proposals) proposed.push({ sessionRunId, ...p })
+      return proposals.length
+    },
     ...overrides,
   }
-  return { repo: r, resolved, usages }
+  return { repo: r, resolved, usages, proposed }
 }
 
 const noul = (probability: number): DecideAnswer => ({ type: 'noul', probability })
@@ -119,17 +125,23 @@ describe('renderCloserJudgment', () => {
 })
 
 describe('selectByJudgment', () => {
-  it('resolves only at or above the threshold and fails closed on a missing answer', () => {
+  it('splits the bands: resolve at HIGH, propose in [LOW, HIGH), nothing below', () => {
     expect(
-      selectByJudgment({ c0: noul(CLOSER_RESOLVE_PROBABILITY), c1: noul(0.89) }, BRIEFED).resolve,
-    ).toEqual([MEM_A])
-    expect(selectByJudgment({ c1: noul(0.99) }, BRIEFED).resolve).toEqual([MEM_B])
-    expect(selectByJudgment({}, BRIEFED).resolve).toEqual([])
+      selectByJudgment({ c0: noul(CLOSER_RESOLVE_PROBABILITY), c1: noul(0.89) }, BRIEFED),
+    ).toEqual({ resolve: [MEM_A], propose: [{ memoryId: MEM_B, probability: 0.89 }] })
+    expect(selectByJudgment({ c0: noul(CLOSER_PROPOSE_PROBABILITY) }, BRIEFED).propose).toEqual([
+      { memoryId: MEM_A, probability: CLOSER_PROPOSE_PROBABILITY },
+    ])
+    expect(selectByJudgment({ c0: noul(0.49), c1: noul(0.99) }, BRIEFED)).toEqual({
+      resolve: [MEM_B],
+      propose: [],
+    })
+    expect(selectByJudgment({}, BRIEFED)).toEqual({ resolve: [], propose: [] })
   })
 })
 
 describe('closeSessionRun — typed judgment for opted-in tenants (issue #229)', () => {
-  it('calls decide(), resolves only p >= HIGH, and never calls complete()', async () => {
+  it('calls decide(), resolves p >= HIGH, proposes the mid band, never calls complete()', async () => {
     const gateway = createFakeGateway({
       decisions: { [CLOSER_DECIDE_OPERATION]: { c0: noul(0.97), c1: noul(0.6) } },
     })
@@ -138,7 +150,9 @@ describe('closeSessionRun — typed judgment for opted-in tenants (issue #229)',
     expect(gateway.calls.decide).toHaveLength(1)
     expect(gateway.calls.complete).toHaveLength(0)
     expect(r.resolved).toEqual([MEM_A])
-    expect(result).toMatchObject({ candidates: 1, rejected: 0, resolved: 1 })
+    // The mid-band commitment is staged for review, not resolved.
+    expect(r.proposed).toEqual([{ sessionRunId: RUN, memoryId: MEM_B, probability: 0.6 }])
+    expect(result).toMatchObject({ candidates: 1, rejected: 0, resolved: 1, proposed: 1 })
     // Excerpt reaches the state only inside the fence; topics only inside questions.
     const sent = gateway.calls.decide[0]?.request
     expect(sent?.state).toContain('```json')
@@ -329,5 +343,35 @@ describe('closer judgment bounds', () => {
       ).resolve,
     ).toEqual([MEM_A])
     expect(selectByJudgment({ c0: noul(Number.NaN) }, BRIEFED).resolve).toEqual([])
+  })
+
+  it('stages no proposal on the complete() path or below LOW', async () => {
+    const low = createFakeGateway({
+      decisions: { [CLOSER_DECIDE_OPERATION]: { c0: noul(0.2), c1: noul(0.49) } },
+    })
+    const r = repo(true)
+    const result = await closeSessionRun(r.repo, USER, REQUEST, { ...OPTIONS, gateway: low })
+    expect(r.proposed).toEqual([])
+    expect(result.proposed).toBeUndefined()
+    const optedOut = repo(false)
+    await closeSessionRun(optedOut.repo, USER, REQUEST, {
+      ...OPTIONS,
+      gateway: createFakeGateway({
+        completions: { [CLOSER_OPERATION]: JSON.stringify({ completed: [] }) },
+      }),
+    })
+    expect(optedOut.proposed).toEqual([])
+  })
+
+  it('fences instead of proposing when the epoch moves after the resolves', async () => {
+    const epochs = [3, 3, 4]
+    const gateway = createFakeGateway({
+      decisions: { [CLOSER_DECIDE_OPERATION]: { c0: noul(0.95), c1: noul(0.7) } },
+    })
+    const r = repo(true, { currentEpoch: async () => epochs.shift() ?? 4 })
+    const result = await closeSessionRun(r.repo, USER, REQUEST, { ...OPTIONS, gateway })
+    expect(r.resolved).toEqual([MEM_A])
+    expect(r.proposed).toEqual([])
+    expect(result.skipped).toBe('fenced')
   })
 })

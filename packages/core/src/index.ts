@@ -79,6 +79,7 @@ export {
   type ProposalsListQuery,
   type ProposalsPage,
   type ProposalsPageQuery,
+  type ResolutionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   renderCloserPrompt,

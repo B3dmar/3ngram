@@ -28,6 +28,7 @@ import {
   uuid,
   vector,
 } from 'drizzle-orm/pg-core'
+import { agentSessions } from './agent-sessions.js'
 import { charLengthCheckSql, enumCheckSql, tenantPolicy } from './helpers.js'
 import { users } from './identity.js'
 
@@ -372,6 +373,60 @@ export const factProposals = pgTable(
     check(
       'fact_proposals_validity_check',
       sql`${t.validTo} IS NULL OR (${t.validFrom} IS NOT NULL AND ${t.validFrom} <= ${t.validTo})`,
+    ),
+    tenantPolicy(),
+  ],
+)
+
+/**
+ * Resolution proposals (issue #229): the session closer's MID band. When a typed
+ * judgment says a briefed commitment was PLAUSIBLY completed (LOW <= p < HIGH),
+ * the closer stages a proposal here instead of resolving; `review_proposals`
+ * accepts (resolving the commitment as the reviewer) or rejects it. A review
+ * row, not memory data: accepting writes the commitment transition, never this
+ * table's content. No text columns, so erasure has nothing to redact.
+ */
+export const resolutionProposals = pgTable(
+  'resolution_proposals',
+  {
+    id: uuid('id').primaryKey().default(uuidv7()),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // The commitment's MEMORY id — what resolve and get_memories key on.
+    memoryId: uuid('memory_id').notNull(),
+    sessionRunId: uuid('session_run_id').notNull(),
+    probability: real('probability').notNull(),
+    status: text('status').notNull().default('proposed'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'resolution_proposals_memory_fk',
+      columns: [t.userId, t.memoryId],
+      foreignColumns: [memories.userId, memories.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'resolution_proposals_session_fk',
+      columns: [t.userId, t.sessionRunId],
+      foreignColumns: [agentSessions.userId, agentSessions.id],
+    }).onDelete('cascade'),
+    // One OPEN proposal per commitment: a later pass that judges the same
+    // commitment mid-band again is a no-op until a reviewer decides the open
+    // one; re-proposal after a rejection is allowed (the proposals_open_idx
+    // precedent). The insert's ON CONFLICT target must mirror this index.
+    uniqueIndex('resolution_proposals_open_idx')
+      .on(t.userId, t.memoryId)
+      .where(sql`status = 'proposed'`),
+    index('resolution_proposals_review_idx').on(t.userId, t.status, t.createdAt),
+    check(
+      'resolution_proposals_status_check',
+      enumCheckSql(t.status, proposalStatusSchema.options),
+    ),
+    check(
+      'resolution_proposals_probability_check',
+      sql`${t.probability} >= 0 AND ${t.probability} <= 1`,
     ),
     tenantPolicy(),
   ],
