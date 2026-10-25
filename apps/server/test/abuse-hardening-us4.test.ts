@@ -54,13 +54,25 @@ interface Harness {
   baseUrl: string
 }
 
+// Load the app module ONCE, at collection time, after the vi.mock calls above.
+// Importing it inside startApp() charged the cold import of the whole server
+// graph to whichever test ran first, and under CPU contention that alone blew
+// the 5s test timeout (#297: reproduced as 12 of 40 runs beside three
+// concurrent server suites).
+const { createApp } = await import('../src/app.js')
+
 // Build the app with the FACTORY-DEFAULT limiters (no pass-through override) so
 // the real per-endpoint buckets are exercised. With no `redis`, createRateLimiter
 // falls back to RateLimiterMemory — no real Redis required (CI parity).
+//
+// The listener binds 127.0.0.1, the exact address the requests target. A
+// bare listen(0) binds the dual-stack wildcard, so the fetched address and the
+// bound one differ, which leaves room for a request to reach some OTHER
+// loopback listener. The forgot-password route can only answer 200, 400 or 429,
+// so the 401 #297 once saw cannot have come from this app.
 async function startApp(): Promise<Harness> {
   resetEnvCache()
-  const { createApp } = await import('../src/app.js')
-  const server = createApp({}).listen(0)
+  const server = createApp({}).listen(0, '127.0.0.1')
   await new Promise<void>((resolve) => server.once('listening', resolve))
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('expected a TCP address')
@@ -73,7 +85,9 @@ async function stopApp(harness: Harness): Promise<void> {
   })
 }
 
-const JSON_HEADERS = { 'content-type': 'application/json' }
+// `connection: close`: no keep-alive socket outlives the app that accepted it,
+// so a pooled connection can never carry a request to a previous test's server.
+const JSON_HEADERS = { 'content-type': 'application/json', connection: 'close' }
 const CLIENT_PROOF_HASH = 'a'.repeat(64)
 let current: Harness | undefined
 
