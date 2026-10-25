@@ -879,6 +879,36 @@
               },
               "required": ["action", "scope", "mode"],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "const": "set_write_default"
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Registered scope that a remember without scope lands in (mode default), else null."
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "default", "require"],
+                  "description": "Write policy for remember without scope: off = personal, default = scope above, require = reject."
+                }
+              },
+              "required": ["action", "scope", "mode"],
+              "additionalProperties": false
             }
           ]
         },
@@ -1005,6 +1035,41 @@
                 "action": {
                   "type": "string",
                   "const": "retrieval_default_set"
+                },
+                "policy": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["off", "default", "require"]
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["mode", "scope"],
+                  "additionalProperties": true
+                }
+              },
+              "required": ["action", "policy"],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "const": "write_default_set"
                 },
                 "policy": {
                   "type": "object",
@@ -1186,9 +1251,39 @@
               },
               "required": ["mode", "scope"],
               "additionalProperties": true
+            },
+            "writeScopePolicy": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "default", "require"]
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": ["mode", "scope"],
+              "additionalProperties": true
             }
           },
-          "required": ["capabilities", "scopes", "stats", "retrievalScopePolicy"],
+          "required": [
+            "capabilities",
+            "scopes",
+            "stats",
+            "retrievalScopePolicy",
+            "writeScopePolicy"
+          ],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": true
         },
@@ -1996,7 +2091,7 @@
               "maxLength": 2000
             },
             "scope": {
-              "default": "personal",
+              "description": "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
@@ -2079,6 +2174,25 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "dueAt": {
+              "description": "Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most 3 fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "owner": {
+              "description": "Commitments only: who owns the commitment, as a short label. Omit when unknown.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "required": ["memoryType", "topic", "content"],
@@ -3581,7 +3695,7 @@
               "maxLength": 2000
             },
             "scope": {
-              "default": "personal",
+              "description": "Scope to file the memory under. Omitted: your write-scope policy decides (default 'personal').",
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
@@ -3664,6 +3778,25 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "dueAt": {
+              "description": "Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most 3 fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "owner": {
+              "description": "Commitments only: who owns the commitment, as a short label. Omit when unknown.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "required": ["memoryType", "topic", "content"],

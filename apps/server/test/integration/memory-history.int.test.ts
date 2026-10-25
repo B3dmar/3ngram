@@ -2,10 +2,12 @@
 // End-to-end REST integration test for memory history: a memory
 // updated then superseded must return 200 with its lineage + audit trail
 // through the REAL Express transport, real runtime role, and real DB — NOT a
-// 500 that the dashboard renders as "History unavailable".
+// 500 that the dashboard renders as "History unavailable". Also pins the
+// allowlisted session-provenance fields (issue #262) end to end.
 import type { Server } from 'node:http'
 import { createUser, login } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
+import { type MemoryHistoryResponse, memoryHistoryResponseSchema } from '@3ngram/schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closePools, ownerPool } from '../../../../packages/db/test/integration/helpers.js'
 import { createApp } from '../../src/app.js'
@@ -17,6 +19,8 @@ let server: Server
 let baseUrl: string
 let email: string
 let key: string
+let otherEmail: string
+let otherKey: string
 
 async function issueKey(token: string, name: string): Promise<string> {
   const res = await fetch(`${baseUrl}/auth/api-keys`, {
@@ -30,11 +34,11 @@ async function issueKey(token: string, name: string): Promise<string> {
 
 async function api(
   path: string,
-  opts: { method?: string; body?: unknown } = {},
+  opts: { method?: string; body?: unknown; as?: string } = {},
 ): Promise<Response> {
   return fetch(`${baseUrl}${path}`, {
     method: opts.method ?? 'GET',
-    headers: { 'content-type': 'application/json', 'x-api-key': key },
+    headers: { 'content-type': 'application/json', 'x-api-key': opts.as ?? key },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   })
 }
@@ -50,13 +54,18 @@ beforeAll(async () => {
   if (address === null || typeof address === 'string') throw new Error('expected a TCP address')
   baseUrl = `http://127.0.0.1:${address.port}`
   key = await issueKey(grant.token, 'history-366')
+  otherEmail = `history-262-other-${crypto.randomUUID()}@test.local`
+  await createUser(otherEmail, PASSWORD)
+  const otherGrant = await login(otherEmail, PASSWORD, 1)
+  if (!otherGrant) throw new Error('login (other tenant) failed in setup')
+  otherKey = await issueKey(otherGrant.token, 'history-262-other')
 })
 
 afterAll(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err === undefined ? resolve() : reject(err)))
   })
-  await ownerPool.query('DELETE FROM users WHERE email = $1', [email])
+  await ownerPool.query('DELETE FROM users WHERE email = ANY($1)', [[email, otherEmail]])
   await closePools()
 })
 
@@ -107,5 +116,117 @@ describe('GET /api/v1/memories/:id/history after update + supersede (#366)', () 
       expect(body.lineage.nodes.length).toBeGreaterThanOrEqual(1)
       expect(body.auditEvents.length).toBeGreaterThanOrEqual(1)
     }
+  })
+})
+
+async function openRun(project: string): Promise<string> {
+  const res = await api('/api/v1/agent-sessions/open', {
+    method: 'POST',
+    body: {
+      agent: 'codex',
+      sessionId: `hist-262-${crypto.randomUUID()}`,
+      source: 'startup',
+      project,
+    },
+  })
+  expect(res.status).toBe(200)
+  return ((await res.json()) as { sessionRunId: string }).sessionRunId
+}
+
+async function history(id: string): Promise<MemoryHistoryResponse> {
+  const res = await api(`/api/v1/memories/${id}/history`)
+  expect(res.status).toBe(200)
+  // The wire body is the strict contract: no raw payload, no unlisted key.
+  return memoryHistoryResponseSchema.parse(await res.json())
+}
+
+describe('GET /api/v1/memories/:id/history session provenance (#262)', () => {
+  it('reports each revision its own creating run, through the real transport', async () => {
+    const project = `hist-262-${crypto.randomUUID().slice(0, 8)}`
+    // Two leased-open runs: a write that omits the id is NOT auto-attached.
+    const runA = await openRun(project)
+    const runB = await openRun(project)
+    const tag = crypto.randomUUID()
+
+    const created = await api('/api/v1/memories', {
+      method: 'POST',
+      body: {
+        memoryType: 'note',
+        topic: 't262',
+        content: `p-${tag} v1`,
+        project,
+        sessionRunId: runA,
+      },
+    })
+    expect(created.status).toBe(201)
+    const idA = ((await created.json()) as { memory: { id: string } }).memory.id
+
+    const revised = await api(`/api/v1/memories/${idA}/revise`, {
+      method: 'POST',
+      body: {
+        memoryType: 'note',
+        topic: 't262',
+        content: `p-${tag} v2`,
+        edgeIntent: 'supersedes',
+        sessionRunId: runB,
+      },
+    })
+    expect(revised.status).toBe(200)
+    const idB = ((await revised.json()) as { memory: { id: string } }).memory.id
+
+    const unattributed = await api(`/api/v1/memories/${idB}/revise`, {
+      method: 'POST',
+      body: { memoryType: 'note', topic: 't262', content: `p-${tag} v3`, edgeIntent: 'updates' },
+    })
+    expect(unattributed.status).toBe(200)
+    const idC = ((await unattributed.json()) as { memory: { id: string } }).memory.id
+
+    const ha = await history(idA)
+    expect(ha.createdBySessionRunId).toBe(runA)
+    expect(ha.auditEvents.map((e) => [e.eventKind, e.sessionRunId]).sort()).toEqual([
+      ['create', runA],
+      ['supersede', runB],
+    ])
+    expect(ha.auditEvents.every((e) => !('payload' in e))).toBe(true)
+
+    const hb = await history(idB)
+    expect(hb.createdBySessionRunId).toBe(runB)
+
+    const hc = await history(idC)
+    expect(hc.createdBySessionRunId).toBeNull()
+    expect(hc.auditEvents.map((e) => e.sessionRunId)).toEqual([null])
+  })
+
+  it('does not let another tenant read the history or stamp the run id', async () => {
+    const project = `hist-262-${crypto.randomUUID().slice(0, 8)}`
+    const run = await openRun(project)
+    const created = await api('/api/v1/memories', {
+      method: 'POST',
+      body: {
+        memoryType: 'note',
+        topic: 't262',
+        content: `x-${crypto.randomUUID()}`,
+        project,
+        sessionRunId: run,
+      },
+    })
+    expect(created.status).toBe(201)
+    const id = ((await created.json()) as { memory: { id: string } }).memory.id
+
+    const foreignRead = await api(`/api/v1/memories/${id}/history`, { as: otherKey })
+    expect(foreignRead.status).toBe(404)
+    const foreignStamp = await api('/api/v1/memories', {
+      method: 'POST',
+      as: otherKey,
+      body: {
+        memoryType: 'note',
+        topic: 't262',
+        content: `y-${crypto.randomUUID()}`,
+        project,
+        sessionRunId: run,
+      },
+    })
+    expect(foreignStamp.status).toBe(400)
+    expect((await history(id)).createdBySessionRunId).toBe(run)
   })
 })

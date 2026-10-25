@@ -325,7 +325,19 @@ export type MemoryHistoryEventPayloadMetadata = z.infer<
   typeof memoryHistoryEventPayloadMetadataSchema
 >
 
-/** One lifecycle audit row for the inspected memory, with payload metadata only. */
+/**
+ * One lifecycle audit row for the inspected memory: payload metadata plus
+ * explicitly ALLOWLISTED payload keys as sibling fields — never the raw payload
+ * and never an arbitrary key. `payloadMetadata` still describes the WHOLE stored
+ * payload. Each allowlisted key is projected with `payload->>'<key>'` and
+ * re-parsed through its strict payload schema; a value that fails the re-parse
+ * is reported as `null`, never passed through.
+ *
+ * - `sessionRunId` (issue #262): the run that produced the event, as recorded
+ *   by the native write path (`sessionProvenancePayloadSchema`). An id, not
+ *   content. `null` when the write carried no provenance — never inferred from
+ *   neighbouring events.
+ */
 export const memoryHistoryEventSchema = z
   .object({
     id: z.uuid(),
@@ -333,6 +345,7 @@ export const memoryHistoryEventSchema = z
     actorKind: actorKindSchema,
     createdAt: isoDateTime(),
     payloadMetadata: memoryHistoryEventPayloadMetadataSchema,
+    sessionRunId: sessionRunIdSchema.nullable(),
   })
   .strict()
 export type MemoryHistoryEvent = z.infer<typeof memoryHistoryEventSchema>
@@ -375,6 +388,16 @@ export const memoryHistoryResponseSchema = z
       .strict(),
     auditEvents: z.array(memoryHistoryEventSchema),
     eventsTruncated: z.boolean(),
+    /**
+     * The `sessionRunId` recorded on this memory's own native `create` event
+     * (issue #262) — read by its own query, so a truncated `auditEvents` window
+     * never hides it. `null` for an imported memory, a create written without
+     * provenance, or when the events section is `unavailable`. Each version in
+     * a revision chain reports ITS OWN creating run; it is never inherited from
+     * a predecessor or inferred from neighbouring events. The id is returned as
+     * recorded: the read does not re-validate it against `agent_sessions`.
+     */
+    createdBySessionRunId: sessionRunIdSchema.nullable(),
     // Additive + optional-tolerant: older servers that omit it are treated as
     // all-`ok` by consumers; the web client casts the body and never re-validates.
     sections: memoryHistorySectionsSchema.optional(),

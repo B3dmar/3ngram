@@ -32,6 +32,7 @@ import {
   userRetrievalPolicy,
   userSessions,
   users,
+  userWriteScopePolicy,
 } from './schema/identity.js'
 import {
   commitments,
@@ -304,6 +305,12 @@ export async function eraseAccountData(
     .update(userRetrievalPolicy)
     .set({ mode: 'off', defaultScope: null, updatedAt: now })
     .where(eq(userRetrievalPolicy.userId, userId))
+  // Same for the write-scope policy (issue #235): drop the scope label and
+  // restore the inert 'off' default.
+  await tx
+    .update(userWriteScopePolicy)
+    .set({ mode: 'off', defaultScope: null, updatedAt: now })
+    .where(eq(userWriteScopePolicy.userId, userId))
   const deletedSessions = await tx.delete(userSessions).returning({ id: userSessions.id })
   const revokedKeys = await tx
     .update(apiKeys)

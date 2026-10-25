@@ -19,6 +19,7 @@ const staleCandidates = vi.fn()
 const recentDecisions = vi.fn()
 const activePreferences = vi.fn()
 const getRetrievalPolicy = vi.fn()
+const getWriteScopePolicy = vi.fn()
 const upsertRetrievalPolicy = vi.fn()
 const listScopes = vi.fn()
 const lockRetrievalScopePolicy = vi.fn(async (_tx: unknown, _userId: string) => undefined)
@@ -53,6 +54,7 @@ vi.mock('@3ngram/db', () => ({
   recentDecisions: (...a: unknown[]) => recentDecisions(...a),
   activePreferences: (...a: unknown[]) => activePreferences(...a),
   getRetrievalPolicy: (...a: unknown[]) => getRetrievalPolicy(...a),
+  getWriteScopePolicy: (...a: unknown[]) => getWriteScopePolicy(...a),
   upsertRetrievalPolicy: (...a: unknown[]) => upsertRetrievalPolicy(...a),
   listScopes: (...a: unknown[]) => listScopes(...a),
   lockRetrievalScopePolicy: (tx: unknown, userId: string) => lockRetrievalScopePolicy(tx, userId),
@@ -488,15 +490,20 @@ describe('describeEnvironment report mapping', () => {
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
     getRetrievalPolicy.mockResolvedValue(null)
+    getWriteScopePolicy.mockResolvedValue(null)
     const report = await describeEnvironment(USER)
     expect(report.retrievalScopePolicy).toEqual({ mode: 'off', scope: null })
+    expect(report.writeScopePolicy).toEqual({ mode: 'off', scope: null })
   })
 
   it('reports the stored policy verbatim', async () => {
     listScopes.mockResolvedValue([])
     getEnvironmentStats.mockResolvedValue(STATS)
     getRetrievalPolicy.mockResolvedValue({ mode: 'default', defaultScope: 'work' })
+    getWriteScopePolicy.mockResolvedValue({ mode: 'require', defaultScope: null })
     const report = await describeEnvironment(USER)
     expect(report.retrievalScopePolicy).toEqual({ mode: 'default', scope: 'work' })
+    // The two policies are independent rows, reported side by side (issue #235).
+    expect(report.writeScopePolicy).toEqual({ mode: 'require', scope: null })
   })
 })
