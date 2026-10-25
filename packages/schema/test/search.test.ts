@@ -238,7 +238,7 @@ describe('searchHitSchema / handoffMemorySchema — bounded EXCERPT contract (is
     expect(searchHitSchema.safeParse(noScope).success).toBe(false)
     expect(searchHitSchema.safeParse(noProject).success).toBe(false)
     expect(searchHitSchema.safeParse({ ...hit('c'), project: 'engine' }).success).toBe(true)
-    for (const commitmentStatus of ['open', 'waiting', 'resolved']) {
+    for (const commitmentStatus of ['open', 'waiting', 'resolved', 'expired']) {
       expect(searchHitSchema.safeParse({ ...hit('c'), commitmentStatus }).success).toBe(true)
     }
     expect(searchHitSchema.safeParse({ ...hit('c'), commitmentStatus: 'done' }).success).toBe(false)

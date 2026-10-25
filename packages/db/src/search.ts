@@ -104,7 +104,12 @@ export interface SearchHit {
   scope: string
   /** The memory's filing project, or null when unfiled (memories.project). */
   project: string | null
-  /** Commitment FSM status when this memory carries a commitment row. */
+  /**
+   * Commitment FSM status when this memory carries a commitment row. Set by the
+   * fused path and {@link fetchHitsByIds} (and the chronological list), which
+   * join commitments; the standalone single-leg helpers (`searchFts`,
+   * `searchRecency`, `searchVector`) do not join it and never set it.
+   */
   commitmentStatus?: CommitmentStatus
   /**
    * True when this row is a superseded predecessor — its validity is CLOSED

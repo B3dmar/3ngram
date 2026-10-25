@@ -238,6 +238,21 @@ describe('search command', () => {
     expect(out.join('\n')).toContain(`decision ${hit.id} work/engine commitment:resolved`)
   })
 
+  it('prints no filing label for a hit from a server that predates #319', async () => {
+    const {
+      scope: _scope,
+      project: _project,
+      ...legacy
+    } = SEARCH_OUT.hits[0] as Record<string, unknown>
+    const stubbed = { hits: [legacy], count: 1 } as unknown as typeof SEARCH_OUT
+    const { client } = stubClient({ search: stubbed })
+    const { io, out } = captureIo(client)
+
+    await run(['search', 'x'], io)
+    expect(out.join('\n')).not.toContain('undefined')
+    expect(out.join('\n')).toContain(`decision ${legacy.id as string}\n`)
+  })
+
   it('accepts --query as an alternative to the positional', async () => {
     const { client, calls } = stubClient({ search: SEARCH_OUT })
     const { io } = captureIo(client)

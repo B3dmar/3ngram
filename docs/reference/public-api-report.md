@@ -682,7 +682,7 @@ its row here even when its name and kind are unchanged.
 | `ScopeRow` | interface | `6874069522c2` |
 | `SearchAsOf` | interface | `dd0fe1ef2631` |
 | `SearchFilters` | interface | `8131acb3c156` |
-| `SearchHit` | interface | `fe3a50fe3f6c` |
+| `SearchHit` | interface | `70453d212cd9` |
 | `SessionEpochFencedError` | class | `cc4a11973844` |
 | `SessionEventRow` | interface | `9f8644041030` |
 | `SessionEventsPage` | interface | `c712271609d4` |

@@ -596,7 +596,7 @@ describe('POST /api/v1/search', () => {
           commitmentStatus: 'waiting',
         },
         {
-          id: COMMIT_ID,
+          id: crypto.randomUUID(),
           memoryType: 'note',
           topic: 'n',
           content: 'note',

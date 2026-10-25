@@ -3,6 +3,7 @@
 '@3ngram/db': minor
 '@3ngram/core': minor
 '@3ngram/server': minor
+'@3ngram/sdk': minor
 '3ngram': minor
 ---
 
