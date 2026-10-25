@@ -75,6 +75,7 @@ import {
   statsResponseSchema,
   triageAttemptLogEntrySchema,
   versionResponseSchema,
+  writeScopeModeSchema,
 } from '@3ngram/schema'
 import { z } from 'zod'
 
@@ -343,6 +344,13 @@ const exportRetrievalPolicy = z
     updatedAt: isoDateTime(),
   })
   .strict()
+const exportWriteScopePolicy = z
+  .object({
+    mode: writeScopeModeSchema,
+    defaultScope: scopeNameSchema.nullable(),
+    updatedAt: isoDateTime(),
+  })
+  .strict()
 const accountExport = z
   .object({
     format: z.literal('3ngram.account-export.v1'),
@@ -361,6 +369,7 @@ const accountExport = z
     llmUsage: z.array(exportLlmUsage),
     profile: exportUserProfile.nullable(),
     retrievalPolicy: exportRetrievalPolicy.nullable(),
+    writeScopePolicy: exportWriteScopePolicy.nullable(),
     counts: z
       .object({
         memories: z.number().int().min(0),

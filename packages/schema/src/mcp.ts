@@ -92,10 +92,11 @@ export type RememberToolInput = z.infer<typeof rememberToolInputSchema>
 export type RememberToolArgs = z.input<typeof rememberToolInputSchema>
 
 /**
- * The created-memory view a write tool returns (structured output). The id is
- * the only field core remember() returns directly; the rest echo the NORMALIZED
- * write input (scope default applied, project null when absent) so the caller
- * gets the canonical stored shape without a follow-up read.
+ * The created-memory view a write tool returns (structured output). `id` and
+ * `scope` come from core remember() (the scope the row was WRITTEN to, after
+ * the write-scope policy resolved an omitted one, issue #235); the rest echo the
+ * normalized write input (project null when absent) so the caller gets the
+ * canonical stored shape without a follow-up read.
  */
 export const writtenMemorySchema = z
   .object({

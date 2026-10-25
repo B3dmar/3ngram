@@ -22,6 +22,9 @@ import {
   retrievalScopePolicyScopeRequirements,
   type TokenEndpointAuthMethod,
   tokenEndpointAuthMethodSchema,
+  type WriteScopeMode,
+  writeScopeModeSchema,
+  writeScopePolicyScopeRequirements,
 } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
@@ -293,6 +296,36 @@ export const userRetrievalPolicy = pgTable(
     check(
       'user_retrieval_policy_scope_consistency_check',
       modeNullableValueCheckSql(t.mode, t.defaultScope, retrievalScopePolicyScopeRequirements),
+    ),
+    tenantPolicy(),
+  ],
+)
+
+/**
+ * Per-user write-scope policy (issue #235): where a `remember` that omits
+ * `scope` lands. The write-side twin of {@link userRetrievalPolicy}, same shape
+ * and same guarantees: one optional row per user (no row means mode 'off', the
+ * shipped `personal` literal), a Zod-derived mode CHECK, a consistency CHECK
+ * ('default' REQUIRES default_scope, 'off'/'require' FORBID it), a
+ * denormalized scope name kept in sync with registry renames/deletes by core,
+ * and RLS scoping every row to its owner (hard rule 3).
+ */
+export const userWriteScopePolicy = pgTable(
+  'user_write_scope_policy',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mode: text('mode').notNull().default('off').$type<WriteScopeMode>(),
+    defaultScope: text('default_scope'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('user_write_scope_policy_mode_check', enumCheckSql(t.mode, writeScopeModeSchema.options)),
+    check(
+      'user_write_scope_policy_scope_consistency_check',
+      modeNullableValueCheckSql(t.mode, t.defaultScope, writeScopePolicyScopeRequirements),
     ),
     tenantPolicy(),
   ],

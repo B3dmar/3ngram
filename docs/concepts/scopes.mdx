@@ -10,14 +10,14 @@ Scopes partition your memory space. Every memory belongs to exactly one scope, a
 
 New accounts start with two scopes:
 
-- **`personal`** — the default. `remember` writes here unless a scope is given.
+- **`personal`** — the default. `remember` writes here unless a scope is given or your [write policy](#write-policy-where-an-unscoped-write-lands) says otherwise.
 - **`work`** — for professional context.
 
 Scopes are user-defined, not a fixed enum. You can create more, rename them, or delete them from the registry as your setup evolves.
 
 ## Scope names and aliases
 
-A scope name is a kebab-case string: lowercase letters, digits, and hyphens, up to 64 characters (`client-acme`, `side-project-x`). Each scope can also carry **aliases** — alternative names that resolve to the same scope, useful when different agents or prompts refer to the same area of your life by different words.
+A scope name is a kebab-case string: lowercase letters, digits, and hyphens, up to 64 characters (`client-acme`, `side-project-x`). Each scope can also carry **aliases** — alternative names for the same area of your life. Aliases are recorded in the registry and returned by `list`, but they are not yet resolved on reads or writes: a `remember` or `search` that passes an alias uses that string as a scope name of its own, and `set_retrieval_default` / `set_write_default` accept only the canonical registered name (an alias is rejected as not found).
 
 ## Managing scopes
 
@@ -30,17 +30,33 @@ The `configure_scope` tool covers the scope lifecycle:
 | `rename` | Change a scope's name |
 | `set_aliases` | Replace a scope's alias list |
 | `delete` | Remove the scope from the registry |
+| `set_retrieval_default` | Bind unscoped reads to a scope (`off`, `default`, `require`) |
+| `set_write_default` | Choose where an unscoped `remember` lands (`off`, `default`, `require`) |
 
-Deleting a scope is registry-only: existing memories keep their scope value. Nothing on a write path destroys memory data — see [Memory model](/concepts/memory-model).
+Deleting a scope is registry-only: existing memories keep their scope value. Nothing on a write path destroys memory data — see [Memory model](/concepts/memory-model). If the deleted scope was the default of either policy, that policy moves to `require` in the same transaction, so unscoped calls fail closed until you choose a new default; renaming a scope carries a policy default to the new name.
 
 ## How scopes shape retrieval
 
 - **`search`** accepts a scope filter, so queries can stay inside one area of your life.
 - **`briefing`** requires an explicit selector — a scope, a project, or `all`. There is no firehose default: a briefing for `work` will not pull in personal commitments.
-- **`remember`** takes the scope at write time and defaults to `personal`.
+- **`remember`** takes the scope at write time. Without one, your write policy decides (by default, `personal`).
 
 Memories also carry an optional `project` label, which subdivides within a scope — a scope is the broad partition ("work"), a project is the specific effort inside it.
 
+## Write policy: where an unscoped write lands
+
+`configure_scope` with `action: "set_write_default"` sets a per-account write policy for `remember` calls that omit `scope`. It uses the same three modes as the retrieval policy:
+
+| Mode | A `remember` without `scope` |
+|---|---|
+| `off` (default) | Lands in `personal`, as it always has |
+| `default` | Lands in the configured scope, which must be a registered scope name |
+| `require` | Is rejected with an invalid-input error naming the fix; nothing is written |
+
+`scope` is required for `default` and must be `null` for `off` and `require`. An explicit `scope` on the write always wins and is used as given; it is not checked against the registry. The response's `memory.scope` reports where the memory actually landed. The rejection under `require` happens before any write, access, or budget check, so a rejected call stores nothing and spends nothing.
+
+The policy is stored per account (one row, tenant-isolated like every other user table) and only ever read for the authenticated caller: a scope name in a request never selects another account. `describe_environment` reports it as `writeScopePolicy`, next to `retrievalScopePolicy`; an account that never configured one reports `{ "mode": "off", "scope": null }`. `revise` does not use the write policy: a successor that omits `scope` inherits its predecessor's. Import does not consult it either: an imported memory without a scope keeps the `personal` default.
+
 ## Binding sessions to a scope
 
-A practical pattern for agents: decide the scope once per session (or per client) and pass it on every write. For example, an agent doing consulting or business tasks writes with `scope: work`, while a life-admin assistant writes with `scope: personal`. Keeping the binding explicit at the call site avoids misfiled memories that are awkward to re-sort later — corrections require revising each memory, since nothing is bulk-rewritten in place.
+A practical pattern for agents: decide the scope once per session (or per client) and pass it on every write. For example, an agent doing consulting or business tasks writes with `scope: work`, while a life-admin assistant writes with `scope: personal`. Keeping the binding explicit at the call site avoids misfiled memories that are awkward to re-sort later — corrections require revising each memory, since nothing is bulk-rewritten in place. An account whose agents cannot be trusted to pass a scope can set the write policy to `require`, so a forgotten scope fails loudly instead of landing in `personal`.

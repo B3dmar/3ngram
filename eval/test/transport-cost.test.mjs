@@ -166,6 +166,22 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
+      // MCP +309/+2472/+603, REST +309/+309/+309 (issue #165, dueAt/owner on
+      // the remember input): two optional commitment-only fields with their
+      // descriptions ride the
+      // remember input schema; MCP pays them on tools/list per turn, REST on the
+      // request surface once. The CLI surface is unchanged. The tool
+      // description is unchanged (no embeddings regen). MEASURED on this PR's
+      // actual base (staging b1731b7), not summed.
+      // MCP +352/+2816/+686, REST +20/+20/+20 (issue #235, write-scope
+      // policy): the remember `scope` field drops its `personal` default for a
+      // one-line description (omission now follows the tenant's write policy),
+      // configure_scope gains the `set_write_default` input branch and the
+      // `write_default_set` output branch, and describe_environment's output
+      // gains `writeScopePolicy`. MCP pays all three on tools/list per turn;
+      // REST only carries the remember request surface. CLI unchanged. No tool
+      // description changed (no embeddings regen). MEASURED on this PR's actual
+      // base (feat/165-commitment-due-dates), not summed.
       // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
       // list input gains an optional opaque `cursor` (with a field
       // description) and the list OUTPUT variant gains `counts`/`totals`
@@ -173,10 +189,10 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // tools/list every MCP turn. The tool description is unchanged (no
       // embeddings regen). REST and CLI are unchanged: the REST surface does
       // not carry the proposals list and the CLI has no proposals command.
-      // MEASURED on this PR's actual base (staging b1731b7), not summed.
-      mcp: [27894, 224968, 56209],
+      // MEASURED on staging d86c839, not summed.
+      mcp: [28555, 230256, 57498],
       cli: [333, 1236, 1236],
-      rest: [3816, 4833, 4833],
+      rest: [4145, 5162, 5162],
     },
   )
 })

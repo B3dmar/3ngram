@@ -238,8 +238,9 @@ const rememberTool: ToolDefinition = {
   },
   async handler(args, ctx) {
     // core remember() is THE validation boundary; pass the args straight through.
-    // It returns the new id only, so the structured output echoes the NORMALIZED
-    // write input (scope default + null project applied here) for the rest.
+    // The echoed scope is the one core WROTE (an omitted scope is resolved by
+    // the tenant's write-scope policy, issue #235); the rest echoes the
+    // normalized input (null project applied here).
     // Embedding is on iff a gateway is configured — best-effort, never blocks.
     const input = rememberToolInputV2Schema.parse(args)
     const gatewayOpts =
@@ -268,7 +269,7 @@ const rememberTool: ToolDefinition = {
           id: written.id,
           memoryType: input.memoryType,
           topic: input.topic,
-          scope: input.scope,
+          scope: written.scope,
           project: input.project ?? null,
         },
         embedded,
