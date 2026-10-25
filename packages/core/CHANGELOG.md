@@ -1,5 +1,35 @@
 # @3ngram/core
 
+## 0.15.0
+
+### Minor Changes
+
+- 0888ff0: The session closer uses typed judgments for tenants that opted in (issue #229). An opted-in tenant's pass calls `gateway.decide()` with one Noul per briefed commitment. The excerpt is fenced as untrusted data, and the criteria say that an assertion of completion is not evidence. A commitment is resolved through `resolveForClosedRun` only when its probability reaches `CLOSER_RESOLVE_PROBABILITY` (0.9). The call is metered as `session.closer.decide`. Opted-out tenants, and deployments without a judgment gateway, keep the `complete()` path unchanged. `SessionCloserRepo` gains `isJudgmentEnabled`. `SESSION_CLOSER_ENABLED` still defaults to off.
+- 48dcb4a: Add a per-tenant judgment opt-in (issue #225). The new table `user_judgment_policy` (migration 0043) has RLS and FORCE RLS, and its runtime grant is SELECT/INSERT/UPDATE. Core adds `isJudgmentEnabled`, `getJudgmentPolicy` and `setJudgmentPolicy`, and REST adds `GET` and `PUT /api/v1/settings/judgment`. The default is `off`, and there is no MCP surface. Account erasure resets the opt-in to `off`, and the account export includes it as `judgmentPolicy`. Nothing reads the opt-in yet. Each change appends a content-free `audit_log` row (`settings.judgment.set`, mode only) as a consent record.
+  
+  Self-hosters need the usual migration step. It creates the table and re-runs `provision-roles.sql`, which grants `app_user` access to it.
+- 6a3adf5: Add the `rate_limits` system table (migration 0042, no RLS; `provision-roles.sql` grants the runtime role SELECT, INSERT, UPDATE and DELETE on it) and `createPostgresRateLimiter`, a `rate-limiter-flexible` Postgres limiter over that table, re-exported from `@3ngram/core`. It runs no DDL at runtime, sends every query unnamed so it works behind a transaction-mode pooler, runs one expired-row sweeper per process, and has no in-memory fallback. Nothing uses it yet. Refs #315.
+- 5ceaec4: Add `incrementWindowCounter`, `readWindowCounter` and `deleteWindowCounter`: a sliding-window counter on the `rate_limits` table, re-exported from `@3ngram/core`. Each increment is one atomic upsert that slides the expiry forward, matching the Redis `INCR` + `EXPIRE` semantics of the /oauth/token failure counter; an expired row restarts at 1. Nothing uses it yet. Refs #315.
+- 7dec400: Add resolution proposals, the session closer's mid band (issue #229). On the typed-judgment path, a briefed commitment judged plausibly completed (0.5 ≤ p < 0.9) is staged in the new `resolution_proposals` table instead of being resolved. The table (migration 0044) has RLS and FORCE RLS, holds one open proposal per commitment, has tenant-composite foreign keys to the memory and the session run, and is included in the export. `review_proposals` lists the new kind (output V3): `resolutionProposals` appears only when it is non-empty, `counts`/`totals` gain a `resolution` key, and accept/reject return `applied_resolution`/`rejected_resolution`. Accepting claims the proposal and then resolves the commitment through the shipped FSM-checked transition, recorded as the reviewer. A refused transition reopens the proposal. Only still-open commitments are staged, at most once per run. The input and the tool description are unchanged. Self-hosters need the usual migration step.
+  
+  Compatibility notes. MCP `review_proposals` cursors issued before this release are rejected as invalid input once, because the walk now binds the third kind. Restart such a walk from page 1. A client that strict-parses the V2 output, or switches exhaustively on `action`, has to admit the new `resolution` count key and the two new action literals.
+
+### Patch Changes
+
+- dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
+  
+  Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
+- eee7fe3: Add a one-shot worker entrypoint, `node dist/once.js <consolidation|surfacing|gc-clients>`, for cron-style schedulers (#315). It runs one pass without Redis, closes the database pool, and exits 0 on success, 1 on failure, or 2 for an unknown job. The resident BullMQ worker (`node dist/index.js`) stays the default. `@3ngram/core` re-exports `closeDb`, and `@3ngram/config/otel` adds `flushObservability` to drain Sentry events before a deliberate exit.
+- Updated dependencies [dc5dd43]
+- Updated dependencies [537811a]
+- Updated dependencies [48dcb4a]
+- Updated dependencies [6a3adf5]
+- Updated dependencies [5ceaec4]
+- Updated dependencies [7dec400]
+  - @3ngram/llm@0.4.0
+  - @3ngram/schema@0.13.0
+  - @3ngram/db@0.14.0
+
 ## 0.14.1
 
 ### Patch Changes
