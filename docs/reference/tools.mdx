@@ -1336,6 +1336,30 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               },
               "overdue": {
                 "type": "boolean"
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -1344,7 +1368,10 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "topic",
               "status",
               "dueAt",
-              "overdue"
+              "overdue",
+              "owner",
+              "scope",
+              "project"
             ],
             "additionalProperties": true
           }
@@ -1410,6 +1437,30 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               },
               "overdue": {
                 "type": "boolean"
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "project": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -1418,7 +1469,10 @@ Structured session orientation: open/overdue commitments, blockers, stale candid
               "topic",
               "status",
               "dueAt",
-              "overdue"
+              "overdue",
+              "owner",
+              "scope",
+              "project"
             ],
             "additionalProperties": true
           }

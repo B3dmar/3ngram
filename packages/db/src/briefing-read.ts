@@ -70,7 +70,12 @@ export type BriefingSelector =
   | { kind: 'project'; project: string }
   | { kind: 'scope_project'; scope: string; project: string; includeUnscoped: boolean }
 
-/** A commitment row for the briefing (ids/status/timestamps only — no content). */
+/**
+ * A commitment row for the briefing (ids/status/timestamps/filing — no content).
+ * `owner` is the commitment's recorded owner label, NULL when none was recorded;
+ * `scope`/`project` are the riding memory's filing (issue #261), read in the same
+ * join so a caller can label a row without a per-row memory read.
+ */
 export interface BriefingCommitmentRow {
   id: string
   memoryId: string
@@ -78,6 +83,9 @@ export interface BriefingCommitmentRow {
   status: string
   dueAt: Date | null
   nextSurfacingAt: Date | null
+  owner: string | null
+  scope: string
+  project: string | null
 }
 
 /** A memory row for the briefing list sections (decision/blocker/preference). */
@@ -198,15 +206,7 @@ export async function openCommitments(
   limit: number,
 ): Promise<BriefingPage<BriefingCommitmentRow>> {
   const rows = await tx
-    .select({
-      id: commitments.id,
-      memoryId: commitments.memoryId,
-      topic: memories.topic,
-      status: commitments.status,
-      dueAt: commitments.dueAt,
-      nextSurfacingAt: commitments.nextSurfacingAt,
-      totalCount: TOTAL_COUNT,
-    })
+    .select(COMMITMENT_COLUMNS)
     .from(commitments)
     .innerJoin(
       memories,
@@ -265,15 +265,7 @@ export async function overdueCommitments(
   limit: number,
 ): Promise<BriefingPage<BriefingCommitmentRow>> {
   const rows = await tx
-    .select({
-      id: commitments.id,
-      memoryId: commitments.memoryId,
-      topic: memories.topic,
-      status: commitments.status,
-      dueAt: commitments.dueAt,
-      nextSurfacingAt: commitments.nextSurfacingAt,
-      totalCount: TOTAL_COUNT,
-    })
+    .select(COMMITMENT_COLUMNS)
     .from(commitments)
     .innerJoin(
       memories,
@@ -284,6 +276,20 @@ export async function overdueCommitments(
     .orderBy(asc(commitments.dueAt), asc(commitments.id))
     .limit(limit)
   return { items: rows.map(stripCount), totalCount: totalFrom(rows) }
+}
+
+/** The commitment-section projection shared by the open and overdue reads. */
+const COMMITMENT_COLUMNS = {
+  id: commitments.id,
+  memoryId: commitments.memoryId,
+  topic: memories.topic,
+  status: commitments.status,
+  dueAt: commitments.dueAt,
+  nextSurfacingAt: commitments.nextSurfacingAt,
+  owner: commitments.owner,
+  scope: memories.scope,
+  project: memories.project,
+  totalCount: TOTAL_COUNT,
 }
 
 /** Drop the window-count column from a commitment row to yield the public shape. */
