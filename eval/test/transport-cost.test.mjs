@@ -166,9 +166,78 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
-      mcp: [27700, 223416, 55831],
+      // MCP +309/+2472/+603, REST +309/+309/+309 (issue #165, dueAt/owner on
+      // the remember input): two optional commitment-only fields with their
+      // descriptions ride the
+      // remember input schema; MCP pays them on tools/list per turn, REST on the
+      // request surface once. The CLI surface is unchanged. The tool
+      // description is unchanged (no embeddings regen). MEASURED on this PR's
+      // actual base (staging b1731b7), not summed.
+      // MCP +352/+2816/+686, REST +20/+20/+20 (issue #235, write-scope
+      // policy): the remember `scope` field drops its `personal` default for a
+      // one-line description (omission now follows the tenant's write policy),
+      // configure_scope gains the `set_write_default` input branch and the
+      // `write_default_set` output branch, and describe_environment's output
+      // gains `writeScopePolicy`. MCP pays all three on tools/list per turn;
+      // REST only carries the remember request surface. CLI unchanged. No tool
+      // description changed (no embeddings regen). MEASURED on this PR's actual
+      // base (feat/165-commitment-due-dates), not summed.
+      // MCP +170/+1360/+331 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
+      // MCP +154/+1232/+300 (issue #261, owner/scope/project on briefing
+      // commitment items): three output fields ride the briefing output
+      // schema, paid on tools/list per turn. REST and CLI request surfaces are
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging ab8b193, not summed.
+      // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
+      // list input gains an optional opaque `cursor` (with a field
+      // description) and the list OUTPUT variant gains `counts`/`totals`
+      // ({ edge, fact }), `hasMore` and `nextCursor`; both schemas ride
+      // tools/list every MCP turn. The tool description is unchanged (no
+      // embeddings regen). REST and CLI are unchanged: the REST surface does
+      // not carry the proposals list and the CLI has no proposals command.
+      // MEASURED on staging a21c604, not summed.
+      // MCP +156/+1248/+304 (issue #321): describe_environment's output schema
+      // gains the required `account: { id }` object (a uuid with its field
+      // description) that MCP pays on tools/list per turn. The tool description
+      // is unchanged (no embeddings regen); REST and CLI are unchanged.
+      // MEASURED, not summed.
+      // MCP +112/+896/+219 (issue #168): describe_environment's output schema
+      // gains the required `facets: { scopes, projects }` inventory (the REST
+      // facets element schemas plus two field descriptions). The new
+      // threengram://facets resource rides resources/list, which surfaceTokens
+      // does not count. Tool description unchanged; REST and CLI unchanged.
+      // MEASURED, not summed.
+      // MCP +72/+576/+140 (issue #168 review): the inline facets arrays gain
+      // maxItems (MAX_INLINE_FACET_LABELS) and a required `truncated:
+      // { scopes, projects }` object with its description. Tool description
+      // unchanged; REST and CLI unchanged. MEASURED, not summed.
+      // Re-measured after composing onto #235 (describe_environment V5 =
+      // V4 + writeScopePolicy), re-measured on staging 0a6cdf3: the three deltas still hold.
+      // MCP +74/+592/+145, REST +74/+74/+74 (issue #234): the resolve input
+      // gains an optional, described `reason` (1-500 chars). MCP pays it on
+      // tools/list per turn, REST on the resolve request surface once. CLI
+      // unchanged. The tool description is unchanged (no embeddings regen).
+      // MEASURED on staging 054315b, not summed.
+      // MCP +622/+4976/+1213, REST +385/+385/+385 (issue #217, revise archive
+      // disposition): the revise input union gains a third branch
+      // (`kind: "archive"` + a bounded `memoryIds` batch, with field
+      // descriptions) and the registered output becomes a two-branch union
+      // that adds the per-id outcome list. MCP pays both on tools/list per
+      // turn; REST pays the request body (URL id, so no memoryIds) and the
+      // response once. CLI has no revise command. The tool description is
+      // unchanged (no embeddings regen). MEASURED on staging
+      // ac5469b, not summed.
+      // MCP +42/+336/+82, REST +32/+32/+32 (issue #218, revise reaffirm
+      // disposition): the `kind` enum gains `reaffirm` (one more description
+      // sentence), the outcome enum `reaffirmed`, and the rejection enum
+      // `archived`. Description unchanged (no embeddings regen); CLI
+      // unchanged. MEASURED on #217's branch over staging ac5469b, not summed.
+      mcp: [29957, 241472, 60232],
       cli: [333, 1236, 1236],
-      rest: [3816, 4833, 4833],
+      rest: [4636, 5653, 5653],
     },
   )
 })
@@ -336,6 +405,15 @@ test('the MCP surface fixture covers resource templates and completions (additiv
   assert.equal(memoryTemplate.name, 'memory')
   assert.equal(memoryTemplate.uriTemplate, 'threengram://memory/{id}')
   assert.deepEqual(memoryTemplate.cacheHint, { ttlMs: 24 * 60 * 60_000, cacheScope: 'private' })
+
+  // resources/list: exactly ONE fixed-uri resource, the threengram://facets
+  // scope/project inventory (issue #168), cached private on a short TTL. The
+  // memory template stays unlisted (no corpus enumeration).
+  assert.deepEqual(
+    surfaces.mcp.resources.map((r) => [r.name, r.uri]),
+    [['facets', 'threengram://facets']],
+  )
+  assert.deepEqual(surfaces.mcp.resources[0].cacheHint, { ttlMs: 60_000, cacheScope: 'private' })
 
   // Completions coverage: which prompt args and resource-template URI variables
   // are wired to completable() (apps/server/src/mcp/completions.ts, resources.ts).

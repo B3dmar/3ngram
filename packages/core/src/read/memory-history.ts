@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // getMemoryHistory(): content-free lineage/audit read for the memory detail page.
 // Mirrors getMemoryById's not-found policy, but deliberately
-// returns identity/audit metadata only. Full content remains limited to the
-// inspect endpoint/read.
+// returns identity/audit metadata only — plus, as the one content field, the
+// owner's `lastResolutionReason` for the memory's commitment (issue #234). Full
+// memory content remains limited to the inspect endpoint/read.
 import {
   getMemoryHistory as getMemoryHistoryDb,
   type MemoryHistoryRead,

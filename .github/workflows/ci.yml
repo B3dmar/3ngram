@@ -626,17 +626,21 @@ jobs:
               test/integration/briefing-read.int.test.ts
               test/integration/commitments.int.test.ts
               test/integration/fact-proposals.int.test.ts
+              test/integration/proposals-page.int.test.ts
               test/integration/facts-read.int.test.ts
               test/integration/facts-write.int.test.ts
               test/integration/session-provenance.int.test.ts
               test/integration/session-events-read.int.test.ts
               test/integration/session-closer.int.test.ts
+              test/integration/session-contention.int.test.ts
               test/integration/session-lifecycle.int.test.ts
               test/integration/session-triage.int.test.ts
               test/integration/session-triage-backfill.int.test.ts
               test/integration/memory-read.int.test.ts
               test/integration/memory-history-read.int.test.ts
+              test/integration/resolution-reason.int.test.ts
               test/integration/retrieval-policy.int.test.ts
+              test/integration/write-scope-policy.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

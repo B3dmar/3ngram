@@ -25,7 +25,7 @@
 // a guaranteed cosine hit. Assertions carry NO memory content beyond test-local
 // random tags (hard rule 6).
 import type { Server } from 'node:http'
-import { resetEnvCache } from '@3ngram/config'
+import { resetEnvCache, setLogDestination } from '@3ngram/config'
 import { getFacts as coreGetFacts, search as coreSearch } from '@3ngram/core'
 import { createUser, login } from '@3ngram/core/auth'
 import { createFakeGateway } from '@3ngram/llm'
@@ -257,6 +257,67 @@ describe('A4 remember parity (REST x-api-key ≡ MCP Bearer, same tenant)', () =
   })
 })
 
+describe('remember commitment deadline parity (issue #165)', () => {
+  const dueAt = '2026-11-30T17:00:00.000Z'
+  const commitmentRow = (memoryId: string) =>
+    ownerPool.query<{ due_at: Date; owner: string }>(
+      'SELECT due_at, owner FROM commitments WHERE memory_id = $1',
+      [memoryId],
+    )
+
+  it('persists the same explicit dueAt and owner from REST and MCP', async () => {
+    const body = { memoryType: 'commitment', topic: 'c', dueAt, owner: 'release-captain' }
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { ...body, content: `due-rest-${crypto.randomUUID()}` },
+    })
+    expect(restRes.status).toBe(201)
+    const restBody = (await restRes.json()) as { memory: { id: string } }
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: { ...body, content: `due-mcp-${crypto.randomUUID()}` },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBeFalsy()
+    const mcpBody = mcpRes.structuredContent as { memory: { id: string } }
+
+    for (const id of [restBody.memory.id, mcpBody.memory.id]) {
+      const row = (await commitmentRow(id)).rows[0]
+      expect(row?.owner).toBe('release-captain')
+      expect(row?.due_at.toISOString()).toBe(dueAt)
+    }
+  })
+
+  it('rejects a deadline on a non-commitment on both, writing nothing', async () => {
+    const restContent = `due-note-rest-${crypto.randomUUID()}`
+    const mcpContent = `due-note-mcp-${crypto.randomUUID()}`
+    const restRes = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { memoryType: 'note', topic: 'n', content: restContent, dueAt },
+    })
+    expect(restRes.status).toBe(400)
+    expect(await restRes.json()).toEqual({ error: 'invalid_input' })
+
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'remember',
+      arguments: { memoryType: 'note', topic: 'n', content: mcpContent, dueAt },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBe(true)
+
+    const written = await ownerPool.query(
+      'SELECT count(*)::int AS n FROM memories WHERE content = ANY($1)',
+      [[restContent, mcpContent]],
+    )
+    expect(written.rows[0].n).toBe(0)
+  })
+})
+
 describe('A4 search parity (same tenant, same projection)', () => {
   it('projects identical hit shape {id,memoryType,topic,content,score} with count===hits.length', async () => {
     // Write the SAME content over each transport, then search for each over the
@@ -302,6 +363,8 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'contentLength',
       'id',
       'memoryType',
+      'project',
+      'scope',
       'score',
       'superseded',
       'topic',
@@ -312,6 +375,8 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'contentLength',
       'id',
       'memoryType',
+      'project',
+      'scope',
       'score',
       'superseded',
       'topic',
@@ -376,6 +441,57 @@ describe('A4 search parity (same tenant, same projection)', () => {
     // PARITY: REST (no output parse — core excerpting bounds it) byte-equals
     // the MCP hit the output schema validated.
     expect(restHit).toEqual(mcpHit)
+  })
+
+  it('labels filing + commitment lifecycle identically on REST and MCP (#319)', async () => {
+    // A resolved commitment stays a valid hit — labelled, never hidden — and
+    // reads the same over REST, MCP full/compact, and MCP chronological.
+    const tag = `lifecycle-${crypto.randomUUID()}`
+    const project = `p-${tag}`
+    const written = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { memoryType: 'commitment', topic: 'lc', content: tag, scope: 'work', project },
+    })
+    const memId = ((await written.json()) as { memory: { id: string } }).memory.id
+    const resolved = await rest(`/api/v1/memories/${memId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved' },
+    })
+    expect(resolved.status).toBe(200)
+
+    type Hit = { id: string; scope?: string; project?: string | null; commitmentStatus?: string }
+    const restRes = await rest('/api/v1/search', {
+      method: 'POST',
+      key: keyA,
+      body: { query: tag },
+    })
+    const restHit = ((await restRes.json()) as { hits: Hit[] }).hits.find((h) => h.id === memId)
+    const client = await connect(tokenA)
+    const hitOf = async (args: Record<string, unknown>) => {
+      const res = await client.callTool({ name: 'search', arguments: args })
+      expect(res.isError).toBeFalsy()
+      return (res.structuredContent as { hits: Hit[] }).hits.find((h) => h.id === memId)
+    }
+    const full = await hitOf({ query: tag })
+    const compact = await hitOf({ query: tag, projection: 'compact' })
+    const chrono = await hitOf({ order: 'chronological', project, projection: 'compact' })
+    await client.close()
+
+    const label = { scope: 'work', project, commitmentStatus: 'resolved' }
+    expect(restHit).toMatchObject(label)
+    expect(restHit).toEqual(full)
+    expect(compact).toMatchObject(label)
+    expect(chrono).toMatchObject(label)
+
+    // Tenant isolation: B's search over the same text never sees A's labelled row.
+    const otherRes = await rest('/api/v1/search', {
+      method: 'POST',
+      key: keyB,
+      body: { query: tag },
+    })
+    expect(((await otherRes.json()) as { hits: Hit[] }).hits.map((h) => h.id)).not.toContain(memId)
   })
 })
 
@@ -558,6 +674,171 @@ describe('A4 revise parity (successor semantics)', () => {
   })
 })
 
+/** Write one memory for a tenant over REST and return its id. */
+async function restRemember(key: string, memoryType: string, label: string): Promise<string> {
+  const res = await rest('/api/v1/memories', {
+    method: 'POST',
+    key,
+    body: { memoryType, topic: 'disposition', content: `${label}-${crypto.randomUUID()}` },
+  })
+  return ((await res.json()) as { memory: { id: string } }).memory.id
+}
+
+describe('revise archive disposition parity (issue #217)', () => {
+  it('same per-id outcomes over REST (URL id) and MCP (memoryIds), audited per transport', async () => {
+    const restId = await restRemember(keyA, 'decision', 'archive-rest')
+    const mcpId = await restRemember(keyA, 'decision', 'archive-mcp')
+    const blockerId = await restRemember(keyA, 'blocker', 'archive-blocker')
+    const foreignId = await restRemember(keyB, 'decision', 'archive-foreign')
+
+    const restArchive = (id: string, key = keyA) =>
+      rest(`/api/v1/memories/${id}/revise`, { method: 'POST', key, body: { kind: 'archive' } })
+    const client = await connect(tokenA)
+    const mcpArchive = async (memoryIds: string[]) => {
+      const res = await client.callTool({
+        name: 'revise',
+        arguments: { kind: 'archive', memoryIds },
+      })
+      expect(res.isError).toBeFalsy()
+      return res.structuredContent
+    }
+
+    const restFirst = await restArchive(restId)
+    expect(restFirst.status).toBe(200)
+    expect(await restFirst.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'archived' }],
+    })
+    expect(await mcpArchive([mcpId, blockerId, foreignId])).toEqual({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: mcpId, outcome: 'archived' },
+        { memoryId: blockerId, outcome: 'rejected', reason: 'blocker' },
+        { memoryId: foreignId, outcome: 'rejected', reason: 'not_found' },
+      ],
+    })
+
+    // The repeat is idempotent on both; a rejection is a 200 outcome, never a 404.
+    expect(await (await restArchive(mcpId)).json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: mcpId, outcome: 'already_archived' }],
+    })
+    expect(await mcpArchive([restId])).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'already_archived' }],
+    })
+    const restBlocker = await restArchive(blockerId)
+    expect(restBlocker.status).toBe(200)
+    expect(await restBlocker.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: blockerId, outcome: 'rejected', reason: 'blocker' }],
+    })
+    // Tenant B over REST: A's row is not_found (RLS), as A's view of B's row was.
+    expect(await (await restArchive(restId, keyB)).json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'rejected', reason: 'not_found' }],
+    })
+    await client.close()
+
+    const events = await ownerPool.query(
+      "SELECT memory_id, actor_kind, payload FROM memory_events WHERE memory_id = ANY($1::uuid[]) AND event_kind = 'archive' ORDER BY id",
+      [[restId, mcpId, blockerId, foreignId]],
+    )
+    expect(events.rows).toEqual([
+      { memory_id: restId, actor_kind: 'user_api', payload: { disposition: 'archive' } },
+      { memory_id: mcpId, actor_kind: 'user_mcp', payload: { disposition: 'archive' } },
+    ])
+  })
+
+  it('REST: the URL wins over a body predecessorId or memoryIds, and a malformed kind is 400', async () => {
+    const id = await restRemember(keyA, 'fact', 'archive-url-wins')
+    const other = await restRemember(keyA, 'fact', 'archive-not-targeted')
+    const res = await rest(`/api/v1/memories/${id}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive', predecessorId: other, memoryIds: [other] },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: id, outcome: 'archived' }],
+    })
+    const untouched = await ownerPool.query('SELECT status FROM memories WHERE id = $1', [other])
+    expect(untouched.rows[0]?.status).toBe('active')
+
+    const bad = await rest(`/api/v1/memories/${id}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive', reason: 'free text is not part of the contract' },
+    })
+    expect(bad.status).toBe(400)
+  })
+})
+
+describe('revise reaffirm disposition parity (issue #218)', () => {
+  it('same outcomes over REST and MCP; the review stamp rides the export, nothing else moves', async () => {
+    const restId = await restRemember(keyA, 'fact', 'reaffirm-rest')
+    const mcpId = await restRemember(keyA, 'decision', 'reaffirm-mcp')
+    const archivedId = await restRemember(keyA, 'fact', 'reaffirm-archived')
+    await rest(`/api/v1/memories/${archivedId}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive' },
+    })
+    const before = await ownerPool.query(
+      'SELECT id, content, status, updated_at, recorded_at, valid_from, valid_to FROM memories WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[restId, mcpId]],
+    )
+
+    const restRes = await rest(`/api/v1/memories/${restId}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'reaffirm' },
+    })
+    expect(restRes.status).toBe(200)
+    expect(await restRes.json()).toEqual({
+      kind: 'reaffirm',
+      outcomes: [{ memoryId: restId, outcome: 'reaffirmed' }],
+    })
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'revise',
+      arguments: { kind: 'reaffirm', memoryIds: [mcpId, archivedId] },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBeFalsy()
+    expect(mcpRes.structuredContent).toEqual({
+      kind: 'reaffirm',
+      outcomes: [
+        { memoryId: mcpId, outcome: 'reaffirmed' },
+        { memoryId: archivedId, outcome: 'rejected', reason: 'archived' },
+      ],
+    })
+
+    const after = await ownerPool.query(
+      'SELECT id, content, status, updated_at, recorded_at, valid_from, valid_to FROM memories WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[restId, mcpId]],
+    )
+    expect(after.rows).toEqual(before.rows)
+    const events = await ownerPool.query(
+      "SELECT memory_id, actor_kind, payload FROM memory_events WHERE memory_id = ANY($1::uuid[]) AND event_kind = 'reaffirm' ORDER BY id",
+      [[restId, mcpId, archivedId]],
+    )
+    expect(events.rows).toEqual([
+      { memory_id: restId, actor_kind: 'user_api', payload: { disposition: 'reaffirm' } },
+      { memory_id: mcpId, actor_kind: 'user_mcp', payload: { disposition: 'reaffirm' } },
+    ])
+
+    const exported = (await (await rest('/api/v1/export', { key: keyA })).json()) as {
+      memories: Array<{ id: string; lastReviewedAt: string | null }>
+    }
+    const stamp = (id: string) => exported.memories.find((m) => m.id === id)?.lastReviewedAt
+    expect(stamp(restId)).toEqual(expect.any(String))
+    expect(stamp(mcpId)).toEqual(expect.any(String))
+    expect(stamp(archivedId)).toBeNull()
+  })
+})
+
 describe('A4 resolve parity (FSM status output)', () => {
   it('returns {commitmentId,status} with identical FSM transitions on both', async () => {
     // REST: remember a commitment, resolve it, then unresolve back to open.
@@ -603,6 +884,121 @@ describe('A4 resolve parity (FSM status output)', () => {
     // Same FSM output shape + value on both transports.
     expect(mcpOut.commitmentId).toEqual(expect.any(String))
     expect(mcpOut.status).toBe(restOut.status)
+  })
+})
+
+// --- RESOLVE REASON parity (issue #234) -------------------------------------
+
+describe('resolve reason parity (#234): REST ≡ MCP, read back via history, never logged', () => {
+  // Capture EVERY structured line the process-global log() emits while the
+  // resolves below run (the oauth-token-outcome-log precedent): hard rule 6
+  // says the reason is content, so no line may carry its text — only lengths.
+  const lines: string[] = []
+  beforeAll(() => {
+    setLogDestination({ write: (chunk: string) => void lines.push(chunk) })
+  })
+  afterAll(() => {
+    setLogDestination()
+  })
+
+  async function remember(client: McpClient, memoryType: string): Promise<string> {
+    const written = await client.callTool({
+      name: 'remember',
+      arguments: { memoryType, topic: 'reason', content: `reason-${crypto.randomUUID()}` },
+    })
+    return (written.structuredContent as { memory: { id: string } }).memory.id
+  }
+
+  async function lastReason(memoryId: string): Promise<string | null> {
+    const res = await rest(`/api/v1/memories/${memoryId}/history`, { key: keyA })
+    expect(res.status).toBe(200)
+    return ((await res.json()) as { lastResolutionReason: string | null }).lastResolutionReason
+  }
+
+  it('stores the same trimmed reason from either transport and rejects it identically', async () => {
+    const restSecret = `rest-reason-${crypto.randomUUID()}`
+    const mcpSecret = `mcp-reason-${crypto.randomUUID()}`
+    const blockerSecret = `blocker-reason-${crypto.randomUUID()}`
+    const client = await connect(tokenA)
+    const restMemId = await remember(client, 'commitment')
+    const mcpMemId = await remember(client, 'commitment')
+    const blockerId = await remember(client, 'blocker')
+
+    // Success on both transports.
+    const restRes = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved', reason: ` ${restSecret} ` },
+    })
+    expect(restRes.status).toBe(200)
+    const mcpRes = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'resolved', reason: ` ${mcpSecret} ` },
+    })
+    expect(mcpRes.isError).toBeFalsy()
+    expect((mcpRes.structuredContent as { status: string }).status).toBe(
+      ((await restRes.json()) as { status: string }).status,
+    )
+    expect(await lastReason(restMemId)).toBe(restSecret)
+    expect(await lastReason(mcpMemId)).toBe(mcpSecret)
+
+    // A blocker cannot carry a reason: invalid input on both, nothing archived.
+    const restBlocker = await rest(`/api/v1/memories/${blockerId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved', reason: blockerSecret },
+    })
+    expect(restBlocker.status).toBe(400)
+    expect(((await restBlocker.json()) as { error: string }).error).toBe('invalid_input')
+    const mcpBlocker = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: blockerId, status: 'resolved', reason: blockerSecret },
+    })
+    expect(mcpBlocker.isError).toBe(true)
+    expect(toolText(mcpBlocker)).toContain('invalid input')
+    expect(toolText(mcpBlocker)).not.toContain(blockerSecret)
+
+    // Oversize on both: the shared schema bound.
+    const oversize = `${restSecret}${'x'.repeat(500)}`
+    const restBig = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'open', reason: oversize },
+    })
+    expect(restBig.status).toBe(400)
+    const mcpBig = await client.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'open', reason: oversize },
+    })
+    expect(mcpBig.isError).toBe(true)
+
+    // Cross-tenant: B's resolve of A's commitment is not_found on both.
+    const restForeign = await rest(`/api/v1/memories/${restMemId}/resolve`, {
+      method: 'POST',
+      key: keyB,
+      body: { status: 'open', reason: restSecret },
+    })
+    expect(restForeign.status).toBe(404)
+    await client.close()
+    const clientB = await connect(tokenB)
+    const mcpForeign = await clientB.callTool({
+      name: 'resolve',
+      arguments: { memoryId: mcpMemId, status: 'open', reason: mcpSecret },
+    })
+    await clientB.close()
+    expect(mcpForeign.isError).toBe(true)
+    expect(toolText(mcpForeign)).toContain('not_found')
+    // None of the failures moved or rewrote A's stored reasons.
+    expect(await lastReason(restMemId)).toBe(restSecret)
+    expect(await lastReason(mcpMemId)).toBe(mcpSecret)
+
+    // The capture saw the failure paths (so it is live) ...
+    const captured = lines.join('')
+    expect(captured).toContain('resolve reason rejected for a blocker')
+    // ... and no line, success or failure, carries any reason text.
+    for (const secret of [restSecret, mcpSecret, blockerSecret]) {
+      expect(captured).not.toContain(secret)
+    }
   })
 })
 

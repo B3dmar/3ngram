@@ -475,7 +475,13 @@ async function carryOrResolvePredecessorCommitment(
   // transition).
   const resolved = await tx
     .update(commitments)
-    .set({ status: 'resolved', resolvedAt: sql`now()`, updatedAt: sql`now()` })
+    // A reasonless transition clears any earlier reason (issue #234).
+    .set({
+      status: 'resolved',
+      resolvedAt: sql`now()`,
+      lastResolutionReason: null,
+      updatedAt: sql`now()`,
+    })
     .where(
       and(
         eq(commitments.userId, userId),

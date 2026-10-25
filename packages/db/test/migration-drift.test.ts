@@ -8,12 +8,15 @@ import {
   commitmentStatusSchema,
   edgeTypeSchema,
   eventKindSchema,
+  MAX_RESOLUTION_REASON_LENGTH,
   memoryStatusSchema,
   memoryTypeSchema,
   oauthClientRegistrationMethodSchema,
   proposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
+  writeScopeModeSchema,
+  writeScopePolicyScopeRequirements,
 } from '@3ngram/schema'
 import { describe, expect, it } from 'vitest'
 
@@ -93,6 +96,21 @@ const agentSessionsSql = readFileSync(
 // 0032's lease index, which is why that one cannot serve it.
 const sessionCloserIndexSql = readFileSync(
   join(import.meta.dirname, '../migrations/0033_session_closer_index.sql'),
+  'utf8',
+)
+// 0039 adds the write-scope policy (issue #235), the write-side twin of 0030.
+const writeScopePolicySql = readFileSync(
+  join(import.meta.dirname, '../migrations/0039_user_write_scope_policy.sql'),
+  'utf8',
+)
+// 0040 adds the commitment's latest-transition reason (issue #234).
+const resolutionReasonSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0040_commitment_resolution_reason.sql'),
+  'utf8',
+)
+// 0041 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
+const reviewStampSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0041_memory_last_reviewed_at.sql'),
   'utf8',
 )
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
@@ -654,6 +672,87 @@ describe('agent_sessions table (0032, issue #166)', () => {
       /GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments, facts, consolidation_proposals, fact_proposals, scopes, agent_sessions/,
     )
     expect(rolesSql).not.toMatch(/GRANT DELETE ON agent_sessions/)
+  })
+})
+
+describe('write-scope policy table (0039, issue #235)', () => {
+  it('derives the mode CHECK and every scope-consistency branch from the schema', () => {
+    expect(writeScopePolicySql).toContain(
+      `CHECK ("user_write_scope_policy"."mode" IN (${writeScopeModeSchema.options.map((m) => `'${m}'`).join(', ')}))`,
+    )
+    for (const [mode, requirement] of Object.entries(writeScopePolicyScopeRequirements)) {
+      const nullability = requirement === 'required' ? 'IS NOT NULL' : 'IS NULL'
+      expect(writeScopePolicySql).toContain(
+        `"user_write_scope_policy"."mode" = '${mode}' AND "user_write_scope_policy"."default_scope" ${nullability}`,
+      )
+    }
+  })
+
+  it("defaults to mode 'off' and keys one row per user, cascading with the user", () => {
+    expect(writeScopePolicySql).toContain('"user_id" uuid PRIMARY KEY NOT NULL')
+    expect(writeScopePolicySql).toContain(`"mode" text DEFAULT 'off' NOT NULL`)
+    expect(writeScopePolicySql).toContain(
+      'FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade',
+    )
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE', () => {
+    expect(writeScopePolicySql).toContain(
+      'ALTER TABLE "user_write_scope_policy" ENABLE ROW LEVEL SECURITY',
+    )
+    expect(writeScopePolicySql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "user_write_scope_policy"',
+    )
+    expect(writeScopePolicySql).toContain(`NULLIF(current_setting('app.user_id', true), '')::uuid`)
+    expect(writeScopePolicySql).toContain(
+      'ALTER TABLE "user_write_scope_policy" FORCE ROW LEVEL SECURITY',
+    )
+    expect(writeScopePolicySql).not.toMatch(/DROP (TABLE|POLICY)/)
+  })
+
+  it('runtime grant is SELECT/INSERT/UPDATE, no DELETE', () => {
+    expect(rolesSql).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON user_write_scope_policy TO app_user;',
+    )
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*user_write_scope_policy/)
+  })
+})
+
+describe('commitment resolution reason (0040, issue #234)', () => {
+  it('adds one nullable text column, no table and no backfill', () => {
+    expect(resolutionReasonSql).toContain(
+      'ALTER TABLE "commitments" ADD COLUMN "last_resolution_reason" text;',
+    )
+    expect(resolutionReasonSql).not.toMatch(/CREATE TABLE|NOT NULL|UPDATE "commitments"/i)
+  })
+
+  it('derives the length CHECK from the schema bound', () => {
+    expect(resolutionReasonSql).toContain(
+      `CONSTRAINT "commitments_last_resolution_reason_length_check" CHECK (char_length("commitments"."last_resolution_reason") BETWEEN 1 AND ${MAX_RESOLUTION_REASON_LENGTH})`,
+    )
+  })
+
+  it('needs no new grant: the runtime role already UPDATEs commitments', () => {
+    expect(rolesSql).toMatch(/GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments,/)
+  })
+})
+
+describe('reaffirm review stamp (0041, issue #218)', () => {
+  it('adds a nullable, default-less column: no rewrite, no backfill', () => {
+    expect(reviewStampSql).toContain(
+      'ALTER TABLE "memories" ADD COLUMN "last_reviewed_at" timestamp with time zone;',
+    )
+  })
+
+  it('regenerates the event-kind CHECK from the schema enum, reaffirm included', () => {
+    expect(eventKindSchema.options).toContain('reaffirm')
+    expect(reviewStampSql).toContain(
+      `CHECK ("memory_events"."event_kind" IN (${eventKindSchema.options.map((k) => `'${k}'`).join(', ')}))`,
+    )
+  })
+
+  it('adds no table and touches no policy', () => {
+    expect(reviewStampSql).not.toMatch(/CREATE TABLE|POLICY|ROW LEVEL SECURITY/i)
   })
 })
 

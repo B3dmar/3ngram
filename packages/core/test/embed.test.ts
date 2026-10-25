@@ -16,6 +16,10 @@ const recordEmbedFailure = vi.fn()
 const insertLlmUsage = vi.fn()
 
 vi.mock('@3ngram/db', () => ({
+  // remember() resolves an omitted scope from the write-scope policy (issue
+  // #235): no stored row, so the shipped 'personal' literal applies.
+  withTenant: (_userId: string, fn: (tx: unknown) => Promise<unknown>) => fn({}),
+  getWriteScopePolicy: async () => null,
   writeMemory: (...a: unknown[]) => writeMemory(...a),
   reviseMemory: (...a: unknown[]) => reviseMemory(...a),
   updateMemoryEmbedding: (...a: unknown[]) => updateMemoryEmbedding(...a),

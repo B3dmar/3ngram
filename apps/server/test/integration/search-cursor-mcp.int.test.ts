@@ -174,10 +174,13 @@ describe('MCP search cursor pagination (#49, real transport)', () => {
     expect(page.count).toBeGreaterThanOrEqual(1)
     const hit = page.hits.find((h) => h.id === id)
     expect(hit).toBeDefined()
-    // The compact wire shape: id/type/topic/score/superseded ONLY — no excerpt triple.
+    // The compact wire shape: id/type/topic/score/superseded + filing (#319;
+    // a note carries no commitmentStatus) — no excerpt triple.
     expect(Object.keys(hit as object).sort()).toEqual([
       'id',
       'memoryType',
+      'project',
+      'scope',
       'score',
       'superseded',
       'topic',

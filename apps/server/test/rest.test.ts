@@ -13,13 +13,20 @@
 import { readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { fakeEmbedding } from '@3ngram/llm'
+import { memoryHistoryResponseSchema, searchRestResponseV2Schema } from '@3ngram/schema'
 import express, { type Response as ExpressResponse, type NextFunction, type Request } from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 // The REAL ZodError: the triage routes no longer pre-parse, so a rejected body
 // reaches the mapper as a throw FROM core, and only the real class matches the
 // `instanceof` ladder in rest/errors.ts.
 import { ZodError } from 'zod'
-import { decodeCursor, encodeCursor, searchFingerprint } from '../src/cursor.js'
+import {
+  decodeCursor,
+  encodeCursor,
+  encodeProposalsCursor,
+  proposalsFingerprint,
+  searchFingerprint,
+} from '../src/cursor.js'
 import { SERVER_VERSION } from '../src/version.js'
 
 // --- core memory tools (the thin adapter's target) ---
@@ -28,6 +35,7 @@ const search = vi.fn()
 const searchDashboardPage = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
+const reviseDisposition = vi.fn()
 const resolveByMemoryId = vi.fn()
 const archiveMemory = vi.fn()
 const briefing = vi.fn()
@@ -36,7 +44,7 @@ const listMemories = vi.fn()
 const listMemoryFacets = vi.fn()
 const getMemoryById = vi.fn()
 const getMemoryHistory = vi.fn()
-const listProposals = vi.fn()
+const listEdgeProposalsPage = vi.fn()
 const applyProposal = vi.fn()
 const rejectProposal = vi.fn()
 const listScopes = vi.fn()
@@ -105,6 +113,22 @@ function formatUnscopedRetrievalDetail(registeredScopes: readonly string[]): str
   const shown = registeredScopes.slice(0, 8)
   const omitted = registeredScopes.length - shown.length
   return `${prefix}registered scopes: ${shown.join(', ')}${omitted > 0 ? `; +${omitted} more omitted` : ''}`
+}
+class UnscopedWriteError extends Error {
+  constructor() {
+    super(
+      "this account requires an explicit scope on writes (write-scope mode 'require') — pass scope; registered scopes: personal, work",
+    )
+    this.name = 'UnscopedWriteError'
+  }
+}
+class ResolveReasonNotSupportedError extends Error {
+  readonly memoryId: string
+  constructor(memoryId: string) {
+    super('a resolve reason is stored only on a commitment; omit reason to resolve a blocker')
+    this.name = 'ResolveReasonNotSupportedError'
+    this.memoryId = memoryId
+  }
 }
 class UnscopedRetrievalError extends Error {
   readonly registeredScopes: readonly string[]
@@ -224,6 +248,7 @@ vi.mock('@3ngram/core', async () => ({
   searchDashboardPage,
   getFacts,
   revise,
+  reviseDisposition,
   resolveByMemoryId,
   archiveMemory,
   briefing,
@@ -236,7 +261,7 @@ vi.mock('@3ngram/core', async () => ({
   listMemoryFacets,
   getMemoryById,
   getMemoryHistory,
-  listProposals,
+  listEdgeProposalsPage,
   applyProposal,
   rejectProposal,
   listScopes,
@@ -271,6 +296,8 @@ vi.mock('@3ngram/core', async () => ({
   resolveRetrievalPolicy,
   formatUnscopedRetrievalDetail,
   UnscopedRetrievalError,
+  UnscopedWriteError,
+  ResolveReasonNotSupportedError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   ProposalNotFoundError,
@@ -464,6 +491,7 @@ describe('REST /api/v1 auth (X-API-Key OR session Bearer, issue #194)', () => {
 describe('POST /api/v1/memories (remember)', () => {
   it('happy path: validates, calls core under the key tenant, echoes the normalized write', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: NEW_ID,
       embed: { settled: Promise.resolve(true) },
     })
@@ -487,7 +515,12 @@ describe('POST /api/v1/memories (remember)', () => {
 
   it('echoes factIds when the body carries facts, and omits the key otherwise', async () => {
     const factIds = [crypto.randomUUID()]
-    remember.mockResolvedValue({ id: NEW_ID, factIds, embed: { settled: Promise.resolve(true) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: NEW_ID,
+      factIds,
+      embed: { settled: Promise.resolve(true) },
+    })
     const withFacts = await call('/api/v1/memories', {
       method: 'POST',
       key: VALID_KEY,
@@ -503,7 +536,11 @@ describe('POST /api/v1/memories (remember)', () => {
 
     // No facts -> the key is absent entirely, so the shipped response shape is
     // byte-identical for every existing caller.
-    remember.mockResolvedValue({ id: NEW_ID, embed: { settled: Promise.resolve(true) } })
+    remember.mockResolvedValue({
+      scope: 'personal',
+      id: NEW_ID,
+      embed: { settled: Promise.resolve(true) },
+    })
     const without = await call('/api/v1/memories', {
       method: 'POST',
       key: VALID_KEY,
@@ -561,8 +598,41 @@ describe('POST /api/v1/memories (remember)', () => {
     expect(await res.json()).toEqual({ error: 'resource_limit_exceeded' })
   })
 
+  it('echoes the scope core WROTE for an omitted scope, not a schema default (#235)', async () => {
+    remember.mockResolvedValue({
+      scope: 'work',
+      id: NEW_ID,
+      embed: { settled: Promise.resolve(true) },
+    })
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'rest', content: 'policy filled' },
+    })
+    expect(res.status).toBe(201)
+    expect(((await res.json()) as { memory: { scope: string } }).memory.scope).toBe('work')
+    // Omission reaches core intact: the policy, not the transport, fills it.
+    const coreInput = remember.mock.calls[0]?.[1] as Record<string, unknown>
+    expect('scope' in coreInput).toBe(false)
+  })
+
+  it('400s an unscoped write rejected by the write-scope policy, with recovery detail (#235)', async () => {
+    remember.mockRejectedValue(new UnscopedWriteError())
+    const res = await call('/api/v1/memories', {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { memoryType: 'note', topic: 'secret topic', content: 'secret content' },
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string; detail?: string }
+    expect(body.error).toBe('invalid_input')
+    expect(body.detail).toMatch(/pass scope; registered scopes: personal, work$/)
+    expect(JSON.stringify(body)).not.toContain('secret')
+  })
+
   it('surfaces the commitmentId for a commitment-type write', async () => {
     remember.mockResolvedValue({
+      scope: 'personal',
       id: NEW_ID,
       commitmentId: COMMIT_ID,
       embed: { settled: Promise.resolve(true) },
@@ -589,7 +659,22 @@ describe('POST /api/v1/search', () => {
           contentLength: 'hit'.length,
           truncated: false,
           score: 0.9,
+          superseded: false,
+          scope: 'work',
+          project: 'engine',
           commitmentStatus: 'waiting',
+        },
+        {
+          id: crypto.randomUUID(),
+          memoryType: 'note',
+          topic: 'n',
+          content: 'note',
+          contentLength: 'note'.length,
+          truncated: false,
+          score: 0.5,
+          superseded: false,
+          scope: 'work',
+          project: null,
         },
       ],
       appliedScope: null,
@@ -611,10 +696,19 @@ describe('POST /api/v1/search', () => {
       hasMore?: boolean
     }
     expect(body).not.toHaveProperty('hasMore')
+    expect(searchRestResponseV2Schema.safeParse(body).success).toBe(true)
     expect(body.count).toBe(body.hits.length)
-    expect(body.count).toBe(1)
+    expect(body.count).toBe(2)
     expect(body.hits[0]).toMatchObject({ content: 'hit', contentLength: 3, truncated: false })
-    expect(body.hits[0]).not.toHaveProperty('commitmentStatus')
+    // #319: filing + commitment lifecycle ride the public hit; a non-commitment
+    // gets no fabricated status.
+    expect(body.hits[0]).toMatchObject({
+      scope: 'work',
+      project: 'engine',
+      commitmentStatus: 'waiting',
+    })
+    expect(body.hits[1]).toMatchObject({ scope: 'work', project: null })
+    expect(body.hits[1]).not.toHaveProperty('commitmentStatus')
     expect(search).toHaveBeenCalledWith(
       TENANT,
       'find me',
@@ -1375,6 +1469,31 @@ describe('POST /api/v1/memories/:id/revise', () => {
     )
   })
 
+  it('archive disposition: the URL id is the one-element batch, outcomes echoed (#217)', async () => {
+    reviseDisposition.mockResolvedValue({
+      kind: 'archive',
+      outcomes: [{ memoryId: NEW_ID, outcome: 'already_archived' }],
+    })
+    const res = await call(`/api/v1/memories/${NEW_ID}/revise`, {
+      method: 'POST',
+      key: VALID_KEY,
+      // The SDK sends predecessorId for every kind; the URL wins.
+      body: { kind: 'archive', predecessorId: NEW_ID },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: NEW_ID, outcome: 'already_archived' }],
+    })
+    expect(revise).not.toHaveBeenCalled()
+    expect(reviseDisposition).toHaveBeenCalledWith(
+      TENANT,
+      { kind: 'archive', memoryIds: [NEW_ID] },
+      'user_api',
+      expect.anything(),
+    )
+  })
+
   it('404s an unknown predecessor (typed not_found -> HTTP)', async () => {
     revise.mockRejectedValue(new PredecessorNotFoundError(NEW_ID))
     const res = await call(`/api/v1/memories/${NEW_ID}/revise`, {
@@ -1403,7 +1522,57 @@ describe('POST /api/v1/memories/:id/resolve', () => {
       'resolved',
       'user_api',
       undefined,
+      undefined,
     )
+  })
+
+  it('passes a trimmed reason through to core (issue #234)', async () => {
+    resolveByMemoryId.mockResolvedValue({ id: COMMIT_ID, status: 'resolved' })
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason: '  shipped in PR #234  ' },
+    })
+    expect(res.status).toBe(200)
+    expect(resolveByMemoryId).toHaveBeenCalledWith(
+      TENANT,
+      NEW_ID,
+      'resolved',
+      'user_api',
+      undefined,
+      'shipped in PR #234',
+    )
+  })
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   '],
+    ['oversize', 'x'.repeat(501)],
+  ])('400s a %s reason at the schema boundary, before core', async (_label, reason) => {
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason },
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'invalid_input' })
+    expect(resolveByMemoryId).not.toHaveBeenCalled()
+  })
+
+  it('400s a reason on a blocker with fixed recovery text, never the reason', async () => {
+    resolveByMemoryId.mockRejectedValue(new ResolveReasonNotSupportedError(NEW_ID))
+    const res = await call(`/api/v1/memories/${NEW_ID}/resolve`, {
+      method: 'POST',
+      key: VALID_KEY,
+      body: { status: 'resolved', reason: 'private-evidence-text' },
+    })
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body).toEqual({
+      error: 'invalid_input',
+      detail: 'a resolve reason is stored only on a commitment; omit reason to resolve a blocker',
+    })
+    expect(JSON.stringify(body)).not.toContain('private-evidence-text')
   })
 
   it('409s an illegal FSM transition (invalid_transition -> HTTP)', async () => {
@@ -1700,6 +1869,8 @@ describe('GET /api/v1/memories/facets (issue #342)', () => {
   })
 })
 
+const RUN_ID_262 = '01890b6e-0000-7000-8000-000000000262'
+
 describe('GET /api/v1/memories/:id/history', () => {
   it('happy path: returns identity-only lineage and audit metadata', async () => {
     const predecessorId = crypto.randomUUID()
@@ -1756,9 +1927,12 @@ describe('GET /api/v1/memories/:id/history', () => {
           actorKind: 'user_api',
           createdAt: new Date('2026-06-01T00:00:00Z'),
           payloadMetadata: { present: true, jsonType: 'object', byteLength: 20 },
+          sessionRunId: RUN_ID_262,
         },
       ],
       eventsTruncated: false,
+      createdBySessionRunId: RUN_ID_262,
+      lastResolutionReason: 'shipped in PR #234',
       sections: { lineage: 'ok', events: 'ok' },
     })
 
@@ -1767,15 +1941,27 @@ describe('GET /api/v1/memories/:id/history', () => {
     const body = (await res.json()) as {
       memory: { id: string; content?: string; recordedAt: string }
       lineage: { edges: Array<{ createdAt: string }> }
-      auditEvents: Array<{ payloadMetadata: { byteLength: number }; payload?: unknown }>
+      auditEvents: Array<{
+        payloadMetadata: { byteLength: number }
+        payload?: unknown
+        sessionRunId: string | null
+      }>
+      createdBySessionRunId: string | null
+      lastResolutionReason: string | null
       sections: { lineage: string; events: string }
     }
     expect(body.memory.id).toBe(NEW_ID)
+    // Issue #234: the commitment's latest-transition reason, top level.
+    expect(body.lastResolutionReason).toBe('shipped in PR #234')
     expect(body.memory).not.toHaveProperty('content')
     expect(body.memory.recordedAt).toBe('2026-05-01T00:00:00.000Z')
     expect(body.lineage.edges[0]?.createdAt).toBe('2026-06-02T00:00:00.000Z')
     expect(body.auditEvents[0]?.payloadMetadata.byteLength).toBe(20)
     expect(body.auditEvents[0]).not.toHaveProperty('payload')
+    // Issue #262: the allowlisted provenance id rides beside payloadMetadata.
+    expect(body.auditEvents[0]?.sessionRunId).toBe(RUN_ID_262)
+    expect(body.createdBySessionRunId).toBe(RUN_ID_262)
+    expect(memoryHistoryResponseSchema.safeParse(body).success).toBe(true)
     expect(body.sections).toEqual({ lineage: 'ok', events: 'ok' })
     expect(getMemoryHistory).toHaveBeenCalledWith(TENANT, NEW_ID)
   })
@@ -1819,6 +2005,8 @@ describe('GET /api/v1/memories/:id/history', () => {
       directRelationships: { predecessors: [], successors: [], truncated: false },
       auditEvents: [],
       eventsTruncated: false,
+      createdBySessionRunId: null,
+      lastResolutionReason: null,
       sections: { lineage: 'ok', events: 'unavailable' },
       sectionErrors: { events: 'Error' },
     })
@@ -1829,10 +2017,12 @@ describe('GET /api/v1/memories/:id/history', () => {
     const body = (await res.json()) as {
       lineage: { nodes: Array<{ id: string }> }
       auditEvents: unknown[]
+      createdBySessionRunId: string | null
       sections: { lineage: string; events: string }
       sectionErrors?: unknown
     }
     expect(body.sections).toEqual({ lineage: 'ok', events: 'unavailable' })
+    expect(body.createdBySessionRunId).toBeNull()
     expect(body.lineage.nodes).toHaveLength(1)
     expect(body.auditEvents).toEqual([])
     // The content-free diagnostic stays server-side; it is not on the wire body.
@@ -1909,35 +2099,107 @@ describe('GET /api/v1/memories/:id (inspect)', () => {
 })
 
 describe('GET /api/v1/proposals (list)', () => {
+  const edgeRow = {
+    id: NEW_ID,
+    fromId: NEW_ID,
+    toId: COMMIT_ID,
+    edgeType: 'supersedes',
+    memoryType: 'note',
+    similarity: 0.91,
+    rationale: null,
+    status: 'proposed',
+    decidedAt: null,
+    createdAt: new Date('2026-06-01T00:00:00Z'),
+  }
+  const POSITION = { createdAt: '2026-06-01T00:00:00.000001Z', id: NEW_ID }
+  const restFp = (status?: string, tenant = TENANT) =>
+    proposalsFingerprint({ surface: 'rest', kinds: ['edge'], status, tenant })
+
   it('happy path: passes status/limit, returns the proposal envelope', async () => {
-    listProposals.mockResolvedValue([
-      {
-        id: NEW_ID,
-        fromId: NEW_ID,
-        toId: COMMIT_ID,
-        edgeType: 'supersedes',
-        memoryType: 'note',
-        similarity: 0.91,
-        rationale: null,
-        status: 'proposed',
-        decidedAt: null,
-        createdAt: new Date('2026-06-01T00:00:00Z'),
-      },
-    ])
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [edgeRow],
+      totals: { edge: 1 },
+      hasMore: false,
+      next: undefined,
+    })
     const res = await call('/api/v1/proposals?status=proposed&limit=10', { key: VALID_KEY })
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { proposals: unknown[]; count: number }
-    expect(body.count).toBe(body.proposals.length)
-    expect(listProposals).toHaveBeenCalledWith(
-      TENANT,
-      expect.objectContaining({ status: 'proposed', limit: 10 }),
-    )
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toEqual({
+      proposals: [expect.objectContaining({ id: NEW_ID, createdAt: '2026-06-01T00:00:00.000Z' })],
+      count: 1,
+      totals: { edge: 1 },
+      hasMore: false,
+    })
+    expect(listEdgeProposalsPage).toHaveBeenCalledWith(TENANT, {
+      status: 'proposed',
+      limit: 10,
+      after: undefined,
+    })
+  })
+
+  it('a page with more rows returns hasMore + nextCursor; count stays the page size (#320)', async () => {
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [edgeRow],
+      totals: { edge: 250 },
+      hasMore: true,
+      next: POSITION,
+    })
+    const res = await call('/api/v1/proposals?limit=1', { key: VALID_KEY })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.count).toBe(1)
+    expect(body.totals).toEqual({ edge: 250 })
+    expect(body.hasMore).toBe(true)
+    expect(body.nextCursor).toBe(encodeProposalsCursor(POSITION, restFp()))
+  })
+
+  it('a continuation cursor resumes after its position (#320)', async () => {
+    listEdgeProposalsPage.mockResolvedValue({
+      proposals: [],
+      totals: { edge: 0 },
+      hasMore: false,
+      next: undefined,
+    })
+    const cursor = encodeProposalsCursor(POSITION, restFp('proposed'))
+    const res = await call(`/api/v1/proposals?status=proposed&cursor=${cursor}`, {
+      key: VALID_KEY,
+    })
+    expect(res.status).toBe(200)
+    expect(listEdgeProposalsPage).toHaveBeenCalledWith(TENANT, {
+      status: 'proposed',
+      limit: 25,
+      after: POSITION,
+    })
+  })
+
+  it.each([
+    ['garbled', 'not-a-cursor'],
+    ['minted for another status', encodeProposalsCursor(POSITION, restFp('rejected'))],
+    ['minted for another tenant', encodeProposalsCursor(POSITION, restFp(undefined, NEW_ID))],
+    [
+      'minted by the MCP edge+fact walk',
+      encodeProposalsCursor(
+        POSITION,
+        proposalsFingerprint({
+          surface: 'mcp',
+          kinds: ['edge', 'fact'],
+          status: undefined,
+          tenant: TENANT,
+        }),
+      ),
+    ],
+  ])('400s a cursor that is %s, never reaching core (#320)', async (_label, cursor) => {
+    const res = await call(`/api/v1/proposals?cursor=${cursor}`, { key: VALID_KEY })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_input' })
+    expect(listEdgeProposalsPage).not.toHaveBeenCalled()
   })
 
   it('400s an invalid status enum (schema boundary)', async () => {
     const res = await call('/api/v1/proposals?status=bogus', { key: VALID_KEY })
     expect(res.status).toBe(400)
-    expect(listProposals).not.toHaveBeenCalled()
+    expect(listEdgeProposalsPage).not.toHaveBeenCalled()
   })
 })
 
@@ -2251,6 +2513,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-02T00:00:00.000Z'),
     },
+    writeScopePolicy: {
+      mode: 'require',
+      defaultScope: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-04T00:00:00.000Z'),
+    },
   })
 
   it('returns the caller dataset, calls core under the key tenant, sets a download header', async () => {
@@ -2276,6 +2544,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       userBudgets: Array<{ capUsdOverride: string | null }>
       llmUsage: Array<{ operation: string; costUsd: string | null }>
       retrievalPolicy: {
+        mode: string
+        defaultScope: string | null
+        updatedAt: string
+      } | null
+      writeScopePolicy: {
         mode: string
         defaultScope: string | null
         updatedAt: string
@@ -2323,6 +2596,12 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       mode: 'default',
       defaultScope: 'work',
       updatedAt: '2026-01-02T00:00:00.000Z',
+    })
+    // The write-scope policy is user configuration too (issue #235).
+    expect(body.writeScopePolicy).toEqual({
+      mode: 'require',
+      defaultScope: null,
+      updatedAt: '2026-01-04T00:00:00.000Z',
     })
     expect(body.counts).toEqual({
       memories: 1,
@@ -2415,6 +2694,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     const schema =
       spec.paths['/api/v1/export'].get.responses['200'].content['application/json'].schema
     expect(schema.required).toContain('retrievalPolicy')
+    expect(schema.required).toContain('writeScopePolicy')
     expect(schema.required).toContain('agentSessions')
     const policy = schema.properties.retrievalPolicy
     const objectBranch = policy?.anyOf?.find((branch) => branch.type === 'object')
@@ -3265,6 +3545,25 @@ describe('agent-session lifecycle routes', () => {
       expect(await res.json()).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 0 })
     })
 
+    it('forwards a defensive complete verbatim — core owns the rule (issue #189)', async () => {
+      completeAgentSessionTriage.mockResolvedValue({
+        sessionRunId: RUN,
+        triageStatus: 'expired',
+        eventCount: 0,
+        sinceBeginCount: 1,
+        truncated: false,
+      })
+      const body = { ...BODY, defensive: true }
+      const res = await call('/api/v1/agent-sessions/triage/complete', {
+        method: 'POST',
+        key: VALID_KEY,
+        body,
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ triageStatus: 'expired', sinceBeginCount: 1 })
+      expect(completeAgentSessionTriage).toHaveBeenCalledWith(TENANT, body)
+    })
+
     it('409s a stale attempt', async () => {
       // A crashed hook, a second Stop, or a closer that re-claimed the row after
       // the lease expired mid-handshake. The caller must learn its attempt is
@@ -3620,7 +3919,7 @@ describe('access gate enforcement (#429)', () => {
     ],
     ['facts (read)', 'GET', '/api/v1/facts', undefined, getFacts],
     ['briefing (read)', 'GET', '/api/v1/briefing?kind=all', undefined, briefing],
-    ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listProposals],
+    ['proposals.list (read)', 'GET', '/api/v1/proposals', undefined, listEdgeProposalsPage],
     ['stats (read)', 'GET', '/api/v1/stats', undefined, describeEnvironment],
     ['export (read)', 'GET', '/api/v1/export', undefined, exportUserData],
     [
