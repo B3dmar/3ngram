@@ -182,7 +182,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // REST only carries the remember request surface. CLI unchanged. No tool
       // description changed (no embeddings regen). MEASURED on this PR's actual
       // base (feat/165-commitment-due-dates), not summed.
-      mcp: [28361, 228704, 57120],
+      // MCP +170/+1360/+331 (issue #319): the search output hit gains
+      // scope, nullable project, and optional commitmentStatus in both
+      // projections. Descriptions are unchanged (no embeddings regen); REST
+      // and CLI are unchanged. MEASURED on staging fee3bc9 (after #323 and #336), not summed.
+      mcp: [28531, 230064, 57451],
       cli: [333, 1236, 1236],
       rest: [4145, 5162, 5162],
     },

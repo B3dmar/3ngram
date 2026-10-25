@@ -363,6 +363,8 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'contentLength',
       'id',
       'memoryType',
+      'project',
+      'scope',
       'score',
       'superseded',
       'topic',
@@ -373,6 +375,8 @@ describe('A4 search parity (same tenant, same projection)', () => {
       'contentLength',
       'id',
       'memoryType',
+      'project',
+      'scope',
       'score',
       'superseded',
       'topic',
@@ -437,6 +441,57 @@ describe('A4 search parity (same tenant, same projection)', () => {
     // PARITY: REST (no output parse — core excerpting bounds it) byte-equals
     // the MCP hit the output schema validated.
     expect(restHit).toEqual(mcpHit)
+  })
+
+  it('labels filing + commitment lifecycle identically on REST and MCP (#319)', async () => {
+    // A resolved commitment stays a valid hit — labelled, never hidden — and
+    // reads the same over REST, MCP full/compact, and MCP chronological.
+    const tag = `lifecycle-${crypto.randomUUID()}`
+    const project = `p-${tag}`
+    const written = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { memoryType: 'commitment', topic: 'lc', content: tag, scope: 'work', project },
+    })
+    const memId = ((await written.json()) as { memory: { id: string } }).memory.id
+    const resolved = await rest(`/api/v1/memories/${memId}/resolve`, {
+      method: 'POST',
+      key: keyA,
+      body: { status: 'resolved' },
+    })
+    expect(resolved.status).toBe(200)
+
+    type Hit = { id: string; scope?: string; project?: string | null; commitmentStatus?: string }
+    const restRes = await rest('/api/v1/search', {
+      method: 'POST',
+      key: keyA,
+      body: { query: tag },
+    })
+    const restHit = ((await restRes.json()) as { hits: Hit[] }).hits.find((h) => h.id === memId)
+    const client = await connect(tokenA)
+    const hitOf = async (args: Record<string, unknown>) => {
+      const res = await client.callTool({ name: 'search', arguments: args })
+      expect(res.isError).toBeFalsy()
+      return (res.structuredContent as { hits: Hit[] }).hits.find((h) => h.id === memId)
+    }
+    const full = await hitOf({ query: tag })
+    const compact = await hitOf({ query: tag, projection: 'compact' })
+    const chrono = await hitOf({ order: 'chronological', project, projection: 'compact' })
+    await client.close()
+
+    const label = { scope: 'work', project, commitmentStatus: 'resolved' }
+    expect(restHit).toMatchObject(label)
+    expect(restHit).toEqual(full)
+    expect(compact).toMatchObject(label)
+    expect(chrono).toMatchObject(label)
+
+    // Tenant isolation: B's search over the same text never sees A's labelled row.
+    const otherRes = await rest('/api/v1/search', {
+      method: 'POST',
+      key: keyB,
+      body: { query: tag },
+    })
+    expect(((await otherRes.json()) as { hits: Hit[] }).hits.map((h) => h.id)).not.toContain(memId)
   })
 })
 

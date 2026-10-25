@@ -852,6 +852,8 @@ describe('search tool', () => {
     truncated: false,
     score: 0.9,
     superseded: false,
+    scope: 'work',
+    project: null,
   }
 
   it('validates input, calls core, returns a bounded schema-valid hit list', async () => {
@@ -887,8 +889,41 @@ describe('search tool', () => {
       topic: 'pin',
       score: 0.9,
       superseded: false,
+      scope: 'work',
+      project: null,
     })
   })
+
+  // #319: commitment lifecycle is a separate axis from memory status — every
+  // projection x order labels a commitment hit, and never fabricates one.
+  const RESOLVED = {
+    ...HIT,
+    id: '22222222-2222-4222-8222-222222222222',
+    project: 'engine',
+    commitmentStatus: 'resolved' as const,
+  }
+  for (const order of ['relevance', 'chronological'] as const) {
+    for (const projection of ['full', 'compact'] as const) {
+      it(`labels filing + commitment lifecycle (${order}, ${projection}, #319)`, async () => {
+        const page = { ...pageOf([RESOLVED, HIT]), nextCursor: undefined, appliedScope: null }
+        searchDashboardPage.mockResolvedValue(page)
+        searchChronological.mockResolvedValue(page)
+        const args =
+          order === 'relevance' ? { query: 'sdk pin' } : { order, scope: 'work' as const }
+        const result = await call('search', { ...args, projection }, ctx())
+        expect(result.isError).toBeFalsy()
+        const parsed = searchToolOutputV2Schema.parse(result.structuredContent)
+        expect(parsed.hits[0]).toMatchObject({
+          scope: 'work',
+          project: 'engine',
+          commitmentStatus: 'resolved',
+        })
+        expect(parsed.hits[1]).toMatchObject({ scope: 'work', project: null })
+        expect(parsed.hits[1]).not.toHaveProperty('commitmentStatus')
+        expect('content' in (parsed.hits[0] ?? {})).toBe(projection === 'full')
+      })
+    }
+  }
 
   it('emits a decodable nextCursor exactly when core reports a further page (#49)', async () => {
     searchDashboardPage.mockResolvedValue(pageOf([HIT], { nextOffset: 1, hasMore: true }))
