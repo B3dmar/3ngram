@@ -102,7 +102,12 @@ a model run — the same substitution the blocking gate makes for the product re
 
 - Scenarios: `fixtures/tool-selection.json` — exactly 5 agent utterances per registered
   tool (55; pinned by a unit test) plus a separate `surfaceScenarios` array whose correct
-  target is not a tool.
+  target is not a tool, and a **report-only** `capabilityScenarios` array: utterances for
+  a second job a tool's input schema carries but its description does not name (today
+  `revise#disposition`, the archive/reaffirm `memoryIds` batch). Those are scored per
+  `tool#capability` and printed beside the gated metrics, but never enter
+  `selection_accuracy_at_1`/`selection_margin`, so neither the floors nor the 5-per-tool
+  rule move with them.
 - Descriptions come from the committed `fixtures/transport-surfaces.json` (the real
   `tools/list` capture). **Every embedded text — each tool description AND each scenario
   utterance — is stored with a sha256 of the exact string.** A description edit, an
