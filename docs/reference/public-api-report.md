@@ -394,6 +394,7 @@ its row here even when its name and kind are unchanged.
 | `dbSurfacingRepo` | const | `bd42a3f284fd` |
 | `deleteAccount` | function | `43aafd3f76ea` |
 | `deleteScope` | function | `8e460c0839b0` |
+| `deleteWindowCounter` | function | `13cc4dd10203` |
 | `describeEnvironment` | function | `4ba1439f061f` |
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expiryCutoff` | function | `66a0347310b8` |
@@ -416,6 +417,7 @@ its row here even when its name and kind are unchanged.
 | `importEvent` | function | `b646608824c0` |
 | `importFact` | function | `de183450645f` |
 | `importMemory` | function | `94b80cc5a793` |
+| `incrementWindowCounter` | function | `36c4508075c1` |
 | `isCloserEligible` | function | `5ba2c96e3393` |
 | `listAllProposals` | function | `a406e03c4581` |
 | `listMemories` | function | `949fe93c7c39` |
@@ -424,6 +426,7 @@ its row here even when its name and kind are unchanged.
 | `listScopes` | function | `569a98d16b90` |
 | `listSessionEvents` | function | `ebd96679d1c9` |
 | `openAgentSession` | function | `f9f1c5480ba4` |
+| `readWindowCounter` | function | `5a420ebce5e1` |
 | `rejectProposal` | function | `33be71cbec7e` |
 | `rejectProposalAnyKind` | function | `e5eb76037fc2` |
 | `releaseBudgetReservation` | function | `391df079ae05` |
@@ -748,6 +751,7 @@ its row here even when its name and kind are unchanged.
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
 | `deleteScope` | function | `d948256373ca` |
+| `deleteWindowCounter` | function | `13cc4dd10203` |
 | `deletedEmail` | function | `ae76aba2c615` |
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
@@ -775,6 +779,7 @@ its row here even when its name and kind are unchanged.
 | `getUserPasswordHashById` | function | `2521258de060` |
 | `getUserProfileAttributes` | function | `673f97623df1` |
 | `heartbeatSession` | function | `f792e4d2366f` |
+| `incrementWindowCounter` | function | `36c4508075c1` |
 | `insertApiKey` | function | `e0020f05cd8f` |
 | `insertAuditLog` | function | `5ab559d1a0ae` |
 | `insertEdge` | function | `5b307f86e993` |
@@ -827,6 +832,7 @@ its row here even when its name and kind are unchanged.
 | `readCloserSession` | function | `1a19fa49b914` |
 | `readForcedTenantTables` | function | `a78ad1adcdb7` |
 | `readUserDataExport` | function | `f6875e14f62d` |
+| `readWindowCounter` | function | `5a420ebce5e1` |
 | `recentDecisions` | function | `386c29c370a3` |
 | `recordCloserFailure` | function | `2ec57e2f8795` |
 | `recordEmbedFailure` | function | `cf6208524a42` |
