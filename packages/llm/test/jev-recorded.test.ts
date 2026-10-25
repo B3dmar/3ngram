@@ -2,9 +2,10 @@
 // Jev decide() against a RECORDED live response (issue #225). The fixture holds
 // the verbatim body of one POST /v1/systemone call made on 2026-10-25 with the
 // synthetic contract-fixture request and the pinned model (see its _meta). These
-// tests run #349's wire guards on it, and pin that the live answer shapes match
-// the SDK-derived contract fixture key for key, so a vendor-side shape change
-// shows up here as a diff instead of as a closer outage. fetch is stubbed.
+// tests run #349's wire guards on it and pin that the recorded answer shapes
+// match the SDK-derived contract fixture key for key. Both are static files, so
+// this catches the two fixtures drifting apart, not a vendor-side change: to
+// re-verify the vendor, re-record against the live API and diff. fetch is stubbed.
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createJevGateway, isFloatingModelAlias, parseDecideResponse } from '../src/jev.js'
