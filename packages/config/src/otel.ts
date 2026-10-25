@@ -95,6 +95,7 @@ export function resolveSentryEnvironment(
 }
 
 let initialized = false
+let sentryEnabled = false
 
 /**
  * Error tracking + tracing, DSN-gated: an empty SENTRY_DSN means fully
@@ -137,8 +138,22 @@ export function initObservability(options: { release?: string; role?: EnvRole } 
     beforeSend: (event) => scrubSentryEvent(event),
     beforeSendTransaction: (event) => scrubEvent(event),
   })
+  sentryEnabled = true
   registerCrashHandlers(true)
   logger.info({ release, environment }, 'observability: Sentry + OTel enabled')
+}
+
+/**
+ * Drains queued Sentry events before a deliberate exit (one-shot entrypoints).
+ * A no-op when Sentry is disabled; never throws, so it cannot change an exit code.
+ */
+export async function flushObservability(timeoutMs = 2000): Promise<void> {
+  if (!sentryEnabled) return
+  try {
+    await Sentry.flush(timeoutMs)
+  } catch {
+    // Best effort: a failed flush must not mask the pass's own outcome.
+  }
 }
 
 function registerCrashHandlers(sentryEnabled: boolean): void {

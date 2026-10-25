@@ -164,6 +164,7 @@ its row here even when its name and kind are unchanged.
 | Export | Kind | Signature |
 |---|---|---|
 | `crashSafeError` | function | `17e662f1ed24` |
+| `flushObservability` | function | `dc10f59c42cc` |
 | `initObservability` | function | `bb8fa29c2e18` |
 | `resolveSentryEnvironment` | function | `fd88a78c181e` |
 | `scrubEvent` | function | `e24aa095d332` |
@@ -384,6 +385,7 @@ its row here even when its name and kind are unchanged.
 | `briefing` | function | `981b58704849` |
 | `chooseProposedEdge` | function | `8aad9a8c1b5d` |
 | `closeAgentSession` | function | `3010834f16c1` |
+| `closeDb` | function | `07b382de379c` |
 | `closeSessionRun` | function | `7be3707051e7` |
 | `completeAgentSessionTriage` | function | `34348b3754ec` |
 | `consolidate` | function | `b7af3875f5b6` |

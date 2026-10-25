@@ -133,7 +133,7 @@ export function getAdminDb(): NodePgDatabase {
   return getDb()
 }
 
-/** Test-only teardown hook. */
+/** Teardown hook: closes the pool. Used by one-shot entrypoints (apps/worker/src/once.ts) and tests. */
 export async function closeDb(): Promise<void> {
   if (pool) {
     await pool.end()

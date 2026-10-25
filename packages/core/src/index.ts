@@ -4,7 +4,8 @@
 // block below.
 // --- account lifecycle: self-serve deletion ---
 
-export { assertRlsInForce, ResourceLimitExceededError, RlsGuardError } from '@3ngram/db'
+// closeDb: pool teardown for one-shot entrypoints (apps reach db through core).
+export { assertRlsInForce, closeDb, ResourceLimitExceededError, RlsGuardError } from '@3ngram/db'
 // --- budget: access gate port + Apache budget gate ---
 export type {
   ResourceLimitKind,

@@ -78,6 +78,9 @@ published artifact.
 docker pull ghcr.io/b3dmar/3ngram-worker:latest
 ```
 
+Override the command with `node dist/once.js <job>` to run one pass without
+Redis ([Worker modes](/operate#worker-modes)).
+
 The worker has no HTTP surface: no `EXPOSE`, no `PORT`, and its `HEALTHCHECK`
 is a process-liveness probe (`node -e "process.exit(0)"`) rather than an
 endpoint check. This is **PID-only liveness**: a missing `REDIS_URL` is a
