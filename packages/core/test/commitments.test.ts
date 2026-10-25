@@ -440,6 +440,9 @@ describe('resolveForClosedRun (session closer)', () => {
     // would re-enter resolveSessionProvenance and resurrect the row.
     expect(call.sessionRunId).toBeUndefined()
     expect(call).toMatchObject({ to: 'resolved', actorKind: 'worker' })
+    // The closer never supplies a resolve reason (issue #234), so the write
+    // clears any earlier one: a reason explains one transition.
+    expect(call.resolutionReason).toBeUndefined()
   })
 
   it('abandons the pass (epoch-fenced) when the write-time epoch guard rejects it — issue #185', async () => {

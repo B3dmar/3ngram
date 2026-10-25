@@ -7,7 +7,8 @@
 // append-only `memory_events.payload`. Proves:
 //   - a transition WITH a reason stores it; one WITHOUT clears it (a reason
 //     explains one transition) — for resolve, unresolve, waiting and expired,
-//     and for the reasonless writers (sweep expiry, revise demote)
+//     and for the reasonless writers (sweep expiry, revise demote, an
+//     accepted supersedes proposal whose successor is not a commitment)
 //   - the audit event still carries ONLY the session provenance
 //   - the revise carry moves the reason with the commitment row
 //   - the DB length CHECK is a backstop generated from the schema bound
@@ -16,9 +17,11 @@
 import { MAX_RESOLUTION_REASON_LENGTH } from '@3ngram/schema'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
+  applyProposal,
   CommitmentNotFoundError,
   closeDb,
   getMemoryHistory,
+  insertProposals,
   reviseMemory,
   sweepCommitments,
   transitionCommitment,
@@ -259,6 +262,50 @@ describe('reasonless writers clear a stale reason (#234)', () => {
       predecessorId: memoryId,
       edgeType: 'supersedes',
     })
+
+    const r = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [commitmentId])
+    expect(r.rows[0].status).toBe('resolved')
+    expect(await storedReason(commitmentId)).toBeNull()
+  })
+
+  it('an accepted supersedes proposal over a non-commitment successor resolves without a reason, clearing it', async () => {
+    const { memoryId, commitmentId } = await seedCommitment(userA, 'proposal')
+    await transitionCommitment({
+      userId: userA,
+      commitmentId,
+      to: 'waiting',
+      actorKind: ACTOR,
+      resolutionReason: 'waiting on review',
+    })
+    const successor = await writeMemory({
+      userId: userA,
+      memoryType: 'note',
+      topic: 'follow up',
+      content: 'the follow-up happened',
+      scope: 'work',
+      project: '3ngram',
+      tags: [],
+      contentHash: `hash-proposal-${crypto.randomUUID()}`,
+      actorKind: ACTOR,
+    })
+    await withTenant(userA, (tx) =>
+      insertProposals(tx, [
+        {
+          userId: userA,
+          fromId: successor.id,
+          toId: memoryId,
+          edgeType: 'supersedes',
+          memoryType: 'commitment',
+          similarity: 0.95,
+        },
+      ]),
+    )
+    const proposal = await ownerPool.query(
+      'SELECT id FROM consolidation_proposals WHERE user_id = $1 AND to_id = $2',
+      [userA, memoryId],
+    )
+
+    await withTenant(userA, (tx) => applyProposal(tx, userA, proposal.rows[0].id, ACTOR))
 
     const r = await ownerPool.query('SELECT status FROM commitments WHERE id = $1', [commitmentId])
     expect(r.rows[0].status).toBe('resolved')

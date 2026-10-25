@@ -14,7 +14,8 @@ import { loadEnv } from './env.js'
  * class, budget gate, OAuth rejection, breach-check outage), and blanket
  * redaction would hash every one of those. The resolve input's `reason` never
  * reaches a log call (transports log class names only) — pinned by the
- * resolve-reason integration test, which captures every line a resolve emits.
+ * server parity integration test (apps/server/test/integration/
+ * parity.int.test.ts), which captures every line a resolve emits.
  */
 export const REDACTED_FIELDS = [
   'answer',

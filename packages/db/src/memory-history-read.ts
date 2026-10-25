@@ -5,9 +5,9 @@
 // keys — the one allowlisted payload key, `sessionRunId`, is re-parsed through
 // its strict payload schema. The single deliberate exception is the inspected
 // memory's `lastResolutionReason` (issue #234): the owner's own evidence text
-// for its commitment's latest transition, never logged. It runs inside withTenant(); RLS scopes all rows to
-// the caller. The raw SQL reads + raw row shapes live in
-// ./memory-history-queries.ts (500-line cap).
+// for its commitment's latest transition, never logged. It runs inside
+// withTenant(); RLS scopes all rows to the caller. The raw SQL reads + raw row
+// shapes live in ./memory-history-queries.ts (500-line cap).
 import { sessionProvenancePayloadSchema } from '@3ngram/schema'
 import type { TenantTx } from './client.js'
 import {
