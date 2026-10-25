@@ -30,7 +30,8 @@ export function settingsRouter(): Router {
   router.put('/api/v1/settings/judgment', (req, res) => {
     void guard('settings.judgment.put', res, async () => {
       const body = judgmentPolicyBodySchema.parse(req.body)
-      res.status(200).json(judgmentResponse(await setJudgmentPolicy(tenant(req), body.mode)))
+      const stored = await setJudgmentPolicy(tenant(req), body.mode, 'user_api')
+      res.status(200).json(judgmentResponse(stored))
     })
   })
 

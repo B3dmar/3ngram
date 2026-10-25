@@ -1091,6 +1091,15 @@ describe('REST /api/v1/settings/judgment (runtime role, real DB, issue #225)', (
       body: { mode: 'off' },
     })
     expect(((await off.json()) as { mode: string }).mode).toBe('off')
+    // Each change leaves a content-free consent record: on, then off.
+    const audit = await ownerPool.query(
+      `SELECT metadata->>'mode' AS mode FROM audit_log
+       WHERE action = 'settings.judgment.set'
+         AND user_id = (SELECT id FROM users WHERE email = $1)
+       ORDER BY created_at, id`,
+      [emailA],
+    )
+    expect(audit.rows.map((row: { mode: string }) => row.mode).slice(-2)).toEqual(['on', 'off'])
   })
 
   it('400s an unknown mode or an extra key, and writes nothing', async () => {

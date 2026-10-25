@@ -296,6 +296,7 @@ its row here even when its name and kind are unchanged.
 | `InlineFacets` | interface | `c7254b1afd05` |
 | `InvalidCommitmentTransitionError` | class | `35bdd3c53d32` |
 | `InvalidEmbeddingError` | class | `e7642376886d` |
+| `JUDGMENT_POLICY_AUDIT_ACTION` | const | `515fcd14a3a0` |
 | `JudgmentPolicySetting` | interface | `2beed10014fa` |
 | `LEGACY_SURFACING_POLICY` | const | `ec760cc39997` |
 | `Limits` | interface | `8dfe7e48d9c8` |
@@ -455,7 +456,7 @@ its row here even when its name and kind are unchanged.
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
 | `selectResolvable` | function | `6026659c6ba3` |
-| `setJudgmentPolicy` | function | `5389b3575240` |
+| `setJudgmentPolicy` | function | `4b792c35865f` |
 | `setRetrievalDefault` | function | `0ccb8427e53f` |
 | `setScopeAliases` | function | `53ba3adf4e3e` |
 | `setWriteDefault` | function | `8f06eefe3633` |

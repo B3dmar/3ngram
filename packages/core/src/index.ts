@@ -277,6 +277,7 @@ export {
 export {
   getJudgmentPolicy,
   isJudgmentEnabled,
+  JUDGMENT_POLICY_AUDIT_ACTION,
   type JudgmentPolicySetting,
   setJudgmentPolicy,
 } from './settings/judgment.js'
