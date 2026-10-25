@@ -334,6 +334,7 @@ its row here even when its name and kind are unchanged.
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
 | `RetryFailedEmbedsResult` | interface | `5ce9653631d7` |
+| `ReviseDispositionOptions` | interface | `5767d0767ee9` |
 | `ReviseResult` | interface | `b7c38ab71907` |
 | `RlsGuardError` | class | `69c1f89a6de9` |
 | `SELFHOST_LIMITS` | const | `8a65a36d9637` |
@@ -442,6 +443,7 @@ its row here even when its name and kind are unchanged.
 | `resolveWriteScopePolicy` | function | `7b3806b157f2` |
 | `retryFailedEmbeds` | function | `814fcebeb911` |
 | `revise` | function | `3f4cc72c85ff` |
+| `reviseDisposition` | function | `e2beadf99fb3` |
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
@@ -575,6 +577,9 @@ its row here even when its name and kind are unchanged.
 | `ApiKeyMetadata` | interface | `79f070aa6a83` |
 | `AppliedFactProposal` | interface | `9ad3015726f8` |
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
+| `ArchiveOutcome` | type | `16b337b1bd53` |
+| `ArchivePolicy` | type | `05584b476e9a` |
+| `ArchiveWrite` | interface | `d4698df30d58` |
 | `AsOf` | interface | `7ff84f49ed40` |
 | `AuditLogEntry` | interface | `7be038eca9e3` |
 | `AuthorizedClient` | interface | `a1b0bc5ae156` |
@@ -736,6 +741,8 @@ its row here even when its name and kind are unchanged.
 | `applyProposal` | function | `fa33f54559a5` |
 | `archiveBlockerMemory` | function | `3ad80537eb43` |
 | `archiveMemory` | function | `a710fad9d8a2` |
+| `archiveMemoryDisposition` | function | `4ce7d8e90540` |
+| `archiveMemoryIn` | function | `d5624527e5cd` |
 | `assertRlsInForce` | function | `d2c61c280d14` |
 | `assertSessionRunOwned` | function | `49433fabc3b3` |
 | `auditLog` | const | `16136a25b871` |
@@ -984,6 +991,7 @@ its row here even when its name and kind are unchanged.
 | `AgentSessionTriageCompleteResponse` | type | `f65d521a2c8f` |
 | `AgentSessionTriageStatus` | type | `c575ca6b65f7` |
 | `ApiKeyId` | type | `7c3726c9d129` |
+| `ArchiveEventPayload` | type | `5e06607b321d` |
 | `ArchiveMemoryBody` | type | `e45c53e264c9` |
 | `AsOfInput` | type | `80bbe425bddf` |
 | `AuthorizeRequest` | type | `68f7fb6a9aa9` |
@@ -1117,6 +1125,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_RESOLUTION_REASON_LENGTH` | const | `ccbdcfae6619` |
 | `MAX_REST_ERROR_DETAIL_LENGTH` | const | `c6a35723ead3` |
 | `MAX_REST_PROPOSALS_LIMIT` | const | `f1509546a975` |
+| `MAX_REVISE_DISPOSITION_IDS` | const | `87fc9796fe9a` |
 | `MAX_SCOPE_ALIASES` | const | `2dab13b8d48c` |
 | `MAX_SEARCH_LIMIT` | const | `3b4be4f038c1` |
 | `MAX_SESSION_EVENTS_LIMIT` | const | `83a104e42c17` |
@@ -1146,6 +1155,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryStatus` | type | `a1a65a8fa7db` |
 | `MemoryType` | type | `6d5684c2a472` |
 | `NativeRememberInput` | type | `88272fc24856` |
+| `NativeReviseDispositionInput` | type | `9b348f04906f` |
 | `NativeReviseInput` | type | `576a3ddcc8fa` |
 | `NativeReviseRequest` | type | `a97acecbb4c4` |
 | `OAuthClientIdParam` | type | `cdff48c25b49` |
@@ -1187,6 +1197,11 @@ its row here even when its name and kind are unchanged.
 | `ReviewProposalsInput` | type | `869d9b031012` |
 | `ReviewProposalsOutput` | type | `9775221bd01d` |
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
+| `ReviseDispositionKind` | type | `94d9ffd08b65` |
+| `ReviseDispositionOutcome` | type | `4191aeeac157` |
+| `ReviseDispositionOutcomeKind` | type | `ac0a6e1f1c44` |
+| `ReviseDispositionOutput` | type | `caab7b526c67` |
+| `ReviseDispositionRejection` | type | `35b05f10af83` |
 | `ReviseEdgeIntent` | type | `866315193454` |
 | `ReviseInput` | type | `bc5404423a89` |
 | `ReviseMoveEventPayload` | type | `4d4cbcd8ac0b` |
@@ -1195,6 +1210,7 @@ its row here even when its name and kind are unchanged.
 | `ReviseToolArgs` | type | `b45806d452a9` |
 | `ReviseToolInput` | type | `e603fdbc008c` |
 | `ReviseToolOutput` | type | `616dbf434372` |
+| `ReviseToolOutputV2` | type | `a84aa9f77762` |
 | `ReviseToolRequest` | type | `25cabf691597` |
 | `ReviseToolRequestArgs` | type | `ff67cc775b88` |
 | `SESSION_EXCERPT_TTL_MS` | const | `e2a87bfdd69f` |
@@ -1269,6 +1285,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
+| `archiveEventPayloadSchema` | const | `91db38f923d5` |
 | `archiveMemoryBodySchema` | const | `159c881512f8` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
@@ -1383,6 +1400,8 @@ its row here even when its name and kind are unchanged.
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `6f61f82c064f` |
+| `nativeReviseDispositionBodySchema` | const | `08beb6754886` |
+| `nativeReviseDispositionInputSchema` | const | `261d2ba23834` |
 | `nativeReviseInputSchema` | const | `008be3067068` |
 | `nativeReviseMoveBodySchema` | const | `1d56bb00cf48` |
 | `nativeReviseMoveInputSchema` | const | `b1bf05d9c611` |
@@ -1430,6 +1449,11 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
 | `reviewProposalsRegisterOutputShapeV2` | const | `a43afb37177a` |
 | `reviewProposalsRegisterShape` | const | `c147835e9d4d` |
+| `reviseDispositionKindSchema` | const | `92b1b86ce629` |
+| `reviseDispositionOutcomeKindSchema` | const | `0081a9e2c446` |
+| `reviseDispositionOutcomeSchema` | const | `e845ff9b7a31` |
+| `reviseDispositionOutputSchema` | const | `637122fad7e5` |
+| `reviseDispositionRejectionSchema` | const | `2587d8534c9d` |
 | `reviseEdgeIntentSchema` | const | `58d5316cb310` |
 | `reviseInputSchema` | const | `09ffd4a9974d` |
 | `reviseMoveEventPayloadSchema` | const | `40e10b62fdac` |
@@ -1437,7 +1461,8 @@ its row here even when its name and kind are unchanged.
 | `reviseRequestSchema` | const | `72585de0b3c9` |
 | `reviseToolInputSchema` | const | `1d077958627a` |
 | `reviseToolOutputSchema` | const | `1217ef364cc8` |
-| `reviseToolRequestSchema` | const | `f279f08c5739` |
+| `reviseToolOutputV2Schema` | const | `d6203c8f174d` |
+| `reviseToolRequestSchema` | const | `fea676742b7f` |
 | `scopeAliasesSchema` | const | `3b20b9ac8157` |
 | `scopeNameSchema` | const | `3d34f13b9953` |
 | `scopeProjectSelectorSchema` | const | `2fc41e46ba86` |
@@ -1445,7 +1470,7 @@ its row here even when its name and kind are unchanged.
 | `scopeSchema` | const | `c80b675a855b` |
 | `searchFiltersSchema` | const | `95db88e873a1` |
 | `searchFiltersV2Schema` | const | `a9ee22e6bf07` |
-| `searchHitCompactSchema` | const | `60664d99da4b` |
+| `searchHitCompactSchema` | const | `af37fb623ef8` |
 | `searchHitSchema` | const | `1ebde3a70a0c` |
 | `searchInputSchema` | const | `1b30debf20eb` |
 | `searchOrderSchema` | const | `53e1f0ae783f` |
@@ -1458,8 +1483,8 @@ its row here even when its name and kind are unchanged.
 | `searchQueryV4Schema` | const | `fc8e00d5ee44` |
 | `searchRestResponseV2Schema` | const | `f21903378843` |
 | `searchToolOutputSchema` | const | `4df1b86b85cf` |
-| `searchToolOutputV2Schema` | const | `e996610620ee` |
-| `searchToolOutputV3Schema` | const | `81581242adfe` |
+| `searchToolOutputV2Schema` | const | `26363788d4b2` |
+| `searchToolOutputV3Schema` | const | `0795aa80c8d5` |
 | `sessionCloserJobDataSchema` | const | `d8b375861c64` |
 | `sessionCloserJobId` | function | `d84e5b9d3442` |
 | `sessionEventSchema` | const | `380c2a93e5e9` |

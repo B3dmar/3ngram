@@ -45,3 +45,4 @@ export {
   type ReviseResult,
   revise,
 } from './revise.js'
+export { type ReviseDispositionOptions, reviseDisposition } from './revise-disposition.js'

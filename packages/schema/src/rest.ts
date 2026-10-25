@@ -575,7 +575,7 @@ export const accountDeleteBodySchema = z
   .strict()
 export type AccountDeleteBody = z.infer<typeof accountDeleteBodySchema>
 
-/** Optional body for REST-only POST /api/v1/memories/:id/archive. */
+/** Optional body for POST /api/v1/memories/:id/archive (the operator form; revise archive is the guarded one). */
 export const archiveMemoryBodySchema = z
   .object({
     sessionRunId: sessionRunIdSchema

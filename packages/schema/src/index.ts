@@ -294,6 +294,7 @@ export type {
   ReviseToolArgs,
   ReviseToolInput,
   ReviseToolOutput,
+  ReviseToolOutputV2,
   ScopeRecordOutput,
   SearchFiltersInput,
   SearchFiltersV2Input,
@@ -351,6 +352,7 @@ export {
   reviewProposalsRegisterShape,
   reviseToolInputSchema,
   reviseToolOutputSchema,
+  reviseToolOutputV2Schema,
   reviseToolRequestSchema,
   scopeAliasesSchema,
   scopeNameSchema,
@@ -511,6 +513,25 @@ export {
   reviewProposalsOutputV2Schema,
   reviewProposalsRegisterOutputShapeV2,
 } from './review-fact-proposals.js'
+// --- revise dispositions (issue #216 umbrella) — appended block ---
+export {
+  type ArchiveEventPayload,
+  archiveEventPayloadSchema,
+  MAX_REVISE_DISPOSITION_IDS,
+  type NativeReviseDispositionInput,
+  nativeReviseDispositionBodySchema,
+  nativeReviseDispositionInputSchema,
+  type ReviseDispositionKind,
+  type ReviseDispositionOutcome,
+  type ReviseDispositionOutcomeKind,
+  type ReviseDispositionOutput,
+  type ReviseDispositionRejection,
+  reviseDispositionKindSchema,
+  reviseDispositionOutcomeKindSchema,
+  reviseDispositionOutcomeSchema,
+  reviseDispositionOutputSchema,
+  reviseDispositionRejectionSchema,
+} from './revise-disposition.js'
 export type { Scope } from './scope.js'
 export { DEFAULT_SCOPES, scopeSchema } from './scope.js'
 // --- search cursor pagination + compact projection (MCP tool IO, issue #49) ---

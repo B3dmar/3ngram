@@ -35,6 +35,7 @@ const search = vi.fn()
 const searchDashboardPage = vi.fn()
 const getFacts = vi.fn()
 const revise = vi.fn()
+const reviseDisposition = vi.fn()
 const resolveByMemoryId = vi.fn()
 const archiveMemory = vi.fn()
 const briefing = vi.fn()
@@ -247,6 +248,7 @@ vi.mock('@3ngram/core', async () => ({
   searchDashboardPage,
   getFacts,
   revise,
+  reviseDisposition,
   resolveByMemoryId,
   archiveMemory,
   briefing,
@@ -1462,6 +1464,31 @@ describe('POST /api/v1/memories/:id/revise', () => {
     expect(revise).toHaveBeenCalledWith(
       TENANT,
       expect.objectContaining({ kind: 'move', predecessorId: NEW_ID, project: 'rdg-npd' }),
+      'user_api',
+      expect.anything(),
+    )
+  })
+
+  it('archive disposition: the URL id is the one-element batch, outcomes echoed (#217)', async () => {
+    reviseDisposition.mockResolvedValue({
+      kind: 'archive',
+      outcomes: [{ memoryId: NEW_ID, outcome: 'already_archived' }],
+    })
+    const res = await call(`/api/v1/memories/${NEW_ID}/revise`, {
+      method: 'POST',
+      key: VALID_KEY,
+      // The SDK sends predecessorId for every kind; the URL wins.
+      body: { kind: 'archive', predecessorId: NEW_ID },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: NEW_ID, outcome: 'already_archived' }],
+    })
+    expect(revise).not.toHaveBeenCalled()
+    expect(reviseDisposition).toHaveBeenCalledWith(
+      TENANT,
+      { kind: 'archive', memoryIds: [NEW_ID] },
       'user_api',
       expect.anything(),
     )

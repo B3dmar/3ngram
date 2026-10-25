@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit tests — no DB. LOCK ORDER of the two archive helpers (Codex P2).
+// Unit tests — no DB. LOCK ORDER of the blocker archive helper (Codex P2). The
+// generic archive moved to memory-disposition.ts (issue #217) and is pinned in
+// memory-disposition.test.ts.
 //
 // resolveSessionProvenance may take the tenant/project attach advisory lock;
 // reviseMemory therefore resolves provenance BEFORE it locks any memory row.
@@ -41,8 +43,7 @@ vi.mock('../src/memory-edges.js', () => ({
 }))
 vi.mock('../src/pg-errors.js', () => ({ isUniqueViolation: () => false }))
 
-const { ActiveMemoryNotFoundError, archiveBlockerMemory, archiveMemory, BlockerNotFoundError } =
-  await import('../src/memory-revise.js')
+const { archiveBlockerMemory, BlockerNotFoundError } = await import('../src/memory-revise.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
 const MEMORY_ID = '00000000-0000-7000-8000-0000000000aa'
@@ -98,11 +99,6 @@ afterEach(() => {
 })
 
 const cases = [
-  {
-    name: 'archiveMemory',
-    run: () => archiveMemory(USER, MEMORY_ID, 'user_api', RUN_ID, NOW),
-    notFound: ActiveMemoryNotFoundError,
-  },
   {
     name: 'archiveBlockerMemory',
     run: () => archiveBlockerMemory(USER, MEMORY_ID, 'user_api', RUN_ID, NOW),

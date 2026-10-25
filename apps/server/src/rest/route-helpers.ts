@@ -3,7 +3,7 @@
 // authenticated tenant access, temporal coercion, and uniform error mapping.
 import { log } from '@3ngram/config'
 import { crashSafeError } from '@3ngram/config/otel'
-import type { AsOfInput, FactsRangeInput } from '@3ngram/schema'
+import { type AsOfInput, type FactsRangeInput, reviseDispositionKindSchema } from '@3ngram/schema'
 import type { Request, Response } from 'express'
 import { mapRestError } from './errors.js'
 
@@ -14,6 +14,22 @@ export function defined<T extends Record<string, unknown>>(
   return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined)) as {
     [K in keyof T]?: Exclude<T[K], undefined>
   }
+}
+
+const DISPOSITION_KINDS: ReadonlySet<unknown> = new Set(reviseDispositionKindSchema.options)
+
+/**
+ * Merge the revise route's URL id into its body BEFORE the single parse (the
+ * URL wins): the predecessorId of a successor or move, the one-element
+ * memoryIds batch of a disposition (issue #217). A body predecessorId on a
+ * disposition is dropped rather than rejected, since the SDK sends it for every
+ * kind and the URL governs anyway.
+ */
+export function mergeReviseTarget(body: unknown, id: string | undefined): Record<string, unknown> {
+  const fields = { ...(body as Record<string, unknown> | undefined) }
+  if (!DISPOSITION_KINDS.has(fields.kind)) return { ...fields, predecessorId: id }
+  const { predecessorId: _urlWins, ...rest } = fields
+  return { ...rest, memoryIds: [id] }
 }
 
 /** Map optional ISO coordinates to core Date values. */

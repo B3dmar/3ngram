@@ -48,6 +48,7 @@ import {
   resolveByMemoryId,
   resolveRetrievalPolicy,
   revise,
+  reviseDisposition,
 } from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
 import {
@@ -72,7 +73,7 @@ import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
 import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
-import { defined, guard, tenant, toAsOf, toRange } from './route-helpers.js'
+import { defined, guard, mergeReviseTarget, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
 import { sessionRouter } from './session-router.js'
 
@@ -667,14 +668,23 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // POST /api/v1/memories/:id/revise — revise (mirrors the MCP revise tool). The
-  // body is the full successor write, or a `kind: "move"` refile (issue #233);
-  // core revise() is THE validation boundary.
-  // :id is the predecessor — merged into the body as predecessorId BEFORE the
-  // single parse, so the URL and body cannot disagree (the URL wins).
+  // body is the full successor write, a `kind: "move"` refile (issue #233), or
+  // a `kind: "archive"` disposition (issue #217); core is THE validation
+  // boundary.
+  // :id is the target — merged into the body BEFORE the single parse, so the URL
+  // and body cannot disagree (the URL wins): as predecessorId for a successor or
+  // move, as the one-element memoryIds batch for a disposition.
   router.post('/api/v1/memories/:id/revise', (req, res) => {
     void guard('revise', res, async () => {
-      const merged = { ...(req.body as Record<string, unknown>), predecessorId: req.params.id }
-      const input = reviseToolRequestSchema.parse(merged)
+      const input = reviseToolRequestSchema.parse(mergeReviseTarget(req.body, req.params.id))
+      // Only a disposition carries `memoryIds` (same dispatch as the MCP tool).
+      if ('memoryIds' in input) {
+        const result = await reviseDisposition(tenant(req), input, 'user_api', {
+          access: options.access,
+        })
+        res.status(200).json(result)
+        return
+      }
       const gatewayOpts =
         options.gateway === undefined
           ? { access: options.access, limits: options.limits }
@@ -729,7 +739,8 @@ export function restRouter(options: RestRouterOptions): Router {
   })
 
   // POST /api/v1/memories/:id/archive — archive an active memory of ANY type
-  // (adoption-gate Decision D: REST-only, no MCP tool mirrors it). status flips
+  // (the unguarded operator form; the agent-facing form is the revise archive
+  // disposition, issue #217, which rejects blockers and live commitments). status flips
   // 'active' -> 'archived'; valid_to stays NULL, so the row lands in the archived
   // bucket GET /memories?status=archived and GET /stats read. Optional body
   // carries sessionRunId; omitted body is the same as {}. A malformed uuid path

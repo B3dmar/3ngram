@@ -158,6 +158,23 @@ describe('ThreengramClient request shape', () => {
     expect(result).toEqual(payload)
   })
 
+  it('revise with kind archive targets the path id and returns the per-id outcome (#217)', async () => {
+    const id = crypto.randomUUID()
+    const payload = { kind: 'archive', outcomes: [{ memoryId: id, outcome: 'archived' }] }
+    const { fetch, calls } = stubFetch(200, payload)
+    const client = new ThreengramClient(CONFIG, fetch)
+
+    // Typed by the disposition overload: the result is the outcome list, no cast.
+    const result = await client.revise(id, { kind: 'archive' })
+    const outcome: string | undefined = result.outcomes[0]?.outcome
+
+    const call = only(calls)
+    expect(call.url).toBe(`https://api.example.com/api/v1/memories/${id}/revise`)
+    expect(call.body).toEqual({ kind: 'archive', predecessorId: id })
+    expect(outcome).toBe('archived')
+    expect(result).toEqual(payload)
+  })
+
   it('resolve POSTs /api/v1/memories/:id/resolve with only the status in the body', async () => {
     const id = crypto.randomUUID()
     const payload = { commitmentId: crypto.randomUUID(), status: 'resolved' }

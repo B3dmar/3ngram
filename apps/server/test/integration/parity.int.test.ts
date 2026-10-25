@@ -674,6 +674,107 @@ describe('A4 revise parity (successor semantics)', () => {
   })
 })
 
+/** Write one memory for a tenant over REST and return its id. */
+async function restRemember(key: string, memoryType: string, label: string): Promise<string> {
+  const res = await rest('/api/v1/memories', {
+    method: 'POST',
+    key,
+    body: { memoryType, topic: 'disposition', content: `${label}-${crypto.randomUUID()}` },
+  })
+  return ((await res.json()) as { memory: { id: string } }).memory.id
+}
+
+describe('revise archive disposition parity (issue #217)', () => {
+  it('same per-id outcomes over REST (URL id) and MCP (memoryIds), audited per transport', async () => {
+    const restId = await restRemember(keyA, 'decision', 'archive-rest')
+    const mcpId = await restRemember(keyA, 'decision', 'archive-mcp')
+    const blockerId = await restRemember(keyA, 'blocker', 'archive-blocker')
+    const foreignId = await restRemember(keyB, 'decision', 'archive-foreign')
+
+    const restArchive = (id: string, key = keyA) =>
+      rest(`/api/v1/memories/${id}/revise`, { method: 'POST', key, body: { kind: 'archive' } })
+    const client = await connect(tokenA)
+    const mcpArchive = async (memoryIds: string[]) => {
+      const res = await client.callTool({
+        name: 'revise',
+        arguments: { kind: 'archive', memoryIds },
+      })
+      expect(res.isError).toBeFalsy()
+      return res.structuredContent
+    }
+
+    const restFirst = await restArchive(restId)
+    expect(restFirst.status).toBe(200)
+    expect(await restFirst.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'archived' }],
+    })
+    expect(await mcpArchive([mcpId, blockerId, foreignId])).toEqual({
+      kind: 'archive',
+      outcomes: [
+        { memoryId: mcpId, outcome: 'archived' },
+        { memoryId: blockerId, outcome: 'rejected', reason: 'blocker' },
+        { memoryId: foreignId, outcome: 'rejected', reason: 'not_found' },
+      ],
+    })
+
+    // The repeat is idempotent on both; a rejection is a 200 outcome, never a 404.
+    expect(await (await restArchive(mcpId)).json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: mcpId, outcome: 'already_archived' }],
+    })
+    expect(await mcpArchive([restId])).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'already_archived' }],
+    })
+    const restBlocker = await restArchive(blockerId)
+    expect(restBlocker.status).toBe(200)
+    expect(await restBlocker.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: blockerId, outcome: 'rejected', reason: 'blocker' }],
+    })
+    // Tenant B over REST: A's row is not_found (RLS), as A's view of B's row was.
+    expect(await (await restArchive(restId, keyB)).json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: restId, outcome: 'rejected', reason: 'not_found' }],
+    })
+    await client.close()
+
+    const events = await ownerPool.query(
+      "SELECT memory_id, actor_kind, payload FROM memory_events WHERE memory_id = ANY($1::uuid[]) AND event_kind = 'archive' ORDER BY id",
+      [[restId, mcpId, blockerId, foreignId]],
+    )
+    expect(events.rows).toEqual([
+      { memory_id: restId, actor_kind: 'user_api', payload: { disposition: 'archive' } },
+      { memory_id: mcpId, actor_kind: 'user_mcp', payload: { disposition: 'archive' } },
+    ])
+  })
+
+  it('REST: the URL wins over a body predecessorId or memoryIds, and a malformed kind is 400', async () => {
+    const id = await restRemember(keyA, 'fact', 'archive-url-wins')
+    const other = await restRemember(keyA, 'fact', 'archive-not-targeted')
+    const res = await rest(`/api/v1/memories/${id}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive', predecessorId: other, memoryIds: [other] },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      kind: 'archive',
+      outcomes: [{ memoryId: id, outcome: 'archived' }],
+    })
+    const untouched = await ownerPool.query('SELECT status FROM memories WHERE id = $1', [other])
+    expect(untouched.rows[0]?.status).toBe('active')
+
+    const bad = await rest(`/api/v1/memories/${id}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive', reason: 'free text is not part of the contract' },
+    })
+    expect(bad.status).toBe(400)
+  })
+})
+
 describe('A4 resolve parity (FSM status output)', () => {
   it('returns {commitmentId,status} with identical FSM transitions on both', async () => {
     // REST: remember a commitment, resolve it, then unresolve back to open.

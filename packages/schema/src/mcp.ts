@@ -30,11 +30,15 @@ import { edgeTypeSchema, memoryStatusSchema, memoryTypeSchema } from './memory.j
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { proposalsCursorSchema } from './proposals-page.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
+import {
+  nativeReviseDispositionInputSchema,
+  reviseDispositionOutputSchema,
+} from './revise-disposition.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
 import {
   nativeReviseInputSchema,
-  nativeReviseRequestSchema,
+  nativeReviseMoveInputSchema,
   projectSchema,
   rememberInputSchema,
 } from './write.js'
@@ -164,11 +168,18 @@ export type RememberToolOutput = z.infer<typeof rememberToolOutputSchema>
 export const reviseToolInputSchema = nativeReviseInputSchema
 export type ReviseToolInput = z.infer<typeof reviseToolInputSchema>
 /**
- * What the tool actually accepts (issue #233): the successor object above OR a
- * move. Registered as the tool's input schema and parsed by both transports;
+ * What the tool actually accepts: a disposition over a batch of ids (issue
+ * #217), a move (issue #233), or the successor object above. Registered as the
+ * tool's input schema and parsed by both transports, which hand a disposition
+ * to core reviseDisposition() and the other two to core revise() (whose own
+ * contract, nativeReviseRequestSchema, stays successor | move).
  * `reviseToolInputSchema` keeps its object shape for callers that compose it.
  */
-export const reviseToolRequestSchema = nativeReviseRequestSchema
+export const reviseToolRequestSchema = z.union([
+  nativeReviseDispositionInputSchema,
+  nativeReviseMoveInputSchema,
+  nativeReviseInputSchema,
+])
 export type ReviseToolRequest = z.infer<typeof reviseToolRequestSchema>
 /** Caller-side shape of either kind; what the SDK's revise body derives from. */
 export type ReviseToolRequestArgs = z.input<typeof reviseToolRequestSchema>
@@ -194,6 +205,16 @@ export const reviseToolOutputSchema = z
   .strict()
   .meta(OPEN_OUTPUT_META)
 export type ReviseToolOutput = z.infer<typeof reviseToolOutputSchema>
+/**
+ * What the tool actually returns (issue #217): the written/moved memory above,
+ * or a disposition's per-id outcomes. A union under a new name so
+ * {@link reviseToolOutputSchema} keeps its shape for existing callers.
+ */
+export const reviseToolOutputV2Schema = z.union([
+  reviseToolOutputSchema,
+  reviseDispositionOutputSchema,
+])
+export type ReviseToolOutputV2 = z.infer<typeof reviseToolOutputV2Schema>
 
 // ---------------------------------------------------------------------------
 // resolve
