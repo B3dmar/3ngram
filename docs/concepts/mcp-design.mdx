@@ -78,7 +78,7 @@ Short queries (≤2 whitespace tokens) activate a topic entity-match bonus (topi
 
 ## Rate limiting & sessions
 
-Redis-backed, per-user + per-key. The Node adapter receives only the verified `AuthInfo` produced by bearer middleware; tenant and tool authorization stay inside the per-request handler.
+Redis- or Postgres-backed (`RATE_LIMIT_STORE`), per-user + per-key. The Node adapter receives only the verified `AuthInfo` produced by bearer middleware; tenant and tool authorization stay inside the per-request handler.
 
 **Sessions are stateless by design**: all MCP session state lives in Postgres/Redis, never in-process — any server instance serves any request. This makes redeploys non-events. `.well-known/mcp` server metadata (SEP-1649) is tracked but **deferred until the SEP stabilizes**.
 

@@ -100,6 +100,9 @@ Current limit dimensions are:
 - per-IP on login and OAuth authorization-server endpoints;
 - per API key/source on `/api/v1`.
 
+The `/oauth/token` progressive-delay counter (failed exchanges per client)
+follows `RATE_LIMIT_STORE` too, so Redis and Postgres share it across replicas.
+
 If the store is unavailable, rate limiting fails open so the service keeps serving.
 Operators should treat repeated `rate-limit: store unavailable` warnings as a
 degraded-protection incident.
@@ -135,8 +138,9 @@ foreign-key/display state and must not be treated as fetched-metadata authority.
 
 The server is stateless across requests, so it can run as multiple replicas
 behind a load balancer once shared-state dependencies are healthy. Before
-scaling replicas, verify Redis is configured and Postgres connection pressure
-is acceptable.
+scaling replicas, verify `RATE_LIMIT_STORE` is `redis` or `postgres` (not
+`memory`) and Postgres connection pressure is acceptable. Redis is needed only
+for the resident worker and `RATE_LIMIT_STORE=redis`.
 
 Database scaling is your Postgres provider's operation. Background workers use
 BullMQ, ship as their own image (`ghcr.io/b3dmar/3ngram-worker`), and are part
@@ -152,7 +156,8 @@ Use the smallest recovery action that matches the failure:
 |---|---|
 | Server regression | Redeploy the last good server commit if schema-compatible, otherwise roll forward |
 | OAuth/config failure | Check `BASE_URL`, `WEB_APP_URL`, signing keys, and discovery endpoints |
-| Rate-limit store outage | Confirm the server still serves; treat limits as degraded until the store returns |
+| Rate-limit store outage (Redis) | Confirm the server still serves; treat limits as degraded until the store returns |
+| Rate-limit store degraded (Postgres) | Same fail-open `rate-limit: store unavailable` warning; check `DATABASE_URL` connectivity and pool pressure |
 | Database/data incident | Restore from backup — or your provider's point-in-time / branch restore — then repoint runtime credentials only after an explicit operator decision |
 
 After recovery, rerun the deploy verification checks and one authenticated read
