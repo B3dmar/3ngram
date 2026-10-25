@@ -198,7 +198,7 @@ cursor on `memory_events.payload`. That does not work:
    commitment via `resolve` is a write; being *shown* one is not.
 3. **`memory_events` cannot hold a session marker.** Every row needs a real `memory_id`
    and an `event_kind` in the existing CHECK
-   (`create|revise|supersede|resolve|unresolve|archive|import|embed_failed`).
+   (`create|revise|supersede|resolve|unresolve|archive|import|embed_failed|reaffirm`).
 4. **A cursor sampled at SessionEnd sits after Session A's writes**, so a naive "since
    close" delta omits exactly the work that should hand off.
 5. **Stop is not a session boundary.** The first qualifying turn is not "the session

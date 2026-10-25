@@ -405,6 +405,34 @@ describe('staleCandidates (runtime role)', () => {
     expect(ids).not.toContain(staleCommitment)
   })
 
+  it('a review stamp counts as freshness: GREATEST(updated_at, last_reviewed_at) (issue #218)', async () => {
+    const cutoff = new Date('2026-01-01T00:00:00.000Z')
+    const neverReviewed = await seedMemory(userA, 'fact', { updatedAt: '2025-03-01T00:00:00.000Z' })
+    const reviewedRecently = await seedMemory(userA, 'fact', {
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    })
+    const reviewedLongAgo = await seedMemory(userA, 'decision', {
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    })
+    const reviewStamps: [string, string][] = [
+      [reviewedRecently, '2026-02-01T00:00:00.000Z'],
+      [reviewedLongAgo, '2025-06-01T00:00:00.000Z'],
+    ]
+    for (const [id, at] of reviewStamps) {
+      await ownerPool.query('UPDATE memories SET last_reviewed_at = $2 WHERE id = $1', [id, at])
+    }
+
+    const page = await withTenant(userA, (tx) =>
+      staleCandidates(tx, userA, ALL, cutoff, 25, STALE_TYPES),
+    )
+    // Reviewed after the cutoff: out. Never reviewed: judged by updated_at, as
+    // before. Reviewed before the cutoff: still stale, ranked by its review
+    // (2025-06) — AFTER the never-reviewed row (2025-03), though its updated_at
+    // (2025-01) is older: least-fresh first.
+    expect(page.items.map((r) => r.id)).toEqual([neverReviewed, reviewedLongAgo])
+    expect(page.totalCount).toBe(2)
+  })
+
   it('type allowlist: of all 8 types stale, exactly the reviewable 4 surface (issue #44)', async () => {
     // One stale row per memory type. The predicate is memory_type IN (allowlist):
     // decision/preference/blocker/fact are IN; commitment/pattern/note/event are

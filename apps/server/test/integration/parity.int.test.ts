@@ -775,6 +775,70 @@ describe('revise archive disposition parity (issue #217)', () => {
   })
 })
 
+describe('revise reaffirm disposition parity (issue #218)', () => {
+  it('same outcomes over REST and MCP; the review stamp rides the export, nothing else moves', async () => {
+    const restId = await restRemember(keyA, 'fact', 'reaffirm-rest')
+    const mcpId = await restRemember(keyA, 'decision', 'reaffirm-mcp')
+    const archivedId = await restRemember(keyA, 'fact', 'reaffirm-archived')
+    await rest(`/api/v1/memories/${archivedId}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'archive' },
+    })
+    const before = await ownerPool.query(
+      'SELECT id, content, status, updated_at, recorded_at, valid_from, valid_to FROM memories WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[restId, mcpId]],
+    )
+
+    const restRes = await rest(`/api/v1/memories/${restId}/revise`, {
+      method: 'POST',
+      key: keyA,
+      body: { kind: 'reaffirm' },
+    })
+    expect(restRes.status).toBe(200)
+    expect(await restRes.json()).toEqual({
+      kind: 'reaffirm',
+      outcomes: [{ memoryId: restId, outcome: 'reaffirmed' }],
+    })
+    const client = await connect(tokenA)
+    const mcpRes = await client.callTool({
+      name: 'revise',
+      arguments: { kind: 'reaffirm', memoryIds: [mcpId, archivedId] },
+    })
+    await client.close()
+    expect(mcpRes.isError).toBeFalsy()
+    expect(mcpRes.structuredContent).toEqual({
+      kind: 'reaffirm',
+      outcomes: [
+        { memoryId: mcpId, outcome: 'reaffirmed' },
+        { memoryId: archivedId, outcome: 'rejected', reason: 'archived' },
+      ],
+    })
+
+    const after = await ownerPool.query(
+      'SELECT id, content, status, updated_at, recorded_at, valid_from, valid_to FROM memories WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[restId, mcpId]],
+    )
+    expect(after.rows).toEqual(before.rows)
+    const events = await ownerPool.query(
+      "SELECT memory_id, actor_kind, payload FROM memory_events WHERE memory_id = ANY($1::uuid[]) AND event_kind = 'reaffirm' ORDER BY id",
+      [[restId, mcpId, archivedId]],
+    )
+    expect(events.rows).toEqual([
+      { memory_id: restId, actor_kind: 'user_api', payload: { disposition: 'reaffirm' } },
+      { memory_id: mcpId, actor_kind: 'user_mcp', payload: { disposition: 'reaffirm' } },
+    ])
+
+    const exported = (await (await rest('/api/v1/export', { key: keyA })).json()) as {
+      memories: Array<{ id: string; lastReviewedAt: string | null }>
+    }
+    const stamp = (id: string) => exported.memories.find((m) => m.id === id)?.lastReviewedAt
+    expect(stamp(restId)).toEqual(expect.any(String))
+    expect(stamp(mcpId)).toEqual(expect.any(String))
+    expect(stamp(archivedId)).toBeNull()
+  })
+})
+
 describe('A4 resolve parity (FSM status output)', () => {
   it('returns {commitmentId,status} with identical FSM transitions on both', async () => {
     // REST: remember a commitment, resolve it, then unresolve back to open.

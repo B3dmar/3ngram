@@ -12,6 +12,15 @@
 //     payload, attributed to the actor and the attached session run
 //   - product path: the briefing's staleCandidates count drops after an archive
 //
+// and the REAFFIRM disposition (issue #218):
+//   - the only change is last_reviewed_at (+ a `reaffirm` event): no new row,
+//     edge or status change; content, topic, recorded_at, valid time and
+//     updated_at are byte-identical
+//   - a reaffirmed stale candidate stays out of the briefing for a full
+//     STALE_WINDOW_DAYS window (injected now) and returns after it
+//   - superseded / archived / unknown / other-tenant ids are rejected
+//   - ranked search ordering and scores are unchanged
+//
 // Reuses packages/db integration infra (helpers.ts).
 import {
   closeDb,
@@ -28,7 +37,7 @@ import {
   resetDomainTables,
   seedUser,
 } from '../../../db/test/integration/helpers.js'
-import { briefing, STALE_CANDIDATE_TYPES } from '../../src/read/briefing.js'
+import { briefing, STALE_CANDIDATE_TYPES, STALE_WINDOW_DAYS } from '../../src/read/briefing.js'
 import { openAgentSession } from '../../src/session/lifecycle.js'
 import { resolveByMemoryId } from '../../src/write/commitments.js'
 import { remember } from '../../src/write/remember.js'
@@ -52,6 +61,9 @@ const write = async (
 
 const archive = (user: string, memoryIds: string[], extra: Record<string, unknown> = {}) =>
   reviseDisposition(user, { kind: 'archive', memoryIds, ...extra }, ACTOR)
+const reaffirm = (user: string, memoryIds: string[]) =>
+  reviseDisposition(user, { kind: 'reaffirm', memoryIds }, ACTOR)
+const DAY_MS = 86_400_000
 
 const SNAPSHOT_COLUMNS =
   'content, topic, tags, scope, project, memory_type, content_hash, valid_from, valid_to, recorded_at, created_at'
@@ -240,5 +252,141 @@ describe('revise archive disposition (issue #217, runtime role)', () => {
       staleCandidates(tx, userA, { kind: 'all' }, new Date(), 25, STALE_CANDIDATE_TYPES),
     )
     expect(direct.items.map((item) => item.id)).not.toContain(stale[0])
+  })
+})
+
+describe('revise reaffirm disposition (issue #218, runtime role)', () => {
+  const ROW = `${SNAPSHOT_COLUMNS}, status, updated_at, last_reviewed_at`
+
+  it('records the review and nothing else: same row, no edge, no status or date change', async () => {
+    const id = await write(userA, 'decision', 'still the right call', {
+      project: PROJECT,
+      tags: ['ops'],
+    })
+    await ownerPool.query('UPDATE memories SET updated_at = $2 WHERE id = $1', [id, OLD])
+    const before = (await ownerPool.query(`SELECT ${ROW} FROM memories WHERE id = $1`, [id]))
+      .rows[0]
+    expect(before.last_reviewed_at).toBeNull()
+
+    const result = await reaffirm(userA, [id])
+
+    expect(result).toEqual({
+      kind: 'reaffirm',
+      outcomes: [{ memoryId: id, outcome: 'reaffirmed' }],
+    })
+    const after = (await ownerPool.query(`SELECT ${ROW} FROM memories WHERE id = $1`, [id])).rows[0]
+    expect(after.last_reviewed_at).toBeInstanceOf(Date)
+    expect({ ...after, last_reviewed_at: null }).toEqual(before)
+    const counts = await ownerPool.query(
+      'SELECT (SELECT count(*) FROM memories WHERE user_id = $1) AS memories, (SELECT count(*) FROM memory_edges WHERE user_id = $1) AS edges',
+      [userA],
+    )
+    expect(counts.rows[0]).toEqual({ memories: '1', edges: '0' })
+    const events = await ownerPool.query(
+      'SELECT event_kind, actor_kind, payload FROM memory_events WHERE memory_id = $1 ORDER BY id',
+      [id],
+    )
+    expect(events.rows.map((event) => event.event_kind)).toEqual(['create', 'reaffirm'])
+    expect(events.rows[1]).toEqual({
+      event_kind: 'reaffirm',
+      actor_kind: 'user_mcp',
+      payload: { disposition: 'reaffirm' },
+    })
+  })
+
+  it('a reaffirmed stale candidate stays out for one full window, then returns', async () => {
+    const reaffirmed = await write(userA, 'fact', 'still true fact', { project: PROJECT })
+    const control = await write(userA, 'preference', 'never reviewed preference', {
+      project: PROJECT,
+    })
+    await ownerPool.query('UPDATE memories SET updated_at = $2 WHERE id = ANY($1::uuid[])', [
+      [reaffirmed, control],
+      OLD,
+    ])
+    const t0 = new Date()
+    const staleAt = async (now: Date) =>
+      (
+        await briefing(userA, {
+          selector: { kind: 'project', project: PROJECT },
+          mode: 'full',
+          now,
+        })
+      ).staleCandidates.items.map((item) => item.id)
+
+    expect(await staleAt(t0)).toEqual(expect.arrayContaining([reaffirmed, control]))
+    await reaffirm(userA, [reaffirmed])
+
+    for (const days of [0, STALE_WINDOW_DAYS - 1]) {
+      const ids = await staleAt(new Date(t0.getTime() + days * DAY_MS))
+      expect(ids, `day ${days}`).not.toContain(reaffirmed)
+      expect(ids, `day ${days}`).toContain(control)
+    }
+    const afterWindow = await staleAt(new Date(t0.getTime() + (STALE_WINDOW_DAYS + 1) * DAY_MS))
+    expect(afterWindow).toEqual(expect.arrayContaining([reaffirmed, control]))
+  })
+
+  it('rejects superseded, archived, unknown and other-tenant ids, writing nothing for them', async () => {
+    const superseded = await write(userA, 'fact', 'old reading')
+    await revise(
+      userA,
+      {
+        memoryType: 'fact',
+        topic: 'stale review',
+        content: 'new reading',
+        predecessorId: superseded,
+      },
+      ACTOR,
+    )
+    const archived = await write(userA, 'decision', 'retired decision')
+    await archive(userA, [archived])
+    const live = await write(userA, 'blocker', 'still blocked on review')
+    const foreign = await write(userB, 'fact', 'tenant B fact')
+
+    const result = await reaffirm(userA, [superseded, archived, live, UNKNOWN, foreign])
+
+    expect(result.outcomes).toEqual([
+      { memoryId: superseded, outcome: 'rejected', reason: 'superseded' },
+      { memoryId: archived, outcome: 'rejected', reason: 'archived' },
+      { memoryId: live, outcome: 'reaffirmed' },
+      { memoryId: UNKNOWN, outcome: 'rejected', reason: 'not_found' },
+      { memoryId: foreign, outcome: 'rejected', reason: 'not_found' },
+    ])
+    const stamped = await ownerPool.query(
+      'SELECT id FROM memories WHERE last_reviewed_at IS NOT NULL ORDER BY id',
+    )
+    expect(stamped.rows.map((row) => row.id)).toEqual([live])
+    const reaffirmEvents = await ownerPool.query(
+      "SELECT memory_id FROM memory_events WHERE event_kind = 'reaffirm'",
+    )
+    expect(reaffirmEvents.rows.map((row) => row.memory_id)).toEqual([live])
+  })
+
+  it('leaves ranked search ordering and scores unchanged', async () => {
+    const ids = [
+      await write(userA, 'fact', 'the cobalt gateway retries three times'),
+      await write(userA, 'decision', 'cobalt gateway timeouts stay at five seconds'),
+      await write(userA, 'preference', 'prefer the cobalt gateway over direct calls'),
+    ]
+    await ownerPool.query('UPDATE memories SET updated_at = $2 WHERE id = ANY($1::uuid[])', [
+      ids,
+      OLD,
+    ])
+    const ranked = async () =>
+      (await withTenant(userA, (tx) => searchFused(tx, userA, 'cobalt gateway', 10))).map((hit) => [
+        hit.id,
+        hit.score,
+      ])
+
+    const before = await ranked()
+    expect(before.map(([id]) => id).sort()).toEqual([...ids].sort())
+    await reaffirm(userA, [ids[2] as string, ids[0] as string])
+
+    // Same order; same scores up to the recency leg's now()-relative decay,
+    // which drifts by the milliseconds between the two reads.
+    const after = await ranked()
+    expect(after.map(([id]) => id)).toEqual(before.map(([id]) => id))
+    after.forEach(([, score], index) => {
+      expect(score as number).toBeCloseTo(before[index]?.[1] as number, 6)
+    })
   })
 })

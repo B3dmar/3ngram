@@ -230,9 +230,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // response once. CLI has no revise command. The tool description is
       // unchanged (no embeddings regen). MEASURED on staging
       // ac5469b, not summed.
-      mcp: [29915, 241136, 60150],
+      // MCP +42/+336/+82, REST +32/+32/+32 (issue #218, revise reaffirm
+      // disposition): the `kind` enum gains `reaffirm` (one more description
+      // sentence), the outcome enum `reaffirmed`, and the rejection enum
+      // `archived`. Description unchanged (no embeddings regen); CLI
+      // unchanged. MEASURED on #217's branch over staging ac5469b, not summed.
+      mcp: [29957, 241472, 60232],
       cli: [333, 1236, 1236],
-      rest: [4604, 5621, 5621],
+      rest: [4636, 5653, 5653],
     },
   )
 })

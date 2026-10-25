@@ -20,8 +20,9 @@
 // are the MAX constants, never unbounded.
 //
 // INJECTED TIME (no datetime.now() in business logic): the caller passes `now`;
-// the overdue split (due_at < now) and the stale window (updated_at < now - N
-// days) are derived from it, so a briefing is deterministic and testable.
+// the overdue split (due_at < now) and the stale window (GREATEST(updated_at,
+// last_reviewed_at) < now - N days) are derived from it, so a briefing is
+// deterministic and testable.
 //
 // VALIDATION GAP (hard rule 2): the single Zod boundary is packages/schema. The
 // SELECTOR shape is validated by the MCP schema at the transport; this core layer
@@ -74,8 +75,10 @@ export class MissingSelectorError extends Error {
 export type BriefingMode = 'brief' | 'full'
 
 /**
- * Stale window: a live, active memory untouched for this many DAYS is a stale
- * CANDIDATE (it has gone quiet and may want review). 30 days is the sensible
+ * Stale window: a live, active memory neither touched nor reaffirmed (revise
+ * `kind: "reaffirm"`, issue #218) for this many DAYS is a stale CANDIDATE (it
+ * has gone quiet and may want review). A reaffirm keeps a row out for one full
+ * window, after which it returns for another look. 30 days is the sensible
  * default — long enough that a memory is genuinely dormant, short enough that the
  * briefing still surfaces drift. Documented here as the single source of truth;
  * core derives `now - STALE_WINDOW_DAYS` and passes the instant to db.

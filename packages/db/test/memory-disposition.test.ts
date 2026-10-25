@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Unit tests — no DB. The archive disposition's ORDER OF OPERATIONS and its
-// per-row verdicts (issue #217). A deadlock or a lost race is not
+// Unit tests — no DB. The archive (issue #217) and reaffirm (issue #218)
+// dispositions' ORDER OF OPERATIONS and their per-row verdicts. A deadlock or a lost race is not
 // deterministically reproducible against Postgres, so what is pinned here is the
 // property that prevents each: the account guard first, provenance before the
 // row lock, the decision re-made under the lock, and no write or event for a
@@ -29,9 +29,12 @@ vi.mock('../src/session-provenance.js', () => ({
   sessionPayload: (id: string | undefined) => (id === undefined ? undefined : { sessionRunId: id }),
 }))
 
-const { ActiveMemoryNotFoundError, archiveMemory, archiveMemoryDisposition } = await import(
-  '../src/memory-disposition.js'
-)
+const {
+  ActiveMemoryNotFoundError,
+  archiveMemory,
+  archiveMemoryDisposition,
+  reaffirmMemoryDisposition,
+} = await import('../src/memory-disposition.js')
 
 const USER = '00000000-0000-7000-8000-000000000001'
 const MEMORY_ID = '00000000-0000-7000-8000-0000000000aa'
@@ -242,5 +245,59 @@ describe('REST archive (generic policy) keeps its contract (#217)', () => {
     await expect(archiveMemory(USER, MEMORY_ID, 'user_api')).rejects.toBeInstanceOf(
       ActiveMemoryNotFoundError,
     )
+  })
+})
+
+describe('reaffirm disposition order of operations (#218)', () => {
+  const reaffirm = () =>
+    reaffirmMemoryDisposition({ userId: USER, memoryId: MEMORY_ID, actorKind: 'user_api' })
+
+  it('guard, peek, provenance, locked re-read, UPDATE last_reviewed_at ONLY, reaffirm event', async () => {
+    const { inserts, updates } = makeTx({ peek: live() })
+
+    await expect(reaffirm()).resolves.toEqual({ memoryId: MEMORY_ID, outcome: 'reaffirmed' })
+
+    expect(ops).toEqual(['guard', 'memory:read', 'provenance', 'memory:update', 'update', 'insert'])
+    // No status, no updated_at, no content, topic, recorded_at or valid time.
+    expect(Object.keys(updates[0] ?? {})).toEqual(['lastReviewedAt'])
+    expect(inserts).toHaveLength(1)
+    expect(inserts[0]?.table).toBe(memoryEvents)
+    expect(inserts[0]?.values).toMatchObject({
+      eventKind: 'reaffirm',
+      actorKind: 'user_api',
+      payload: { sessionRunId: RUN_ID, disposition: 'reaffirm' },
+    })
+  })
+
+  it('a blocker or a live commitment can be reaffirmed: a review is not an exit', async () => {
+    makeTx({ peek: live('blocker') })
+    await expect(reaffirm()).resolves.toMatchObject({ outcome: 'reaffirmed' })
+    makeTx({ peek: live('commitment'), commitment: 'open' })
+    await expect(reaffirm()).resolves.toMatchObject({ outcome: 'reaffirmed' })
+  })
+
+  it.each([
+    ['not_found', undefined, 'not_found'],
+    ['archived', { ...live(), status: 'archived' }, 'archived'],
+    ['superseded', { ...live(), validTo: new Date() }, 'superseded'],
+  ] as const)('%s: rejected from the peek, before provenance, writing nothing', async (_name, peek, reason) => {
+    const { inserts, updates } = makeTx(peek === undefined ? {} : { peek: { ...peek } })
+
+    await expect(reaffirm()).resolves.toEqual({ memoryId: MEMORY_ID, outcome: 'rejected', reason })
+    expect(ops).not.toContain('provenance')
+    expect(updates).toHaveLength(0)
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('re-decides under the row lock: a concurrent archive that won is reported', async () => {
+    const { inserts, updates } = makeTx({ peek: live(), locked: { ...live(), status: 'archived' } })
+
+    await expect(reaffirm()).resolves.toEqual({
+      memoryId: MEMORY_ID,
+      outcome: 'rejected',
+      reason: 'archived',
+    })
+    expect(updates).toHaveLength(0)
+    expect(inserts).toHaveLength(0)
   })
 })

@@ -983,6 +983,7 @@ export function restRouter(options: RestRouterOptions): Router {
           recordedAt: memory.recordedAt.toISOString(),
           createdAt: memory.createdAt.toISOString(),
           updatedAt: memory.updatedAt.toISOString(),
+          lastReviewedAt: memory.lastReviewedAt?.toISOString() ?? null,
         })),
         facts: data.facts.map((fact) => ({
           id: fact.id,

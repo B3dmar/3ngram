@@ -179,6 +179,7 @@ const exportMemory = z
     recordedAt: isoDateTime(),
     createdAt: isoDateTime(),
     updatedAt: isoDateTime(),
+    lastReviewedAt: isoDateTime().nullable(),
   })
   .strict()
 const exportFact = z

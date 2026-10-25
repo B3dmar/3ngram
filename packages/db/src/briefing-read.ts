@@ -393,8 +393,20 @@ export function activePreferences(
 }
 
 /**
+ * A row's freshness for staleness: the later of its last write (updated_at) and
+ * its last review (last_reviewed_at, issue #218). GREATEST skips a NULL, so a
+ * never-reviewed row is judged by updated_at alone, exactly as before the
+ * column existed. Note that updated_at also moves on the embedding write-back
+ * (memory-embedding.ts), not only on a user-visible change: a backfilled row
+ * restarts its window. A reaffirm stamps last_reviewed_at and never updated_at,
+ * so a review does not masquerade as an edit.
+ */
+const staleFreshness = sql`GREATEST(${memories.updatedAt}, ${memories.lastReviewedAt})`
+
+/**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
- * memories of an ALLOWLISTED type untouched (updated_at) since `staleBefore`,
+ * memories of an ALLOWLISTED type neither touched (updated_at) nor reaffirmed
+ * (last_reviewed_at) since `staleBefore` — see {@link staleFreshness} —
  * scope/project-narrowed. The type filter is an ALLOWLIST (`memory_type IN
  * (...)`) supplied by core, NOT a NOT-IN exclusion: which types are worth a
  * staleness review is briefing POLICY (hard rule 5), owned by
@@ -420,7 +432,7 @@ function staleCandidatePredicate(
     eq(memories.userId, userId),
     isNull(memories.validTo),
     eq(memories.status, 'active'),
-    lt(memories.updatedAt, staleBefore),
+    sql`${staleFreshness} < ${staleBefore}::timestamptz`,
     memoryTypes === undefined
       ? ne(memories.memoryType, 'commitment')
       : inArray(memories.memoryType, [...memoryTypes]),
@@ -432,8 +444,9 @@ function staleCandidatePredicate(
 
 /**
  * Stale candidates: LIVE, active memories of an ALLOWLISTED `memoryTypes` type
- * not touched (updated_at) since `staleBefore`, scope/project-narrowed, ordered
- * OLDEST-first (the most-stale first) and BOUNDED by `limit`.
+ * neither touched (updated_at) nor reaffirmed (last_reviewed_at) since
+ * `staleBefore`, scope/project-narrowed, ordered least-fresh first (the
+ * most-stale first) and BOUNDED by `limit`.
  *
  * `staleBefore` is computed by core from the injected `now` minus the stale
  * window, and `memoryTypes` is core's STALE_CANDIDATE_TYPES allowlist (no
@@ -479,8 +492,8 @@ export async function staleCandidates(
     })
     .from(memories)
     .where(staleCandidatePredicate(userId, selector, staleBefore, memoryTypes))
-    // Oldest-touched first: the most-stale memory leads.
-    .orderBy(asc(memories.updatedAt), asc(memories.id))
+    // Least-fresh first: the most-stale memory leads.
+    .orderBy(asc(staleFreshness), asc(memories.id))
     .limit(limit)
   return { items: rows.map(stripMemoryCount), totalCount: totalFrom(rows) }
 }

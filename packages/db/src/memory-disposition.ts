@@ -18,7 +18,16 @@
 // unique memories_hash_idx, so re-remembering identical content stays a
 // DuplicateMemoryError until the archived row is superseded.
 //
-// ORDER OF OPERATIONS (moveMemory's template, memory-revise.ts):
+// REAFFIRM (issue #218) records a review — "reviewed, still valid" — and is not
+// a status transition at all: it stamps memories.last_reviewed_at = now() and
+// writes a `reaffirm` event. No new row, no edge, no status change; content,
+// topic, recorded_at, valid time AND updated_at are untouched, so the review
+// rewrites nothing and fakes no successor. Stale candidates key on
+// GREATEST(updated_at, last_reviewed_at), so a reaffirmed row leaves the queue
+// for one full STALE_WINDOW_DAYS window and returns after it. Ranked search
+// reads neither column, so its ordering is unchanged.
+//
+// ORDER OF OPERATIONS (moveMemory's template, memory-revise.ts), both kinds:
 //   1. guardSessionMutation — the account-lifecycle lock comes before every
 //      other lock, so a disposition never lands after account erasure;
 //   2. unlocked peek — a row that will not change returns HERE, before
@@ -32,7 +41,12 @@
 //   5. the UPDATE and its audit event, in the same transaction.
 //
 // Observability (hard rule 6): nothing here logs; outcomes carry ids only.
-import type { ActorKind, ArchiveEventPayload, ReviseDispositionRejection } from '@3ngram/schema'
+import type {
+  ActorKind,
+  ArchiveEventPayload,
+  ReaffirmEventPayload,
+  ReviseDispositionRejection,
+} from '@3ngram/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { type TenantTx, withTenant } from './client.js'
 import { guardSessionMutation } from './credential-guard.js'
@@ -165,6 +179,81 @@ export function archiveMemoryDisposition(
   input: Omit<ArchiveWrite, 'policy'>,
 ): Promise<ArchiveOutcome> {
   return withTenant(input.userId, (tx) => archiveMemoryIn(tx, { ...input, policy: 'disposition' }))
+}
+
+/** One id's reaffirm outcome. Rejections write nothing; a repeat is another review. */
+export type ReaffirmOutcome =
+  | { memoryId: string; outcome: 'reaffirmed' }
+  | { memoryId: string; outcome: 'rejected'; reason: 'not_found' | 'superseded' | 'archived' }
+
+export type ReaffirmWrite = Omit<ArchiveWrite, 'policy'>
+
+const reaffirmState = {
+  status: memories.status,
+  validTo: memories.validTo,
+  project: memories.project,
+}
+
+/** Only a live, active row can be kept fresh; anything else is already out of the queue. */
+function judgeReaffirm(row: { status: string; validTo: Date | null }) {
+  if (row.status === 'archived') return { outcome: 'rejected', reason: 'archived' } as const
+  if (row.validTo !== null) return { outcome: 'rejected', reason: 'superseded' } as const
+  return undefined
+}
+
+/**
+ * Reaffirm one memory inside the caller's withTenant transaction, in the
+ * module header's order of operations. The UPDATE sets last_reviewed_at only.
+ *
+ * @throws AccountDeletedError the account is being erased.
+ * @throws UnknownSessionRunError a supplied run id is not this tenant's.
+ */
+export async function reaffirmMemoryIn(
+  tx: TenantTx,
+  input: ReaffirmWrite,
+): Promise<ReaffirmOutcome> {
+  const { userId, memoryId } = input
+  await guardSessionMutation(tx, userId)
+  const target = and(eq(memories.userId, userId), eq(memories.id, memoryId))
+
+  const [peek] = await tx.select(reaffirmState).from(memories).where(target).limit(1)
+  if (!peek) return { memoryId, outcome: 'rejected', reason: 'not_found' }
+  const early = judgeReaffirm(peek)
+  if (early) return { memoryId, ...early }
+
+  const runId = await resolveSessionProvenance(tx, userId, {
+    sessionRunId: input.sessionRunId,
+    project: peek.project,
+    now: input.now ?? new Date(),
+  })
+
+  const [current] = await tx
+    .select(reaffirmState)
+    .from(memories)
+    .where(target)
+    .limit(1)
+    .for('update')
+  if (!current) return { memoryId, outcome: 'rejected', reason: 'not_found' }
+  const late = judgeReaffirm(current)
+  if (late) return { memoryId, ...late }
+
+  await tx.update(memories).set({ lastReviewedAt: sql`now()` }).where(target)
+  await tx.insert(memoryEvents).values({
+    userId,
+    memoryId,
+    eventKind: 'reaffirm',
+    actorKind: input.actorKind,
+    payload: {
+      ...(sessionPayload(runId) ?? {}),
+      disposition: 'reaffirm',
+    } satisfies ReaffirmEventPayload,
+  })
+  return { memoryId, outcome: 'reaffirmed' }
+}
+
+/** The revise reaffirm disposition for ONE id, in its own transaction (see archive's). */
+export function reaffirmMemoryDisposition(input: ReaffirmWrite): Promise<ReaffirmOutcome> {
+  return withTenant(input.userId, (tx) => reaffirmMemoryIn(tx, input))
 }
 
 /**

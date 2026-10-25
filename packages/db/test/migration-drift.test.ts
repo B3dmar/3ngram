@@ -108,6 +108,11 @@ const resolutionReasonSql = readFileSync(
   join(import.meta.dirname, '../migrations/0040_commitment_resolution_reason.sql'),
   'utf8',
 )
+// 0041 adds the reaffirm review stamp and the 'reaffirm' event kind (issue #218).
+const reviewStampSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0041_memory_last_reviewed_at.sql'),
+  'utf8',
+)
 const drizzleConfig = readFileSync(join(import.meta.dirname, '../drizzle.config.ts'), 'utf8')
 const retrievalPolicySnapshot = JSON.parse(
   readFileSync(join(import.meta.dirname, '../migrations/meta/0030_snapshot.json'), 'utf8'),
@@ -729,6 +734,25 @@ describe('commitment resolution reason (0040, issue #234)', () => {
 
   it('needs no new grant: the runtime role already UPDATEs commitments', () => {
     expect(rolesSql).toMatch(/GRANT SELECT, INSERT, UPDATE ON memories, memory_edges, commitments,/)
+  })
+})
+
+describe('reaffirm review stamp (0041, issue #218)', () => {
+  it('adds a nullable, default-less column: no rewrite, no backfill', () => {
+    expect(reviewStampSql).toContain(
+      'ALTER TABLE "memories" ADD COLUMN "last_reviewed_at" timestamp with time zone;',
+    )
+  })
+
+  it('regenerates the event-kind CHECK from the schema enum, reaffirm included', () => {
+    expect(eventKindSchema.options).toContain('reaffirm')
+    expect(reviewStampSql).toContain(
+      `CHECK ("memory_events"."event_kind" IN (${eventKindSchema.options.map((k) => `'${k}'`).join(', ')}))`,
+    )
+  })
+
+  it('adds no table and touches no policy', () => {
+    expect(reviewStampSql).not.toMatch(/CREATE TABLE|POLICY|ROW LEVEL SECURITY/i)
   })
 })
 

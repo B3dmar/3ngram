@@ -3149,8 +3149,8 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "enum": ["archive"],
-                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+                  "enum": ["archive", "reaffirm"],
+                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while."
                 },
                 "memoryIds": {
                   "minItems": 1,
@@ -3356,7 +3356,7 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "enum": ["archive"]
+                  "enum": ["archive", "reaffirm"]
                 },
                 "outcomes": {
                   "maxItems": 50,
@@ -3371,12 +3371,18 @@
                       },
                       "outcome": {
                         "type": "string",
-                        "enum": ["archived", "already_archived", "rejected"]
+                        "enum": ["archived", "already_archived", "reaffirmed", "rejected"]
                       },
                       "reason": {
                         "description": "Present only when outcome is rejected.",
                         "type": "string",
-                        "enum": ["not_found", "superseded", "open_commitment", "blocker"]
+                        "enum": [
+                          "not_found",
+                          "superseded",
+                          "open_commitment",
+                          "blocker",
+                          "archived"
+                        ]
                       }
                     },
                     "required": ["memoryId", "outcome"],
@@ -4197,8 +4203,8 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "enum": ["archive"],
-                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve."
+                  "enum": ["archive", "reaffirm"],
+                  "description": "archive: take each memory out of the active set (status archived). No successor; content, tags and dates untouched; recoverable with status: archived. Open commitments and blockers are rejected: settle those with resolve. reaffirm: record that each memory was reviewed and is still valid; nothing about it changes, it just stops being a stale candidate for a while."
                 },
                 "memoryIds": {
                   "minItems": 1,

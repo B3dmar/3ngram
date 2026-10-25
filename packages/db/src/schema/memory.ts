@@ -61,6 +61,12 @@ export const memories = pgTable(
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    // Review stamp (issue #218): set by the revise reaffirm disposition when a
+    // stale candidate was reviewed and is still valid. NULL until first
+    // reviewed. Deliberately NOT updated_at: a review changes nothing about the
+    // row, and it never touches content, topic, recorded_at or valid time.
+    // Stale candidates key on GREATEST(updated_at, last_reviewed_at).
+    lastReviewedAt: timestamp('last_reviewed_at', { withTimezone: true }),
     // FTS leg (migration 0006): a GENERATED STORED tsvector over
     // topic + content (english) with a GIN index lives in the DB but is
     // intentionally NOT modeled here. drizzle-kit cannot express a generated

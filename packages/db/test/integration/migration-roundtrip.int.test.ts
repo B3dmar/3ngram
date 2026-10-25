@@ -123,6 +123,21 @@ describe('migration round-trip structure', () => {
     await ownerPool.query(`DELETE FROM oauth_clients WHERE client_id LIKE 'probe-registration-%'`)
   })
 
+  it('memories.last_reviewed_at is a nullable timestamptz with no default (0041, issue #218)', async () => {
+    const r = await ownerPool.query(
+      `SELECT data_type, is_nullable, column_default FROM information_schema.columns
+       WHERE table_name = 'memories' AND column_name = 'last_reviewed_at'`,
+    )
+    expect(r.rows).toEqual([
+      { data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+    ])
+    const check = await ownerPool.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+       WHERE conname = 'memory_events_kind_check'`,
+    )
+    expect(check.rows[0]?.def).toContain("'reaffirm'::text")
+  })
+
   it('HNSW index exists on memories.embedding', async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM pg_indexes

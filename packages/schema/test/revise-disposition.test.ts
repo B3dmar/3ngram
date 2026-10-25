@@ -8,6 +8,7 @@ import {
   nativeReviseDispositionBodySchema,
   nativeReviseDispositionInputSchema,
   nativeReviseRequestSchema,
+  reaffirmEventPayloadSchema,
   reviseDispositionOutputSchema,
   reviseRequestSchema,
   reviseToolOutputV2Schema,
@@ -132,5 +133,51 @@ describe('disposition output (#217)', () => {
       embedded: 'off',
     }
     expect(reviseToolOutputV2Schema.parse(written)).toEqual(written)
+  })
+})
+
+describe('reaffirm disposition (#218)', () => {
+  it('takes the same bounded, unique, strict batch as archive', () => {
+    expect(
+      nativeReviseDispositionInputSchema.parse({ kind: 'reaffirm', memoryIds: ids(3) }).kind,
+    ).toBe('reaffirm')
+    expect(reviseToolRequestSchema.parse({ kind: 'reaffirm', memoryIds: ids(1) })).toEqual({
+      kind: 'reaffirm',
+      memoryIds: ids(1),
+    })
+    for (const bad of [
+      { kind: 'reaffirm', memoryIds: [] },
+      { kind: 'reaffirm', memoryIds: ids(MAX_REVISE_DISPOSITION_IDS + 1) },
+      { kind: 'reaffirm', memoryIds: [id(1), id(1)] },
+      // No content, topic or date rides a review: it rewrites nothing.
+      { kind: 'reaffirm', memoryIds: ids(1), content: 'still true' },
+      { kind: 'reaffirm', memoryIds: ids(1), validFrom: '2026-01-01T00:00:00Z' },
+    ]) {
+      expect(nativeReviseDispositionInputSchema.safeParse(bad).success).toBe(false)
+    }
+    expect(
+      nativeReviseRequestSchema.safeParse({ kind: 'reaffirm', memoryIds: ids(1) }).success,
+    ).toBe(false)
+  })
+
+  it('event payload is exactly { disposition: reaffirm, sessionRunId? }', () => {
+    expect(reaffirmEventPayloadSchema.parse({ disposition: 'reaffirm' })).toEqual({
+      disposition: 'reaffirm',
+    })
+    expect(reaffirmEventPayloadSchema.safeParse({ disposition: 'archive' }).success).toBe(false)
+    expect(
+      reaffirmEventPayloadSchema.safeParse({ disposition: 'reaffirm', note: 'why' }).success,
+    ).toBe(false)
+  })
+
+  it('outcomes add reaffirmed and the archived rejection', () => {
+    const output = {
+      kind: 'reaffirm',
+      outcomes: [
+        { memoryId: id(1), outcome: 'reaffirmed' },
+        { memoryId: id(2), outcome: 'rejected', reason: 'archived' },
+      ],
+    }
+    expect(reviseDispositionOutputSchema.parse(output)).toEqual(output)
   })
 })

@@ -93,6 +93,8 @@ export interface ExportMemoryRow {
   recordedAt: Date
   createdAt: Date
   updatedAt: Date
+  /** Last "reviewed, still valid" stamp (issue #218); null until reaffirmed. */
+  lastReviewedAt: Date | null
 }
 
 /** A full fact row for an export (every bi-temporal generation). */
@@ -350,6 +352,7 @@ export async function readUserDataExport(
       recordedAt: memories.recordedAt,
       createdAt: memories.createdAt,
       updatedAt: memories.updatedAt,
+      lastReviewedAt: memories.lastReviewedAt,
     })
     .from(memories)
     .where(eq(memories.userId, userId))
