@@ -7,7 +7,10 @@ import { randomUUID } from 'node:crypto'
 import { RateLimiterRes } from 'rate-limiter-flexible'
 import { afterAll, describe, expect, it } from 'vitest'
 import { closeDb } from '../../src/client.js'
-import { createPostgresRateLimiter, resetRateLimitSweeperClaim } from '../../src/rate-limit-store.js'
+import {
+  createPostgresRateLimiter,
+  resetRateLimitSweeperClaim,
+} from '../../src/rate-limit-store.js'
 import { closePools, ownerPool } from './helpers.js'
 
 const prefix = () => `t-${randomUUID()}`
@@ -59,7 +62,7 @@ describe('createPostgresRateLimiter (rate_limits)', () => {
     await expect(l.get('k')).resolves.toBeNull()
   })
 
-  it('stores the row as `${keyPrefix}:${key}` in rate_limits', async () => {
+  it('stores the row under keyPrefix:key in rate_limits', async () => {
     const p = prefix()
     await limiter(p, 5).consume('k')
     const r = await ownerPool.query('SELECT points, expire FROM rate_limits WHERE key = $1', [

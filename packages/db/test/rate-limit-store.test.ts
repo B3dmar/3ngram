@@ -36,7 +36,12 @@ afterEach(() => {
 describe('unnamedQueryClient', () => {
   it('forwards text and values and drops the statement name', async () => {
     const seen: unknown[] = []
-    const handle = { query: async (q: unknown) => (seen.push(q), { rows: [] }) }
+    const handle = {
+      query: async (q: unknown) => {
+        seen.push(q)
+        return { rows: [] }
+      },
+    }
     const wrapped = unnamedQueryClient(() => handle)
     await wrapped.query({ name: 'rate_limits:rlflx-upsert', text: 'SELECT $1', values: [1] })
     expect(seen).toEqual([{ text: 'SELECT $1', values: [1] }])

@@ -15,7 +15,7 @@ export interface PostgresRateLimiterOptions {
 }
 
 interface QueryHandle {
-  query: (q: { text: string; values?: unknown[] }) => Promise<unknown>
+  query: (q: { text: string; values?: unknown[] | undefined }) => Promise<unknown>
 }
 
 /**
