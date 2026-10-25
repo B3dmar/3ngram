@@ -273,6 +273,16 @@ export {
   EpisodicSupersessionError,
   SuccessorNotLiveError,
 } from './proposals-apply.js'
+// --- complete proposal-review pagination (issue #320) ---
+export {
+  countFactProposals,
+  countProposals,
+  type KeyedProposal,
+  listFactProposalsAfter,
+  listProposalsAfter,
+  type ProposalKeyset,
+  type ProposalPageQuery,
+} from './proposals-page.js'
 // --- MCP admin tools D3: scopes registry + proposals + env stats ---
 export {
   countProposalsByStatus,

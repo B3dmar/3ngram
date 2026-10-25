@@ -18,7 +18,7 @@ import { z } from 'zod'
 import { commitmentStatusSchema } from './commitment.js'
 import { proposalStatusSchema } from './consolidation.js'
 import { isoDateTime } from './iso-datetime.js'
-import { MAX_MEMORY_TYPES_FILTER, searchFiltersSchema } from './mcp.js'
+import { MAX_MEMORY_TYPES_FILTER, proposalRecordSchema, searchFiltersSchema } from './mcp.js'
 import {
   actorKindSchema,
   edgeTypeSchema,
@@ -26,6 +26,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+import { proposalEdgeTotalsSchema, proposalsCursorSchema } from './proposals-page.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
 import { sessionRunIdSchema } from './session-run-id.js'
@@ -393,8 +394,12 @@ export const MAX_REST_PROPOSALS_LIMIT = 100
 
 /**
  * GET /api/v1/proposals query contract: an optional `status` filter
- * ({@link proposalStatusSchema}) + a bounded `limit`. Numeric `limit` arrives as
- * a string over a GET, so the transport coerces it before parse.
+ * ({@link proposalStatusSchema}) + a bounded `limit` + an optional opaque
+ * `cursor` from a previous page's `nextCursor` (issue #320). Numeric `limit`
+ * arrives as a string over a GET, so the transport coerces it before parse.
+ * The REST list walks EDGE proposals only; its cursors are bound to that walk,
+ * so a cursor minted by the MCP `review_proposals` list (edge + fact) is
+ * rejected here, and vice versa.
  */
 export const proposalsListQuerySchema = z
   .object({
@@ -405,9 +410,38 @@ export const proposalsListQuerySchema = z
       .min(1)
       .max(MAX_REST_PROPOSALS_LIMIT)
       .default(DEFAULT_REST_PROPOSALS_LIMIT),
+    cursor: proposalsCursorSchema.optional(),
   })
   .strict()
 export type ProposalsListQueryInput = z.infer<typeof proposalsListQuerySchema>
+
+/**
+ * GET /api/v1/proposals response envelope. `count` KEEPS its shipped meaning —
+ * the number of proposals on THIS page, never a total. `totals.edge` is the
+ * live count of every edge proposal matching the status filter as of this
+ * page's read (not frozen across pages); `hasMore` says whether rows remain
+ * after this page in `created_at DESC, id DESC` order, and `nextCursor` is
+ * present exactly when `hasMore` is true. Contract and concurrent
+ * create/decide semantics: proposals-page.ts.
+ */
+export const proposalsListResponseSchema = z
+  .object({
+    proposals: z.array(proposalRecordSchema),
+    count: z.number().int().min(0),
+    totals: proposalEdgeTotalsSchema,
+    hasMore: z.boolean(),
+    nextCursor: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((o) => o.count === o.proposals.length, {
+    message: 'count must equal proposals.length',
+    path: ['count'],
+  })
+  .refine((o) => (o.nextCursor !== undefined) === o.hasMore, {
+    message: 'nextCursor must be present exactly when hasMore is true',
+    path: ['nextCursor'],
+  })
+export type ProposalsListResponse = z.infer<typeof proposalsListResponseSchema>
 
 /**
  * POST /api/v1/proposals/:id/reject body — an OPTIONAL `{ rationale }`. The

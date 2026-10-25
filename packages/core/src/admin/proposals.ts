@@ -108,6 +108,11 @@ export interface AllProposals {
  *
  * One withTenant transaction covers both reads, so the two lists are a
  * consistent snapshot rather than two round-trips a decision could land between.
+ *
+ * No longer called by a transport: the MCP list pages BOTH kinds to
+ * completion through `listProposalsPage` (proposals-page.ts, issue #320),
+ * which replaces a bounded window with a walk that can prove nothing was left
+ * unseen. Kept because it is a published export.
  */
 export function listAllProposals(userId: string, query: ProposalsListQuery): Promise<AllProposals> {
   const dbQuery =

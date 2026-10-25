@@ -166,7 +166,15 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // are unchanged because isoDateTime() keeps the zod 4.4.3 grammar, and
       // REST and CLI are unchanged. MEASURED on this PR's actual base
       // (staging 5edac14), not summed.
-      mcp: [27700, 223416, 55831],
+      // MCP +194/+1552/+378 (issue #320, review_proposals pagination): the
+      // list input gains an optional opaque `cursor` (with a field
+      // description) and the list OUTPUT variant gains `counts`/`totals`
+      // ({ edge, fact }), `hasMore` and `nextCursor`; both schemas ride
+      // tools/list every MCP turn. The tool description is unchanged (no
+      // embeddings regen). REST and CLI are unchanged: the REST surface does
+      // not carry the proposals list and the CLI has no proposals command.
+      // MEASURED on this PR's actual base (staging b1731b7), not summed.
+      mcp: [27894, 224968, 56209],
       cli: [333, 1236, 1236],
       rest: [3816, 4833, 4833],
     },
