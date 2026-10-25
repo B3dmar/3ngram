@@ -38,9 +38,9 @@ import {
   getMemoryHistory,
   getSessionTriageAttempts,
   type LimitsResolver,
+  listEdgeProposalsPage,
   listMemories,
   listMemoryFacets,
-  listProposals,
   listScopes,
   listSessionEvents,
   rejectProposal,
@@ -59,6 +59,7 @@ import {
   memoriesListQuerySchema,
   proposalRejectBodySchema,
   proposalsListQuerySchema,
+  proposalsListResponseSchema,
   rememberToolInputV2Schema,
   resolveToolInputSchema,
   reviseToolRequestSchema,
@@ -67,8 +68,10 @@ import {
 } from '@3ngram/schema'
 import { Router } from 'express'
 import { z } from 'zod'
+import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
 import { apiOrSessionAuth } from '../middleware/api-or-session.js'
 import type { RateLimiterMiddleware } from '../middleware/rate-limit.js'
+import { parseOutput } from '../output-validation.js'
 import { SERVER_VERSION } from '../version.js'
 import { defined, guard, mergeReviseTarget, tenant, toAsOf, toRange } from './route-helpers.js'
 import { searchRouter } from './search-router.js'
@@ -753,30 +756,41 @@ export function restRouter(options: RestRouterOptions): Router {
     })
   })
 
-  // GET /api/v1/proposals — bounded consolidation-proposal list over
-  // the EXISTING core listProposals. status/limit arrive as query params; limit is
-  // coerced before the single parse against proposalsListQuerySchema. The route
-  // shapes the proposal records (timestamps to ISO; rationale may be null).
+  // GET /api/v1/proposals — bounded, cursor-paginated EDGE-proposal list
+  // (issue #320). status/limit/cursor arrive as query params; limit is coerced
+  // before the single parse against proposalsListQuerySchema. The cursor is
+  // bound to the REST edge-only walk, the status filter and the tenant (hashed),
+  // so an MCP cursor, a cursor for another status, or another tenant's cursor is
+  // a 400. The route shapes the records (timestamps to ISO; rationale may be
+  // null) and validates the envelope against proposalsListResponseSchema
+  // (a shape fault is a 500 invalid_output, never a silently wrong page).
   router.get('/api/v1/proposals', (req, res) => {
     void guard('proposals.list', res, async () => {
       const query = proposalsListQuerySchema.parse(
         defined({
           status: req.query.status,
           limit: req.query.limit === undefined ? undefined : Number(req.query.limit),
+          cursor: req.query.cursor,
         }),
       )
       // ACCESS GUARD: proposals are memory-derived (consolidation candidates over
       // the tenant's memories), so read access is asserted BEFORE the read
       // (self-host allowAllAccess allows all).
       if (options.access) await options.access.assertRead(tenant(req))
-      // limit carries the schema default (always present); status is OPTIONAL —
-      // strip it when undefined so the exactOptional core query type fits.
-      const proposals = await listProposals(tenant(req), {
-        limit: query.limit,
-        ...defined({ status: query.status }),
+      const fp = proposalsFingerprint({
+        surface: 'rest',
+        kinds: ['edge'],
+        status: query.status,
+        tenant: tenant(req),
       })
-      res.status(200).json({
-        proposals: proposals.map((proposal) => ({
+      const after = query.cursor === undefined ? undefined : decodeProposalsCursor(query.cursor, fp)
+      const page = await listEdgeProposalsPage(tenant(req), {
+        status: query.status,
+        limit: query.limit,
+        after,
+      })
+      const body = parseOutput('proposals.list', proposalsListResponseSchema, {
+        proposals: page.proposals.map((proposal) => ({
           id: proposal.id,
           fromId: proposal.fromId,
           toId: proposal.toId,
@@ -788,8 +802,13 @@ export function restRouter(options: RestRouterOptions): Router {
           decidedAt: proposal.decidedAt?.toISOString() ?? null,
           createdAt: proposal.createdAt.toISOString(),
         })),
-        count: proposals.length,
+        // `count` keeps its shipped meaning: rows on THIS page, never a total.
+        count: page.proposals.length,
+        totals: page.totals,
+        hasMore: page.hasMore,
+        ...(page.next === undefined ? {} : { nextCursor: encodeProposalsCursor(page.next, fp) }),
       })
+      res.status(200).json(body)
     })
   })
 
