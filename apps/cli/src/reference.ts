@@ -101,7 +101,7 @@ export const CLI_COMMANDS: readonly CliCommandReference[] = [
         name: '--due',
         value: '<iso-instant>',
         description:
-          'Commitments only: explicit deadline as an ISO-8601 instant (at most millisecond precision). Past it, briefing reports the commitment overdue.',
+          'Commitments only: explicit deadline as a UTC ISO-8601 instant ending in Z (at most millisecond precision). Past it, briefing reports the commitment overdue.',
       },
       {
         name: '--owner',

@@ -42,7 +42,7 @@ Append a typed memory through the REST-backed SDK client.
 | `--scope &lt;scope>` | no | no | Optional scope such as personal or work. |
 | `--project &lt;project>` | no | no | Optional project key for project briefings. |
 | `--tags &lt;tag[,tag]>` | no | yes | Repeatable; comma-separated values are flattened and trimmed. |
-| `--due &lt;iso-instant>` | no | no | Commitments only: explicit deadline as an ISO-8601 instant (at most millisecond precision). Past it, briefing reports the commitment overdue. |
+| `--due &lt;iso-instant>` | no | no | Commitments only: explicit deadline as a UTC ISO-8601 instant ending in Z (at most millisecond precision). Past it, briefing reports the commitment overdue. |
 | `--owner &lt;owner>` | no | no | Commitments only: who owns the commitment. |
 
 ### Examples

@@ -228,7 +228,7 @@ export const commitmentOwnerSchema = z.string().trim().min(1).max(256)
  * `new Date()`, and `null` meaning the same as omitting it.
  */
 const commitmentDueAtField = factTimestampSchema.describe(
-  `Commitments only: the explicit deadline, as an ISO-8601 instant with at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.`,
+  `Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most ${MAX_FACT_WRITE_FRACTION_DIGITS} fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.`,
 )
 const commitmentOwnerField = commitmentOwnerSchema
   .optional()
@@ -240,8 +240,12 @@ const commitmentOwnerField = commitmentOwnerSchema
  * Core's single parse must accept this shape so session provenance does not
  * regress structured fact writes.
  *
- * `dueAt`/`owner` on a non-commitment is rejected rather than ignored: a
- * silently dropped deadline would look accepted to the caller.
+ * A `dueAt` or `owner` VALUE on a non-commitment is rejected rather than
+ * ignored: a silently dropped deadline would look accepted to the caller. An
+ * explicit `dueAt: null` means "no deadline" on every type (the same absent
+ * meaning it has on a commitment), so it carries nothing to drop. The issue is
+ * reported at the offending key, not at `memoryType`, so an agent reading the
+ * validation error sees which argument to remove.
  */
 export const nativeRememberInputSchema = rememberWithFactsInputSchema
   .safeExtend({
@@ -249,11 +253,17 @@ export const nativeRememberInputSchema = rememberWithFactsInputSchema
     dueAt: commitmentDueAtField,
     owner: commitmentOwnerField,
   })
-  .refine(
-    (input) =>
-      input.memoryType === 'commitment' || (input.dueAt === undefined && input.owner === undefined),
-    { message: 'dueAt and owner apply to commitment memories only', path: ['memoryType'] },
-  )
+  .superRefine((input, ctx) => {
+    if (input.memoryType === 'commitment') return
+    for (const key of ['dueAt', 'owner'] as const) {
+      if (input[key] === undefined) continue
+      ctx.addIssue({
+        code: 'custom',
+        message: `${key} applies to commitment memories only`,
+        path: [key],
+      })
+    }
+  })
 export type NativeRememberInput = z.infer<typeof nativeRememberInputSchema>
 
 /**

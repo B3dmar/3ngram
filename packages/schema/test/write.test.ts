@@ -10,6 +10,7 @@ import {
   MAX_FACTS_PER_WRITE,
   MAX_TAGS,
   nativeRememberInputSchema,
+  nativeReviseInputSchema,
   nativeReviseRequestSchema,
   rememberInputSchema,
   rememberWithFactsInputSchema,
@@ -417,17 +418,39 @@ describe('nativeRememberInputSchema', () => {
       ).toBe(false)
     })
 
-    it('rejects dueAt or owner on a non-commitment instead of dropping it', () => {
-      const dated = { ...validRemember, dueAt: '2026-11-30T17:00:00Z' }
-      const owned = { ...validRemember, owner: 'sebastian' }
-      expect(nativeRememberInputSchema.safeParse(dated).success).toBe(false)
-      expect(nativeRememberInputSchema.safeParse(owned).success).toBe(false)
+    it('rejects a dueAt or owner value on a non-commitment, reporting the offending key', () => {
+      const dated = nativeRememberInputSchema.safeParse({
+        ...validRemember,
+        dueAt: '2026-11-30T17:00:00Z',
+      })
+      const owned = nativeRememberInputSchema.safeParse({ ...validRemember, owner: 'sebastian' })
+      expect(dated.success).toBe(false)
+      expect(dated.error?.issues.map((issue) => issue.path)).toEqual([['dueAt']])
+      expect(owned.success).toBe(false)
+      expect(owned.error?.issues.map((issue) => issue.path)).toEqual([['owner']])
+    })
+
+    it('treats dueAt: null as absent on any type (nothing to drop)', () => {
+      const parsed = nativeRememberInputSchema.parse({ ...validRemember, dueAt: null })
+      expect(parsed.dueAt).toBeUndefined()
+    })
+
+    it('accepts only a UTC instant ending in Z, not a local offset', () => {
+      expect(
+        nativeRememberInputSchema.safeParse({ ...commitment, dueAt: '2026-11-30T17:00:00+01:00' })
+          .success,
+      ).toBe(false)
     })
 
     it('keeps the fields off the base contract that revise and import extend', () => {
       const dated = { ...commitment, dueAt: '2026-11-30T17:00:00Z' }
       expect(rememberInputSchema.safeParse(dated).success).toBe(false)
       expect(rememberWithFactsInputSchema.safeParse(dated).success).toBe(false)
+      const revision = { ...dated, predecessorId: UUID_A }
+      expect(nativeReviseInputSchema.safeParse(revision).success).toBe(false)
+      expect(
+        nativeReviseInputSchema.safeParse({ ...revision, dueAt: undefined, owner: 'x' }).success,
+      ).toBe(false)
     })
   })
 
