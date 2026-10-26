@@ -98,6 +98,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   printf 'ok\n' >"$tmp/docs/concepts/architecture.mdx"
   printf 'ok\n' >"$tmp/AGENTS.md"
   printf '**Status: design, not built.**\n' >"$tmp/docs/concepts/threads.mdx"
+  printf '**Status: design, not built.**\n' >"$tmp/docs/concepts/forgetting-pass.mdx"
   printf '**Status: shipped, default-off — gated on the validation bar.**\n' \
     >"$tmp/docs/concepts/session-continuity.mdx"
   printf '**Status: the cap is shipped; the proposals below are still design.**\n' \
