@@ -1,5 +1,9 @@
 # @3ngram/sdk
 
+## 1.10.1
+
+No changes in this release.
+
 ## 1.10.0
 
 ### Patch Changes

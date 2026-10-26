@@ -1599,7 +1599,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.10.0
+## `@3ngram/server` 1.10.1
 
 ### `./app`
 
