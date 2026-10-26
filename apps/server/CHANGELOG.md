@@ -1,5 +1,9 @@
 # @3ngram/server
 
+## 1.10.1
+
+No changes in this release.
+
 ## 1.10.0
 
 ### Minor Changes
