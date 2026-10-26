@@ -1,0 +1,4 @@
+# Generated files that are not docs pages. Mintlify parses changed files as MDX
+# during incremental deploys, and the HTML comments in this report fail that parse
+# (docs deploy for v1.10.1, commit 13e0e84, 2026-10-26).
+reference/public-api-report.md
