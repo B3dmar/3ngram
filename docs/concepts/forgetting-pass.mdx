@@ -1,0 +1,230 @@
+---
+title: "Forgetting pass"
+description: "ADR draft: a scheduled, proposals-only pass that finds stale and conflicting memories and asks a typed judgment model what to do with each."
+icon: "broom"
+---
+
+**Status: design, not built.** This is an ADR draft for review. Nothing below exists in code yet. Once built, it ships default-off behind `FORGETTING_PASS_ENABLED`, and it only ever writes proposals.
+
+## Context
+
+A long-running agent's memory fills up with decisions that were overtaken, preferences that drifted, and facts that went out of date. Drew Breunig puts it plainly in "The State of Context Engineering" (2026-10-24): "the instructions and memories start to build up and conflict with one another", and strategic forgetting is unsolved.
+
+3ngram already has the data model for forgetting without loss:
+- append-and-supersede, where nothing is merged or deleted on a write path (ADR-0005, [memory model](/concepts/memory-model));
+- type-aware consolidation that never auto-applies an edge to an `event` memory (ADR-0005 §3: at most an advisory `extends` proposal);
+- an archive transition that leaves history readable.
+
+In practice, forgetting is still weak:
+
+| Signal | Value | Source |
+|---|---|---|
+| Stale candidates in one heavily used project | 344, then 114 after one manual review pass | operator observation, production briefing `staleCandidates`, 2026-10-26 |
+| Manual supersession in a 14k-memory store | 19 uses | S1 forensics (ADR-0005 amendment) |
+| `revise` archive/reaffirm routing accuracy | 0.4, report-only | `node eval/src/tool-selection.mjs`, the `revise#disposition` capability slice (computed per run, not recorded as a floor) |
+
+Two things follow:
+- **Supersession only happens if something proposes it.** People do not maintain lineage by hand.
+- **Proposals cannot be applied blindly.** In the S1 data, high similarity could not tell "same fact, restated" from "same ritual, new day".
+
+Commitments are out of scope here: the [session closer](/concepts/session-continuity) owns their lifecycle.
+
+## Decision (proposed)
+
+Add a worker job, `forgetting-pass`. Once a day, for each tenant that opted in to judgment, it:
+1. **Selects candidates:** stale single memories, plus pairs of same-type, same-scope memories that likely conflict.
+2. **Asks for verdicts:** sends them in batches to `Gateway.decide()` (Jev, pinned model) for typed verdicts with calibrated confidence: `keep`, `archive`, `supersede-by:<id>` or `conflict-with:<id>`.
+3. **Writes proposals:** confident non-keep verdicts become proposals that the user reviews through `review_proposals`.
+
+It never archives, supersedes or edits anything itself. Accepting a proposal reuses the existing audited write paths.
+
+## Candidate query
+
+The pass reads two candidate streams per tenant. Both use the live-row predicate (`valid_to IS NULL AND status = 'active'`) and the tenant selector of briefing.
+
+**Stale singles.** Exactly briefing's stale predicate (`packages/db/src/briefing-read.ts`):
+- type in `STALE_CANDIDATE_TYPES` (decision, preference, blocker, fact);
+- freshness `GREATEST(updated_at, last_reviewed_at)` older than `STALE_WINDOW_DAYS` (30);
+- ordered most stale first;
+- capped at 60 per tenant per run.
+
+Blockers are only ever judged `keep` or `conflict-with`, because blockers settle through `resolve`.
+
+**Conflict pairs.** The `findSimilarPairs` skeleton (`packages/db/src/search.ts`), with these conditions added inside the lateral kNN:
+
+```sql
+b.memory_type = a.memory_type
+AND b.scope = a.scope
+AND b.project IS NOT DISTINCT FROM a.project
+AND a.memory_type IN ('decision', 'preference', 'fact')
+AND (1 - (a.embedding <=> b.embedding)) >= :conflict_floor   -- 0.82 to start, set by the eval
+```
+
+- **`event` is excluded** from pairing, as ADR-0005 §3 requires. Recurring episodic entries are near-identical by construction.
+- **`note` is excluded in v1.** In the S1 data, notes were 79% of destructive-merge targets, and their free form makes "conflict" hard to judge. Revisit after the eval.
+- **Pair order:** pairs are oriented by recency, newer first, as consolidation orients them. Pairs whose older side is stale rank first. The cap is 40 per tenant per run.
+- **Anti-joins:**
+  - an existing edge;
+  - a consolidation proposal in any status;
+  - a retention proposal in any status created after both memories' freshness.
+
+  So a decision stays final for a pair until a newer memory reopens it (the [memory model](/concepts/memory-model) rule).
+
+A single that also appears in a pair is judged once, inside the pair.
+
+## Judgment: the Jev state shape
+
+- **Calls:** one `decide()` call per batch of up to 12 items, through the composed gateway. `JEV_API_KEY` and `JEV_MODEL` are pinned (`jev-1.14.0`), the same configuration the session closer uses.
+- **Size limits:** the judged memory's content is cut to 1,200 characters, and each `newer` neighbour's to 300. A single item then carries at most about 2,100 characters of content and a pair about 2,400. Twelve items plus JSON overhead stay under 40k characters, against Jev's limits of 64k (`MAX_DECIDE_STATE_CHARS`) and 100 questions. The batcher measures the rendered state and splits a batch that would pass 48k, so an unusually long topic cannot trip `assertDecideRequest`.
+- **Metering:** each call is metered as a new operation, `memory.forget.decide`. That takes two registry edits in `packages/llm/src/operations.ts`:
+  - an `llmOperations` entry with its own cost ceiling;
+  - an addition to `METERED_JUDGMENT_OPERATIONS`.
+
+  The pass uses the same injected `BudgetEnforcement` and the closer's metered-call shape: reserve, send, record usage, release.
+- **Opt-in:** `isJudgmentEnabled(userId)` is read immediately before every send.
+- **No fallback:** there is no fallback to `complete()`. A tenant without the opt-in, or a deployment without a judgment gateway, gets no forgetting pass at all.
+
+The state is the closer's untrusted-data preamble followed by one fenced JSON block. It is built with the closer's helpers:
+- `fenceExcerpt`, which is exported from `session-closer-prompt.ts`;
+- `jsonLiteral`, which is private to `session-closer-judgment.ts` today. PR 2 moves it beside `fenceExcerpt` and exports it.
+
+```json
+{
+  "now": "2026-10-26T04:30:00Z",
+  "items": [
+    {
+      "ref": "s0",
+      "kind": "single",
+      "memory": { "type": "decision", "scope": "work", "project": "3ngram",
+                  "topic": "…", "content": "…", "recordedAt": "…", "lastTouchedAt": "…" },
+      "newer": [ { "ref": "s0n0", "type": "decision", "topic": "…", "content": "…", "recordedAt": "…" } ]
+    },
+    {
+      "ref": "p0",
+      "kind": "pair",
+      "older": { "type": "fact", "topic": "…", "content": "…", "recordedAt": "…" },
+      "newer": { "type": "fact", "topic": "…", "content": "…", "recordedAt": "…" },
+      "similarity": 0.86
+    }
+  ]
+}
+```
+
+`newer` lists up to three newer live memories of the same type and scope, ranked by similarity. That makes "superseded by" answerable for singles.
+
+Each item gets one `choice` question, so Jev returns a confidence and a full probability map:
+
+| Item | Choice keys | Meaning |
+|---|---|---|
+| single | `keep`, `archive`, `supersede_by:s0n0` … | archive means no longer true or no longer useful as a standing memory. supersede means a listed newer memory states the same thing more currently |
+| pair | `keep_both`, `archive_older`, `supersede_older`, `conflict` | conflict means both are live and contradict, and a human must choose |
+
+The answer maps to a typed verdict:
+- `keep`, `keep_both`: **keep**.
+- `archive`, `archive_older`: **archive**.
+- `supersede_by:…`, `supersede_older`: **supersede-by:**`<newer id>`.
+- `conflict`: **conflict-with:**`<other id>`.
+
+The confidence is the chosen key's probability. A proposal is written only when the verdict is not `keep` and its probability clears that verdict's threshold. The thresholds start at 0.85 for archive and supersede and 0.6 for conflict. The eval sets the final values.
+
+## Proposals
+
+**A new kind is needed. `resolution_proposals` cannot be reused:**
+- its `session_run_id` is NOT NULL with a foreign key to `agent_sessions`, and a forgetting pass has no session;
+- it has no action column;
+- it only stages open or waiting commitments;
+- it means "this commitment is done".
+
+`consolidation_proposals` can express a supersede edge, but not an archive. Its `similarity` column means cosine, so storing a judge probability there would blur the per-type precision audit that ADR-0005 asks for.
+
+So the pass gets a fourth `review_proposals` kind, `retention`, backed by a new table:
+
+```sql
+CREATE TABLE retention_proposals (
+  id                uuid PRIMARY KEY DEFAULT uuidv7(),
+  user_id           uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  memory_id         uuid NOT NULL,              -- the memory the verdict is about
+  action            text NOT NULL CHECK (action IN ('keep', 'archive', 'supersede', 'conflict')),
+  related_memory_id uuid,                       -- the newer memory (supersede) or the other side (conflict)
+  probability       double precision NOT NULL CHECK (probability BETWEEN 0 AND 1),
+  probabilities     jsonb NOT NULL,             -- the full choice distribution, for calibration
+  model             text NOT NULL,              -- the pinned judge model
+  status            text NOT NULL DEFAULT 'proposed'
+                    CHECK (status IN ('proposed', 'applied', 'rejected', 'dismissed')),
+  decided_at        timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  CHECK ((action IN ('supersede', 'conflict')) = (related_memory_id IS NOT NULL)),
+  FOREIGN KEY (user_id, memory_id) REFERENCES memories(user_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id, related_memory_id) REFERENCES memories(user_id, id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX retention_proposals_open_idx
+  ON retention_proposals (user_id, memory_id, action) WHERE status = 'proposed';
+CREATE INDEX retention_proposals_review_idx ON retention_proposals (user_id, status, created_at);
+-- tenant_isolation policy and FORCE ROW LEVEL SECURITY, exactly as 0043 and 0044;
+-- runtime grants SELECT, INSERT, UPDATE only (no DELETE); covered by export and account deletion.
+```
+
+- **Keep verdicts** are stored with status `dismissed` and are never listed. They stop the pass from re-judging a memory until that memory's freshness moves past the verdict, through an edit, a reaffirm or a newer neighbour.
+- **Table count:** this is the 32nd physical table. Its JTBD is "a memory the judge thinks is finished waits for a human yes instead of lingering in every briefing, or being dropped", and no existing proposal table can carry it, as argued above.
+- **Accepting:**
+  - **archive:** `archiveMemoryIn` with the `disposition` policy, the same rejection rules and an audited `archive` event.
+  - **supersede:** a `supersedes` edge from the newer to the older memory, with `applyProposal`'s predecessor-close semantics. It refuses event-type and no-longer-live memories.
+  - **conflict:** records the review only, with no memory change. The user resolves it with `revise`.
+- **Rejecting:** final for that memory and action, until the memory's freshness moves.
+
+**The MCP surface.** A fourth kind changes the strict `review_proposals` output counts, so this ships as a V4 output under ADR-0011. The tool description and its embeddings are regenerated, and the tool-selection eval gate is rerun at the current floors. Hard rule 8 still requires exactly 5 scenarios per tool.
+
+## Flag and schedule
+
+The pattern is `SESSION_CLOSER_ENABLED`:
+- `FORGETTING_PASS_ENABLED` in `packages/config`, a `stringbool` that defaults to false, loaded with `loadForgettingPassConfig()`.
+- **Resident worker:** with the flag on, upsert a job scheduler at `0 30 4 * * *`, daily at 04:30 UTC, clear of the hourly consolidation tick. With it off, remove the scheduler, and gate the processor so a residual job completes as a no-op.
+- **One-shot:** add `forgetting-pass` to `ONCE_JOBS`. With the flag off it exits 0 without reading anything. Add a row to the [operate](/operate) job table (`30 4 * * *`).
+- **Budget:** the injected `BudgetEnforcement` reserves a slot before every `decide()` call, as the closer does, and the pass rejects instead of billing past the cap.
+
+## Eval plan
+
+**Golden set.** It is built from real memories in the 3ngram project of one consenting account, so it **never goes into the public `eval/fixtures`**. It lives in a private repository. A small synthetic mirror in `eval/` tests the harness wiring in CI. Target slices:
+
+| Slice | Target size | Expected verdict | Source |
+|---|---|---|---|
+| stale, should archive | 60 | archive | the 2026-10-26 corpus review: human-applied archives |
+| conflicting pairs | 40 | supersede 25, conflict 15 | mined with the candidate query, labelled by hand |
+| still valid | 60 | keep | the review's reaffirms, plus standing decisions and preferences |
+| recurring episodic | 30 | never collapse | digests, debriefs, standups: `event` and dated `note` entries |
+
+The recurring-episodic slice must stay at **zero false collapses**. `event` rows never enter pairing, so this slice checks the exclusion, plus dated notes, which can enter as singles.
+
+**Metrics.**
+- **Headline:** precision on archive and supersede proposals, each separately and then combined, reported per memory type as ADR-0005 asks. A wrong archive costs more than a missed one, so recall is secondary.
+- **Also reported:** conflict precision, the keep rate on still-valid items, and calibration (expected calibration error) of the judge's confidences.
+
+**Protocol.** It follows the #166 pre-registration:
+- labels are frozen before the first judged run;
+- thresholds are chosen on a development split, and precision is reported on a held-out split;
+- recorded Jev responses become fixtures for deterministic CI, as `jev-recorded.test.ts` does;
+- a live re-measurement runs whenever `JEV_MODEL` changes.
+
+**Bars.** The pass stays report-only, like the `revise#disposition` slice, until both hold on the held-out split:
+- archive precision of at least 0.95 with at least 40 proposals;
+- zero recurring-episodic collapses.
+
+After four weeks of stability it may become a gated floor. Floors only move up.
+
+## Rollout
+
+It ships as a stack of small PRs to `staging`, all default-off:
+1. Migration and db functions for `retention_proposals` (RLS + FORCE), plus export and account-deletion coverage.
+2. Core candidate selection and judgment rendering, tested with `FakeGateway`.
+3. Worker job, flag and one-shot entry, plus the operate docs row.
+4. `review_proposals` V4 with the `retention` kind, description and embeddings regenerated, and the eval gate rerun.
+5. Private golden set and report-only harness.
+
+A staging trial follows with one opted-in tenant. Production only on an explicit go.
+
+## Open questions
+
+1. Should confident `keep` verdicts also propose a `reaffirm`? It would shrink the stale list, but it is a write the user did not ask for. The v1 answer is no: a keep stays silent.
+2. Should notes join conflict pairing after the eval, or only as singles?
+3. Should accepting a `conflict` offer the two resolutions inline (archive the older, or supersede), instead of sending the user to `revise`?
+4. How does the pass share the daily budget with the session closer when both are on?

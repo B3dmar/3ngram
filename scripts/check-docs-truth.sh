@@ -69,6 +69,8 @@ run_production_checks() {
     'shipped concept pages must say so'
   require docs/concepts/threads.mdx 'Status: design, not built' \
     'unbuilt designs must declare status so they cannot be read as shipped'
+  require docs/concepts/forgetting-pass.mdx 'Status: design, not built' \
+    'unbuilt designs must declare status so they cannot be read as shipped'
   # session-continuity is now a MIXED page, the same genus as mcp-surface: every
   # implementation step ships, but only default-off, and the default-on behavior
   # the page argues for is gated on an unmeasured validation bar. Requiring the
