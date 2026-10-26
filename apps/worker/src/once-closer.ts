@@ -3,9 +3,8 @@
 // ioredis). The sweep's enqueueCloser port collects requests here instead of
 // into a queue; they run one at a time AFTER the sweep resolves. Loaded by
 // once.ts through a dynamic import, because it pulls in the core/pg graph.
-import { loadBudgetConfig, loadLlmGatewayConfig, log } from '@3ngram/config'
-import { type BudgetEnforcement, type CloserEnqueueRequest, SELFHOST_LIMITS } from '@3ngram/core'
-import { createOpenAIGateway, type Gateway } from '@3ngram/llm'
+import { log } from '@3ngram/config'
+import type { CloserEnqueueRequest } from '@3ngram/core'
 import { sessionCloserJobId } from '@3ngram/schema'
 
 export interface CloserCollector {
@@ -50,24 +49,4 @@ export function createCloserCollector(): CloserCollector {
       return { attempted, failed }
     },
   }
-}
-
-export interface CloserDeps {
-  gateway: Gateway | undefined
-  budget: BudgetEnforcement
-}
-
-/**
- * The closer's gateway and budget. MUST stay in sync with startQueues in
- * src/queues.ts, which builds the same pair for the resident worker.
- */
-export function buildCloserDeps(): CloserDeps {
-  const gatewayConfig = loadLlmGatewayConfig()
-  const gateway = gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig)
-  const budget: BudgetEnforcement = {
-    resolveLimits: async () => SELFHOST_LIMITS,
-    config: loadBudgetConfig(),
-    logger: { warn: (obj, msg) => log().warn(obj, msg) },
-  }
-  return { gateway, budget }
 }

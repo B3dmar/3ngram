@@ -10,9 +10,14 @@ vi.mock('@3ngram/config', () => ({
   loadEnv: vi.fn(),
   loadSessionCloserConfig: vi.fn(() => ({ enabled: true })),
   loadLlmGatewayConfig: () => undefined,
+  loadJevGatewayConfig: () => undefined,
   loadBudgetConfig: () => ({}),
 }))
-vi.mock('@3ngram/llm', () => ({ createOpenAIGateway: vi.fn() }))
+vi.mock('@3ngram/llm', () => ({
+  createOpenAIGateway: vi.fn(),
+  createJevGateway: vi.fn(),
+  composeGateway: vi.fn(({ base }) => base),
+}))
 vi.mock('@3ngram/config/otel', () => ({
   initObservability: vi.fn(),
   flushObservability: vi.fn(async () => {}),

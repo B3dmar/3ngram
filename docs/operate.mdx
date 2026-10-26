@@ -85,7 +85,7 @@ describes each tool and its required scope.
 `RATE_LIMIT_STORE` picks where limiter buckets live:
 
 - `redis` keeps them in Redis and requires `REDIS_URL`.
-- `postgres` keeps them in the `rate_limits` table (migration 0039) on
+- `postgres` keeps them in the `rate_limits` table (migration 0042) on
   `DATABASE_URL`, so a production server needs no Redis.
 - `memory` keeps them per process. In production it is an explicit opt-in for a
   single replica and logs a warning at boot.

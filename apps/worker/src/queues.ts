@@ -16,17 +16,12 @@
 // turning it off REMOVES the durable scheduler from Redis and makes the two
 // processors no-op, so a deployment that once ran with it on stops closing rows
 // and stops billing generation as soon as it restarts with the flag off.
-import {
-  loadBudgetConfig,
-  loadJevGatewayConfig,
-  loadLlmGatewayConfig,
-  loadSessionCloserConfig,
-  log,
-} from '@3ngram/config'
-import { type BudgetEnforcement, type CloserEnqueueRequest, SELFHOST_LIMITS } from '@3ngram/core'
-import { composeGateway, createJevGateway, createOpenAIGateway, type Gateway } from '@3ngram/llm'
+import { loadSessionCloserConfig, log } from '@3ngram/config'
+import type { BudgetEnforcement, CloserEnqueueRequest } from '@3ngram/core'
+import type { Gateway } from '@3ngram/llm'
 import { type Job, Queue, Worker } from 'bullmq'
 import type { Redis } from 'ioredis'
+import { buildCloserDeps } from './closer-deps.js'
 import { CONSOLIDATION_JOB, runConsolidation } from './jobs/consolidation.js'
 import { GC_CLIENTS_JOB, runGcClients } from './jobs/gc-clients.js'
 import { runSessionCloser, SESSION_CLOSER_JOB, sessionCloserJobId } from './jobs/session-closer.js'
@@ -264,34 +259,11 @@ export function logBullmqError(source: 'queue' | 'worker', err: unknown): void {
 export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   const queue = new Queue(QUEUE_NAME, { connection })
   queue.on('error', (err) => logBullmqError('queue', err))
-  // The closer is the only job that needs generation. Resolve the gateway ONCE
-  // at boot (env-gated, exactly as apps/server does) rather than per job: it is
-  // a pure factory, and re-reading env per tick would let a live process drift.
-  // Absent config → undefined → every closer pass reports `no-gateway` and
-  // writes nothing, which is the correct degraded behaviour for a self-host
-  // deployment with no LLM configured.
-  // decide() routes to Jev only when JEV_API_KEY + JEV_MODEL are set (issue
-  // #225); otherwise it rejects with a typed NotImplementedError.
-  const gatewayConfig = loadLlmGatewayConfig()
-  const jevConfig = loadJevGatewayConfig()
-  if (jevConfig !== undefined && gatewayConfig === undefined) {
-    log().warn({}, 'JEV_* set without LLM_GATEWAY_URL/LLM_GATEWAY_API_KEY: decide() unavailable')
-  }
-  const gateway = composeGateway({
-    base: gatewayConfig === undefined ? undefined : createOpenAIGateway(gatewayConfig),
-    judgment: jevConfig === undefined ? undefined : createJevGateway(jevConfig),
-  })
+  // The closer is the only job that needs generation. Its gateway and budget are
+  // resolved ONCE at boot, by the same builder the one-shot session-sweep uses
+  // (src/closer-deps.ts), so the two worker modes cannot drift apart again.
+  const { gateway, budget } = buildCloserDeps()
   const closer = loadSessionCloserConfig()
-  // Budget enforcement for the ONE metered operation the worker owns. Mirrors
-  // apps/server's composition root: self-host resolves empty limits and falls
-  // through to the config default cap, so a self-host worker is capped too. The
-  // closer is a background job, so an over-cap pass must be REJECTED rather than
-  // silently billed — this is the seam that does it.
-  const budget: BudgetEnforcement = {
-    resolveLimits: async () => SELFHOST_LIMITS,
-    config: loadBudgetConfig(),
-    logger: { warn: (obj, msg) => log().warn(obj, msg) },
-  }
   const worker = new Worker(
     QUEUE_NAME,
     (job) => process(job, queue, gateway, budget, closer.enabled),

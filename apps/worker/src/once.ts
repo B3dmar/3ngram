@@ -42,7 +42,8 @@ async function runSessionSweepOnce(job: OnceJob): Promise<unknown> {
     log().info({ job, skipped: 'closer-disabled' }, 'worker once: session closer disabled')
     return { skipped: 'closer-disabled' }
   }
-  const { buildCloserDeps, createCloserCollector } = await import('./once-closer.js')
+  const { createCloserCollector } = await import('./once-closer.js')
+  const { buildCloserDeps } = await import('./closer-deps.js')
   const { runSessionSweep } = await import('./jobs/session-sweep.js')
   const { runSessionCloser } = await import('./jobs/session-closer.js')
   const { gateway, budget } = buildCloserDeps()
