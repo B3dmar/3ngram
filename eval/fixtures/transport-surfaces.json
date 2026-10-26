@@ -2220,6 +2220,11 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "cardinality": {
+                    "description": "How this value relates to other values of the same subject and predicate. \"one\" (default): it replaces the current value, which ends at this value's validFrom. \"many\": the fact holds several values at once, and nothing is closed.",
+                    "type": "string",
+                    "enum": ["one", "many"]
                   }
                 },
                 "required": ["subject", "predicate", "value"],
@@ -4232,6 +4237,11 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "cardinality": {
+                    "description": "How this value relates to other values of the same subject and predicate. \"one\" (default): it replaces the current value, which ends at this value's validFrom. \"many\": the fact holds several values at once, and nothing is closed.",
+                    "type": "string",
+                    "enum": ["one", "many"]
                   }
                 },
                 "required": ["subject", "predicate", "value"],

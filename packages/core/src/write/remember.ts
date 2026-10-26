@@ -66,6 +66,7 @@ function toFactWrite(fact: FactWriteInput): MemoryFactWrite {
     confidence: fact.confidence,
     validFrom: fact.validFrom === undefined ? undefined : new Date(fact.validFrom),
     validTo: fact.validTo === undefined ? undefined : new Date(fact.validTo),
+    cardinality: fact.cardinality,
   }
 }
 

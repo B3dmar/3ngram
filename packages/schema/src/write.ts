@@ -157,6 +157,12 @@ export const factWriteSchema = z
     confidence: z.number().min(0).max(1).optional(),
     validFrom: factTimestampSchema.describe(factBoundDescription('start')),
     validTo: factTimestampSchema.describe(factBoundDescription('end')),
+    cardinality: z
+      .enum(['one', 'many'])
+      .optional()
+      .describe(
+        'How this value relates to other values of the same subject and predicate. "one" (default): it replaces the current value, which ends at this value\'s validFrom. "many": the fact holds several values at once, and nothing is closed.',
+      ),
   })
   .strict()
   .refine((fact) => fact.validTo === undefined || fact.validFrom !== undefined, {

@@ -4331,6 +4331,14 @@
                     "items": {
                       "additionalProperties": false,
                       "properties": {
+                        "cardinality": {
+                          "description": "How this value relates to other values of the same subject and predicate. \"one\" (default): it replaces the current value, which ends at this value's validFrom. \"many\": the fact holds several values at once, and nothing is closed.",
+                          "enum": [
+                            "one",
+                            "many"
+                          ],
+                          "type": "string"
+                        },
                         "confidence": {
                           "maximum": 1,
                           "minimum": 0,
