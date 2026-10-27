@@ -67,7 +67,7 @@ describe('resolution proposals through core (issue #229)', () => {
     await staged('ship the closer')
     const page = await listProposalsPage(userA, { limit: 10 })
     expect(page.resolutionProposals).toHaveLength(1)
-    expect(page.totals).toEqual({ edge: 0, fact: 0, resolution: 1 })
+    expect(page.totals).toEqual({ edge: 0, fact: 0, resolution: 1, retention: 0 })
   })
 
   it('accept resolves the commitment as the reviewer and marks the proposal applied', async () => {

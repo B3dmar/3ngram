@@ -26,6 +26,8 @@ const listProposals = vi.fn()
 const listFactProposals = vi.fn()
 const decideResolutionProposal = vi.fn()
 const reopenResolutionProposal = vi.fn()
+const decideRetentionProposal = vi.fn()
+const acceptRetentionProposal = vi.fn()
 const resolveCommitmentByMemoryId = vi.fn()
 
 // The commitment-only resolve an accepted resolution proposal goes through (#229).
@@ -47,6 +49,9 @@ vi.mock('@3ngram/db', () => ({
   listFactProposals: (...args: unknown[]) => listFactProposals(...args),
   decideResolutionProposal: (...args: unknown[]) => decideResolutionProposal(...args),
   reopenResolutionProposal: (...args: unknown[]) => reopenResolutionProposal(...args),
+  decideRetentionProposal: (...args: unknown[]) => decideRetentionProposal(...args),
+  acceptRetentionProposal: (...args: unknown[]) => acceptRetentionProposal(...args),
+  RetentionProposalNotApplicableError: class RetentionProposalNotApplicableError extends Error {},
 }))
 
 const { acceptProposalAnyKind, listAllProposals, rejectProposalAnyKind } = await import(
@@ -69,6 +74,8 @@ const reset = () => {
     listFactProposals,
     decideResolutionProposal,
     reopenResolutionProposal,
+    decideRetentionProposal,
+    acceptRetentionProposal,
     resolveCommitmentByMemoryId,
   ] as Mock[]) {
     m.mockReset()
@@ -114,10 +121,12 @@ describe('rejectProposalAnyKind', () => {
     rejectProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     rejectFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideRetentionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
 
     await expect(rejectProposalAnyKind(USER, ID)).rejects.toBeInstanceOf(ProposalNotFoundError)
     expect(rejectFactProposal).toHaveBeenCalledOnce()
     expect(decideResolutionProposal).toHaveBeenCalledOnce()
+    expect(decideRetentionProposal).toHaveBeenCalledOnce()
   })
 
   it('propagates a NON-not-found edge failure instead of probing the fact table', async () => {
@@ -240,10 +249,41 @@ describe('listAllProposals', () => {
     applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
     decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    acceptRetentionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
 
     await expect(acceptProposalAnyKind(USER, ID, 'user_mcp')).rejects.toBeInstanceOf(
       ProposalNotFoundError,
     )
     expect(resolveCommitmentByMemoryId).not.toHaveBeenCalled()
+  })
+})
+
+describe('the retention kind (forgetting pass)', () => {
+  const retention = { id: ID, memoryId: 'm1', action: 'archive', status: 'applied' }
+
+  it('reject falls through to the retention table last', async () => {
+    reset()
+    rejectProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    rejectFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideRetentionProposal.mockResolvedValue({ ...retention, status: 'rejected' })
+    await expect(rejectProposalAnyKind(USER, ID)).resolves.toEqual({
+      kind: 'retention',
+      proposal: { ...retention, status: 'rejected' },
+    })
+    expect(decideRetentionProposal).toHaveBeenCalledWith('tx', USER, ID, 'rejected')
+  })
+
+  it('accept applies the retention verdict as the reviewer, in one tenant transaction', async () => {
+    reset()
+    applyProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    applyFactProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    decideResolutionProposal.mockRejectedValue(new ProposalNotFoundError(ID))
+    acceptRetentionProposal.mockResolvedValue(retention)
+    await expect(acceptProposalAnyKind(USER, ID, 'user_mcp')).resolves.toEqual({
+      kind: 'retention_applied',
+      proposal: retention,
+    })
+    expect(acceptRetentionProposal).toHaveBeenCalledWith('tx', USER, ID, 'user_mcp')
   })
 })

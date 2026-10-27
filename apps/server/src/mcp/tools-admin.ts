@@ -38,6 +38,7 @@ import {
   listScopes,
   type ProposalRecord,
   type ResolutionProposalRecord,
+  type RetentionProposalRecord,
   rejectProposalAnyKind,
   renameScope,
   type ScopeRecord,
@@ -54,7 +55,7 @@ import {
   describeEnvironmentOutputV5Schema,
   type ReviewProposalsInput,
   reviewProposalsInputSchema,
-  reviewProposalsOutputV3Schema,
+  reviewProposalsOutputV4Schema,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { decodeProposalsCursor, encodeProposalsCursor, proposalsFingerprint } from '../cursor.js'
@@ -244,7 +245,7 @@ async function runReviewProposals(
     // the tenant (hashed): a mismatched cursor is a typed invalid-input error.
     const fp = proposalsFingerprint({
       surface: 'mcp',
-      kinds: ['edge', 'fact', 'resolution'],
+      kinds: ['edge', 'fact', 'resolution', 'retention'],
       status: input.status,
       tenant: ctx.userId,
     })
@@ -254,9 +255,9 @@ async function runReviewProposals(
       limit: input.limit,
       after,
     })
-    const { proposals, factProposals, resolutionProposals } = page
+    const { proposals, factProposals, resolutionProposals, retentionProposals } = page
     return ok(
-      parseOutput('review_proposals', reviewProposalsOutputV3Schema, {
+      parseOutput('review_proposals', reviewProposalsOutputV4Schema, {
         action: 'list',
         proposals: proposals.map(toProposalOutput),
         // `count` stays the EDGE count ON THIS PAGE: it is the shipped field,
@@ -270,10 +271,14 @@ async function runReviewProposals(
         ...(resolutionProposals.length > 0
           ? { resolutionProposals: resolutionProposals.map(toResolutionProposalOutput) }
           : {}),
+        ...(retentionProposals.length > 0
+          ? { retentionProposals: retentionProposals.map(toRetentionProposalOutput) }
+          : {}),
         counts: {
           edge: proposals.length,
           fact: factProposals.length,
           resolution: resolutionProposals.length,
+          retention: retentionProposals.length,
         },
         totals: page.totals,
         hasMore: page.hasMore,
@@ -295,8 +300,23 @@ async function runReviewProposals(
       ? await acceptProposalAnyKind(ctx.userId, input.proposalId, 'user_mcp')
       : await rejectProposalAnyKind(ctx.userId, input.proposalId)
   return ok(
-    parseOutput('review_proposals', reviewProposalsOutputV3Schema, toDecisionOutput(decided)),
+    parseOutput('review_proposals', reviewProposalsOutputV4Schema, toDecisionOutput(decided)),
   )
+}
+
+/** Shape a core retention-proposal record for the structured output (Dates -> ISO). */
+function toRetentionProposalOutput(p: RetentionProposalRecord) {
+  return {
+    id: p.id,
+    memoryId: p.memoryId,
+    action: p.action,
+    relatedMemoryId: p.relatedMemoryId,
+    probability: p.probability,
+    model: p.model,
+    status: p.status,
+    decidedAt: p.decidedAt === null ? null : p.decidedAt.toISOString(),
+    createdAt: p.createdAt.toISOString(),
+  }
 }
 
 /** Shape a core resolution-proposal record for the structured output (Dates -> ISO). */
@@ -362,6 +382,10 @@ function toDecisionOutput(decided: DecidedProposal): Record<string, unknown> {
         commitmentId: decided.commitmentId,
         commitmentStatus: decided.commitmentStatus,
       }
+    case 'retention':
+      return { action: 'rejected_retention', proposal: toRetentionProposalOutput(decided.proposal) }
+    case 'retention_applied':
+      return { action: 'applied_retention', proposal: toRetentionProposalOutput(decided.proposal) }
   }
 }
 
@@ -463,7 +487,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
       description:
         'List proposals awaiting review (optionally by status), reject one, or accept one. Two kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; and extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it. Accept and reject take the proposal id either way. Reject and accept require the write scope.',
       inputSchema: reviewProposalsInputSchema,
-      outputSchema: reviewProposalsOutputV3Schema,
+      outputSchema: reviewProposalsOutputV4Schema,
       // Per-action (list is a read; reject/accept are writes), so the hints
       // describe the write path. destructiveHint: false: accepting materializes
       // an edge, and a supersedes/updates edge CLOSES the predecessor's validity

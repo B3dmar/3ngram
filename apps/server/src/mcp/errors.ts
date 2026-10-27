@@ -30,6 +30,7 @@ import {
   ProposalNotFoundError,
   ResolveReasonNotSupportedError,
   ResourceLimitExceededError,
+  RetentionProposalNotApplicableError,
   ScopeNameConflictError,
   ScopeNotFoundError,
   SuccessorNotLiveError,
@@ -285,6 +286,18 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: proposal successor no longer live')
     return fail(
       `conflict: proposal ${err.proposalId} successor ${err.fromId} is no longer live; re-propose against the live successor or reject this proposal`,
+    )
+  }
+  // An accepted retention proposal (the forgetting pass) whose verdict can no
+  // longer be applied: the memory left the live set, or the archive disposition
+  // refuses it (a blocker, an open or waiting commitment). A documented domain
+  // CONFLICT; the transaction rolled back, so the proposal stays open for the
+  // reject path. Names the proposal id and a bounded reason only.
+  if (err instanceof RetentionProposalNotApplicableError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'conflict' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: retention proposal not applicable')
+    return fail(
+      `conflict: retention proposal ${err.proposalId} cannot be applied (${err.reason}); reject it instead`,
     )
   }
   return undefined

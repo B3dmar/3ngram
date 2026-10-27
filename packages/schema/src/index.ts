@@ -543,6 +543,17 @@ export {
   resolutionProposalRecordSchema,
   reviewProposalsOutputV3Schema,
 } from './review-resolution-proposals.js'
+// --- retention proposals in review_proposals (the forgetting pass) ---
+export type {
+  ProposalKindCountsV4,
+  RetentionProposalRecordOutput,
+  ReviewProposalsOutputV4,
+} from './review-retention-proposals.js'
+export {
+  proposalKindCountsV4Schema,
+  retentionProposalRecordSchema,
+  reviewProposalsOutputV4Schema,
+} from './review-retention-proposals.js'
 // --- revise dispositions (issue #216 umbrella) — appended block ---
 export {
   type ArchiveEventPayload,

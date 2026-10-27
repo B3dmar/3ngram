@@ -261,7 +261,7 @@ its row here even when its name and kind are unchanged.
 | `DashboardSearchPage` | interface | `77168fc773d5` |
 | `DebriefBriefedMemory` | interface | `82f24b49a983` |
 | `DebriefPromptContext` | interface | `8ca9a0260c74` |
-| `DecidedProposal` | type | `3e983d9a9cd5` |
+| `DecidedProposal` | type | `af703c94b7ca` |
 | `DeleteAccountOptions` | interface | `fd986a00ec9a` |
 | `DuplicateEmailError` | class | `4f7a078f9631` |
 | `DuplicateMemoryError` | class | `93f0fe6bc97d` |
@@ -349,7 +349,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalPosition` | type | `6f6bf52d77ac` |
 | `ProposalRecord` | type | `7ef93d00e3ad` |
 | `ProposalsListQuery` | interface | `cd92940b612e` |
-| `ProposalsPage` | interface | `8e2513277fce` |
+| `ProposalsPage` | interface | `c461e0ef4d40` |
 | `ProposalsPageQuery` | interface | `443bc668abd5` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
 | `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
@@ -360,6 +360,8 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `ResourceLimitKind` | type | `38affb7e6a60` |
 | `ResourceLimits` | type | `413a8884f475` |
+| `RetentionProposalNotApplicableError` | class | `92c39a416fe4` |
+| `RetentionProposalRecord` | type | `43504b15b089` |
 | `RetrievalPolicy` | type | `f18dae676991` |
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
@@ -1280,6 +1282,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalEdgeTotals` | type | `a20b221efc92` |
 | `ProposalKindCounts` | type | `28e7864043af` |
 | `ProposalKindCountsV3` | type | `2410ed9cbacd` |
+| `ProposalKindCountsV4` | type | `506aa4398c67` |
 | `ProposalRecordOutput` | type | `8a269415e658` |
 | `ProposalRejectBody` | type | `2fb4de60f87a` |
 | `ProposalStatus` | type | `184c3cc32f4f` |
@@ -1307,6 +1310,7 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimits` | type | `413a8884f475` |
 | `RestErrorResponse` | type | `a66b13d0a81f` |
 | `RetentionAction` | type | `2ffd7ac28002` |
+| `RetentionProposalRecordOutput` | type | `0377b2b59af0` |
 | `RetentionProposalStatus` | type | `f735e0aea5ce` |
 | `RetrievalScopeMode` | type | `8ed013f1984e` |
 | `RetrievalScopePolicy` | type | `655e702851b3` |
@@ -1314,6 +1318,7 @@ its row here even when its name and kind are unchanged.
 | `ReviewProposalsOutput` | type | `9775221bd01d` |
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
 | `ReviewProposalsOutputV3` | type | `cfaadd706087` |
+| `ReviewProposalsOutputV4` | type | `a11a6025d062` |
 | `ReviseDispositionKind` | type | `94d9ffd08b65` |
 | `ReviseDispositionOutcome` | type | `4191aeeac157` |
 | `ReviseDispositionOutcomeKind` | type | `ac0a6e1f1c44` |
@@ -1537,6 +1542,7 @@ its row here even when its name and kind are unchanged.
 | `proposalEdgeTotalsSchema` | const | `3b06e6383471` |
 | `proposalKindCountsSchema` | const | `5d10c63012dd` |
 | `proposalKindCountsV3Schema` | const | `b41c4f35455f` |
+| `proposalKindCountsV4Schema` | const | `7086ee4f3f11` |
 | `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |
@@ -1564,6 +1570,7 @@ its row here even when its name and kind are unchanged.
 | `resourceLimitsSchema` | const | `db1d186cc9a5` |
 | `restErrorResponseSchema` | const | `f7252b5b657d` |
 | `retentionActionSchema` | const | `c1ffd933371e` |
+| `retentionProposalRecordSchema` | const | `c5ba3128d863` |
 | `retentionProposalStatusSchema` | const | `edde6b2adcb2` |
 | `retrievalScopeModeSchema` | const | `341a6d63e822` |
 | `retrievalScopePolicySchema` | const | `8fe9bd2568c5` |
@@ -1572,6 +1579,7 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsOutputSchema` | const | `9b97544b2f22` |
 | `reviewProposalsOutputV2Schema` | const | `c44e9b2087ea` |
 | `reviewProposalsOutputV3Schema` | const | `a196245ef29e` |
+| `reviewProposalsOutputV4Schema` | const | `4c5f9e2af870` |
 | `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
 | `reviewProposalsRegisterOutputShapeV2` | const | `a43afb37177a` |
 | `reviewProposalsRegisterShape` | const | `c147835e9d4d` |
