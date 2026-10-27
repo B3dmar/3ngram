@@ -30,6 +30,7 @@ vi.mock('@3ngram/config', () => ({
   loadLlmGatewayConfig: () => undefined,
   loadJevGatewayConfig: () => undefined,
   loadSessionCloserConfig: () => ({ enabled: false }),
+  loadForgettingPassConfig: () => ({ enabled: false }),
   loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
 }))
 // The job modules reach @3ngram/core and a database; this suite needs neither.
@@ -50,6 +51,10 @@ vi.mock('../src/jobs/session-closer.js', () => ({
   SESSION_CLOSER_JOB: 'session-closer',
   runSessionCloser: vi.fn(),
   sessionCloserJobId: vi.fn(),
+}))
+vi.mock('../src/jobs/forgetting-pass.js', () => ({
+  FORGETTING_PASS_JOB: 'forgetting-pass',
+  runForgettingPassJob: vi.fn(),
 }))
 
 import { QUEUE_NAME, startQueues } from '../src/queues.js'

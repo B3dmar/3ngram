@@ -35,6 +35,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
 | `EnvRole` | type | `3d4c8d58bbd2` |
+| `ForgettingPassConfig` | interface | `111e8ca77fd5` |
 | `JevGatewayConfig` | interface | `3e4b1203d762` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
@@ -60,13 +61,14 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `e72520eca715` |
+| `envSchema` | const | `f2cecb307a49` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
+| `loadForgettingPassConfig` | function | `9c52f0ce959e` |
 | `loadJevGatewayConfig` | function | `d10f4742421d` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
@@ -110,6 +112,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
 | `EnvRole` | type | `3d4c8d58bbd2` |
+| `ForgettingPassConfig` | interface | `111e8ca77fd5` |
 | `JevGatewayConfig` | interface | `3e4b1203d762` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
@@ -122,10 +125,11 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `e72520eca715` |
+| `envSchema` | const | `f2cecb307a49` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
+| `loadForgettingPassConfig` | function | `9c52f0ce959e` |
 | `loadJevGatewayConfig` | function | `d10f4742421d` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
@@ -290,6 +294,8 @@ its row here even when its name and kind are unchanged.
 | `ForgettingPassResult` | interface | `d6e421e96c99` |
 | `ForgettingRepo` | interface | `66b546ebc6b4` |
 | `ForgettingStop` | type | `daa781ee5103` |
+| `ForgettingSweepOptions` | interface | `337882bef481` |
+| `ForgettingSweepResult` | interface | `4de89d2ae361` |
 | `ForgettingUsage` | interface | `c2e1f465c371` |
 | `FrozenOrdering` | interface | `4e9572ab5ac1` |
 | `FullBriefing` | interface | `2b54af8c1c89` |
@@ -425,6 +431,7 @@ its row here even when its name and kind are unchanged.
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
+| `forgetAllTenants` | function | `f40d741129a6` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `formatUnscopedWriteDetail` | function | `458c8da8d442` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |

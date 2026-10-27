@@ -379,6 +379,13 @@ export const envSchema = z
     // With the flag off the sweep is never scheduled, so no row is implicitly
     // closed and no generation is billed.
     SESSION_CLOSER_ENABLED: z.stringbool().default(false),
+    // Forgetting pass (docs/concepts/forgetting-pass.mdx). When true, the worker
+    // runs a daily pass that judges stale and conflicting memories of tenants
+    // who opted in to judgment, and stages archive, supersede and conflict
+    // PROPOSALS for review. It never archives, supersedes or edits anything
+    // itself. DEFAULT OFF; with the flag off the scheduler is removed and no
+    // judgment call is billed.
+    FORGETTING_PASS_ENABLED: z.stringbool().default(false),
     // Overdue grace window for the surfacing sweep (issue #221). The sweep used
     // to expire every open|waiting commitment the moment due_at passed, and no
     // briefing section reads `expired`, so an overdue item was visible for at
@@ -939,6 +946,20 @@ export interface SessionCloserConfig {
  */
 export function loadSessionCloserConfig(): SessionCloserConfig {
   return { enabled: loadEnv().SESSION_CLOSER_ENABLED }
+}
+
+/** Resolved forgetting-pass config (docs/concepts/forgetting-pass.mdx). */
+export interface ForgettingPassConfig {
+  /** Schedule the daily pass and process its jobs. Default off. */
+  enabled: boolean
+}
+
+/**
+ * Resolve the forgetting-pass config. Separate from the closer's flag: the two
+ * are different background LLM passes, measured and enabled on their own.
+ */
+export function loadForgettingPassConfig(): ForgettingPassConfig {
+  return { enabled: loadEnv().FORGETTING_PASS_ENABLED }
 }
 
 /** Resolved surfacing-sweep policy (issue #221; docs/concepts/memory-model.mdx). */

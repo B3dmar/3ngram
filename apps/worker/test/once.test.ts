@@ -9,6 +9,7 @@ vi.mock('@3ngram/config', () => ({
   log: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
   loadEnv: vi.fn(),
   loadSessionCloserConfig: vi.fn(() => ({ enabled: true })),
+  loadForgettingPassConfig: vi.fn(() => ({ enabled: true })),
   loadLlmGatewayConfig: () => undefined,
   loadJevGatewayConfig: () => undefined,
   loadBudgetConfig: () => ({}),
@@ -26,6 +27,7 @@ vi.mock('@3ngram/core', () => ({ closeDb: vi.fn(async () => {}), SELFHOST_LIMITS
 vi.mock('../src/jobs/consolidation.js', () => ({ runConsolidation: vi.fn(async () => ({})) }))
 vi.mock('../src/jobs/surfacing.js', () => ({ runSurfacing: vi.fn(async () => ({})) }))
 vi.mock('../src/jobs/gc-clients.js', () => ({ runGcClients: vi.fn(async () => ({})) }))
+vi.mock('../src/jobs/forgetting-pass.js', () => ({ runForgettingPassJob: vi.fn(async () => ({})) }))
 const RUN_A = { userId: 'u1', sessionRunId: 'run-a', activationEpoch: 1 }
 const RUN_B = { userId: 'u1', sessionRunId: 'run-b', activationEpoch: 2 }
 const events: string[] = []
@@ -55,7 +57,8 @@ const { closeDb } = await import('@3ngram/core')
 const { runConsolidation } = await import('../src/jobs/consolidation.js')
 const { runSurfacing } = await import('../src/jobs/surfacing.js')
 const { runGcClients } = await import('../src/jobs/gc-clients.js')
-const { loadSessionCloserConfig } = await import('@3ngram/config')
+const { loadForgettingPassConfig, loadSessionCloserConfig } = await import('@3ngram/config')
+const { runForgettingPassJob } = await import('../src/jobs/forgetting-pass.js')
 const { runSessionSweep } = await import('../src/jobs/session-sweep.js')
 const { runSessionCloser } = await import('../src/jobs/session-closer.js')
 const { main, parseOnceJob, UnknownOnceJobError } = await import('../src/once.js')
@@ -113,7 +116,7 @@ describe('worker once: usage errors', () => {
   it('parseOnceJob names the accepted jobs', () => {
     expect(() => parseOnceJob('bogus')).toThrow(UnknownOnceJobError)
     expect(() => parseOnceJob('bogus')).toThrow(
-      /consolidation, surfacing, gc-clients, session-sweep/,
+      /consolidation, surfacing, gc-clients, session-sweep, forgetting-pass/,
     )
   })
 })
@@ -150,6 +153,28 @@ describe('worker once: session-sweep', () => {
     })
     expect(await main(argv('session-sweep'))).toBe(1)
     expect(runSessionCloser).not.toHaveBeenCalled()
+    expect(closeDb).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('worker once: forgetting-pass', () => {
+  it('with the flag off exits 0 without running the pass', async () => {
+    vi.mocked(loadForgettingPassConfig).mockReturnValueOnce({ enabled: false } as never)
+    expect(await main(argv('forgetting-pass'))).toBe(0)
+    expect(runForgettingPassJob).not.toHaveBeenCalled()
+    expect(closeDb).toHaveBeenCalledTimes(1)
+  })
+
+  it('with the flag on runs the pass with the boot deps and exits 0', async () => {
+    expect(await main(argv('forgetting-pass'))).toBe(0)
+    expect(runForgettingPassJob).toHaveBeenCalledTimes(1)
+    // No LLM configured here: the job gets no gateway and reports it itself.
+    expect(vi.mocked(runForgettingPassJob).mock.calls[0]?.[0]).toBeUndefined()
+  })
+
+  it('exits 1 when a tenant pass failed', async () => {
+    vi.mocked(runForgettingPassJob).mockRejectedValueOnce(new Error('1 tenant failed'))
+    expect(await main(argv('forgetting-pass'))).toBe(1)
     expect(closeDb).toHaveBeenCalledTimes(1)
   })
 })
