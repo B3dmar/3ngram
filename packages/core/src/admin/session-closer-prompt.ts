@@ -83,12 +83,33 @@ export function renderCloserPrompt(input: {
  * fence of its own.
  */
 export function fenceExcerpt(excerpt: string | null): string {
-  const payload = JSON.stringify(excerpt ?? '')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029')
+  return fenceJson(JSON.stringify(excerpt ?? ''))
+}
+
+/**
+ * Fence one line of serialized JSON (the output of JSON.stringify, which has
+ * no raw newlines) as a `json` block whose fence is longer than any backtick
+ * run inside it, so the payload cannot close it. U+2028/U+2029, which
+ * JSON.stringify leaves literal, are escaped too. Shared by the closer and the
+ * forgetting pass so both fence tenant data identically.
+ */
+export function fenceJson(json: string): string {
+  const payload = escapeLineSeparators(json)
   const longest = (payload.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0)
   const fence = '`'.repeat(Math.max(3, longest + 1))
   return [`${fence}json`, payload, fence].join('\n')
+}
+
+/**
+ * Text as one JSON string literal on one line: JSON.stringify escapes quotes
+ * and newlines, and U+2028/U+2029 are escaped too.
+ */
+export function jsonLiteral(text: string): string {
+  return escapeLineSeparators(JSON.stringify(text))
+}
+
+function escapeLineSeparators(json: string): string {
+  return json.replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
 }
 
 /**

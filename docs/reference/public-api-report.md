@@ -746,7 +746,7 @@ its row here even when its name and kind are unchanged.
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `RetentionProposalRow` | interface | `03aab7dafc56` |
-| `RetentionVerdictWrite` | interface | `d6746bedb99b` |
+| `RetentionVerdictWrite` | interface | `46ec12d432d0` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
 | `ReviseWrite` | interface | `e0b4d7ac9cc4` |
 | `RevisedMemory` | interface | `d8080d7c6e2a` |
