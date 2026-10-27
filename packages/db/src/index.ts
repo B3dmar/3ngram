@@ -159,6 +159,7 @@ export {
   type ExportMemoryRow,
   type ExportProposalRow,
   type ExportResolutionProposalRow,
+  type ExportRetentionProposalRow,
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
@@ -337,6 +338,13 @@ export {
   reopenResolutionProposal,
 } from './resolution-proposals.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
+// --- retention proposals: forgetting-pass verdicts (docs/concepts/forgetting-pass.mdx) ---
+export {
+  insertRetentionProposals,
+  RETENTION_PROPOSAL_COLUMNS,
+  type RetentionProposalRow,
+  type RetentionVerdictWrite,
+} from './retention-proposals.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {
   getRetrievalPolicy,

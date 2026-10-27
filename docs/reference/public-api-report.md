@@ -382,7 +382,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
 | `UnscopedWriteError` | class | `836d2ad0275b` |
-| `UserDataExport` | interface | `59f762ceb045` |
+| `UserDataExport` | interface | `fa7b25dcf613` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WriteScopePolicySetting` | interface | `ab65eda55f36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
@@ -663,6 +663,7 @@ its row here even when its name and kind are unchanged.
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
 | `ExportProposalRow` | interface | `bfdfabd2f739` |
 | `ExportResolutionProposalRow` | type | `75f251182ce5` |
+| `ExportRetentionProposalRow` | type | `496d6809608d` |
 | `ExportRetrievalPolicyRow` | interface | `2c15c6c22150` |
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
@@ -730,6 +731,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalsQuery` | interface | `60bf10951af6` |
 | `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `RESOLUTION_PROPOSAL_COLUMNS` | const | `8436389f787c` |
+| `RETENTION_PROPOSAL_COLUMNS` | const | `dd2e6cb40d46` |
 | `ReaffirmOutcome` | type | `3f19d3b45ae0` |
 | `ReaffirmWrite` | type | `932c546d55f0` |
 | `ResolutionProposalRow` | interface | `80b6b1ed0256` |
@@ -738,6 +740,8 @@ its row here even when its name and kind are unchanged.
 | `ResolvedOauthToken` | interface | `476671b8cf0e` |
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
+| `RetentionProposalRow` | interface | `03aab7dafc56` |
+| `RetentionVerdictWrite` | interface | `d6746bedb99b` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
 | `ReviseWrite` | interface | `e0b4d7ac9cc4` |
 | `RevisedMemory` | interface | `d8080d7c6e2a` |
@@ -762,7 +766,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
 | `UserBudgetWrite` | interface | `8e6b2933fc5b` |
-| `UserDataExport` | interface | `59f762ceb045` |
+| `UserDataExport` | interface | `fa7b25dcf613` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `UserRow` | interface | `0d5553e9b368` |
 | `WriteScopePolicyRow` | interface | `982129ab2c36` |
@@ -854,6 +858,7 @@ its row here even when its name and kind are unchanged.
 | `insertPasswordResetToken` | function | `97640b502405` |
 | `insertProposals` | function | `d9da67f8e0da` |
 | `insertResolutionProposals` | function | `a6e1fa5ab1c1` |
+| `insertRetentionProposals` | function | `10d22eed7eea` |
 | `insertSession` | function | `3952aa8da8b9` |
 | `insertUnverifiedUserWithEmailVerificationToken` | function | `6891a4ff6db3` |
 | `insertUser` | function | `1526ee55b233` |
@@ -917,6 +922,7 @@ its row here even when its name and kind are unchanged.
 | `resolveApiKey` | function | `d219083527a2` |
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
+| `retentionProposals` | const | `a7bc64be5b8e` |
 | `retryUnverifiedSignupWithEmailVerificationToken` | function | `b4a3ba8d69ed` |
 | `reviseMemory` | function | `de0e1f8d434c` |
 | `revokeApiKey` | function | `44d18e5177c8` |
@@ -1251,6 +1257,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalsCursorPayload` | type | `46ce4ee6353d` |
 | `ProposalsListQueryInput` | type | `7665b8f7ad17` |
 | `ProposalsListResponse` | type | `280d03d07ed7` |
+| `RETENTION_ACTIONS_WITH_RELATED` | const | `b5176ad84636` |
 | `ReaffirmEventPayload` | type | `78e435d55dca` |
 | `RecordedRangeIssue` | interface | `1f880cb5f300` |
 | `RememberInput` | type | `6eea6a370e3e` |
@@ -1270,6 +1277,8 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimitKind` | type | `38affb7e6a60` |
 | `ResourceLimits` | type | `413a8884f475` |
 | `RestErrorResponse` | type | `a66b13d0a81f` |
+| `RetentionAction` | type | `2ffd7ac28002` |
+| `RetentionProposalStatus` | type | `f735e0aea5ce` |
 | `RetrievalScopeMode` | type | `8ed013f1984e` |
 | `RetrievalScopePolicy` | type | `655e702851b3` |
 | `ReviewProposalsInput` | type | `869d9b031012` |
@@ -1525,6 +1534,8 @@ its row here even when its name and kind are unchanged.
 | `resourceLimitKindSchema` | const | `ba462cc09a99` |
 | `resourceLimitsSchema` | const | `db1d186cc9a5` |
 | `restErrorResponseSchema` | const | `f7252b5b657d` |
+| `retentionActionSchema` | const | `c1ffd933371e` |
+| `retentionProposalStatusSchema` | const | `edde6b2adcb2` |
 | `retrievalScopeModeSchema` | const | `341a6d63e822` |
 | `retrievalScopePolicySchema` | const | `8fe9bd2568c5` |
 | `retrievalScopePolicyScopeRequirements` | const | `e9d9207e7728` |

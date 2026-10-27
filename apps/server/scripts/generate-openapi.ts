@@ -67,6 +67,8 @@ import {
   rememberToolOutputV2Schema,
   resolveToolInputSchema,
   resolveToolOutputSchema,
+  retentionActionSchema,
+  retentionProposalStatusSchema,
   retrievalScopeModeSchema,
   reviseToolInputSchema,
   reviseToolOutputV2Schema,
@@ -282,6 +284,22 @@ const exportResolutionProposal = z
     createdAt: isoDateTime(),
   })
   .strict()
+// Retention proposals in the archive (the forgetting pass): ids, the verdict,
+// its probabilities and the judge model, lifecycle. No user text.
+const exportRetentionProposal = z
+  .object({
+    id: z.uuid(),
+    memoryId: z.uuid(),
+    action: retentionActionSchema,
+    relatedMemoryId: z.uuid().nullable(),
+    probability: z.number(),
+    probabilities: z.record(z.string(), z.number()),
+    model: z.string(),
+    status: retentionProposalStatusSchema,
+    decidedAt: isoDateTime().nullable(),
+    createdAt: isoDateTime(),
+  })
+  .strict()
 const exportAgentSession = z
   .object({
     id: z.uuid(),
@@ -391,6 +409,7 @@ const accountExport = z
     proposals: z.array(exportProposal),
     factProposals: z.array(exportFactProposal),
     resolutionProposals: z.array(exportResolutionProposal),
+    retentionProposals: z.array(exportRetentionProposal),
     agentSessions: z.array(exportAgentSession),
     userBudgets: z.array(exportBudget),
     llmUsage: z.array(exportLlmUsage),
