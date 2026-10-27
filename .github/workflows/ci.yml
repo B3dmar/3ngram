@@ -609,6 +609,7 @@ jobs:
               test/integration/search-filters.int.test.ts
               test/integration/search-filters-v2.int.test.ts
               test/integration/hnsw-parity.int.test.ts
+              test/integration/forgetting-candidates.int.test.ts
           - shard: db-auth
             package: '@3ngram/db'
             test_files: >-

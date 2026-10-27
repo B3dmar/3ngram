@@ -635,6 +635,8 @@ its row here even when its name and kind are unchanged.
 | `CommitmentWrite` | interface | `dd9c21233475` |
 | `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
+| `ConflictPair` | interface | `4738af51ed62` |
+| `ConflictPairsOptions` | interface | `5732feddd5bd` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
 | `DEFAULT_RECENCY_HALF_LIFE_DAYS` | const | `f8e82bdcf21b` |
@@ -675,6 +677,7 @@ its row here even when its name and kind are unchanged.
 | `FactRow` | interface | `e6493ad6346b` |
 | `FactWrite` | interface | `38b489370192` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
+| `ForgettingMemory` | interface | `5193705c6910` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
 | `HeartbeatSessionResult` | interface | `2f2f116773fa` |
 | `IllegalCommitmentTransitionError` | class | `f0d748c08600` |
@@ -717,6 +720,8 @@ its row here even when its name and kind are unchanged.
 | `NewOauthCode` | interface | `2e6e2540b16a` |
 | `NewOauthToken` | interface | `3a3e001a15de` |
 | `NewPasswordResetToken` | interface | `2ba6c8796e81` |
+| `NewerNeighbour` | interface | `90c8231632f3` |
+| `NewerNeighboursOptions` | interface | `aa8b5d1da21e` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OAuthClientRow` | interface | `1a2affe71574` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
@@ -758,6 +763,7 @@ its row here even when its name and kind are unchanged.
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SignupEmailVerificationToken` | interface | `d97e5d87001a` |
 | `SimilarPair` | interface | `4acfe8cd4a10` |
+| `StaleSinglesOptions` | interface | `b091c1c4bd89` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingSweepResult` | interface | `7be2206cfb1b` |
 | `TenantTx` | type | `62a38afad7f6` |
@@ -795,6 +801,7 @@ its row here even when its name and kind are unchanged.
 | `closerBackoffDelayMs` | function | `a90ec2357606` |
 | `commitments` | const | `eb38994078d2` |
 | `completeSessionTriage` | function | `3a3467b20029` |
+| `conflictPairs` | function | `4b3462ffbe92` |
 | `consolidationProposals` | const | `c87ade1c93dc` |
 | `consumeOauthCode` | function | `60c538284d80` |
 | `consumePasswordResetToken` | function | `577e6ea7d054` |
@@ -885,6 +892,7 @@ its row here even when its name and kind are unchanged.
 | `memoryEdges` | const | `52088e26ee30` |
 | `memoryEvents` | const | `8b52656b3790` |
 | `moveMemory` | function | `4a4ea0fdfcc4` |
+| `newerNeighbours` | function | `304c82c3bb72` |
 | `oauthClients` | const | `afb1565e898e` |
 | `oauthCodes` | const | `bfa4d83807b7` |
 | `oauthTokens` | const | `5309b692908e` |
@@ -940,6 +948,7 @@ its row here even when its name and kind are unchanged.
 | `setScopeAliases` | function | `7c6087427d8f` |
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
+| `staleSingles` | function | `02e02e501537` |
 | `sweepCommitments` | function | `61fdca16f338` |
 | `sweepExpiredLeases` | function | `9814898ac80b` |
 | `sweepFloor` | function | `2212e4e03aa8` |

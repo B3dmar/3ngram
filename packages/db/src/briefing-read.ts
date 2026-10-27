@@ -401,7 +401,7 @@ export function activePreferences(
  * restarts its window. A reaffirm stamps last_reviewed_at and never updated_at,
  * so a review does not masquerade as an edit.
  */
-const staleFreshness = sql`GREATEST(${memories.updatedAt}, ${memories.lastReviewedAt})`
+export const staleFreshness = sql`GREATEST(${memories.updatedAt}, ${memories.lastReviewedAt})`
 
 /**
  * The STALE-candidate predicate for {@link staleCandidates}: LIVE active
@@ -422,7 +422,7 @@ const staleFreshness = sql`GREATEST(${memories.updatedAt}, ${memories.lastReview
  * policy here" and exists only for compatibility; in-repo callers always pass
  * the allowlist.
  */
-function staleCandidatePredicate(
+export function staleCandidatePredicate(
   userId: string,
   selector: BriefingSelector,
   staleBefore: Date,

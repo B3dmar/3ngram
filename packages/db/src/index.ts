@@ -197,6 +197,18 @@ export {
   insertFacts,
   type MemoryFactWrite,
 } from './facts-write.js'
+// --- forgetting-pass candidates (docs/concepts/forgetting-pass.mdx) ---
+export {
+  type ConflictPair,
+  type ConflictPairsOptions,
+  conflictPairs,
+  type ForgettingMemory,
+  type NewerNeighbour,
+  type NewerNeighboursOptions,
+  newerNeighbours,
+  type StaleSinglesOptions,
+  staleSingles,
+} from './forgetting-candidates.js'
 // --- judgment opt-in store (issue #225) ---
 export {
   getJudgmentPolicy,
