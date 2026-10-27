@@ -672,7 +672,7 @@ its row here even when its name and kind are unchanged.
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |
-| `FactWrite` | interface | `373a924698db` |
+| `FactWrite` | interface | `38b489370192` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
 | `HeartbeatSessionResult` | interface | `2f2f116773fa` |
@@ -843,9 +843,9 @@ its row here even when its name and kind are unchanged.
 | `insertAuditLog` | function | `5ab559d1a0ae` |
 | `insertEdge` | function | `5b307f86e993` |
 | `insertEmailVerificationToken` | function | `99496a4c2342` |
-| `insertFact` | function | `5dde86949a36` |
+| `insertFact` | function | `3065c864e73d` |
 | `insertFactProposals` | function | `c40d814e2c79` |
-| `insertFacts` | function | `b8e1b02e0c6b` |
+| `insertFacts` | function | `7d9f241c95b7` |
 | `insertImportedFact` | function | `eba63a98444e` |
 | `insertLlmUsage` | function | `343a613f2a45` |
 | `insertMemoryWithEvent` | function | `3f4a50bb32bc` |
@@ -1428,7 +1428,7 @@ its row here even when its name and kind are unchanged.
 | `exceedsRecordedBoundPrecision` | function | `b6ca070a8ac1` |
 | `factProposalRecordSchema` | const | `78ec1dbc2134` |
 | `factSchema` | const | `8222b4b77888` |
-| `factWriteSchema` | const | `ccd8c23e9889` |
+| `factWriteSchema` | const | `57d4f949c886` |
 | `factsQueryInputSchema` | const | `072db1556589` |
 | `factsQueryInputV2Schema` | const | `7b55759b2b58` |
 | `factsRangeSchema` | const | `68943816c6ea` |
@@ -1481,7 +1481,7 @@ its row here even when its name and kind are unchanged.
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
-| `nativeRememberInputSchema` | const | `6f61f82c064f` |
+| `nativeRememberInputSchema` | const | `a2688055a272` |
 | `nativeReviseDispositionBodySchema` | const | `99e911f9716e` |
 | `nativeReviseDispositionInputSchema` | const | `bc3a92c87d8a` |
 | `nativeReviseInputSchema` | const | `008be3067068` |
@@ -1511,10 +1511,10 @@ its row here even when its name and kind are unchanged.
 | `redirectUriSchema` | const | `fd884c385be1` |
 | `rememberInputSchema` | const | `16100440a692` |
 | `rememberToolInputSchema` | const | `1489c4354420` |
-| `rememberToolInputV2Schema` | const | `ae2e1d96dec6` |
+| `rememberToolInputV2Schema` | const | `021133fc9b6a` |
 | `rememberToolOutputSchema` | const | `91a0502f9fa9` |
 | `rememberToolOutputV2Schema` | const | `5dd2d2f6afec` |
-| `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |
+| `rememberWithFactsInputSchema` | const | `bcf589cf23b1` |
 | `resendVerificationInputSchema` | const | `258740cf44b0` |
 | `resetPasswordInputSchema` | const | `33f21153f1c1` |
 | `resolutionProposalRecordSchema` | const | `4b0cc3664f2d` |

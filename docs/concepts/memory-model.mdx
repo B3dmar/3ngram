@@ -49,7 +49,23 @@ Facts track two timelines independently:
 - **World time** (`valid_from` / `valid_to`): when the statement was true in the world.
 - **System time** (`recorded_at`): when 3ngram learned it.
 
-`get_facts` returns rows whose `valid_to` is NULL (or that overlap a requested `asOf` / `range`). The write path only **INSERTs** facts — it does not close a previous live row for the same `(subject, predicate)`, and it does not write a `supersedes` edge between fact rows. Multiple currently-open facts for one subject are representable. Closing a generation is either a writer-supplied `validTo` on the insert, or future current-truth work.
+`get_facts` returns rows whose `valid_to` is NULL, or that overlap a requested `asOf` or `range`.
+
+A fact key `(subject, predicate)` is **single-valued by default** (issue #369), so a new value replaces the current one:
+
+- It closes every open value of the key that started at or before it, at its own `validFrom`. That includes values written with `cardinality: "many"`.
+- A backdated value is stored as history that ends where the next newer open value starts.
+- Several values of one key in one write are applied in `validFrom` order, and each ends no later than the next one starts, so a series forms a chain even below a newer open value. Two values at the same instant leave the last one current, and the earlier one keeps an empty window.
+- A value written without `validFrom` starts at its transaction's start. Writers of one key are serialized, so concurrent writes cannot leave two values open, and their values are ordered by transaction start, not by commit.
+
+Two kinds of write close nothing:
+
+- A fact written with `cardinality: "many"` holds several values at once.
+- A fact written with its own `validTo` is a closed interval.
+
+A write closes an existing value only at its own start, so it never derives an end time for an existing value from another row. Closing is the only change an existing fact row ever sees. Rows are never deleted, rewritten or reopened, and `asOf` and `range` reads still return every value with its window. Import replays exported windows verbatim. Fact rows carry no `supersedes` edges.
+
+Append-only has one limit. A value that an earlier write already closed is never shortened, so a value later backdated into its window overlaps it in history, and an `asOf` read inside the overlap returns both.
 
 This separation matters because corrections arrive late: you might learn today that a value changed last month. Bi-temporal storage records both when the change happened and when you found out.
 

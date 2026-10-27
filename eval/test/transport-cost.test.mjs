@@ -241,9 +241,14 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // (`rejected_resolution`, `applied_resolution`). Input and description
       // unchanged (no embeddings regen); CLI and REST unchanged. MEASURED on
       // staging 0d32dd9 plus #349/#352/#354, not summed.
-      mcp: [32530, 262056, 65250],
+      // MCP +67/+536/+130, REST +67/+67/+67 (issue #369, single-valued facts):
+      // the optional `cardinality` field and its description join the fact
+      // write schema, which rides `remember` on tools/list every MCP turn and
+      // the REST request surface once. CLI unchanged. MEASURED on staging
+      // f917856, not summed.
+      mcp: [32597, 262592, 65380],
       cli: [333, 1236, 1236],
-      rest: [4636, 5653, 5653],
+      rest: [4703, 5720, 5720],
     },
   )
 })
