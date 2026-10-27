@@ -28,6 +28,11 @@ export {
   runForgettingPass,
 } from './forgetting-pass.js'
 export {
+  type ForgettingSweepOptions,
+  type ForgettingSweepResult,
+  forgetAllTenants,
+} from './forgetting-sweep.js'
+export {
   dbGcClientsRepo,
   GC_CLIENT_IDLE_DAYS,
   type GcClientsOptions,

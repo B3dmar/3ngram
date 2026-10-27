@@ -53,7 +53,7 @@ describe('sessionCloserJobId', () => {
 })
 
 /** Mount startQueues with bullmq and the job modules stubbed. */
-async function bootQueues(closerEnabled: boolean) {
+async function bootQueues(closerEnabled: boolean, forgettingEnabled = false) {
   let processor: ((job: { name: string; data?: unknown }) => Promise<unknown>) | undefined
   const added: {
     name: string
@@ -93,11 +93,17 @@ async function bootQueues(closerEnabled: boolean) {
     loadLlmGatewayConfig: () => undefined,
     loadJevGatewayConfig: () => undefined,
     loadSessionCloserConfig: () => ({ enabled: closerEnabled }),
+    loadForgettingPassConfig: () => ({ enabled: forgettingEnabled }),
     loadBudgetConfig: () => ({ defaultCapUsd: 5, defaultWindowDays: 30 }),
   }))
 
   const sweepRun = vi.fn(async () => ({}))
   const closerRun = vi.fn(async () => ({}))
+  const forgettingRun = vi.fn(async () => ({ ran: 'forgetting-pass' }))
+  vi.doMock('../src/jobs/forgetting-pass.js', () => ({
+    FORGETTING_PASS_JOB: 'forgetting-pass',
+    runForgettingPassJob: forgettingRun,
+  }))
   // The three pre-existing jobs are stubbed too: dispatching them for real would
   // reach @3ngram/core and then a database, and this suite has neither.
   vi.doMock('../src/jobs/consolidation.js', () => ({
@@ -128,7 +134,7 @@ async function bootQueues(closerEnabled: boolean) {
 
   const { startQueues } = await import('../src/queues.js')
   const handles = await startQueues({} as never)
-  return { handles, processor, added, upsert, removeScheduler, sweepRun, closerRun }
+  return { handles, processor, added, upsert, removeScheduler, sweepRun, closerRun, forgettingRun }
 }
 
 function unmountQueues(): void {
@@ -139,6 +145,7 @@ function unmountQueues(): void {
   vi.doUnmock('../src/jobs/gc-clients.js')
   vi.doUnmock('../src/jobs/session-sweep.js')
   vi.doUnmock('../src/jobs/session-closer.js')
+  vi.doUnmock('../src/jobs/forgetting-pass.js')
   vi.resetModules()
 }
 
@@ -226,7 +233,7 @@ describe('the flag is a KILL SWITCH, not just a first-boot default', () => {
 
   it('does not remove it while the flag is on', async () => {
     const { removeScheduler } = await bootQueues(true)
-    expect(removeScheduler).not.toHaveBeenCalled()
+    expect(removeScheduler).not.toHaveBeenCalledWith('session-sweep')
     unmountQueues()
   })
 
@@ -319,5 +326,46 @@ describe('the job id is legal for BullMQ 5', () => {
     const id = sessionCloserJobId(DATA)
     expect(id.includes(':') && id.split(':').length !== 3).toBe(false)
     expect(`${Number.parseInt(id, 10)}` === id).toBe(false)
+  })
+})
+
+describe('the forgetting pass is default-off and a kill switch', () => {
+  it('neither schedules nor runs it while the flag is off, and removes a stored scheduler', async () => {
+    const { upsert, removeScheduler, processor, forgettingRun } = await bootQueues(true, false)
+    expect(upsert.mock.calls.map(([name]) => name)).not.toContain('forgetting-pass')
+    expect(removeScheduler).toHaveBeenCalledWith('forgetting-pass')
+    const result = await processor?.({ name: 'forgetting-pass' })
+    expect(forgettingRun).not.toHaveBeenCalled()
+    expect(result).toEqual({ skipped: 'forgetting-disabled' })
+    unmountQueues()
+  })
+
+  it('schedules it daily at 04:30 with the shared retry policy when the flag is on', async () => {
+    const { upsert, removeScheduler } = await bootQueues(false, true)
+    const forgetting = upsert.mock.calls.find(([name]) => name === 'forgetting-pass')
+    expect(forgetting?.[1]).toEqual({ pattern: '0 30 4 * * *' })
+    expect((forgetting?.[2] as { opts: { attempts: number } }).opts.attempts).toBeGreaterThan(1)
+    expect(removeScheduler).not.toHaveBeenCalledWith('forgetting-pass')
+    unmountQueues()
+  })
+
+  it('routes the job to its runner with the boot gateway and budget', async () => {
+    const { processor, forgettingRun } = await bootQueues(false, true)
+    await expect(processor?.({ name: 'forgetting-pass' })).resolves.toEqual({
+      ran: 'forgetting-pass',
+    })
+    expect(forgettingRun).toHaveBeenCalledOnce()
+    // No LLM configured in this harness: the runner receives no gateway and
+    // reports `no-gateway` itself.
+    expect(forgettingRun.mock.calls[0]?.[0]).toBeUndefined()
+    unmountQueues()
+  })
+
+  it('is independent of the closer flag', async () => {
+    const { upsert, removeScheduler } = await bootQueues(true, false)
+    expect(upsert.mock.calls.map(([name]) => name)).toContain('session-sweep')
+    expect(removeScheduler).not.toHaveBeenCalledWith('session-sweep')
+    expect(removeScheduler).toHaveBeenCalledWith('forgetting-pass')
+    unmountQueues()
   })
 })
