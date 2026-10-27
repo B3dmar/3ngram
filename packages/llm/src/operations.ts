@@ -38,9 +38,14 @@ export type MeteredGenerationOperation = (typeof METERED_GENERATION_OPERATIONS)[
  * therefore the price, differs: an `llm_usage` row must say which path billed.
  *   - `session.closer.decide` → the closer's typed pass for tenants that opted
  *     into judgment (issue #229; packages/core/src/admin/session-closer.ts).
+ *   - `memory.forget.decide` → one batch of the forgetting pass, for tenants
+ *     that opted into judgment (packages/core/src/admin/forgetting-pass.ts).
  * Pinned by the same drift-guard unit test as the other two lists.
  */
-export const METERED_JUDGMENT_OPERATIONS = ['session.closer.decide'] as const
+export const METERED_JUDGMENT_OPERATIONS = [
+  'session.closer.decide',
+  'memory.forget.decide',
+] as const
 export type MeteredJudgmentOperation = (typeof METERED_JUDGMENT_OPERATIONS)[number]
 
 /**
@@ -96,6 +101,12 @@ const MAX_CLOSER_CALL_COST_USD = 0.003
 // generation ceiling. Re-derive it when a list price is published.
 const MAX_CLOSER_DECIDE_CALL_COST_USD = 0.003
 
+// Basis for the forgetting pass's JUDGMENT ceiling: one batch's state is split
+// above 48k characters and Jev refuses more than 64k, so at most ~16K input
+// tokens, plus 12 short server-authored questions. Same pessimistic $0.15/1M
+// input as the closer's judgment, rounded up to the same value.
+const MAX_FORGET_DECIDE_CALL_COST_USD = 0.003
+
 /**
  * Operation → cost ceiling. All embed operations are a single `gateway.embed()`
  * round-trip, so they share the same worst-case bound; they are listed
@@ -109,6 +120,10 @@ export const llmOperations: Readonly<Record<string, LlmOperation>> = {
   'session.closer': { maxCostUsd: MAX_CLOSER_CALL_COST_USD, capabilityClass: 'generation' },
   'session.closer.decide': {
     maxCostUsd: MAX_CLOSER_DECIDE_CALL_COST_USD,
+    capabilityClass: 'generation',
+  },
+  'memory.forget.decide': {
+    maxCostUsd: MAX_FORGET_DECIDE_CALL_COST_USD,
     capabilityClass: 'generation',
   },
 }

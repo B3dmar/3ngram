@@ -70,7 +70,7 @@ AND (1 - (a.embedding <=> b.embedding)) >= :conflict_floor   -- 0.82 to start, s
 
   So a decision stays final for a pair until a newer memory reopens it (the [memory model](/concepts/memory-model) rule).
 
-A single that also appears in a pair is judged once, inside the pair. Each memory is judged at most once per run: a pair that shares a memory with a higher-ranked pair waits for a later run, so one run never stages two contradictory verdicts on one memory. A pair verdict is recorded on the older memory, so the newer one can still come up later as a stale single.
+A single that also appears in a pair is judged once, inside the pair. Each memory is judged at most once per run: a pair that shares a memory with a higher-ranked pair waits for a later run, so one run never stages two contradictory verdicts on one memory. A pair verdict is recorded on the older memory. A supersede or conflict verdict also names the newer one, which is skipped while that proposal is open; otherwise the newer one can still come up later as a stale single.
 
 ## Judgment: the Jev state shape
 

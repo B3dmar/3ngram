@@ -285,6 +285,12 @@ its row here even when its name and kind are unchanged.
 | `FactProposalRecord` | type | `6627d74a9d46` |
 | `FactRow` | interface | `e6493ad6346b` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
+| `ForgettingCandidates` | interface | `95fdd84a114c` |
+| `ForgettingPassOptions` | interface | `0f6797b4fb83` |
+| `ForgettingPassResult` | interface | `d6e421e96c99` |
+| `ForgettingRepo` | interface | `66b546ebc6b4` |
+| `ForgettingStop` | type | `daa781ee5103` |
+| `ForgettingUsage` | interface | `c2e1f465c371` |
 | `FrozenOrdering` | interface | `4e9572ab5ac1` |
 | `FullBriefing` | interface | `2b54af8c1c89` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
@@ -407,6 +413,7 @@ its row here even when its name and kind are unchanged.
 | `createScope` | function | `1e8f58a54fe9` |
 | `createUser` | function | `41cb089db439` |
 | `dbConsolidateRepo` | const | `d157d777ed45` |
+| `dbForgettingRepo` | const | `8458a5770e0a` |
 | `dbGcClientsRepo` | const | `9758cf7041e4` |
 | `dbSessionCloserRepo` | const | `0d7316e7ffee` |
 | `dbSessionSweepRepo` | function | `a35dac85f439` |
@@ -469,6 +476,7 @@ its row here even when its name and kind are unchanged.
 | `retryFailedEmbeds` | function | `814fcebeb911` |
 | `revise` | function | `3f4cc72c85ff` |
 | `reviseDisposition` | function | `e2beadf99fb3` |
+| `runForgettingPass` | function | `63e714847e72` |
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
@@ -1021,7 +1029,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_DECIDE_STATE_CHARS` | const | `df1d3cc28cf6` |
 | `METERED_EMBED_OPERATIONS` | const | `201351990a48` |
 | `METERED_GENERATION_OPERATIONS` | const | `7ad0575de8c3` |
-| `METERED_JUDGMENT_OPERATIONS` | const | `a0593d023c14` |
+| `METERED_JUDGMENT_OPERATIONS` | const | `3d70f8676fc5` |
 | `MeteredEmbedOperation` | type | `2767f0fd1b01` |
 | `MeteredGenerationOperation` | type | `7208de8ee2e3` |
 | `MeteredJudgmentOperation` | type | `ef1be6209a68` |
