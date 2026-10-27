@@ -114,6 +114,20 @@ describe('retention proposal store (runtime role, withTenant)', () => {
     ])
   })
 
+  it('stores a below-threshold verdict dismissed, with its real action', async () => {
+    const memoryId = await seedMemory(userA)
+    expect(
+      await stage(userA, [
+        verdict(memoryId, { probability: 0.6, dismissed: true }),
+        verdict(memoryId),
+      ]),
+    ).toBe(2)
+    expect((await rowsOf(userA)).map((r) => [r.action, r.status, r.probability])).toEqual([
+      ['archive', 'dismissed', 0.6],
+      ['archive', 'proposed', 0.9],
+    ])
+  })
+
   it('keeps one OPEN proposal per memory and action, and re-proposes after a decision', async () => {
     const memoryId = await seedMemory(userA)
     const other = await seedMemory(userA)

@@ -24,9 +24,11 @@ export const RETENTION_ACTIONS_WITH_RELATED = [
 
 /**
  * A retention proposal's lifecycle: `proposed`, `applied` and `rejected` as for
- * every proposal kind, plus `dismissed` for a keep verdict. A dismissed row is
- * never listed for review. It only stops the pass from judging the memory again
- * until the memory's freshness moves past the verdict.
+ * every proposal kind, plus `dismissed` for a keep verdict or one below its
+ * threshold. A dismissed row is never listed for review. It only stops the pass
+ * from judging the memory again until the memory's freshness moves past the
+ * verdict, and keeps the probabilities for calibration. Only the pass sets
+ * `dismissed`; a reviewer's no is `rejected`.
  */
 export const retentionProposalStatusSchema = z.enum([
   'proposed',

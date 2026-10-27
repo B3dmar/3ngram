@@ -48,7 +48,7 @@ The pass reads two candidate streams per tenant. Both use the live-row predicate
 - ordered most stale first;
 - capped at 60 per tenant per run.
 
-Blockers are only ever judged `keep` or `conflict-with`, because blockers settle through `resolve`.
+Blockers are only ever judged `keep` or `conflict-with`, because blockers settle through `resolve`. A stale blocker with no newer neighbour is therefore not judged at all.
 
 **Conflict pairs.** The `findSimilarPairs` skeleton (`packages/db/src/search.ts`), with these conditions added inside the lateral kNN:
 
@@ -70,7 +70,7 @@ AND (1 - (a.embedding <=> b.embedding)) >= :conflict_floor   -- 0.82 to start, s
 
   So a decision stays final for a pair until a newer memory reopens it (the [memory model](/concepts/memory-model) rule).
 
-A single that also appears in a pair is judged once, inside the pair.
+A single that also appears in a pair is judged once, inside the pair. Each memory is judged at most once per run: a pair that shares a memory with a higher-ranked pair waits for a later run, so one run never stages two contradictory verdicts on one memory. A pair verdict is recorded on the older memory, so the newer one can still come up later as a stale single.
 
 ## Judgment: the Jev state shape
 
@@ -116,7 +116,7 @@ Each item gets one `choice` question, so Jev returns a confidence and a full pro
 
 | Item | Choice keys | Meaning |
 |---|---|---|
-| single | `keep`, `archive`, `supersede_by:s0n0` … | archive means no longer true or no longer useful as a standing memory. supersede means a listed newer memory states the same thing more currently |
+| single | `keep`, `archive`, `supersede_by:s0n0` …; a blocker gets `keep` and `conflict_with:s0n0` … | archive means no longer true or no longer useful as a standing memory. supersede means a listed newer memory states the same thing more currently. conflict means a listed newer memory contradicts it |
 | pair | `keep_both`, `archive_older`, `supersede_older`, `conflict` | conflict means both are live and contradict, and a human must choose |
 
 The answer maps to a typed verdict:
@@ -125,7 +125,7 @@ The answer maps to a typed verdict:
 - `supersede_by:…`, `supersede_older`: **supersede-by:**`<newer id>`.
 - `conflict`: **conflict-with:**`<other id>`.
 
-The confidence is the chosen key's probability. A proposal is written only when the verdict is not `keep` and its probability clears that verdict's threshold. The thresholds start at 0.85 for archive and supersede and 0.6 for conflict. The eval sets the final values.
+The confidence is the chosen key's probability. A proposal is written only when the verdict is not `keep` and its probability clears that verdict's threshold. A verdict below its threshold is stored `dismissed` with its real action and probabilities, so calibration can use it and the pass does not judge an uncertain memory again every day. The thresholds start at 0.85 for archive and supersede and 0.6 for conflict. The eval sets the final values.
 
 ## Proposals
 
@@ -164,7 +164,7 @@ CREATE INDEX retention_proposals_review_idx ON retention_proposals (user_id, sta
 -- runtime grants SELECT, INSERT, UPDATE only (no DELETE); covered by export and account deletion.
 ```
 
-- **Keep verdicts** are stored with status `dismissed` and are never listed. They stop the pass from re-judging a memory until that memory's freshness moves past the verdict, through an edit, a reaffirm or a newer neighbour.
+- **Keep verdicts**, and verdicts below their threshold, are stored with status `dismissed` and are never listed. Only the pass sets `dismissed`; a reviewer's no is `rejected`, with `decided_at` set, so calibration can tell the two apart. They stop the pass from re-judging a memory until that memory's freshness moves past the verdict, through an edit, a reaffirm or a newer neighbour.
 - **Table count:** this is the 32nd physical table. Its JTBD is "a memory the judge thinks is finished waits for a human yes instead of lingering in every briefing, or being dropped", and no existing proposal table can carry it, as argued above.
 - **Accepting:**
   - **archive:** `archiveMemoryIn` with the `disposition` policy, the same rejection rules and an audited `archive` event.

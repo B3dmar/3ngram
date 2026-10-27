@@ -61,6 +61,12 @@ export interface RetentionVerdictWrite {
   probabilities: Record<string, number>
   /** The pinned judge model. */
   model: string
+  /**
+   * Store the verdict `dismissed` even though its action is not keep: it did
+   * not clear its threshold. It is recorded for calibration and stops the pass
+   * from judging the memory again until it changes, but is never listed.
+   */
+  dismissed?: boolean | undefined
 }
 
 /**
@@ -70,9 +76,9 @@ export interface RetentionVerdictWrite {
  */
 const PROBABILITY_KEY = /^[a-z_]+(:[a-z0-9]+)?$/
 
-/** A keep verdict is recorded but never listed; every other verdict waits for review. */
-function statusFor(action: RetentionAction): RetentionProposalStatus {
-  return action === 'keep' ? 'dismissed' : 'proposed'
+/** A keep or below-threshold verdict is recorded but never listed; every other verdict waits for review. */
+function statusFor(verdict: RetentionVerdictWrite): RetentionProposalStatus {
+  return verdict.action === 'keep' || verdict.dismissed === true ? 'dismissed' : 'proposed'
 }
 
 /**
@@ -85,8 +91,8 @@ function statusFor(action: RetentionAction): RetentionProposalStatus {
  * revise or archive of them waits for this transaction (the commitments.ts
  * precedent).
  *
- * A keep verdict is stored `dismissed` with no `decided_at`, since no reviewer
- * decided it. Dismissed rows are not deduplicated; the pass's candidate query
+ * A keep verdict, or one marked `dismissed`, is stored `dismissed` with no
+ * `decided_at`, since no reviewer decided it. Dismissed rows are not deduplicated; the pass's candidate query
  * skips a memory whose verdict is newer than its freshness. A proposed verdict
  * is skipped when its memory already has an OPEN proposal for the same action
  * (`retention_proposals_open_idx`, ON CONFLICT DO NOTHING), so later passes
@@ -144,7 +150,7 @@ export async function insertRetentionProposals(
         probability: v.probability,
         probabilities: v.probabilities,
         model: v.model,
-        status: statusFor(v.action),
+        status: statusFor(v),
       })),
     )
     .onConflictDoNothing()
