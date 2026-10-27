@@ -646,6 +646,7 @@ jobs:
               test/integration/judgment-policy.int.test.ts
               test/integration/resolution-proposals.int.test.ts
               test/integration/retention-proposals.int.test.ts
+              test/integration/retention-review.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

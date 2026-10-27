@@ -760,6 +760,7 @@ its row here even when its name and kind are unchanged.
 | `ResolvedOauthToken` | interface | `476671b8cf0e` |
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
+| `RetentionProposalNotApplicableError` | class | `92c39a416fe4` |
 | `RetentionProposalRow` | interface | `03aab7dafc56` |
 | `RetentionVerdictWrite` | interface | `46ec12d432d0` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
@@ -793,6 +794,7 @@ its row here even when its name and kind are unchanged.
 | `WriteScopePolicyRow` | interface | `982129ab2c36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
 | `WrittenMemory` | interface | `bec591e2c3d0` |
+| `acceptRetentionProposal` | function | `0a977ff486cc` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
 | `agentSessions` | const | `a8e7698df3bc` |
@@ -825,10 +827,12 @@ its row here even when its name and kind are unchanged.
 | `countProposals` | function | `7c68fb735bcd` |
 | `countProposalsByStatus` | function | `83536379eed5` |
 | `countResolutionProposals` | function | `732fbcf08ef4` |
+| `countRetentionProposals` | function | `6b94c49d527f` |
 | `createCommitment` | function | `fb2e38368ac8` |
 | `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `f1efc67b328e` |
 | `decideResolutionProposal` | function | `6b38198b213a` |
+| `decideRetentionProposal` | function | `71ab3fac3ee5` |
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
 | `deleteScope` | function | `d948256373ca` |
@@ -896,6 +900,7 @@ its row here even when its name and kind are unchanged.
 | `listProposals` | function | `ca00070826cc` |
 | `listProposalsAfter` | function | `6d212688eabe` |
 | `listResolutionProposalsAfter` | function | `935db4d96a7e` |
+| `listRetentionProposalsAfter` | function | `fb69f9c0a43b` |
 | `listScopes` | function | `38d9a9aee782` |
 | `listSessionEvents` | function | `38bf91400471` |
 | `listTenantIds` | function | `71356a9ecac7` |
