@@ -165,6 +165,24 @@ describe('staleSingles', () => {
     await openProposalOn(userA, other, 1, side)
     expect(await singles(userA)).toEqual([])
   })
+
+  it('skips the newer side of a supersede only while that proposal is open', async () => {
+    const supersede = async (status: string) => {
+      const olderSide = await seed(userA, { touchedDaysAgo: 90 })
+      const newerSide = await seed(userA, { touchedDaysAgo: 60 })
+      await ownerPool.query(
+        `INSERT INTO retention_proposals (user_id, memory_id, action, related_memory_id, probability,
+                                          probabilities, model, status, created_at)
+         VALUES ($1, $2, 'supersede', $3, 0.9, '{}'::jsonb, 'jev-test', $4, $5::timestamptz)`,
+        [userA, olderSide, newerSide, status, daysAgo(1)],
+      )
+      return newerSide
+    }
+    await supersede('proposed')
+    // Dismissed: the newer side was only evidence, so it is still judged.
+    const evidenceOnly = await supersede('dismissed')
+    expect((await singles(userA)).map((r) => r.id)).toEqual([evidenceOnly])
+  })
 })
 
 describe('newerNeighbours', () => {

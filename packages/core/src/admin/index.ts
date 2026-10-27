@@ -18,6 +18,16 @@ export {
   type InlineFacets,
 } from './environment.js'
 export {
+  dbForgettingRepo,
+  type ForgettingCandidates,
+  type ForgettingPassOptions,
+  type ForgettingPassResult,
+  type ForgettingRepo,
+  type ForgettingStop,
+  type ForgettingUsage,
+  runForgettingPass,
+} from './forgetting-pass.js'
+export {
   dbGcClientsRepo,
   GC_CLIENT_IDLE_DAYS,
   type GcClientsOptions,

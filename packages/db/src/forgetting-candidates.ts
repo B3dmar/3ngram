@@ -10,8 +10,10 @@
 //
 // RE-JUDGING: a memory is judged again only after it changes, and never while
 // it has an OPEN proposal waiting for review. A retention proposal created
-// after a memory's freshness excludes it as a single (a conflict verdict
-// counts for both sides); one on either side created after both memories'
+// after a memory's freshness excludes it as a single. A memory named as the
+// related side of a proposal (the newer side of a supersede, the other side of
+// a conflict) is skipped only while that proposal is open: it was evidence,
+// not judged itself. A proposal on either side created after both memories'
 // freshness excludes a pair. Freshness is briefing's (`staleFreshness`), so a
 // reaffirm counts as a change.
 //
@@ -106,7 +108,7 @@ export async function staleSingles(
     SELECT 1 FROM retention_proposals r
     WHERE r.user_id = ${memories.userId}
       AND (r.memory_id = ${memories.id}
-           OR (r.action = 'conflict' AND r.related_memory_id = ${memories.id}))
+           OR (r.related_memory_id = ${memories.id} AND r.status = 'proposed'))
       AND (r.status = 'proposed' OR r.created_at > ${staleFreshness}))`
   return tx
     .select({
