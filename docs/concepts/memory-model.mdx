@@ -53,6 +53,14 @@ Facts track two timelines independently:
 
 This separation matters because corrections arrive late: you might learn today that a value changed last month. Bi-temporal storage records both when the change happened and when you found out.
 
+A fact belongs to the memory that asserted it, so it is current only while that memory is (issue #369):
+
+- A current read returns a fact only when its parent memory is live: not superseded through `revise` and not archived. A read that passes only `asKnownAt` counts as a current read.
+- An `asOf` read with `validAt` returns a fact when its parent had not yet been superseded at that instant. The parent's own `valid_from` is not checked, because a fact may be backdated before the memory that records it. Archiving carries no timestamp, so an archived parent's facts stay visible to time travel.
+- A `range` read returns every generation, whatever its parent's state.
+
+A successor `revise` cannot carry facts, so it retires the old memory's facts. To keep a value current, write it again through `remember`. A `revise` move and a reaffirm leave the memory live, so its facts stay current.
+
 ## Consolidation is advisory
 
 A background worker detects candidate duplicates and contradictions and **proposes** edges with a rationale — it does not apply them by default. Proposals surface through the `review_proposals` tool, where you accept or reject them. A decision is final for that pair: a rejected pair is not proposed again, and neither is a pair already joined by an edge. Only a new memory (a successor written by `revise`, or a fresh `remember`) can put the question back on the table.
