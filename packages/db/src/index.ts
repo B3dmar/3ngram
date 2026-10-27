@@ -316,6 +316,7 @@ export {
   listFactProposalsAfter,
   listProposalsAfter,
   listResolutionProposalsAfter,
+  listRetentionProposalsAfter,
   type ProposalKeyset,
   type ProposalPageQuery,
 } from './proposals-page.js'
@@ -352,8 +353,12 @@ export {
 export { ResourceLimitExceededError } from './resource-limits.js'
 // --- retention proposals: forgetting-pass verdicts (docs/concepts/forgetting-pass.mdx) ---
 export {
+  acceptRetentionProposal,
+  countRetentionProposals,
+  decideRetentionProposal,
   insertRetentionProposals,
   RETENTION_PROPOSAL_COLUMNS,
+  RetentionProposalNotApplicableError,
   type RetentionProposalRow,
   type RetentionVerdictWrite,
 } from './retention-proposals.js'

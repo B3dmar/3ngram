@@ -8,14 +8,18 @@
 // withTenant() transaction AND binds the caller's user_id.
 //
 // The runtime role has INSERT, SELECT and UPDATE on retention_proposals and NO
-// DELETE, so every verdict survives as its own audit trail. Listing and
-// deciding proposals arrive with the review_proposals `retention` kind.
+// DELETE, so every verdict survives as its own audit trail. A decision flips
+// `status` and stamps `decided_at`. Accepting applies the verdict in the SAME
+// transaction as the claim, so a refused action leaves the proposal open.
 //
 // Observability (hard rule 6): ids, probabilities, enum states and a model
 // name only. The table has no user text, and this module logs nothing.
-import type { RetentionAction, RetentionProposalStatus } from '@3ngram/schema'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import type { ActorKind, RetentionAction, RetentionProposalStatus } from '@3ngram/schema'
+import { and, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { archiveMemoryIn } from './memory-disposition.js'
+import { materializeEdgeIn } from './proposals-apply.js'
+import { ProposalNotFoundError } from './proposals-read.js'
 import { memories, retentionProposals } from './schema/memory.js'
 
 /** A retention proposal row, minus the tenant id. */
@@ -156,4 +160,149 @@ export async function insertRetentionProposals(
     .onConflictDoNothing()
     .returning({ id: retentionProposals.id })
   return rows.length
+}
+
+/**
+ * Raised when an accepted retention proposal can no longer be applied: the
+ * memory left the live set, or the archive disposition refuses it (a blocker,
+ * or an open or waiting commitment). The transaction rolls back, so the
+ * proposal stays open for a reviewer to reject. Ids and a reason only.
+ */
+export class RetentionProposalNotApplicableError extends Error {
+  constructor(
+    readonly proposalId: string,
+    readonly reason: string,
+  ) {
+    super(`retention proposal ${proposalId} cannot be applied: ${reason}`)
+    this.name = 'RetentionProposalNotApplicableError'
+  }
+}
+
+/**
+ * Decide an OPEN proposal: proposed -> applied | rejected, a compare-and-set on
+ * `status`. Missing, already decided, dismissed, or another tenant's ->
+ * ProposalNotFoundError, so two concurrent decisions cannot both succeed.
+ */
+export async function decideRetentionProposal(
+  tx: TenantTx,
+  userId: string,
+  proposalId: string,
+  status: 'applied' | 'rejected',
+): Promise<RetentionProposalRow> {
+  const [row] = await tx
+    .update(retentionProposals)
+    .set({ status, decidedAt: sql`now()` })
+    .where(
+      and(
+        eq(retentionProposals.userId, userId),
+        eq(retentionProposals.id, proposalId),
+        eq(retentionProposals.status, 'proposed'),
+      ),
+    )
+    .returning(RETENTION_PROPOSAL_COLUMNS)
+  if (row === undefined) throw new ProposalNotFoundError(proposalId)
+  return row
+}
+
+/**
+ * Accept an OPEN retention proposal as the reviewer, in the caller's ONE
+ * transaction: claim it (proposed -> applied), then apply its verdict.
+ *
+ * - **archive:** the revise archive disposition (`archiveMemoryIn`, policy
+ *   `disposition`), with its audited `archive` event. An already archived
+ *   memory counts as applied; any refusal throws
+ *   {@link RetentionProposalNotApplicableError}.
+ * - **supersede:** a `supersedes` edge from the newer memory to the older one,
+ *   closing the older one exactly as an edge proposal does
+ *   (`materializeEdgeIn`): event-type memories and a superseded successor are
+ *   refused there, and an older memory that is no longer live is refused here.
+ *   As with any predecessor close, an open commitment on the older memory moves
+ *   to the newer one or is resolved.
+ * - **conflict:** records the review only. The reviewer resolves the conflict
+ *   with `revise`.
+ *
+ * Any throw rolls the claim back with everything else, so a refused verdict
+ * leaves the proposal open.
+ *
+ * LOCK ORDER: the judged memory is locked FOR UPDATE before the proposal is
+ * claimed. Staging locks the memory (FOR SHARE) before it inserts a proposal,
+ * so both take the memory first and cannot deadlock on each other.
+ */
+export async function acceptRetentionProposal(
+  tx: TenantTx,
+  userId: string,
+  proposalId: string,
+  actorKind: ActorKind,
+): Promise<RetentionProposalRow> {
+  const [open] = await tx
+    .select({ memoryId: retentionProposals.memoryId })
+    .from(retentionProposals)
+    .where(
+      and(
+        eq(retentionProposals.userId, userId),
+        eq(retentionProposals.id, proposalId),
+        eq(retentionProposals.status, 'proposed'),
+      ),
+    )
+    .limit(1)
+  if (open === undefined) throw new ProposalNotFoundError(proposalId)
+  const [memory] = await tx
+    .select({ status: memories.status, validTo: memories.validTo })
+    .from(memories)
+    .where(and(eq(memories.userId, userId), eq(memories.id, open.memoryId)))
+    .limit(1)
+    .for('update')
+  // The compare-and-set still decides a race between two reviewers.
+  const proposal = await decideRetentionProposal(tx, userId, proposalId, 'applied')
+  if (proposal.action === 'archive') {
+    const archived = await archiveMemoryIn(tx, {
+      userId,
+      memoryId: proposal.memoryId,
+      actorKind,
+      policy: 'disposition',
+    })
+    if (archived.outcome === 'rejected') {
+      throw new RetentionProposalNotApplicableError(proposalId, archived.reason)
+    }
+  } else if (proposal.action === 'supersede') {
+    if (proposal.relatedMemoryId === null) {
+      throw new RetentionProposalNotApplicableError(proposalId, 'no_related_memory')
+    }
+    // The edge path only checks that the older memory is not yet superseded;
+    // an archived one must not be moved into the superseded bucket.
+    if (memory?.status !== 'active' || memory.validTo !== null) {
+      throw new RetentionProposalNotApplicableError(proposalId, 'memory_not_live')
+    }
+    await materializeEdgeIn(
+      tx,
+      userId,
+      { fromId: proposal.relatedMemoryId, toId: proposal.memoryId, edgeType: 'supersedes' },
+      actorKind,
+      proposalId,
+    )
+  }
+  return proposal
+}
+
+/**
+ * Count the tenant's reviewable retention proposals matching an optional status
+ * filter. Dismissed rows are never counted: they are not for review.
+ */
+export async function countRetentionProposals(
+  tx: TenantTx,
+  userId: string,
+  status?: string,
+): Promise<number> {
+  const t = retentionProposals
+  const [row] = await tx
+    .select({ n: count() })
+    .from(t)
+    .where(
+      and(
+        eq(t.userId, userId),
+        ne(t.status, 'dismissed'),
+        status === undefined ? undefined : eq(t.status, status),
+      ),
+    )
+  return row?.n ?? 0
 }
