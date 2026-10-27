@@ -2520,7 +2520,20 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       updatedAt: new Date('2026-01-04T00:00:00.000Z'),
     },
     resolutionProposals: [],
-    retentionProposals: [],
+    retentionProposals: [
+      {
+        id: '00000000-0000-7000-8000-0000000000f1',
+        memoryId: '00000000-0000-7000-8000-0000000000f2',
+        action: 'archive',
+        relatedMemoryId: null,
+        probability: 0.9,
+        probabilities: { keep: 0.1, archive: 0.9 },
+        model: 'jev-test',
+        status: 'proposed',
+        decidedAt: null,
+        createdAt: new Date('2026-01-06T00:00:00.000Z'),
+      },
+    ],
     judgmentPolicy: {
       mode: 'on',
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -2623,6 +2636,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       proposals: 1,
       factProposals: 1,
       resolutionProposals: 0,
+      retentionProposals: 1,
       agentSessions: 1,
       userBudgets: 1,
       llmUsage: 1,
@@ -2667,6 +2681,42 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
 
     expect(Object.keys(body.agentSessions[0] ?? {}).sort()).toEqual([...required].sort())
     expect(body.agentSessions[0]?.triageArmedAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  // The same drift one level up: a new export table must reach both the route's
+  // body and the spec, and its row keys must match. The retention table once
+  // reached the spec and the db export but not this route.
+  it('serializes every top-level key, count and retention field the generated OpenAPI requires', async () => {
+    exportUserData.mockResolvedValue(sampleExport())
+    const res = await call('/api/v1/export', { key: VALID_KEY })
+    const body = (await res.json()) as {
+      retentionProposals: Record<string, unknown>[]
+      counts: Record<string, unknown>
+    }
+    type ObjectSchema = { required: string[]; properties: Record<string, ObjectSchema> } & {
+      items?: { required: string[] }
+    }
+    const spec = JSON.parse(
+      readFileSync(new URL('../../../docs/api-reference/openapi.json', import.meta.url), 'utf8'),
+    ) as {
+      paths: Record<
+        string,
+        {
+          get: {
+            responses: { '200': { content: { 'application/json': { schema: ObjectSchema } } } }
+          }
+        }
+      >
+    }
+    const schema =
+      spec.paths['/api/v1/export']?.get.responses['200'].content['application/json'].schema
+    expect(Object.keys(body).sort()).toEqual([...(schema?.required ?? [])].sort())
+    expect(Object.keys(body.counts).sort()).toEqual(
+      [...(schema?.properties.counts?.required ?? [])].sort(),
+    )
+    expect(Object.keys(body.retentionProposals[0] ?? {}).sort()).toEqual(
+      [...(schema?.properties.retentionProposals?.items?.required ?? [])].sort(),
+    )
   })
 
   it('publishes the runtime retrieval-policy shape in generated OpenAPI', () => {

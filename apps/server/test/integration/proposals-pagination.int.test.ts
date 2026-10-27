@@ -180,8 +180,9 @@ describe('review_proposals list pagination (#320, real MCP transport)', () => {
         edge: page.proposals.length,
         fact: factIds.length,
         resolution: 0,
+        retention: 0,
       })
-      expect(page.totals).toEqual({ edge: EDGES, fact: FACTS, resolution: 0 })
+      expect(page.totals).toEqual({ edge: EDGES, fact: FACTS, resolution: 0, retention: 0 })
       seen.push(...page.proposals.map((p) => p.id), ...factIds)
       if (!page.hasMore) {
         expect(page.nextCursor).toBeUndefined()

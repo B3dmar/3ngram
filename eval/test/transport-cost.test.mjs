@@ -246,7 +246,12 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // write schema, which rides `remember` on tools/list every MCP turn and
       // the REST request surface once. CLI unchanged. MEASURED on staging
       // f917856, not summed.
-      mcp: [32597, 262592, 65380],
+      // MCP +2563/+20504/+4998 (forgetting pass, review_proposals V4): the output
+      // grows `retentionProposals` on the list variant, a `retention` key in
+      // counts/totals, and two decision variants (`rejected_retention`,
+      // `applied_retention`). Input and description unchanged (no embeddings
+      // regen); CLI and REST unchanged. MEASURED on staging 28bb31f, not summed.
+      mcp: [35160, 283096, 70378],
       cli: [333, 1236, 1236],
       rest: [4703, 5720, 5720],
     },

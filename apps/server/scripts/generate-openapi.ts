@@ -428,6 +428,7 @@ const accountExport = z
         proposals: z.number().int().min(0),
         factProposals: z.number().int().min(0),
         resolutionProposals: z.number().int().min(0),
+        retentionProposals: z.number().int().min(0),
         agentSessions: z.number().int().min(0),
         userBudgets: z.number().int().min(0),
         llmUsage: z.number().int().min(0),

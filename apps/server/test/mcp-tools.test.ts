@@ -24,7 +24,7 @@ import {
   rememberToolOutputSchema,
   rememberToolOutputV2Schema,
   resolveToolOutputSchema,
-  reviewProposalsOutputV3Schema,
+  reviewProposalsOutputV4Schema,
   reviseToolOutputSchema,
   reviseToolOutputV2Schema,
   searchQueryV3Schema,
@@ -288,6 +288,16 @@ class SuccessorNotLiveError extends Error {
     this.fromId = fromId
   }
 }
+class RetentionProposalNotApplicableError extends Error {
+  readonly proposalId: string
+  readonly reason: string
+  constructor(proposalId: string, reason: string) {
+    super(`retention proposal ${proposalId} cannot be applied: ${reason}`)
+    this.name = 'RetentionProposalNotApplicableError'
+    this.proposalId = proposalId
+    this.reason = reason
+  }
+}
 class UnknownSessionRunError extends Error {
   readonly sessionRunId: string
   constructor(sessionRunId: string) {
@@ -349,6 +359,7 @@ vi.mock('@3ngram/core', () => ({
   ProposalNotFoundError,
   EpisodicSupersessionError,
   SuccessorNotLiveError,
+  RetentionProposalNotApplicableError,
 }))
 
 const { TOOLS, runTool } = await import('../src/mcp/tools.js')
@@ -2295,15 +2306,18 @@ function proposalsPage(
   factProposals: unknown[] = [],
   extra: { hasMore?: boolean; next?: { createdAt: string; id: string } } = {},
   resolutionProposals: unknown[] = [],
+  retentionProposals: unknown[] = [],
 ) {
   return {
     proposals,
     factProposals,
     resolutionProposals,
+    retentionProposals,
     totals: {
       edge: proposals.length,
       fact: factProposals.length,
       resolution: resolutionProposals.length,
+      retention: retentionProposals.length,
     },
     hasMore: extra.hasMore ?? false,
     next: extra.next,
@@ -2431,7 +2445,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.factProposals?.[0]?.subject).toBe('lift.back_squat')
@@ -2455,7 +2469,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     // A DISTINCT literal: a client matching on `rejected` keeps getting the
     // edge payload it was written against.
     expect(parsed.action).toBe('rejected_fact')
@@ -2479,7 +2493,7 @@ describe('configure_scope tool', () => {
     )
 
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('applied_fact')
     if (parsed.action === 'applied_fact') {
       // The reviewer learns what was written without a second call.
@@ -2717,7 +2731,7 @@ describe('review_proposals tool', () => {
       ctx({ scopes: ['memory:read'] }),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('list')
     if (parsed.action === 'list') {
       expect(parsed.count).toBe(1)
@@ -2742,7 +2756,7 @@ describe('review_proposals tool', () => {
     const mcpFp = (status?: string, tenant = UID) =>
       proposalsFingerprint({
         surface: 'mcp',
-        kinds: ['edge', 'fact', 'resolution'],
+        kinds: ['edge', 'fact', 'resolution', 'retention'],
         status,
         tenant,
       })
@@ -2756,15 +2770,15 @@ describe('review_proposals tool', () => {
           hasMore: true,
           next: POSITION,
         }),
-        totals: { edge: 140, fact: 120, resolution: 3 },
+        totals: { edge: 140, fact: 120, resolution: 3, retention: 7 },
       })
       const result = await call('review_proposals', { action: 'list', limit: 2 }, readCtx())
-      const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+      const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
       if (parsed.action !== 'list') throw new Error('expected list')
       // `count` keeps its shipped meaning: EDGE rows on this page, not a total.
       expect(parsed.count).toBe(1)
-      expect(parsed.counts).toEqual({ edge: 1, fact: 1, resolution: 0 })
-      expect(parsed.totals).toEqual({ edge: 140, fact: 120, resolution: 3 })
+      expect(parsed.counts).toEqual({ edge: 1, fact: 1, resolution: 0, retention: 0 })
+      expect(parsed.totals).toEqual({ edge: 140, fact: 120, resolution: 3, retention: 7 })
       expect(parsed.hasMore).toBe(true)
       expect(parsed.nextCursor).toBe(encodeProposalsCursor(POSITION, mcpFp()))
     })
@@ -2841,7 +2855,7 @@ describe('review_proposals tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('rejected')
     if (parsed.action === 'rejected') expect(parsed.proposal.status).toBe('rejected')
     expect(rejectProposalAnyKind).toHaveBeenCalledWith(UID, PROPOSAL_ID)
@@ -2858,7 +2872,7 @@ describe('review_proposals tool', () => {
       ctx(),
     )
     expect(result.isError).toBeFalsy()
-    const parsed = reviewProposalsOutputV3Schema.parse(result.structuredContent)
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
     expect(parsed.action).toBe('applied')
     if (parsed.action === 'applied') expect(parsed.proposal.status).toBe('applied')
     // The MCP transport stamps its actor class on the apply.
@@ -3400,5 +3414,74 @@ describe('retrieval-scope policy wiring', () => {
     expect(handed.isError).toBeFalsy()
     expect(handoff.mock.calls[0]?.[1]).toMatchObject({ retrievalPolicy: DEFAULT_WORK })
     expect((handed.structuredContent as { appliedScope?: string }).appliedScope).toBe('work')
+  })
+})
+
+describe('review_proposals: the retention kind (forgetting pass)', () => {
+  const RETENTION_ID = '019fecaa-0000-7000-8000-0000000000e1'
+  const retentionRecord = (status = 'proposed') => ({
+    id: RETENTION_ID,
+    memoryId: MEMO_ID,
+    action: 'supersede',
+    relatedMemoryId: crypto.randomUUID(),
+    probability: 0.92,
+    probabilities: { 'supersede_by:s0n0': 0.92, keep: 0.08 },
+    model: 'jev-test',
+    status,
+    decidedAt: status === 'proposed' ? null : new Date('2026-02-01T00:00:00.000Z'),
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  })
+
+  it('list: surfaces retention proposals with their own count', async () => {
+    listProposalsPage.mockResolvedValue(proposalsPage([], [], {}, [], [retentionRecord()]))
+    const result = await call(
+      'review_proposals',
+      { action: 'list' },
+      ctx({ scopes: ['memory:read'] }),
+    )
+    const parsed = reviewProposalsOutputV4Schema.parse(result.structuredContent)
+    if (parsed.action !== 'list') throw new Error('expected list')
+    expect(parsed.retentionProposals?.map((p) => [p.id, p.action, p.probability])).toEqual([
+      [RETENTION_ID, 'supersede', 0.92],
+    ])
+    expect(parsed.counts.retention).toBe(1)
+    // The calibration distribution stays out of the review surface.
+    expect(parsed.retentionProposals?.[0]).not.toHaveProperty('probabilities')
+  })
+
+  it('accept and reject return the retention decision variants', async () => {
+    acceptProposalAnyKind.mockResolvedValue({
+      kind: 'retention_applied',
+      proposal: retentionRecord('applied'),
+    })
+    const accepted = reviewProposalsOutputV4Schema.parse(
+      (await call('review_proposals', { action: 'accept', proposalId: RETENTION_ID }, ctx()))
+        .structuredContent,
+    )
+    expect(accepted.action).toBe('applied_retention')
+    rejectProposalAnyKind.mockResolvedValue({
+      kind: 'retention',
+      proposal: retentionRecord('rejected'),
+    })
+    const rejected = reviewProposalsOutputV4Schema.parse(
+      (await call('review_proposals', { action: 'reject', proposalId: RETENTION_ID }, ctx()))
+        .structuredContent,
+    )
+    expect(rejected.action).toBe('rejected_retention')
+  })
+
+  it('accept: maps a verdict that can no longer be applied to conflict, naming no content', async () => {
+    acceptProposalAnyKind.mockRejectedValue(
+      new RetentionProposalNotApplicableError(RETENTION_ID, 'open_commitment'),
+    )
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: RETENTION_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('conflict')
+    expect(text).toContain('open_commitment')
   })
 })

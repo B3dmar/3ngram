@@ -2959,6 +2959,11 @@
                           "minimum": 0,
                           "type": "integer"
                         },
+                        "retentionProposals": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
                         "scopes": {
                           "maximum": 9007199254740991,
                           "minimum": 0,
@@ -2980,6 +2985,7 @@
                         "proposals",
                         "factProposals",
                         "resolutionProposals",
+                        "retentionProposals",
                         "agentSessions",
                         "userBudgets",
                         "llmUsage"

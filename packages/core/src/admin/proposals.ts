@@ -11,15 +11,18 @@
 import {
   type AppliedFactProposal,
   type AppliedProposalRow,
+  acceptRetentionProposal,
   applyFactProposal as applyFactProposalDb,
   applyProposal as applyProposalDb,
   decideResolutionProposal,
+  decideRetentionProposal,
   type FactProposalRow,
   listFactProposals as listFactProposalsDb,
   listProposals as listProposalsDb,
   ProposalNotFoundError,
   type ProposalRow,
   type ResolutionProposalRow,
+  type RetentionProposalRow,
   rejectFactProposal as rejectFactProposalDb,
   rejectProposal as rejectProposalDb,
   reopenResolutionProposal,
@@ -32,6 +35,7 @@ export {
   type AppliedProposalRow,
   EpisodicSupersessionError,
   ProposalNotFoundError,
+  RetentionProposalNotApplicableError,
   SuccessorNotLiveError,
 } from '@3ngram/db'
 
@@ -43,6 +47,9 @@ export type FactProposalRecord = FactProposalRow
 
 /** A resolution proposal record (the closer's mid band, issue #229) returned to a transport. */
 export type ResolutionProposalRecord = ResolutionProposalRow
+
+/** A retention proposal record (the forgetting pass) returned to a transport. */
+export type RetentionProposalRecord = RetentionProposalRow
 
 /**
  * List-mode query: optional status filter + a bounded window (caller defaults
@@ -152,6 +159,8 @@ export type DecidedProposal =
       commitmentId: string
       commitmentStatus: CommitmentStatus
     }
+  | { kind: 'retention'; proposal: RetentionProposalRecord }
+  | { kind: 'retention_applied'; proposal: RetentionProposalRecord }
 
 /**
  * Probe the edge table, then the fact table, then the resolution table, and
@@ -243,6 +252,12 @@ export function rejectProposalAnyKind(
         decideResolutionProposal(tx, userId, proposalId, 'rejected'),
       ),
     }),
+    async () => ({
+      kind: 'retention',
+      proposal: await withTenant(userId, (tx) =>
+        decideRetentionProposal(tx, userId, proposalId, 'rejected'),
+      ),
+    }),
   )
 }
 
@@ -250,8 +265,10 @@ export function rejectProposalAnyKind(
  * Accept an open proposal of ANY kind. An edge proposal materializes its
  * typed edge (and closes the predecessor for a supersedes/updates edge); a fact
  * proposal writes the fact it proposed and returns its id; a resolution proposal
- * resolves its commitment as the reviewer. Missing or already-decided in every
- * table -> ProposalNotFoundError.
+ * resolves its commitment as the reviewer; a retention proposal applies its
+ * verdict as the reviewer (archive, supersede, or a conflict review), in one
+ * transaction with its claim. Missing or already-decided in every table ->
+ * ProposalNotFoundError.
  */
 export function acceptProposalAnyKind(
   userId: string,
@@ -272,5 +289,11 @@ export function acceptProposalAnyKind(
       return { kind: 'fact_applied', proposal: applied.proposal, factId: applied.factId }
     },
     () => acceptResolutionProposal(userId, proposalId, actorKind),
+    async () => ({
+      kind: 'retention_applied',
+      proposal: await withTenant(userId, (tx) =>
+        acceptRetentionProposal(tx, userId, proposalId, actorKind),
+      ),
+    }),
   )
 }

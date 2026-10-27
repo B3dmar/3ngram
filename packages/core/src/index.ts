@@ -104,6 +104,8 @@ export {
   type ProposalsPage,
   type ProposalsPageQuery,
   type ResolutionProposalRecord,
+  RetentionProposalNotApplicableError,
+  type RetentionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   renderCloserPrompt,

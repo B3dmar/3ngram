@@ -54,6 +54,8 @@ export {
   type ProposalRecord,
   type ProposalsListQuery,
   type ResolutionProposalRecord,
+  RetentionProposalNotApplicableError,
+  type RetentionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   SuccessorNotLiveError,
