@@ -142,6 +142,7 @@ const SEEDED_FORCED_TABLES = [
   'memory_events',
   'llm_usage',
   'agent_sessions',
+  'retention_proposals',
 ] as const
 
 async function seedTenantAAllForced(): Promise<void> {
@@ -185,6 +186,10 @@ async function seedTenantAAllForced(): Promise<void> {
       sql`INSERT INTO agent_sessions (user_id, agent, session_id, source, selector)
           VALUES (${a}, 'codex', 'iso-a', 'startup', '{"kind":"all"}'::jsonb)`,
     )
+    await tx.execute(
+      sql`INSERT INTO retention_proposals (user_id, memory_id, action, probability, probabilities, model)
+          VALUES (${a}, ${id1}, 'archive', 0.9, '{"keep":0.1,"archive":0.9}'::jsonb, 'jev-test')`,
+    )
   })
 }
 
@@ -221,6 +226,7 @@ describe('FORCE RLS behavioral isolation (runtime role, real withTenant)', () =>
       memory_events: 1,
       llm_usage: 1,
       agent_sessions: 1,
+      retention_proposals: 1,
     })
   })
 })
@@ -239,13 +245,15 @@ describe('assertRlsInForce runtime guard', () => {
     // 0028 forces twelve tenant-data tables; 0030 adds user_retrieval_policy;
     // 0031 adds fact_proposals; 0032 adds agent_sessions; 0039 adds
     // user_write_scope_policy; 0043 adds user_judgment_policy; 0044 adds
-    // resolution_proposals. The names are asserted individually because a
-    // count alone would let a swap (one table gained, another dropped) pass.
-    expect(forced.length).toBe(18)
+    // resolution_proposals; 0045 adds retention_proposals. The names are
+    // asserted individually because a count alone would let a swap (one table
+    // gained, another dropped) pass.
+    expect(forced.length).toBe(19)
     expect(forced).toContain('user_retrieval_policy')
     expect(forced).toContain('user_write_scope_policy')
     expect(forced).toContain('user_judgment_policy')
     expect(forced).toContain('resolution_proposals')
+    expect(forced).toContain('retention_proposals')
     expect(forced).toContain('fact_proposals')
     expect(forced).toContain('agent_sessions')
   })

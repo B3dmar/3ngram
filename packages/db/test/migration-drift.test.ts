@@ -15,6 +15,9 @@ import {
   oauthClientRegistrationMethodSchema,
   PROBABILITY_BOUNDS,
   proposalStatusSchema,
+  RETENTION_ACTIONS_WITH_RELATED,
+  retentionActionSchema,
+  retentionProposalStatusSchema,
   retrievalScopePolicyScopeRequirements,
   tokenEndpointAuthMethodSchema,
   writeScopeModeSchema,
@@ -113,6 +116,11 @@ const judgmentPolicySql = readFileSync(
 // 0044 adds the closer's resolution proposals (issue #229).
 const resolutionProposalsSql = readFileSync(
   join(import.meta.dirname, '../migrations/0044_resolution_proposals.sql'),
+  'utf8',
+)
+// 0045 adds the forgetting pass's retention proposals (docs/concepts/forgetting-pass.mdx).
+const retentionProposalsSql = readFileSync(
+  join(import.meta.dirname, '../migrations/0045_retention_proposals.sql'),
   'utf8',
 )
 // 0040 adds the commitment's latest-transition reason (issue #234).
@@ -901,5 +909,59 @@ describe('resolution proposals table (0044, issue #229)', () => {
     expect(resolutionProposalsSql).not.toMatch(/DROP (TABLE|POLICY)/)
     expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON resolution_proposals TO app_user;')
     expect(rolesSql).not.toMatch(/DELETE[^\n]*resolution_proposals/)
+  })
+})
+
+describe('retention proposals table (0045, forgetting pass)', () => {
+  const inList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(', ')
+
+  it('derives the action, status, probability and pairing CHECKs from the schema', () => {
+    expect(retentionProposalsSql).toContain(
+      `CHECK ("retention_proposals"."action" IN (${inList(retentionActionSchema.options)}))`,
+    )
+    expect(retentionProposalsSql).toContain(
+      `CHECK ("retention_proposals"."status" IN (${inList(retentionProposalStatusSchema.options)}))`,
+    )
+    expect(retentionProposalsSql).toContain(
+      `"retention_proposals"."probability" >= ${PROBABILITY_BOUNDS.min} AND "retention_proposals"."probability" <= ${PROBABILITY_BOUNDS.max}`,
+    )
+    expect(retentionProposalsSql).toContain(
+      `CHECK (("retention_proposals"."action" IN (${inList(RETENTION_ACTIONS_WITH_RELATED)})) = ("retention_proposals"."related_memory_id" IS NOT NULL))`,
+    )
+    expect(retentionProposalsSql).toContain(
+      'CHECK ("retention_proposals"."related_memory_id" IS NULL OR "retention_proposals"."related_memory_id" <> "retention_proposals"."memory_id")',
+    )
+  })
+
+  it('keys tenant-composite FKs to both memories, cascading', () => {
+    expect(retentionProposalsSql).toContain(
+      'ADD CONSTRAINT "retention_proposals_memory_fk" FOREIGN KEY ("user_id","memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade',
+    )
+    expect(retentionProposalsSql).toContain(
+      'ADD CONSTRAINT "retention_proposals_related_memory_fk" FOREIGN KEY ("user_id","related_memory_id") REFERENCES "public"."memories"("user_id","id") ON DELETE cascade',
+    )
+  })
+
+  it('allows one OPEN proposal per memory and action', () => {
+    expect(retentionProposalsSql).toContain(
+      `CREATE UNIQUE INDEX "retention_proposals_open_idx" ON "retention_proposals" USING btree ("user_id","memory_id","action") WHERE status = 'proposed'`,
+    )
+    expect(retentionProposalsSql).toContain('"probability" double precision NOT NULL')
+    expect(retentionProposalsSql).toContain('"probabilities" jsonb NOT NULL')
+  })
+
+  it('carries the NULLIF-guarded tenant policy with FORCE and a no-DELETE grant', () => {
+    expect(retentionProposalsSql).toContain(
+      'CREATE POLICY "tenant_isolation" ON "retention_proposals"',
+    )
+    expect(retentionProposalsSql).toContain(
+      `NULLIF(current_setting('app.user_id', true), '')::uuid`,
+    )
+    expect(retentionProposalsSql).toContain(
+      'ALTER TABLE "retention_proposals" FORCE ROW LEVEL SECURITY',
+    )
+    expect(retentionProposalsSql).not.toMatch(/DROP (TABLE|POLICY)/)
+    expect(rolesSql).toContain('GRANT SELECT, INSERT, UPDATE ON retention_proposals TO app_user;')
+    expect(rolesSql).not.toMatch(/DELETE[^\n]*retention_proposals/)
   })
 })

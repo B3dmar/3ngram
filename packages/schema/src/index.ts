@@ -486,6 +486,13 @@ export {
   statsResponseSchema,
   versionResponseSchema,
 } from './rest.js'
+// --- forgetting pass retention verdicts (docs/concepts/forgetting-pass.mdx) ---
+export type { RetentionAction, RetentionProposalStatus } from './retention.js'
+export {
+  RETENTION_ACTIONS_WITH_RELATED,
+  retentionActionSchema,
+  retentionProposalStatusSchema,
+} from './retention.js'
 // --- retrieval-scope policy (issue #47) — appended block ---
 export type {
   BriefingToolOutputV4,

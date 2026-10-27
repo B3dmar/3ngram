@@ -51,6 +51,7 @@ import type {
 import { asc, eq } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { RESOLUTION_PROPOSAL_COLUMNS, type ResolutionProposalRow } from './resolution-proposals.js'
+import { RETENTION_PROPOSAL_COLUMNS, type RetentionProposalRow } from './retention-proposals.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import { userBudgets } from './schema/budget.js'
 import {
@@ -69,6 +70,7 @@ import {
   memoryEdges,
   memoryEvents,
   resolutionProposals,
+  retentionProposals,
   scopes,
 } from './schema/memory.js'
 import { llmUsage } from './schema/ops.js'
@@ -254,6 +256,9 @@ export interface ExportWriteScopePolicyRow {
 /** A resolution proposal (issue #229) for a portability export (minus tenant id). */
 export type ExportResolutionProposalRow = ResolutionProposalRow
 
+/** A forgetting-pass verdict (docs/concepts/forgetting-pass.mdx) for a portability export (minus tenant id). */
+export type ExportRetentionProposalRow = RetentionProposalRow
+
 /** A stored judgment opt-in row for a portability export (issue #225). */
 export interface ExportJudgmentPolicyRow {
   mode: JudgmentMode
@@ -300,6 +305,7 @@ export interface UserDataExport {
   proposals: ExportProposalRow[]
   factProposals: ExportFactProposalRow[]
   resolutionProposals: ExportResolutionProposalRow[]
+  retentionProposals: ExportRetentionProposalRow[]
   agentSessions: ExportAgentSessionRow[]
   userBudgets: ExportBudgetRow[]
   llmUsage: ExportLlmUsageRow[]
@@ -490,6 +496,12 @@ export async function readUserDataExport(
     .where(eq(resolutionProposals.userId, userId))
     .orderBy(asc(resolutionProposals.createdAt), asc(resolutionProposals.id))
 
+  const retentionProposalRows = await tx
+    .select(RETENTION_PROPOSAL_COLUMNS)
+    .from(retentionProposals)
+    .where(eq(retentionProposals.userId, userId))
+    .orderBy(asc(retentionProposals.createdAt), asc(retentionProposals.id))
+
   const agentSessionRows = await tx
     .select({
       id: agentSessions.id,
@@ -602,6 +614,7 @@ export async function readUserDataExport(
     proposals: proposalRows,
     factProposals: factProposalRows,
     resolutionProposals: resolutionProposalRows,
+    retentionProposals: retentionProposalRows,
     agentSessions: agentSessionRows,
     userBudgets: budgetRows,
     llmUsage: usageRows,

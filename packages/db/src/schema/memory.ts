@@ -13,6 +13,9 @@ import {
   memoryTypeSchema,
   PROBABILITY_BOUNDS,
   proposalStatusSchema,
+  RETENTION_ACTIONS_WITH_RELATED,
+  retentionActionSchema,
+  retentionProposalStatusSchema,
 } from '@3ngram/schema'
 import { sql } from 'drizzle-orm'
 import {
@@ -433,6 +436,81 @@ export const resolutionProposals = pgTable(
     check(
       'resolution_proposals_probability_check',
       sql`${t.probability} >= ${sql.raw(String(PROBABILITY_BOUNDS.min))} AND ${t.probability} <= ${sql.raw(String(PROBABILITY_BOUNDS.max))}`,
+    ),
+    tenantPolicy(),
+  ],
+)
+
+/**
+ * Forgetting-pass verdicts (docs/concepts/forgetting-pass.mdx). One row per
+ * judged memory and action. A non-keep verdict waits as a `proposed` row for a
+ * human yes. A keep verdict is stored `dismissed`, is never listed, and stops
+ * the pass from judging the memory again until its freshness moves.
+ *
+ * No user text: ids, a probability, the judge's choice distribution (keys are
+ * action names and item refs) and the pinned model name.
+ */
+export const retentionProposals = pgTable(
+  'retention_proposals',
+  {
+    id: uuid('id').primaryKey().default(uuidv7()),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // The memory the verdict is about.
+    memoryId: uuid('memory_id').notNull(),
+    action: text('action').notNull(),
+    // The newer memory (supersede) or the other side (conflict); NULL otherwise.
+    relatedMemoryId: uuid('related_memory_id'),
+    // The chosen key's probability. Double precision, as on resolution_proposals.
+    probability: doublePrecision('probability').notNull(),
+    // The full choice distribution, kept so thresholds can be recalibrated.
+    probabilities: jsonb('probabilities').$type<Record<string, number>>().notNull(),
+    // The pinned judge model that produced the verdict.
+    model: text('model').notNull(),
+    status: text('status').notNull().default('proposed'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'retention_proposals_memory_fk',
+      columns: [t.userId, t.memoryId],
+      foreignColumns: [memories.userId, memories.id],
+    }).onDelete('cascade'),
+    // MATCH SIMPLE: a NULL related_memory_id is not checked.
+    foreignKey({
+      name: 'retention_proposals_related_memory_fk',
+      columns: [t.userId, t.relatedMemoryId],
+      foreignColumns: [memories.userId, memories.id],
+    }).onDelete('cascade'),
+    // One OPEN proposal per memory and action; a later pass is a no-op until a
+    // reviewer decides it. The insert's ON CONFLICT relies on this index.
+    uniqueIndex('retention_proposals_open_idx')
+      .on(t.userId, t.memoryId, t.action)
+      .where(sql`status = 'proposed'`),
+    index('retention_proposals_review_idx').on(t.userId, t.status, t.createdAt),
+    check(
+      'retention_proposals_action_check',
+      enumCheckSql(t.action, retentionActionSchema.options),
+    ),
+    check(
+      'retention_proposals_status_check',
+      enumCheckSql(t.status, retentionProposalStatusSchema.options),
+    ),
+    check(
+      'retention_proposals_probability_check',
+      sql`${t.probability} >= ${sql.raw(String(PROBABILITY_BOUNDS.min))} AND ${t.probability} <= ${sql.raw(String(PROBABILITY_BOUNDS.max))}`,
+    ),
+    // supersede and conflict name a second memory; keep and archive never do.
+    check(
+      'retention_proposals_related_check',
+      sql`(${enumCheckSql(t.action, RETENTION_ACTIONS_WITH_RELATED)}) = (${t.relatedMemoryId} IS NOT NULL)`,
+    ),
+    // A memory never supersedes or conflicts with itself.
+    check(
+      'retention_proposals_distinct_check',
+      sql`${t.relatedMemoryId} IS NULL OR ${t.relatedMemoryId} <> ${t.memoryId}`,
     ),
     tenantPolicy(),
   ],
