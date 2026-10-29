@@ -28,6 +28,9 @@ eval-metrics/
 # kept locally and in git history, dropped from the public tree.
 /docs/research/private/
 
+# Private forgetting-pass golden set (real memories of one account; eval/fixtures/README.md).
+eval/private/
+
 # Local AI-assistant and tooling context (kept on disk, never published).
 CLAUDE.local.md
 .claude/*
