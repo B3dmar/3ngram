@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "now": "2026-10-28T04:30:00.000Z",
+  "candidates": {
+    "pairs": [
+      {
+        "newer": {
+          "id": "00000000-0000-7000-8000-000000000002",
+          "memoryType": "decision",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Demo app hosting",
+          "content": "Deploy the demo app on the managed container platform in two regions.",
+          "recordedAt": "2026-09-15T10:00:00.000Z",
+          "lastTouchedAt": "2026-09-15T10:00:00.000Z"
+        },
+        "older": {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "memoryType": "decision",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Demo app hosting",
+          "content": "Deploy the demo app on a single rented VM behind a reverse proxy.",
+          "recordedAt": "2026-04-10T09:00:00.000Z",
+          "lastTouchedAt": "2026-04-10T09:00:00.000Z"
+        },
+        "similarity": 0.88,
+        "olderStale": true
+      },
+      {
+        "newer": {
+          "id": "00000000-0000-7000-8000-000000000004",
+          "memoryType": "preference",
+          "scope": "work",
+          "project": "docs-site",
+          "topic": "Indentation",
+          "content": "Use two-space indentation everywhere, including the docs repository.",
+          "recordedAt": "2026-09-20T12:00:00.000Z",
+          "lastTouchedAt": "2026-09-20T12:00:00.000Z"
+        },
+        "older": {
+          "id": "00000000-0000-7000-8000-000000000003",
+          "memoryType": "preference",
+          "scope": "work",
+          "project": "docs-site",
+          "topic": "Indentation",
+          "content": "Prefer tabs for indentation in the docs repository.",
+          "recordedAt": "2026-05-02T08:00:00.000Z",
+          "lastTouchedAt": "2026-05-02T08:00:00.000Z"
+        },
+        "similarity": 0.85,
+        "olderStale": true
+      },
+      {
+        "newer": {
+          "id": "00000000-0000-7000-8000-000000000006",
+          "memoryType": "fact",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Staging database version",
+          "content": "The staging database was upgraded to Postgres 17 on 1 October.",
+          "recordedAt": "2026-10-01T07:00:00.000Z",
+          "lastTouchedAt": "2026-10-01T07:00:00.000Z"
+        },
+        "older": {
+          "id": "00000000-0000-7000-8000-000000000005",
+          "memoryType": "fact",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Staging database version",
+          "content": "The staging database runs Postgres 15.",
+          "recordedAt": "2026-03-11T07:00:00.000Z",
+          "lastTouchedAt": "2026-03-11T07:00:00.000Z"
+        },
+        "similarity": 0.9,
+        "olderStale": true
+      },
+      {
+        "newer": {
+          "id": "00000000-0000-7000-8000-000000000023",
+          "memoryType": "decision",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Backup schedule",
+          "content": "Run the weekly backup at 03:00 after the clock change.",
+          "recordedAt": "2026-10-03T06:00:00.000Z",
+          "lastTouchedAt": "2026-10-03T06:00:00.000Z"
+        },
+        "older": {
+          "id": "00000000-0000-7000-8000-000000000022",
+          "memoryType": "decision",
+          "scope": "work",
+          "project": "demo-app",
+          "topic": "Backup schedule",
+          "content": "Run the weekly backup at 02:00 on Sundays.",
+          "recordedAt": "2026-02-14T06:00:00.000Z",
+          "lastTouchedAt": "2026-02-14T06:00:00.000Z"
+        },
+        "similarity": 0.86,
+        "olderStale": true
+      }
+    ],
+    "singles": [
+      {
+        "id": "00000000-0000-7000-8000-000000000007",
+        "memoryType": "decision",
+        "scope": "work",
+        "project": "onboarding",
+        "topic": "Onboarding checklist format",
+        "content": "Ship the onboarding checklist as a PDF attachment in the welcome mail.",
+        "recordedAt": "2026-02-01T09:00:00.000Z",
+        "lastTouchedAt": "2026-02-01T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000008",
+        "memoryType": "preference",
+        "scope": "work",
+        "project": "onboarding",
+        "topic": "Status mail timing",
+        "content": "The weekly status mail goes out on Fridays at 16:00.",
+        "recordedAt": "2026-01-20T09:00:00.000Z",
+        "lastTouchedAt": "2026-01-20T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000009",
+        "memoryType": "fact",
+        "scope": "work",
+        "project": "onboarding",
+        "topic": "Pilot team size",
+        "content": "The pilot team has four members.",
+        "recordedAt": "2026-03-05T09:00:00.000Z",
+        "lastTouchedAt": "2026-03-05T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000010",
+        "memoryType": "decision",
+        "scope": "work",
+        "project": "onboarding",
+        "topic": "Pilot interview booking",
+        "content": "Book pilot interviews through the shared team calendar.",
+        "recordedAt": "2026-04-22T09:00:00.000Z",
+        "lastTouchedAt": "2026-04-22T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000012",
+        "memoryType": "decision",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Working language",
+        "content": "All code, comments and docs are written in English.",
+        "recordedAt": "2026-06-10T09:00:00.000Z",
+        "lastTouchedAt": "2026-06-10T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000013",
+        "memoryType": "preference",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Commit messages",
+        "content": "Commit messages follow conventional commits.",
+        "recordedAt": "2026-05-15T09:00:00.000Z",
+        "lastTouchedAt": "2026-05-15T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000015",
+        "memoryType": "fact",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Production region",
+        "content": "Production runs in the eu-central region.",
+        "recordedAt": "2026-04-01T09:00:00.000Z",
+        "lastTouchedAt": "2026-04-01T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000016",
+        "memoryType": "decision",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Release tagging",
+        "content": "A release is tagged only after the promotion to main is verified.",
+        "recordedAt": "2026-06-20T09:00:00.000Z",
+        "lastTouchedAt": "2026-06-20T09:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000017",
+        "memoryType": "event",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Sprint review",
+        "content": "Sprint review held; the import flow was demoed.",
+        "recordedAt": "2026-09-01T14:00:00.000Z",
+        "lastTouchedAt": "2026-09-01T14:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000018",
+        "memoryType": "event",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Sprint review",
+        "content": "Sprint review held; the export flow was demoed.",
+        "recordedAt": "2026-09-08T14:00:00.000Z",
+        "lastTouchedAt": "2026-09-08T14:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-7000-8000-000000000019",
+        "memoryType": "note",
+        "scope": "work",
+        "project": "demo-app",
+        "topic": "Standup 2026-08-15",
+        "content": "Standup 2026-08-15: blocked on the staging certificate renewal.",
+        "recordedAt": "2026-08-15T08:00:00.000Z",
+        "lastTouchedAt": "2026-08-15T08:00:00.000Z"
+      }
+    ],
+    "neighbours": [
+      {
+        "forId": "00000000-0000-7000-8000-000000000010",
+        "id": "00000000-0000-7000-8000-000000000011",
+        "memoryType": "decision",
+        "topic": "Pilot interview booking",
+        "content": "Pilot interviews are booked through the scheduling bot.",
+        "recordedAt": "2026-10-05T09:00:00.000Z",
+        "similarity": 0.84
+      },
+      {
+        "forId": "00000000-0000-7000-8000-000000000013",
+        "id": "00000000-0000-7000-8000-000000000014",
+        "memoryType": "preference",
+        "topic": "PR titles",
+        "content": "PR titles also follow conventional commits.",
+        "recordedAt": "2026-09-30T09:00:00.000Z",
+        "similarity": 0.81
+      },
+      {
+        "forId": "00000000-0000-7000-8000-000000000019",
+        "id": "00000000-0000-7000-8000-000000000020",
+        "memoryType": "note",
+        "topic": "Standup 2026-10-10",
+        "content": "Standup 2026-10-10: certificate renewed, no longer blocked.",
+        "recordedAt": "2026-10-10T08:00:00.000Z",
+        "similarity": 0.83
+      }
+    ]
+  },
+  "labels": {
+    "00000000-0000-7000-8000-000000000001": {
+      "slice": "conflicting-pair",
+      "expected": "supersede",
+      "relatedMemoryId": "00000000-0000-7000-8000-000000000002",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000003": {
+      "slice": "conflicting-pair",
+      "expected": "conflict",
+      "relatedMemoryId": "00000000-0000-7000-8000-000000000004",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000005": {
+      "slice": "conflicting-pair",
+      "expected": "supersede",
+      "relatedMemoryId": "00000000-0000-7000-8000-000000000006",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000022": {
+      "slice": "conflicting-pair",
+      "expected": "supersede",
+      "relatedMemoryId": "00000000-0000-7000-8000-000000000023",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000007": {
+      "slice": "stale-archive",
+      "expected": "archive",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000008": {
+      "slice": "stale-archive",
+      "expected": "archive",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000009": {
+      "slice": "stale-archive",
+      "expected": "archive",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000010": {
+      "slice": "stale-archive",
+      "expected": "archive",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000012": {
+      "slice": "still-valid",
+      "expected": "keep",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000013": {
+      "slice": "still-valid",
+      "expected": "keep",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000015": {
+      "slice": "still-valid",
+      "expected": "keep",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000016": {
+      "slice": "still-valid",
+      "expected": "keep",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000017": {
+      "slice": "recurring-episodic",
+      "expected": "keep",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000018": {
+      "slice": "recurring-episodic",
+      "expected": "keep",
+      "split": "heldout"
+    },
+    "00000000-0000-7000-8000-000000000019": {
+      "slice": "recurring-episodic",
+      "expected": "keep",
+      "split": "dev"
+    },
+    "00000000-0000-7000-8000-000000000020": {
+      "slice": "recurring-episodic",
+      "expected": "keep",
+      "split": "heldout"
+    }
+  }
+}
