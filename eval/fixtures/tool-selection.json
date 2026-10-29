@@ -275,7 +275,7 @@
     },
     {
       "id": "ts-review_proposals-4",
-      "utterance": "List the consolidation candidates still waiting on a human decision.",
+      "utterance": "Show me the retention proposals the forgetting pass staged for review, so I can accept or reject each one.",
       "expected_tool": "review_proposals"
     },
     {

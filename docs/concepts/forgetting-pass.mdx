@@ -172,7 +172,7 @@ CREATE INDEX retention_proposals_review_idx ON retention_proposals (user_id, sta
   - **conflict:** records the review only, with no memory change. The user resolves it with `revise`.
 - **Rejecting:** final for that memory and action, until the memory's freshness moves.
 
-**The MCP surface.** A fourth kind changes the strict `review_proposals` output counts, so this ships as a V4 output under ADR-0011. V4 itself left the tool description unchanged; a follow-up rewrote it to name all four kinds, regenerated the tool-selection embeddings, and reran the eval gate at the current floors. Hard rule 8 still requires exactly 5 scenarios per tool.
+**The MCP surface.** A fourth kind changes the strict `review_proposals` output counts, so this ships as a V4 output under ADR-0011. V4 itself left the tool description unchanged; a follow-up rewrote it to name all four kinds, regenerated the tool-selection embeddings, replaced one consolidation scenario with a retention one, and reran the eval gate (floors re-recorded upward, never down). Hard rule 8 still requires exactly 5 scenarios per tool.
 
 ## Flag and schedule
 

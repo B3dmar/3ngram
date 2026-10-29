@@ -3470,7 +3470,7 @@ Report server capabilities (tool names, count, version), your registered scopes,
 
 ## review_proposals
 
-List proposals awaiting review (optionally by status), reject one, or accept one. Four kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it; resolution proposals, where accepting marks the commitment or blocker resolved; and retention proposals from the forgetting pass, where accepting archives or supersedes the stale memory. Accept and reject take the proposal id whatever the kind. Reject and accept require the write scope.
+List proposals awaiting review (optionally by status), reject one, or accept one. Four kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it; resolution proposals; and retention proposals. Accept and reject take the proposal id whatever the kind. Reject and accept require the write scope.
 
 **Title:** Review Proposals · **Required scope:** `memory:read` or `memory:write`
 
