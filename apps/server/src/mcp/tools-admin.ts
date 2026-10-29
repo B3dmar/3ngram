@@ -227,9 +227,11 @@ function upserted(scope: ScopeRecord): ToolResult {
 /**
  * Dispatch a review_proposals ACTION. The `anyOf` registry floor admits read OR
  * write; this handler gates the EXACT action scope (layer 2): list →
- * memory:read, reject/accept → memory:write. accept calls core applyProposal,
- * which materializes the proposed edge and (for supersedes/updates) closes the
- * predecessor, returning the `applied` result variant.
+ * memory:read, reject/accept → memory:write. accept applies the proposal of
+ * whichever kind the id names: an edge is materialized (and a supersedes/updates
+ * edge closes the predecessor), a fact is written, a resolution resolves its
+ * commitment or blocker, a retention verdict archives or supersedes the memory.
+ * Each kind answers with its own `applied_*` result variant.
  */
 async function runReviewProposals(
   input: ReviewProposalsInput,
@@ -293,8 +295,9 @@ async function runReviewProposals(
   // allowAllAccess allows all).
   if (ctx.access) await ctx.access.assertWrite(ctx.userId)
 
-  // The id alone identifies the kind (uuidv7, disjoint across both tables), so
-  // the shipped single-id input is unchanged; core probes edge then fact.
+  // The id alone identifies the kind (uuidv7, disjoint across the four kinds'
+  // tables), so the shipped single-id input is unchanged; core probes each
+  // kind's table in turn.
   const decided =
     input.action === 'accept'
       ? await acceptProposalAnyKind(ctx.userId, input.proposalId, 'user_mcp')
@@ -485,7 +488,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
     config: {
       title: 'Review Proposals',
       description:
-        'List proposals awaiting review (optionally by status), reject one, or accept one. Four kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it; resolution proposals; and retention proposals. Accept and reject take the proposal id whatever the kind. Reject and accept require the write scope.',
+        'List proposals awaiting review (optionally by status), reject one, or accept one. Four kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it; resolution proposals; and retention proposals from the forgetting pass. Accept and reject take the proposal id either way. Reject and accept require the write scope.',
       inputSchema: reviewProposalsInputSchema,
       outputSchema: reviewProposalsOutputV4Schema,
       // Per-action (list is a read; reject/accept are writes), so the hints
