@@ -128,6 +128,7 @@ jobs:
 
       - name: Forgetting-pass harness on the synthetic mirror (report-only, offline)
         run: |
+          set -o pipefail
           mkdir -p eval-metrics
           node eval/src/forgetting-eval.mjs --out eval-metrics/forgetting.json | tee forgetting-report.txt
           {
