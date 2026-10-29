@@ -51,8 +51,9 @@ function readJson(path, what) {
   if (!existsSync(path)) throw new Error(`${what} file not found: ${path}`)
   try {
     return JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(`${what} file is not valid JSON: ${path} (${error.message})`)
+  } catch {
+    // The parser's message quotes the source text, which may be memory content (hard rule 6).
+    throw new Error(`${what} file is not valid JSON: ${path}`)
   }
 }
 
