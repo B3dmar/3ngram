@@ -230,8 +230,9 @@ function upserted(scope: ScopeRecord): ToolResult {
  * memory:read, reject/accept → memory:write. accept applies the proposal of
  * whichever kind the id names: an edge is materialized (and a supersedes/updates
  * edge closes the predecessor), a fact is written, a resolution resolves its
- * commitment or blocker, a retention verdict archives or supersedes the memory.
- * Each kind answers with its own `applied_*` result variant.
+ * commitment, a retention verdict archives or supersedes the memory (a conflict
+ * verdict only records the review). Edges answer `applied`; the other kinds
+ * answer their own `applied_*` variant.
  */
 async function runReviewProposals(
   input: ReviewProposalsInput,
