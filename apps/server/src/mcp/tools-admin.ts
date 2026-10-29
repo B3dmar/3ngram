@@ -352,7 +352,7 @@ function toFactProposalOutput(p: FactProposalRecord) {
 }
 
 /**
- * Map a decided proposal to its output variant. The two kinds get DISTINCT
+ * Map a decided proposal to its output variant. Each kind gets DISTINCT
  * discriminator literals so a client matching on `applied`/`rejected` keeps
  * receiving the edge payload it was written against.
  */
@@ -485,7 +485,7 @@ export function createAdminTools(toolNames: () => readonly string[]): ToolDefini
     config: {
       title: 'Review Proposals',
       description:
-        'List proposals awaiting review (optionally by status), reject one, or accept one. Two kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; and extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it. Accept and reject take the proposal id either way. Reject and accept require the write scope.',
+        'List proposals awaiting review (optionally by status), reject one, or accept one. Four kinds are reviewed the same way: consolidation proposals, where accepting materializes the proposed edge and a supersedes/updates edge also closes the predecessor; extracted-fact proposals, where accepting writes the structured fact so `get_facts` can read it; resolution proposals, where accepting marks the commitment or blocker resolved; and retention proposals from the forgetting pass, where accepting archives or supersedes the stale memory. Accept and reject take the proposal id whatever the kind. Reject and accept require the write scope.',
       inputSchema: reviewProposalsInputSchema,
       outputSchema: reviewProposalsOutputV4Schema,
       // Per-action (list is a read; reject/accept are writes), so the hints

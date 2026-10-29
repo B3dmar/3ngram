@@ -172,7 +172,7 @@ CREATE INDEX retention_proposals_review_idx ON retention_proposals (user_id, sta
   - **conflict:** records the review only, with no memory change. The user resolves it with `revise`.
 - **Rejecting:** final for that memory and action, until the memory's freshness moves.
 
-**The MCP surface.** A fourth kind changes the strict `review_proposals` output counts, so this ships as a V4 output under ADR-0011. The tool description and its embeddings are regenerated, and the tool-selection eval gate is rerun at the current floors. Hard rule 8 still requires exactly 5 scenarios per tool.
+**The MCP surface.** A fourth kind changes the strict `review_proposals` output counts, so this ships as a V4 output under ADR-0011. V4 itself left the tool description unchanged; a follow-up rewrote it to name all four kinds, regenerated the tool-selection embeddings, and reran the eval gate at the current floors. Hard rule 8 still requires exactly 5 scenarios per tool.
 
 ## Flag and schedule
 
@@ -217,7 +217,7 @@ It ships as a stack of small PRs to `staging`, all default-off:
 1. Migration and db functions for `retention_proposals` (RLS + FORCE), plus export and account-deletion coverage.
 2. Core candidate selection and judgment rendering, tested with `FakeGateway`.
 3. Worker job, flag and one-shot entry, plus the operate docs row.
-4. `review_proposals` V4 with the `retention` kind, description and embeddings regenerated, and the eval gate rerun.
+4. `review_proposals` V4 with the `retention` kind; the description rewrite, embeddings regeneration and eval-gate rerun followed in their own PR.
 5. Private golden set and report-only harness.
 
 A staging trial follows with one opted-in tenant. Production only on an explicit go.
