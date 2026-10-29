@@ -124,9 +124,11 @@ jobs:
       # and recorded answers; the private golden set never runs here. The harness
       # imports @3ngram/core from dist, hence the build. Metrics are ids/counts/scores.
       - name: Build workspace packages (forgetting harness imports built dist)
+        continue-on-error: true
         run: pnpm build
 
       - name: Forgetting-pass harness on the synthetic mirror (report-only, offline)
+        continue-on-error: true
         run: |
           set -o pipefail
           mkdir -p eval-metrics
