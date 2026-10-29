@@ -43,5 +43,11 @@ kept, since the pass never saw it.
 
 The answers file maps question refs to `DecideAnswer`s. Refs are positional from the pass
 (`p0, p1, ...` for pairs in array order, then `s0, s1, ...` for singles not already in a pair;
-a single's neighbours are `s<i>n<j>`), so regenerate the answers whenever the candidates change:
-run the pass once with a bare `createFakeGateway()` and read `calls.decide[*].request.questions`.
+a single's neighbours are `s<i>n<j>`; a pair dropped for sharing a memory with an earlier pair does
+not consume a ref), so regenerate the answers whenever the candidates change: run the pass once with
+a bare `createFakeGateway()` and read `calls.decide[*].request.questions`. The harness fails when
+the answers' refs do not match the refs the pass asked, since the fake would otherwise answer a
+missing ref with keep at p=0.05 and ignore an extra one.
+
+The threshold sweep is computed on the `dev` split only; precision is reported per split, so the
+`heldout` numbers stay untouched by the threshold choice (the #166 protocol).

@@ -10,9 +10,27 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
+import { fileURLToPath } from 'node:url'
+import {
+  assertAnswersMatchQuestions,
+  DEFAULT_GOLDEN,
+  formatReport,
+  loadGolden,
+  runForgettingEval,
+} from '../src/forgetting-eval.mjs'
 
 const FORBIDDEN_KEYS = new Set(['content', 'topic'])
+
+/** Every topic and content string the synthetic mirror holds. */
+function fixtureText() {
+  const { candidates } = JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))
+  const memories = [
+    ...candidates.singles,
+    ...candidates.neighbours,
+    ...candidates.pairs.flatMap((p) => [p.older, p.newer]),
+  ]
+  return memories.flatMap((m) => [m.topic, m.content])
+}
 
 function collectKeys(value, into = new Set()) {
   if (Array.isArray(value)) for (const v of value) collectKeys(v, into)
@@ -49,6 +67,7 @@ test('runs the pass over the synthetic mirror and reports every metric', async (
     assert.deepEqual(split.falseCollapses.memoryIds, [])
   }
   assert.equal(metrics.splits.all.falseCollapses.recurringEpisodic, 4)
+  assert.equal(metrics.thresholds.split, 'dev')
   assert.equal(metrics.thresholds.archive.length, 10)
   assert.equal(metrics.thresholds.archive[0].threshold, 0.5)
   assert.equal(metrics.thresholds.conflict.at(-1).threshold, 0.95)
@@ -63,17 +82,34 @@ test('runs the pass over the synthetic mirror and reports every metric', async (
   assert.equal(metrics.splits.all.precision.archive.precision, 0.75)
   assert.equal(metrics.splits.all.precision.supersede.precision, 1)
   assert.equal(metrics.splits.all.keepRate.rate, 0.75)
+  assert.equal(metrics.splits.all.keepRate.judged, 4)
+  // One episodic label (a neighbour only) was never a candidate: judged < labelled.
+  assert.equal(metrics.splits.all.falseCollapses.judged, 3)
+  assert.equal(metrics.splits.all.ece.value, 0.1227)
 
   const written = JSON.parse(readFileSync(outPath, 'utf8'))
   assert.deepEqual(written, metrics)
   const keys = collectKeys(written)
   for (const key of FORBIDDEN_KEYS) assert.ok(!keys.has(key), `out file must not carry "${key}"`)
+  const outText = readFileSync(outPath, 'utf8')
+  const report = formatReport(metrics)
+  for (const text of fixtureText()) {
+    assert.ok(!outText.includes(text), 'out file must not carry memory text')
+    assert.ok(!report.includes(text), 'report must not carry memory text')
+  }
+})
+
+test('an answers file that drifted from the asked refs is an error, not a silent keep', () => {
+  const calls = [{ request: { questions: { p0: {}, s0: {} } } }]
+  assertAnswersMatchQuestions(['p0', 's0'], calls)
+  assert.throws(() => assertAnswersMatchQuestions(['p0'], calls), /missing \[s0\]/)
+  assert.throws(() => assertAnswersMatchQuestions(['p0', 's0', 's1'], calls), /extra \[s1\]/)
 })
 
 test('loadGolden rejects a bad schema and a missing file', () => {
   assert.throws(() => loadGolden('/nonexistent/golden.json'), /not found/)
   assert.throws(
-    () => loadGolden(new URL('../package.json', import.meta.url).pathname),
+    () => loadGolden(fileURLToPath(new URL('../package.json', import.meta.url))),
     /version must be 1/,
   )
 })

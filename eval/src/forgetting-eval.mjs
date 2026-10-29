@@ -206,6 +206,8 @@ export function scoreLabels(verdicts, labels, types) {
     proposed.some((v) => v.memoryId === id && v.action !== 'conflict'),
   )
   const kept = stillValid.filter((id) => !proposedIds.has(id)).length
+  const judgedIds = new Set(labelled.map((v) => v.memoryId))
+  const judged = (ids) => ids.filter((id) => judgedIds.has(id)).length
   return {
     labelled: Object.keys(labels).length,
     precision: {
@@ -217,11 +219,13 @@ export function scoreLabels(verdicts, labels, types) {
     },
     keepRate: {
       stillValid: stillValid.length,
+      judged: judged(stillValid),
       kept,
       rate: stillValid.length === 0 ? null : round(kept / stillValid.length),
     },
     falseCollapses: {
       recurringEpisodic: episodic.length,
+      judged: judged(episodic),
       count: collapsed.length,
       memoryIds: collapsed,
     },
@@ -234,10 +238,14 @@ export function scoreLabels(verdicts, labels, types) {
   }
 }
 
-/** Precision and proposal count per action at thresholds 0.50..0.95, over labelled verdicts. */
-export function thresholdSweep(verdicts, labels) {
+/**
+ * Precision and proposal count per action at thresholds 0.50..0.95, over the
+ * labelled verdicts of ONE split. The caller passes the dev split: thresholds
+ * are chosen on dev and precision is reported on heldout (the #166 protocol).
+ */
+export function thresholdSweep(verdicts, labels, split) {
   const labelled = verdicts.filter((v) => Object.hasOwn(labels, v.memoryId))
-  const sweep = {}
+  const sweep = { split }
   for (const action of PROPOSAL_ACTIONS) {
     sweep[action] = []
     for (let k = 50; k <= 95; k += 5) {
@@ -247,6 +255,22 @@ export function thresholdSweep(verdicts, labels) {
     }
   }
   return sweep
+}
+
+/**
+ * The fake fills a missing ref with keep at p=0.05 and ignores an extra one, so
+ * an answers file that drifted from the candidates would change the metrics
+ * silently. Refs are positional (`p0`, `s3`), never memory text.
+ */
+export function assertAnswersMatchQuestions(answerRefs, decideCalls) {
+  const asked = new Set(decideCalls.flatMap((call) => Object.keys(call.request.questions)))
+  const missing = [...asked].filter((ref) => !answerRefs.includes(ref))
+  const extra = answerRefs.filter((ref) => !asked.has(ref))
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `answers do not match the questions the pass asked: missing [${missing.join(', ')}], extra [${extra.join(', ')}]`,
+    )
+  }
 }
 
 function pickSplit(labels, split) {
@@ -259,7 +283,7 @@ async function createGateway({ live, answersPath, env }) {
   if (!live) {
     const answers = readJson(answersPath, 'answers')
     const gateway = llm.createFakeGateway({ decisions: { [FORGET_DECIDE_OPERATION]: answers } })
-    return { gateway, mode: 'fake' }
+    return { gateway, mode: 'fake', answerRefs: Object.keys(answers) }
   }
   // `||`: CI exports optional secrets as '', so empty string is unset (judge.mjs precedent).
   const apiKey = env.JEV_API_KEY || ''
@@ -291,6 +315,7 @@ export async function runForgettingEval(options = {}) {
   const { runForgettingPass } = await import('@3ngram/core')
   const { repo, staged } = createFixtureRepo(golden.candidates)
   const pass = await runForgettingPass(EVAL_USER, { gateway: judge.gateway, repo, now: golden.now })
+  if (judge.answerRefs) assertAnswersMatchQuestions(judge.answerRefs, judge.gateway.calls.decide)
   const types = memoryTypes(golden.candidates)
   const bySlice = Object.fromEntries(
     SLICES.map((s) => [s, Object.values(golden.labels).filter((l) => l.slice === s).length]),
@@ -314,7 +339,7 @@ export async function runForgettingEval(options = {}) {
         SPLITS.map((s) => [s, scoreLabels(staged, pickSplit(golden.labels, s), types)]),
       ),
     },
-    thresholds: thresholdSweep(staged, golden.labels),
+    thresholds: thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
   }
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, `${JSON.stringify(metrics, null, 2)}\n`)
@@ -353,7 +378,10 @@ export function formatReport(m) {
     const parts = Object.entries(actions).map(([a, p]) => `${a} ${cell(p)}`)
     lines.push(`  ${col(type, 12)}${parts.join('  ')}`)
   }
-  lines.push('', 'threshold sweep over labelled verdicts (precision, correct/proposals):')
+  lines.push(
+    '',
+    `threshold sweep on the ${m.thresholds.split} split (precision, correct/proposals):`,
+  )
   lines.push(`  ${col('t', 6)}${col('archive', 16)}${col('supersede', 16)}conflict`)
   for (const [i, row] of m.thresholds.archive.entries()) {
     const at = (a) => cell(m.thresholds[a][i])
