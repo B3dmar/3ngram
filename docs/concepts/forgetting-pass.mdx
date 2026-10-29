@@ -4,7 +4,7 @@ description: "ADR draft: a scheduled, proposals-only pass that finds stale and c
 icon: "broom"
 ---
 
-**Status: shipped, default-off.** This ADR was accepted on 2026-10-27, and the open questions at the end stay open. The pass ships on the worker behind `FORGETTING_PASS_ENABLED` (default off), and its proposals are reviewed through `review_proposals`. It only ever writes proposals. The thresholds are starting values until the eval sets them, and the golden set and its harness are still to come.
+**Status: shipped, default-off.** This ADR was accepted on 2026-10-27, and the open questions at the end stay open. The pass ships on the worker behind `FORGETTING_PASS_ENABLED` (default off), and its proposals are reviewed through `review_proposals`. It only ever writes proposals. The thresholds are starting values until the eval sets them. The report-only harness and its synthetic mirror ship in `eval/` (`eval/src/forgetting-eval.mjs`, run nightly, never gated); the private golden set is still to come.
 
 ## Context
 

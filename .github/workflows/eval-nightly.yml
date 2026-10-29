@@ -119,6 +119,30 @@ jobs:
           echo "mrr=$mrr" >> "$GITHUB_OUTPUT"
           echo "pass=$pass" >> "$GITHUB_OUTPUT"
 
+      # Forgetting-pass harness on the synthetic mirror (docs/concepts/forgetting-pass.mdx).
+      # REPORT-ONLY, NOT GATED: it exercises the harness wiring with the fake gateway
+      # and recorded answers; the private golden set never runs here. The harness
+      # imports @3ngram/core from dist, hence the build. Metrics are ids/counts/scores.
+      - name: Build workspace packages (forgetting harness imports built dist)
+        continue-on-error: true
+        run: pnpm build
+
+      - name: Forgetting-pass harness on the synthetic mirror (report-only, offline)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p eval-metrics
+          node eval/src/forgetting-eval.mjs --out eval-metrics/forgetting.json | tee forgetting-report.txt
+          {
+            echo
+            echo '### Forgetting-pass harness (synthetic mirror, report-only, not gated)'
+            echo
+            echo '```'
+            cat forgetting-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f forgetting-report.txt
+
       # Model-judged answer-synthesis slice (#37). ADVISORY, NEVER BLOCKING and
       # NEVER required: a wrong answer or a missing secret does not fail the run.
       # Live-model lane ONLY when LLM_GATEWAY_API_KEY is configured — otherwise
