@@ -194,18 +194,22 @@ validation bar on that page, and it has not been measured yet.
 ```bash
 cd cmd/3ngram-hook
 CGO_ENABLED=0 go build -trimpath \
-  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty)" \
+  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty 2>/dev/null || echo dev)" \
   -o 3ngram-hook .
 ```
 
 A plain `go build` leaves `main.version` at its `"dev"` default, so
 `3ngram-hook version` prints `3ngram-hook dev` and nothing records which commit
 the binary came from. The `-X main.version=` stamp above fixes that, and
-`-trimpath` matches what the release workflow does. With no `3ngram-hook-v*` tag
-in the repo yet (see [Install](#install-released-binaries)), `git describe`
-falls back to the abbreviated commit sha, so a source build reports something
-like `3ngram-hook a1b2c3d` — `-dirty` appended when the worktree has uncommitted
-changes.
+`-trimpath` matches what the release workflow does. On a branch that carries a
+`3ngram-hook-v*` tag, `git describe` reports the nearest tag plus the distance
+to it, so a source build reports something like
+`3ngram-hook 3ngram-hook-v1.0.0-12-ga1b2c3d` — `-dirty` appended when the
+worktree has uncommitted changes. Where no such tag is reachable (a shallow
+clone, or a branch the tag has not been merged into) `--always` falls back to
+the bare sha. In a tarball with no `.git`, `git describe` fails and the
+`|| echo dev` fallback keeps the version at `dev`; without it the stamp would be
+empty and `3ngram-hook version` would print no version at all.
 
 `contract_gen.go` is generated and committed, so a source build needs no Node
 toolchain. It carries the two bounds the hook must honour before it builds a
@@ -220,17 +224,16 @@ Cross-compile:
 
 ```bash
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
-  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty)" \
+  -ldflags="-s -w -X main.version=$(git describe --tags --match '3ngram-hook-v*' --always --dirty 2>/dev/null || echo dev)" \
   -o 3ngram-hook-darwin-arm64 .
 ```
 
 ## Install (released binaries)
 
-> **Not yet published.** No `3ngram-hook-v*` tag has ever been pushed, so there
-> are no hook binaries on GitHub Releases and
-> [`release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml)
-> has never run. Until a maintainer cuts the first tag,
-> [Build (from source)](#build-from-source) is the only supported install route.
+The first release is
+[`3ngram-hook-v1.0.0`](https://github.com/B3dmar/3ngram/releases/tag/3ngram-hook-v1.0.0)
+(2026-10-29), published by
+[`release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml).
 
 Two things that mislead here:
 
@@ -241,14 +244,13 @@ Two things that mislead here:
 - `npm i -g 3ngram` installs the CLI from `apps/cli`. It does not provide
   `3ngram-hook`, which is Go-only and ships no npm package.
 
-Once the first tag is pushed, the workflow publishes per-target `.tar.gz`
-archives for Linux and macOS (`amd64` + `arm64`) plus a `checksums.txt`
-(sha256) to [GitHub Releases](https://github.com/B3dmar/3ngram/releases).
-Verify the `sha256` checksum, unpack onto your `PATH`, then continue with
+Each release carries per-target `.tar.gz` archives for Linux and macOS
+(`amd64` + `arm64`) plus a `checksums.txt` (sha256) on
+[GitHub Releases](https://github.com/B3dmar/3ngram/releases). Verify the
+`sha256` checksum, unpack onto your `PATH`, then continue with
 [Bootstrap](#bootstrap). A released binary reports its tag rather than a sha:
 
 ```bash
-# after 3ngram-hook-v1.0.0 is published — not available today
 3ngram-hook --version
 # 3ngram-hook 3ngram-hook-v1.0.0
 ```
@@ -500,9 +502,11 @@ export THREENGRAM_API_KEY=3ng_localdevkey
 
 Hook releases are **independent of the npm `v*` series**. `cmd/` sits outside
 the pnpm workspace, so changesets never version or tag the hook: the only way to
-cut a hook release is to push a `3ngram-hook-v*` tag by hand. None has been
-pushed yet, so the workflow has never run and the first such tag starts the
-series.
+cut a hook release is to push a `3ngram-hook-v*` tag by hand. The series
+started with `3ngram-hook-v1.0.0` on 2026-10-29; bump it deliberately, and
+never move or reuse a tag: the repo's tag ruleset only protects `v*`, so
+nothing stops a `3ngram-hook-v*` tag from being moved, and the archives already
+published under that name would then no longer match the commit it points at.
 
 Push a `3ngram-hook-v*` tag to trigger
 [`.github/workflows/release-3ngram-hook.yml`](../../.github/workflows/release-3ngram-hook.yml):
