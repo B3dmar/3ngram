@@ -204,8 +204,9 @@ the binary came from. The `-X main.version=` stamp above fixes that, and
 `-trimpath` matches what the release workflow does. `git describe` reports the
 nearest `3ngram-hook-v*` tag plus the distance to it, so a source build reports
 something like `3ngram-hook 3ngram-hook-v1.0.0-12-ga1b2c3d` — `-dirty` appended
-when the worktree has uncommitted changes. In a shallow clone or a tarball with
-no `.git`, the substitution is empty and the binary reports `dev`; pass
+when the worktree has uncommitted changes. A shallow clone that lacks the tag
+falls back to the bare sha (`--always`); a tarball with no `.git` makes the
+substitution empty and the binary reports `dev`, so pass
 `-X main.version=<label>` yourself in that case.
 
 `contract_gen.go` is generated and committed, so a source build needs no Node
