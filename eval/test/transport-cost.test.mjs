@@ -251,7 +251,12 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // counts/totals, and two decision variants (`rejected_retention`,
       // `applied_retention`). Input and description unchanged (no embeddings
       // regen); CLI and REST unchanged. MEASURED on staging 28bb31f, not summed.
-      mcp: [35160, 283096, 70378],
+      // MCP +10/+80/+20 (review_proposals description names all four kinds:
+      // "Two kinds" -> "Four kinds", plus "; resolution proposals; and retention
+      // proposals from the forgetting pass"). Embeddings regenerated for the
+      // changed text; CLI and REST unchanged. MEASURED on staging 9d3ff21 plus
+      // this change, not summed.
+      mcp: [35170, 283176, 70398],
       cli: [333, 1236, 1236],
       rest: [4703, 5720, 5720],
     },
