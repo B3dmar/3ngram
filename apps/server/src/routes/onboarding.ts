@@ -7,14 +7,13 @@
 // polls it (session bearer) to flip the connect step to "Connected ✓".
 //
 // Status contract:
-//   GET  /auth/onboarding        200 { connected: boolean } — true once the
-//                                caller has been issued their first OAuth token.
-//   POST /auth/onboarding/seed   204 — idempotently (re-)provision the caller's
+//   GET  /auth/onboarding        200 { connected, userMemoryCount } — connection
+//                                history and live memories excluding the system seed.
+//   POST /auth/onboarding/seed   200 { outcome } — idempotently (re-)provision the caller's
 //                                default scopes + welcome memory. The
-//                                first-run dashboard calls this when the seed was
-//                                deferred/failed at verification, then gates on
-//                                the welcome memory existing — never a blank first
-//                                run. Idempotent: a re-run on an already
+//                                dashboard can explicitly request this when the seed
+//                                was deferred/failed at verification.
+//                                Idempotent: a re-run on an already
 //                                seeded account is a no-op (the core helper
 //                                swallows the scope/duplicate conflicts).
 import type { LimitsResolver } from '@3ngram/core'
@@ -51,7 +50,7 @@ export function onboardingRouter(limits?: LimitsResolver): Router {
     (req: Request, res: Response, next: NextFunction) => {
       getOnboardingStatus(req.userId as string)
         .then((status) => {
-          res.status(200).json({ connected: status.connected })
+          res.status(200).json(status)
         })
         .catch(next)
     },
@@ -67,8 +66,8 @@ export function onboardingRouter(limits?: LimitsResolver): Router {
       // NULL embedding (still listable / FTS-searchable, backfillable later), which
       // is enough for the non-empty first-run guarantee.
       provisionVerifiedAccount(req.userId as string, { limits })
-        .then(() => {
-          res.status(204).end()
+        .then((outcome) => {
+          res.status(200).json({ outcome })
         })
         .catch((error: unknown) => {
           const mapped = mapOnboardingSeedError(error)
