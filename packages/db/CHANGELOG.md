@@ -1,16 +1,83 @@
 # @3ngram/db
 
+## 0.15.0
+
+### Minor Changes
+
+- 87d0245: Facts supersede (#369). A fact key `(subject, predicate)` is now single-valued by default, so writing a new value no longer leaves the old one current.
+
+  - **Replacing:** a new value closes every open value of the key that started at or before it, at its own `validFrom`. That includes values written with `cardinality: "many"`.
+  - **Backdating:** a backdated value is stored as history that ends where the next newer open value starts.
+  - **One write, several values:** values of one key are applied in `validFrom` order, and each ends no later than the next one starts, so a series forms a chain. At the same instant, the last value wins.
+  - **Concurrency:** writers of one key are serialized, so concurrent writes cannot leave two values open. Values written without `validFrom` are ordered by transaction start.
+  - **Opting out:** a fact marked `cardinality: "many"`, a new optional field on `remember` facts, holds several values at once and closes nothing. A fact written with its own `validTo` is a closed interval and closes nothing.
+  - **Other writers:** accepting a fact proposal writes a single-valued fact. Import replays exported windows verbatim.
+  - **History:** closing a window is the only change an existing fact row ever sees, and `asOf` and `range` reads still return every value. A value already closed is never shortened, so a value later backdated into its window overlaps it in history.
+  - **`@3ngram/db` API:** `insertFacts` and `insertFact` take an optional `{ supersede }` option, which defaults to true. New exported types are `FactCardinality` and `InsertFactsOptions`.
+
+  Facts written before this release keep their windows. A key that already has several open values has all of them closed at the start of its next single-valued write.
+- df582bf: Add the forgetting pass's candidate reads (docs/concepts/forgetting-pass.mdx, "Candidate query"). Nothing calls them yet: the pass ships later, default off.
+
+  - **`staleSingles`** uses briefing's stale predicate over the whole tenant, most stale first. It skips a memory that has an open retention proposal, or a verdict newer than its last change. A conflict verdict counts for both sides.
+  - **`newerNeighbours`** lists up to N newer live memories of the same type and scope beside each single, nearest first. It overfetches from the index and keeps the nearest N, because the iterative HNSW scan can return slightly out of order.
+  - **`conflictPairs`** pairs two live memories of the same type, scope and project at or above a similarity floor, oriented newer first, with pairs whose older side is stale ranked first. It skips pairs that already have an edge, a consolidation proposal, an open retention proposal on either side, or a verdict newer than both memories' last change.
+
+  Every read cuts content to the caller's limit. Types, windows, floors and caps are the caller's policy.
+- eb0b4ad: Add the forgetting pass's judgment step (docs/concepts/forgetting-pass.mdx, "Judgment"). Nothing runs it yet: the pass ships later, default off.
+
+  - **Core:** turns candidates into items (pairs first, a single in a pair judged once, a stale blocker only with newer neighbours). It renders batched `decide()` requests of at most 12 items and 48k characters, with all memory text in one fenced data block and questions that name items by positional ref only. It maps choice answers back to retention verdicts at the starting thresholds (0.85 archive and supersede, 0.6 conflict).
+  - **db:** `RetentionVerdictWrite` gains an optional `dismissed` flag. A verdict below its threshold is stored dismissed with its real action, so calibration keeps it and the pass does not judge an uncertain memory again every day.
+  - **Shared helpers:** the closer's fencing helper is split into `fenceJson` and `jsonLiteral`, now shared by both passes. The closer's behaviour is unchanged.
+- 57551f2: Add the `retention_proposals` table, the first step of the forgetting pass (docs/concepts/forgetting-pass.mdx). Nothing writes it yet: the pass that stages verdicts ships later, default off.
+
+  - **The table (migration 0045):** one row per judged memory and action (`keep`, `archive`, `supersede` or `conflict`), with the related memory for supersede and conflict (never the memory itself), the chosen probability, the full choice distribution and the judge model. It has RLS and FORCE RLS, tenant-composite foreign keys to `memories`, one open proposal per memory and action, and a runtime grant of SELECT, INSERT and UPDATE with no DELETE. It holds no user text, so account erasure leaves it alone.
+  - **Staging:** `@3ngram/db` adds `insertRetentionProposals`, which stages a verdict only while every memory it names is live, locking those rows against a concurrent revise or archive. A keep verdict is stored `dismissed` and is never listed. A probabilities key must be an action name or item ref, so no text reaches the table.
+  - **Schema:** `@3ngram/schema` adds `retentionActionSchema`, `retentionProposalStatusSchema` and `RETENTION_ACTIONS_WITH_RELATED`. The table's CHECKs are generated from them.
+  - **Export:** the data export gains a `retentionProposals` array.
+
+  Self-hosters need the usual migration step and a re-run of `provision-roles.sql` for the new grant.
+- 5c72da6: Add the db side of reviewing the forgetting pass's retention proposals (docs/concepts/forgetting-pass.mdx). Nothing calls it yet: `review_proposals` gains the retention kind in the next release step.
+
+  - **`listRetentionProposalsAfter` and `countRetentionProposals`** page and count reviewable proposals in the shared keyset order. Dismissed rows, the keep verdicts and those below their threshold, are never listed or counted.
+  - **`decideRetentionProposal`** is a compare-and-set from `proposed` to `applied` or `rejected`.
+  - **`acceptRetentionProposal`** claims the proposal and applies its verdict in the same transaction, as the reviewer. An archive goes through the revise archive disposition with its audit event. A supersede adds a `supersedes` edge from the newer memory to the older one and closes the older one, exactly as an edge proposal does. As with any predecessor close, an open commitment on the older memory moves to the newer one or is resolved. An older memory that is no longer live is refused. A conflict records the review only. A refused verdict throws `RetentionProposalNotApplicableError` or the edge path's own error, and the whole transaction rolls back, so the proposal stays open. Accept locks the judged memory before it claims the proposal, in the same order staging takes them, so the two cannot deadlock.
+  - **Shared edge path:** the edge-materializing half of `applyProposal` moves into an internal `materializeEdgeIn`, so edge proposals and retention proposals close a predecessor through one code path. Edge-proposal behaviour is unchanged.
+
+### Patch Changes
+
+- e1171f5: `get_facts` no longer returns a fact as current after the memory that asserted it was superseded through `revise` or archived (#369).
+
+  - **Current reads** require a live parent memory: not superseded and not archived.
+  - **`asOf` reads** require that the parent had not been superseded at the requested instant. Archive has no timestamp, so it does not hide facts from time travel.
+  - **`range` reads** are unchanged and still return every generation.
+
+  `revise` cannot carry facts, so revising a memory retires its facts. Write a still-true value again through `remember` to keep it current.
+- b16fc73: Add the forgetting pass's run (docs/concepts/forgetting-pass.mdx). Nothing schedules it yet: the worker job and its flag ship next, default off.
+
+  - **Core:** `runForgettingPass(userId, { gateway, budget })` reads one tenant's candidates, judges them in batches through `gateway.decide()` and stages the verdicts as retention proposals. It returns counts only.
+    - It stops when the tenant has not opted in to judgment, re-checking the opt-in immediately before every call.
+    - It stops without a fallback when the deployment has no judgment gateway.
+    - It stops at the first refused budget reservation instead of billing past the cap.
+    - Each batch is staged as soon as it returns. Usage is recorded unpriced under the new operation.
+    - `dbForgettingRepo` is the production wiring.
+  - **llm:** registers the metered judgment operation `memory.forget.decide`, with a $0.003 per-call ceiling sized like the closer's judgment call.
+  - **db:** a stale single named as the related memory of an OPEN proposal, such as the newer side of a supersede waiting for review, is skipped while that proposal is open. Before, this applied to conflicts only. Once the proposal is decided or dismissed, the memory can be judged again, because it was only evidence.
+- Updated dependencies [87d0245]
+- Updated dependencies [57551f2]
+- Updated dependencies [df0c449]
+  - @3ngram/schema@0.14.0
+
 ## 0.14.0
 
 ### Minor Changes
 
 - 48dcb4a: Add a per-tenant judgment opt-in (issue #225). The new table `user_judgment_policy` (migration 0043) has RLS and FORCE RLS, and its runtime grant is SELECT/INSERT/UPDATE. Core adds `isJudgmentEnabled`, `getJudgmentPolicy` and `setJudgmentPolicy`, and REST adds `GET` and `PUT /api/v1/settings/judgment`. The default is `off`, and there is no MCP surface. Account erasure resets the opt-in to `off`, and the account export includes it as `judgmentPolicy`. Nothing reads the opt-in yet. Each change appends a content-free `audit_log` row (`settings.judgment.set`, mode only) as a consent record.
-  
+
   Self-hosters need the usual migration step. It creates the table and re-runs `provision-roles.sql`, which grants `app_user` access to it.
 - 6a3adf5: Add the `rate_limits` system table (migration 0042, no RLS; `provision-roles.sql` grants the runtime role SELECT, INSERT, UPDATE and DELETE on it) and `createPostgresRateLimiter`, a `rate-limiter-flexible` Postgres limiter over that table, re-exported from `@3ngram/core`. It runs no DDL at runtime, sends every query unnamed so it works behind a transaction-mode pooler, runs one expired-row sweeper per process, and has no in-memory fallback. Nothing uses it yet. Refs #315.
 - 5ceaec4: Add `incrementWindowCounter`, `readWindowCounter` and `deleteWindowCounter`: a sliding-window counter on the `rate_limits` table, re-exported from `@3ngram/core`. Each increment is one atomic upsert that slides the expiry forward, matching the Redis `INCR` + `EXPIRE` semantics of the /oauth/token failure counter; an expired row restarts at 1. Nothing uses it yet. Refs #315.
 - 7dec400: Add resolution proposals, the session closer's mid band (issue #229). On the typed-judgment path, a briefed commitment judged plausibly completed (0.5 ≤ p < 0.9) is staged in the new `resolution_proposals` table instead of being resolved. The table (migration 0044) has RLS and FORCE RLS, holds one open proposal per commitment, has tenant-composite foreign keys to the memory and the session run, and is included in the export. `review_proposals` lists the new kind (output V3): `resolutionProposals` appears only when it is non-empty, `counts`/`totals` gain a `resolution` key, and accept/reject return `applied_resolution`/`rejected_resolution`. Accepting claims the proposal and then resolves the commitment through the shipped FSM-checked transition, recorded as the reviewer. A refused transition reopens the proposal. Only still-open commitments are staged, at most once per run. The input and the tool description are unchanged. Self-hosters need the usual migration step.
-  
+
   Compatibility notes. MCP `review_proposals` cursors issued before this release are rejected as invalid input once, because the walk now binds the third kind. Restart such a walk from page 1. A client that strict-parses the V2 output, or switches exhaustively on `action`, has to admit the new `resolution` count key and the two new action literals.
 
 ### Patch Changes
@@ -32,7 +99,7 @@
 
 - 545fb26: Briefing commitment items now carry `owner`, `scope` and `project` (issue #261). `owner` is the recorded owner label, or `null` when none was recorded; it is never inferred from content. `scope` and the nullable `project` are the riding memory's filing, read in the same join as the rest of the item, so the MCP `briefing` tool and `GET /api/v1/briefing` let a reader label ownership and filing (including an unscoped `project: null` row under `includeUnscoped`) without reading each memory back. Counts, ordering and selector semantics are unchanged.
 - 2fc6fbf: `POST /api/v1/agent-sessions/triage/complete` accepts an optional `defensive: true` (issue #189). It declares that the caller armed the attempt but showed no debrief for it: the outcome is `expired` whatever was written since `begin`, and `last_triaged_event_ids` stays at the begin stamp. Before this, the Stop hook's defensive finalize (a finalize-only Stop whose `begin` armed instead of declining `pending`) could have a concurrently committing async write make `since_begin` non-empty, landing the run `completed` with that write absorbed into the watermark: no longer closer-eligible and never re-armed on, though no debrief covered it. The write now stays untriaged, re-arms the next Stop and keeps the run closer-eligible, with its provenance retained. Omitting the field is the unchanged complete; the attempt-id fence, idempotency and account erasure are unaffected. `completeSessionTriage` (`@3ngram/db`) and `completeAgentSessionTriage` (`@3ngram/core`) take the same option.
-  
+
   Hook (`cmd/3ngram-hook`, released separately by `3ngram-hook-v*` tag): an attempt the hook armed but did not inject on — the finalize-only Stop above, or a failed debrief fetch — is now completed with `defensive: true`; finalizing a `pending` attempt, whose debrief was shown, is not. The field is sent only when true, and a 400 from a server older than it (its strict body rejects the unknown key) falls back to the ordinary complete, so a new hook against an old server behaves exactly as before.
 - eef068b: `describe_environment` now names the authenticated account (issue #321). The report carries `account: { id }`, the uuid of the 3ngram account the token authenticated as — the same value `GET /api/v1/me` returns as `id`, stable for the account's lifetime across every OAuth client and API key, and different for every account. It is read from the live account record, not derived from a scope name or memory content, and it carries no email, display label or credential metadata. Two connectors that both show a `work` scope can now be told apart (or confirmed to be the same account) with a read-only call; `docs/concepts/scopes.mdx` documents the diagnostic and why identity, filing scope/project and read policy are separate. A request whose account has been erased gets no id: erasure already revokes its tokens, and a request already in flight is answered `account_deleted`. New exports: `describeEnvironmentOutputV3Schema` and `accountIdentitySchema` (`@3ngram/schema`), `getLiveAccountId` (`@3ngram/db`), and the `account` field on core's `EnvironmentReport`. The tool description is unchanged.
 - 96c5e01: The memory history read now exposes the session run that produced a memory (issue #262). `GET /api/v1/memories/:id/history` adds `sessionRunId: uuid | null` to each audit event and `createdBySessionRunId: uuid | null` to the envelope. These are allowlisted sibling fields, never the raw payload: each is projected with `payload->>'sessionRunId'` and re-parsed through `sessionProvenancePayloadSchema`, and a value that fails the parse reads as `null`. `payloadMetadata` keeps its meaning and still describes the whole stored payload. `createdBySessionRunId` is the run on the memory's own native `create` event. It is read by its own query, so a truncated events window cannot hide it, and each version in a revision chain reports its own creating run. It reads `null` for an imported memory, a create written without provenance, or an `unavailable` events section, and it is never inferred from neighbouring events. The id is returned as recorded, without a join to `agent_sessions`. Harness and model labels are not projected.
