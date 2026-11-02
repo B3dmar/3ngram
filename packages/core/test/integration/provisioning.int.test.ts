@@ -18,10 +18,13 @@ import {
   resetDomainTables,
   seedUser,
 } from '../../../db/test/integration/helpers.js'
-import { provisionVerifiedAccount } from '../../src/auth/provisioning.js'
+import { getOnboardingStatus } from '../../src/auth/onboarding.js'
+import { provisionVerifiedAccount, WELCOME_MEMORY } from '../../src/auth/provisioning.js'
 import { search } from '../../src/read/search.js'
 import { listScopes } from '../../src/scope/scopes.js'
 import { remember } from '../../src/write/remember.js'
+import { revise } from '../../src/write/revise.js'
+import { reviseDisposition } from '../../src/write/revise-disposition.js'
 
 let userA: string
 let userB: string
@@ -39,6 +42,36 @@ afterAll(async () => {
 })
 
 describe('provisionVerifiedAccount (runtime role, real withTenant)', () => {
+  it('excludes a delayed seed but counts user-authored welcome lookalikes and other system notes', async () => {
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(0)
+    await provisionVerifiedAccount(userA)
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(0)
+    await remember(userA, { ...WELCOME_MEMORY, content: 'My own welcome note' }, 'user_mcp')
+    await remember(userA, { ...WELCOME_MEMORY, content: 'A different system note' }, 'system')
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(2)
+    expect((await getOnboardingStatus(userB)).userMemoryCount).toBe(0)
+    await remember(userB, WELCOME_MEMORY, 'user_mcp')
+    expect((await getOnboardingStatus(userB)).userMemoryCount).toBe(1)
+  })
+
+  it('counts a revised welcome as user work and ignores archived or superseded versions', async () => {
+    await provisionVerifiedAccount(userA)
+    const { rows } = await ownerPool.query('SELECT id FROM memories WHERE user_id = $1', [userA])
+    const result = await revise(
+      userA,
+      {
+        ...WELCOME_MEMORY,
+        predecessorId: rows[0].id,
+        content: 'My edited welcome memory',
+        edgeIntent: 'supersedes',
+      },
+      'user_mcp',
+    )
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(1)
+    await reviseDisposition(userA, { kind: 'archive', memoryIds: [result.id] }, 'user_mcp')
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(0)
+  })
+
   it('registers the default scopes and seeds one welcome memory under the tenant', async () => {
     await provisionVerifiedAccount(userA, { gateway })
 
@@ -68,6 +101,15 @@ describe('provisionVerifiedAccount (runtime role, real withTenant)', () => {
     expect(otherHits).toHaveLength(0)
   })
 
+  it('reports an archived seed as existing without recreating or restoring it', async () => {
+    expect(await provisionVerifiedAccount(userA)).toBe('created')
+    await ownerPool.query("UPDATE memories SET status = 'archived' WHERE user_id = $1", [userA])
+    expect(await provisionVerifiedAccount(userA)).toBe('already_exists')
+    const rows = await ownerPool.query('SELECT status FROM memories WHERE user_id = $1', [userA])
+    expect(rows.rows).toEqual([{ status: 'archived' }])
+    expect((await getOnboardingStatus(userA)).userMemoryCount).toBe(0)
+  })
+
   it('is idempotent — a deferred re-seed (T019) duplicates neither scopes nor memory', async () => {
     await provisionVerifiedAccount(userA, { gateway })
     await provisionVerifiedAccount(userA, { gateway })
@@ -83,7 +125,7 @@ describe('provisionVerifiedAccount (runtime role, real withTenant)', () => {
   it('charges the welcome memory as live while keeping an at-cap re-seed idempotent', async () => {
     const limits = async () => ({ maxLiveMemories: 1 })
     await provisionVerifiedAccount(userA, { limits })
-    await expect(provisionVerifiedAccount(userA, { limits })).resolves.toBeUndefined()
+    await expect(provisionVerifiedAccount(userA, { limits })).resolves.toBe('already_exists')
 
     await expect(
       remember(

@@ -65,7 +65,8 @@ Transport contracts are explicit:
 
 - REST memory creation returns `409 {"error":"resource_limit_exceeded"}`.
 - MCP tools return an `isError` result with reason code `resource_limit_exceeded`.
-- The onboarding welcome-seed endpoint returns the same HTTP 409 reason.
+- The onboarding welcome-seed endpoint returns the same HTTP 409 reason. On success it returns `200 { outcome }`, where `created` means a new seed and `already_exists` means deduplication found an existing copy, including archived copies; it never restores an archived memory.
+- `GET /auth/onboarding` is read-only and returns connection history plus `userMemoryCount`: live memories excluding the welcome seed by content hash and system creation provenance. A user-authored note with the same title or content still counts.
 - OAuth token issuance returns RFC-compatible HTTP 400 `invalid_grant` with the safe description `Active MCP client limit reached`.
 
 `@3ngram/server/app` exports the literal `RESOURCE_LIMITS_ENFORCED = true`. Downstream composition roots can require this sentinel before booting, preventing an older public server from silently ignoring the optional fields. It is a runtime compatibility marker, not commercial policy.

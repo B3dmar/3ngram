@@ -539,7 +539,7 @@ its row here even when its name and kind are unchanged.
 | `OAuthServerProviderShape` | interface | `94f436024d06` |
 | `OAuthTokenResponse` | interface | `693ba402b56e` |
 | `OAuthVerifyConfig` | interface | `09821d036b54` |
-| `OnboardingStatus` | interface | `11023ff56c0c` |
+| `OnboardingStatus` | interface | `be357526eb89` |
 | `PasswordBreachCheckOptions` | interface | `e58a99e0f8aa` |
 | `PasswordBreachedError` | class | `e93bf4c58076` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
@@ -580,7 +580,7 @@ its row here even when its name and kind are unchanged.
 | `login` | function | `35761bd7e5ff` |
 | `oauthClientsStore` | const | `4338ac7db198` |
 | `parseScopes` | function | `aebbd4d86fd9` |
-| `provisionVerifiedAccount` | function | `69a271202c93` |
+| `provisionVerifiedAccount` | function | `2bee0b84af8e` |
 | `registerOAuthClient` | function | `93b2787a46ef` |
 | `requestEmailVerification` | function | `f3ca4e09b8c8` |
 | `requestPasswordReset` | function | `69ae384e1e8c` |
@@ -830,6 +830,7 @@ its row here even when its name and kind are unchanged.
 | `countProposalsByStatus` | function | `83536379eed5` |
 | `countResolutionProposals` | function | `732fbcf08ef4` |
 | `countRetentionProposals` | function | `6b94c49d527f` |
+| `countUserMemories` | function | `b2994986cdcd` |
 | `createCommitment` | function | `fb2e38368ac8` |
 | `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `f1efc67b328e` |

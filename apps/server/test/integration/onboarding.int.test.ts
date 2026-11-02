@@ -28,6 +28,7 @@ let clientId: string
 
 interface OnboardingBody {
   connected: boolean
+  userMemoryCount: number
 }
 
 async function readOnboarding(sessionToken: string): Promise<OnboardingBody> {
@@ -90,7 +91,7 @@ afterAll(async () => {
 
 describe('onboarding connection detection (runtime role, real DB)', () => {
   it('reads connected:false before any OAuth token is issued', async () => {
-    expect((await readOnboarding(tokenA)).connected).toBe(false)
+    expect(await readOnboarding(tokenA)).toEqual({ connected: false, userMemoryCount: 0 })
   })
 
   it('flips connected:true once the user is issued their first OAuth token', async () => {
@@ -101,6 +102,20 @@ describe('onboarding connection detection (runtime role, real DB)', () => {
   it("another user's first token does not flip a different user's status", async () => {
     // A is connected (previous test); B was never issued a token.
     expect((await readOnboarding(tokenB)).connected).toBe(false)
+  })
+
+  it('reports whether an explicit seed created a memory or found an archived copy', async () => {
+    const seed = () =>
+      fetch(`${baseUrl}/auth/onboarding/seed`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${tokenA}` },
+      })
+    const created = await seed()
+    expect(created.status).toBe(200)
+    expect(await created.json()).toEqual({ outcome: 'created' })
+    await ownerPool.query("UPDATE memories SET status = 'archived' WHERE user_id = $1", [userIdA])
+    expect(await (await seed()).json()).toEqual({ outcome: 'already_exists' })
+    expect((await readOnboarding(tokenA)).userMemoryCount).toBe(0)
   })
 
   it('rejects an unauthenticated read with 401', async () => {

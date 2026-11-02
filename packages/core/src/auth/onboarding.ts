@@ -12,13 +12,19 @@
 // they ever connect an agent", which is the activation moment we detect, not
 // "is a grant live right now" (that is the consent/grant-management surface).
 //
-// Observability (hard rule 6): a boolean only — no token, hash, or client id.
-import { userHasOauthToken } from '@3ngram/db'
+// Observability (hard rule 6): boolean and count only — no token, hash, or client id.
+import { createHash } from 'node:crypto'
+import { countUserMemories, userHasOauthToken } from '@3ngram/db'
+import { WELCOME_MEMORY } from './provisioning.js'
+
+const welcomeContentHash = createHash('sha256').update(WELCOME_MEMORY.content).digest('hex')
 
 /** The onboarding connection signal the dashboard polls. */
 export interface OnboardingStatus {
   /** True once the user has been issued their first OAuth token (first agent connection). */
   connected: boolean
+  /** Live memories excluding the system-created welcome seed, never title matching. */
+  userMemoryCount: number
 }
 
 /**
@@ -27,5 +33,9 @@ export interface OnboardingStatus {
  * can only ever report the caller's own state.
  */
 export async function getOnboardingStatus(userId: string): Promise<OnboardingStatus> {
-  return { connected: await userHasOauthToken(userId) }
+  const [connected, userMemoryCount] = await Promise.all([
+    userHasOauthToken(userId),
+    countUserMemories(userId, welcomeContentHash),
+  ])
+  return { connected, userMemoryCount }
 }

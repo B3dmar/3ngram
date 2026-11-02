@@ -5,7 +5,6 @@
 // sweepCommitments/SurfacingSweepResult, insertProposals/ProposalWrite,
 // findSimilarPairs/SimilarPair/searchVector).
 
-// --- account deletion PII erasure — RLS-scoped redact ---
 export {
   type AccountErasureResult,
   deletedEmail,
@@ -301,6 +300,9 @@ export {
   type WrittenMemory,
   writeMemory,
 } from './memory-write.js'
+// --- onboarding activation count — RLS-scoped ---
+export { countUserMemories } from './onboarding-read.js'
+// --- account deletion PII erasure — RLS-scoped redact ---
 // --- review_proposals ACCEPT/apply — appended block ---
 export {
   type AppliedProposalRow,
