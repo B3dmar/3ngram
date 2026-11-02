@@ -48,11 +48,6 @@ engineStrict: true
 # same class of silent-no-op that closed PR #379 and that .npmrc warns about.
 minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
-# Reviewed exclusions (exact versions only; drop each once it clears the cooldown):
-# - body-parser@2.4.0 (published 2026-10-22): the CVE-2026-111181 fix. The v1.9.0 release image
-#   scan fails on 2.3.0, and no mature version carries the fix.
-minimumReleaseAgeExclude:
-  - body-parser@2.4.0
 
 # Lifecycle-script policy: default-deny + fail-closed. strictDepBuilds turns an undeclared
 # build-script dependency into a hard install error (ERR_PNPM_IGNORED_BUILDS) instead of a
