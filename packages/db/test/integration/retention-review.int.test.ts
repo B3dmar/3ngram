@@ -11,7 +11,7 @@
 import { sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eraseAccountData } from '../../src/account-delete.js'
-import { withTenant } from '../../src/client.js'
+import { lockSessionAttach, withTenant } from '../../src/client.js'
 import { AccountDeletedError } from '../../src/credential-guard.js'
 import { EpisodicSupersessionError, SuccessorNotLiveError } from '../../src/proposals-apply.js'
 import { listRetentionProposalsAfter } from '../../src/proposals-page.js'
@@ -212,8 +212,13 @@ describe('accept: refusals and races', () => {
     expect((await accept(userA, second)).status).toBe('applied')
   })
 
-  it('two concurrent accepts: exactly one wins', async () => {
-    const id = await seedProposal(userA, await seedMemory(userA), 'archive')
+  it.each([
+    'active',
+    'archived',
+  ])('two accepts on a %s memory: exactly one wins', async (status) => {
+    const m = await seedMemory(userA)
+    await ownerPool.query('UPDATE memories SET status = $2 WHERE id = $1', [m, status])
+    const id = await seedProposal(userA, m, 'archive')
     const results = await Promise.allSettled([accept(userA, id), accept(userA, id)])
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
     const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
@@ -258,5 +263,55 @@ describe('accept: account erasure', () => {
     expect(
       (await ownerPool.query('SELECT content FROM memories WHERE id = $1', [m])).rows[0]?.content,
     ).toBe('[erased]')
+  })
+})
+
+describe('archive acceptance: provenance and decision races', () => {
+  it('waits for provenance without holding the memory row', async () => {
+    const m = await seedMemory(userA)
+    const id = await seedProposal(userA, m, 'archive')
+    const provenance = holdOpen(userA, (tx) => lockSessionAttach(tx, userA, null))
+    await provenance.ready
+    const apply = track(accept(userA, id))
+    await waitForLockWait({ locktype: 'advisory', blockedBy: provenance.pid })
+    // A revise holding provenance can still acquire the memory, so no AB-BA cycle.
+    await withTenant(userA, (tx) =>
+      tx.execute(sql`SELECT 1 FROM memories WHERE id = ${m} FOR UPDATE NOWAIT`),
+    )
+    await provenance.commit()
+    expect((await apply).status).toBe('applied')
+    expect(await events(m)).toEqual(['archive'])
+  })
+
+  it('rolls back archive and audit when rejection wins while it waits for memory', async () => {
+    const m = await seedMemory(userA)
+    const id = await seedProposal(userA, m, 'archive')
+    const pause = holdOpen(userA, (tx) =>
+      tx.execute(sql`SELECT 1 FROM memories WHERE id = ${m} FOR UPDATE`),
+    )
+    await pause.ready
+    const apply = track(accept(userA, id))
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: pause.pid })
+    await withTenant(userA, (tx) => decideRetentionProposal(tx, userA, id, 'rejected'))
+    await pause.commit()
+    await expect(apply).rejects.toBeInstanceOf(ProposalNotFoundError)
+    expect(await memoryState(m)).toEqual({ status: 'active', closed: false })
+    expect(await events(m)).toEqual([])
+    expect(await proposalStatus(id)).toBe('rejected')
+  })
+
+  it('serializes accept versus reject on an already archived memory without another event', async () => {
+    const m = await seedMemory(userA)
+    await ownerPool.query("UPDATE memories SET status = 'archived' WHERE id = $1", [m])
+    const id = await seedProposal(userA, m, 'archive')
+    const results = await Promise.allSettled([
+      accept(userA, id),
+      withTenant(userA, (tx) => decideRetentionProposal(tx, userA, id, 'rejected')),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason,
+    ).toBeInstanceOf(ProposalNotFoundError)
+    expect(await events(m)).toEqual([])
   })
 })

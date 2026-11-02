@@ -207,7 +207,7 @@ export async function decideRetentionProposal(
 
 /**
  * Accept an OPEN retention proposal as the reviewer, in the caller's ONE
- * transaction: claim it (proposed -> applied), then apply its verdict.
+ * transaction: apply its verdict and claim it (proposed -> applied) atomically.
  *
  * - **archive:** the revise archive disposition (`archiveMemoryIn`, policy
  *   `disposition`), with its audited `archive` event. An already archived
@@ -225,9 +225,10 @@ export async function decideRetentionProposal(
  * Any throw rolls the claim back with everything else, so a refused verdict
  * leaves the proposal open.
  *
- * LOCK ORDER: account lifecycle first, then the judged memory FOR UPDATE before the proposal is
- * claimed. Staging locks the memory (FOR SHARE) before it inserts a proposal,
- * so both take the memory first and cannot deadlock on each other.
+ * LOCK ORDER: account lifecycle, archive provenance, memory, then proposal.
+ * Archive owns its provenance-before-memory locking and runs before the claim;
+ * a lost claim rolls its writes back. The other verdicts lock the memory here.
+ * Staging also takes memory before proposal, so it cannot invert this order.
  */
 export async function acceptRetentionProposal(
   tx: TenantTx,
@@ -237,7 +238,7 @@ export async function acceptRetentionProposal(
 ): Promise<RetentionProposalRow> {
   await guardSessionMutation(tx, userId)
   const [open] = await tx
-    .select({ memoryId: retentionProposals.memoryId })
+    .select({ memoryId: retentionProposals.memoryId, action: retentionProposals.action })
     .from(retentionProposals)
     .where(
       and(
@@ -248,6 +249,18 @@ export async function acceptRetentionProposal(
     )
     .limit(1)
   if (open === undefined) throw new ProposalNotFoundError(proposalId)
+  if (open.action === 'archive') {
+    const archived = await archiveMemoryIn(tx, {
+      userId,
+      memoryId: open.memoryId,
+      actorKind,
+      policy: 'disposition',
+    })
+    if (archived.outcome === 'rejected') {
+      throw new RetentionProposalNotApplicableError(proposalId, archived.reason)
+    }
+    return decideRetentionProposal(tx, userId, proposalId, 'applied')
+  }
   const [memory] = await tx
     .select({ status: memories.status, validTo: memories.validTo })
     .from(memories)
@@ -256,17 +269,7 @@ export async function acceptRetentionProposal(
     .for('update')
   // The compare-and-set still decides a race between two reviewers.
   const proposal = await decideRetentionProposal(tx, userId, proposalId, 'applied')
-  if (proposal.action === 'archive') {
-    const archived = await archiveMemoryIn(tx, {
-      userId,
-      memoryId: proposal.memoryId,
-      actorKind,
-      policy: 'disposition',
-    })
-    if (archived.outcome === 'rejected') {
-      throw new RetentionProposalNotApplicableError(proposalId, archived.reason)
-    }
-  } else if (proposal.action === 'supersede') {
+  if (proposal.action === 'supersede') {
     if (proposal.relatedMemoryId === null) {
       throw new RetentionProposalNotApplicableError(proposalId, 'no_related_memory')
     }
