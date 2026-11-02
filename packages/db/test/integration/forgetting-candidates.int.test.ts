@@ -212,6 +212,25 @@ describe('newerNeighbours', () => {
 })
 
 describe('conflictPairs', () => {
+  it.each([
+    10, 100,
+  ])('excludes an open related memory on either pair side (%i days old)', async (days) => {
+    const judged = await seed(userA, { embed: { 7: 1 } })
+    const related = await seed(userA, { createdDaysAgo: days })
+    const other = await seed(userA, { createdDaysAgo: 50 })
+    await openProposalOn(userA, judged, 200, related)
+    expect(await pairs(userA)).toEqual([])
+    for (const status of ['rejected', 'dismissed']) {
+      await ownerPool.query('UPDATE retention_proposals SET status = $2 WHERE user_id = $1', [
+        userA,
+        status,
+      ])
+      expect((await pairs(userA)).map((p) => [p.newer.id, p.older.id].sort())).toEqual([
+        [related, other].sort(),
+      ])
+    }
+  })
+
   it('pairs same type, scope and project above the floor, oriented newer first', async () => {
     const older = await seed(userA, { createdDaysAgo: 100, embed: { 0: 1 } })
     const newer = await seed(userA, { createdDaysAgo: 10, touchedDaysAgo: 10, embed: near(0.9) })

@@ -193,7 +193,7 @@ The pattern is `SESSION_CLOSER_ENABLED`:
 | still valid | 60 | keep | the review's reaffirms, plus standing decisions and preferences |
 | recurring episodic | 30 | never collapse | digests, debriefs, standups: `event` and dated `note` entries |
 
-The recurring-episodic slice must stay at **zero false collapses**. `event` rows never enter pairing, so this slice checks the exclusion, plus dated notes, which can enter as singles.
+The recurring-episodic slice must stay at **zero false collapses**. Neither `event` nor `note` rows enter stale singles or conflict pairing in the shipped pass. This slice checks that both exclusions hold, including dated notes.
 
 **Metrics.**
 - **Headline:** precision on archive and supersede proposals, each separately and then combined, reported per memory type as ADR-0005 asks. A wrong archive costs more than a missed one, so recall is secondary.
@@ -225,6 +225,6 @@ A staging trial follows with one opted-in tenant. Production only on an explicit
 ## Open questions
 
 1. Should confident `keep` verdicts also propose a `reaffirm`? It would shrink the stale list, but it is a write the user did not ask for. The v1 answer is no: a keep stays silent.
-2. Should notes join conflict pairing after the eval, or only as singles?
+2. Should notes join candidate selection after the eval, as singles, pairs, or neither?
 3. Should accepting a `conflict` offer the two resolutions inline (archive the older, or supersede), instead of sending the user to `revise`?
 4. How does the pass share the daily budget with the session closer when both are on?

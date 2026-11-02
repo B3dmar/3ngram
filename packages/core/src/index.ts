@@ -74,6 +74,7 @@ export {
   EpisodicSupersessionError,
   expiryCutoff,
   type FactProposalRecord,
+  FactProposalSourceNotLiveError,
   type ForgettingCandidates,
   type ForgettingPassOptions,
   type ForgettingPassResult,

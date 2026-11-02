@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.6.0
+## `@3ngram/config` 0.7.0
 
 ### `.`
 
@@ -193,7 +193,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.15.0
+## `@3ngram/core` 0.16.0
 
 ### `.`
 
@@ -287,6 +287,7 @@ its row here even when its name and kind are unchanged.
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
 | `FactProposalRecord` | type | `6627d74a9d46` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactRow` | interface | `e6493ad6346b` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `ForgettingCandidates` | interface | `95fdd84a114c` |
@@ -603,7 +604,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.14.0
+## `@3ngram/db` 0.15.0
 
 ### `.`
 
@@ -689,6 +690,7 @@ its row here even when its name and kind are unchanged.
 | `ExportWriteScopePolicyRow` | interface | `106fae184c34` |
 | `FACT_PROPOSAL_COLUMNS` | const | `af88aa95dcf6` |
 | `FactProposalRow` | interface | `c0b1af29d06d` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |
@@ -1006,7 +1008,7 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `runMigrations` | function | `a706d127a172` |
 
-## `@3ngram/llm` 0.4.0
+## `@3ngram/llm` 0.5.0
 
 ### `.`
 
@@ -1073,7 +1075,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `4bf3968c5c87` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.13.0
+## `@3ngram/schema` 0.14.0
 
 ### `.`
 
@@ -1648,7 +1650,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.10.1
+## `@3ngram/server` 1.11.0
 
 ### `./app`
 

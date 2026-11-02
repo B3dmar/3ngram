@@ -251,10 +251,11 @@ export async function conflictPairs(
         AND NOT EXISTS (
           SELECT 1 FROM retention_proposals r
           WHERE r.user_id = ${userId}::uuid
-            AND r.memory_id IN (a.id, b.id)
-            AND (r.status = 'proposed'
-                 OR r.created_at > GREATEST(a.updated_at, a.last_reviewed_at,
-                                            b.updated_at, b.last_reviewed_at))
+            AND ((r.memory_id IN (a.id, b.id)
+                  AND (r.status = 'proposed'
+                       OR r.created_at > GREATEST(a.updated_at, a.last_reviewed_at,
+                                                  b.updated_at, b.last_reviewed_at)))
+                 OR (r.status = 'proposed' AND r.related_memory_id IN (a.id, b.id)))
         )
       ORDER BY LEAST(a.id, b.id), GREATEST(a.id, b.id), (a.embedding <=> b.embedding)
     )

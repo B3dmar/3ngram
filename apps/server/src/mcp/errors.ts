@@ -16,6 +16,7 @@ import {
   DuplicateMemoryError,
   EdgeConflictError,
   EpisodicSupersessionError,
+  FactProposalSourceNotLiveError,
   formatUnscopedRetrievalDetail,
   IllegalCommitmentTransitionError,
   InvalidCommitmentTransitionError,
@@ -293,6 +294,13 @@ export function mapToolError(toolName: string, err: unknown): ToolResult | undef
   // refuses it (a blocker, an open or waiting commitment). A documented domain
   // CONFLICT; the transaction rolled back, so the proposal stays open for the
   // reject path. Names the proposal id and a bounded reason only.
+  if (err instanceof FactProposalSourceNotLiveError) {
+    mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'conflict' })
+    log().warn({ tool_name: toolName, err: err.name }, 'mcp: fact proposal source no longer live')
+    return fail(
+      `conflict: fact proposal ${err.proposalId} source is no longer live; reject it and re-propose against a live memory`,
+    )
+  }
   if (err instanceof RetentionProposalNotApplicableError) {
     mcpToolErrors.add(1, { tool_name: toolName, reason_code: 'conflict' })
     log().warn({ tool_name: toolName, err: err.name }, 'mcp: retention proposal not applicable')
