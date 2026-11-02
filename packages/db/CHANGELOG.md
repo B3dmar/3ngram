@@ -62,6 +62,9 @@
     - `dbForgettingRepo` is the production wiring.
   - **llm:** registers the metered judgment operation `memory.forget.decide`, with a $0.003 per-call ceiling sized like the closer's judgment call.
   - **db:** a stale single named as the related memory of an OPEN proposal, such as the newer side of a supersede waiting for review, is skipped while that proposal is open. Before, this applied to conflicts only. Once the proposal is decided or dismissed, the memory can be judged again, because it was only evidence.
+- 12540ae: Keep both supersession proposal endpoints locked through acceptance so a concurrent revision cannot retire the proposed successor between its liveness check and the predecessor close.
+- 081f4d3: Refuse fact proposals from retired sources before changing current facts, serialize retention acceptance with account erasure, and exclude both sides of open retention proposals from conflict candidates.
+- 272b5fb: Acquire archive session provenance before memory locks when accepting retention proposals. A concurrent review decision rolls back the archive and audit together.
 - Updated dependencies [87d0245]
 - Updated dependencies [57551f2]
 - Updated dependencies [df0c449]
