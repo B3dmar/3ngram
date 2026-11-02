@@ -193,7 +193,7 @@ The pattern is `SESSION_CLOSER_ENABLED`:
 | still valid | 60 | keep | the review's reaffirms, plus standing decisions and preferences |
 | recurring episodic | 30 | never collapse | digests, debriefs, standups: `event` and dated `note` entries |
 
-The recurring-episodic slice must stay at **zero false collapses**. Neither `event` nor `note` rows enter stale singles or conflict pairing in the shipped pass. This slice checks that both exclusions hold, including dated notes.
+The recurring-episodic slice must stay at **zero false collapses**. The fixture-backed eval measures judge verdicts on supplied candidates; it does not exercise production candidate selection. Neither `event` nor `note` rows enter stale singles or conflict pairing in the shipped pass. The core `forgetting-pass.int.test.ts` integration suite checks both exclusions through `dbForgettingRepo.readCandidates`, with otherwise-eligible recurring episodes and a decision-pair positive control.
 
 **Metrics.**
 - **Headline:** precision on archive and supersede proposals, each separately and then combined, reported per memory type as ADR-0005 asks. A wrong archive costs more than a missed one, so recall is secondary.
