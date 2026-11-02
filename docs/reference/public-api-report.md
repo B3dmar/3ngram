@@ -193,7 +193,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.16.0
+## `@3ngram/core` 0.17.0
 
 ### `.`
 
@@ -604,7 +604,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.15.0
+## `@3ngram/db` 0.16.0
 
 ### `.`
 
@@ -1650,7 +1650,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.11.0
+## `@3ngram/server` 1.12.0
 
 ### `./app`
 
