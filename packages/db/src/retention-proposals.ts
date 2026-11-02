@@ -136,6 +136,7 @@ export async function insertRetentionProposals(
         eq(memories.status, 'active'),
       ),
     )
+    .orderBy(memories.id)
     .for('share')
   const liveIds = new Set(live.map((row) => row.id))
   const staged = verdicts.filter(
@@ -227,8 +228,8 @@ export async function decideRetentionProposal(
  *
  * LOCK ORDER: account lifecycle, archive provenance, memory, then proposal.
  * Archive owns its provenance-before-memory locking and runs before the claim;
- * a lost claim rolls its writes back. The other verdicts lock the memory here.
- * Staging also takes memory before proposal, so it cannot invert this order.
+ * a lost claim rolls its writes back. Supersede locks both endpoints by id,
+ * matching edge materialization and staging, before claiming the proposal.
  */
 export async function acceptRetentionProposal(
   tx: TenantTx,
@@ -238,7 +239,11 @@ export async function acceptRetentionProposal(
 ): Promise<RetentionProposalRow> {
   await guardSessionMutation(tx, userId)
   const [open] = await tx
-    .select({ memoryId: retentionProposals.memoryId, action: retentionProposals.action })
+    .select({
+      memoryId: retentionProposals.memoryId,
+      relatedMemoryId: retentionProposals.relatedMemoryId,
+      action: retentionProposals.action,
+    })
     .from(retentionProposals)
     .where(
       and(
@@ -261,12 +266,17 @@ export async function acceptRetentionProposal(
     }
     return decideRetentionProposal(tx, userId, proposalId, 'applied')
   }
-  const [memory] = await tx
-    .select({ status: memories.status, validTo: memories.validTo })
+  const named =
+    open.action === 'supersede' && open.relatedMemoryId !== null
+      ? [open.memoryId, open.relatedMemoryId]
+      : [open.memoryId]
+  const locked = await tx
+    .select({ id: memories.id, status: memories.status, validTo: memories.validTo })
     .from(memories)
-    .where(and(eq(memories.userId, userId), eq(memories.id, open.memoryId)))
-    .limit(1)
+    .where(and(eq(memories.userId, userId), inArray(memories.id, named)))
+    .orderBy(memories.id)
     .for('update')
+  const memory = locked.find((row) => row.id === open.memoryId)
   // The compare-and-set still decides a race between two reviewers.
   const proposal = await decideRetentionProposal(tx, userId, proposalId, 'applied')
   if (proposal.action === 'supersede') {
