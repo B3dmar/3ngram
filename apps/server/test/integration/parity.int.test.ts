@@ -319,6 +319,60 @@ describe('remember commitment deadline parity (issue #165)', () => {
 })
 
 describe('A4 search parity (same tenant, same projection)', () => {
+  it.each([
+    'REST',
+    'MCP',
+  ])('%s search leaves an open commitment and its audit unchanged (#322)', async (transport) => {
+    const content = `open-search-${crypto.randomUUID()}`
+    const written = await rest('/api/v1/memories', {
+      method: 'POST',
+      key: keyA,
+      body: { memoryType: 'commitment', topic: 'open search', content },
+    })
+    expect(written.status).toBe(201)
+    const { memory } = (await written.json()) as { memory: { id: string } }
+    const readState = async () => ({
+      commitments: (
+        await ownerPool.query(
+          'SELECT status, resolved_at FROM commitments WHERE user_id = $1 AND memory_id = $2',
+          [userAId, memory.id],
+        )
+      ).rows,
+      events: (
+        await ownerPool.query(
+          'SELECT id, event_kind, payload FROM memory_events WHERE user_id = $1 AND memory_id = $2 ORDER BY id',
+          [userAId, memory.id],
+        )
+      ).rows,
+    })
+    const before = await readState()
+    expect(before.commitments).toEqual([{ status: 'open', resolved_at: null }])
+    expect(before.events.length).toBeGreaterThan(0)
+    let result: { hits: Array<{ id: string; commitmentStatus?: string }> }
+    if (transport === 'REST') {
+      const response = await rest('/api/v1/search', {
+        method: 'POST',
+        key: keyA,
+        body: { query: content },
+      })
+      expect(response.status).toBe(200)
+      result = (await response.json()) as typeof result
+    } else {
+      const client = await connect(tokenA)
+      try {
+        const response = await client.callTool({ name: 'search', arguments: { query: content } })
+        expect(response.isError).toBeFalsy()
+        result = response.structuredContent as typeof result
+      } finally {
+        await client.close()
+      }
+    }
+    expect(result.hits).toContainEqual(
+      expect.objectContaining({ id: memory.id, commitmentStatus: 'open' }),
+    )
+    expect(await readState()).toEqual(before)
+  })
+
   it('projects identical hit shape {id,memoryType,topic,content,score} with count===hits.length', async () => {
     // Write the SAME content over each transport, then search for each over the
     // OTHER projection path: the hit shape and the count invariant must match.
