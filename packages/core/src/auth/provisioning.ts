@@ -4,11 +4,11 @@
 // seed one welcome memory so the account's first recall is never empty.
 //
 // BEST-EFFORT + IDEMPOTENT: every step swallows its own "already there" conflict
-// (a scope-name collision, a duplicate-content memory), so a re-run — the
-// deferred dashboard re-seed after a transient failure at verification —
+// (a scope-name collision, a duplicate-content memory), so a re-run — an
+// explicitly requested seed after a transient failure at verification —
 // never double-seeds. Callers MUST treat the whole thing as best-effort and
 // swallow any other error: provisioning must never fail or delay the
-// verification response (the seed is re-attempted on the next dashboard load).
+// verification response (the user can explicitly request the seed later).
 //
 // Observability (hard rule 6): this module logs nothing and never sees a
 // password; it writes only the system-authored welcome content below.
@@ -24,7 +24,7 @@ const WELCOME_SCOPE = DEFAULT_SCOPES[0]
  * as a `note` so it never lands in a commitment/blocker briefing. Editable and
  * deletable by the user like any other memory (append-and-supersede, hard rule 1).
  */
-const WELCOME_MEMORY = {
+export const WELCOME_MEMORY = {
   memoryType: 'note',
   topic: 'Welcome to 3ngram',
   content:
@@ -46,12 +46,12 @@ const WELCOME_MEMORY = {
  *
  * Best-effort by contract: this resolves on the expected conflicts but lets an
  * unexpected error propagate so the caller can decide — verifyEmail swallows it
- * and relies on the deferred dashboard re-seed.
+ * and leaves an explicit retry available in the dashboard.
  */
 export async function provisionVerifiedAccount(
   userId: string,
   embedOptions: EmbedOptions = {},
-): Promise<void> {
+): Promise<'created' | 'already_exists'> {
   for (const scope of DEFAULT_SCOPES) {
     try {
       await createScope(userId, scope, [])
@@ -62,7 +62,9 @@ export async function provisionVerifiedAccount(
 
   try {
     await remember(userId, WELCOME_MEMORY, 'system', embedOptions)
+    return 'created'
   } catch (error) {
     if (!(error instanceof DuplicateMemoryError)) throw error
+    return 'already_exists'
   }
 }

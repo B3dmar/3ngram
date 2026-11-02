@@ -13,7 +13,7 @@ Test *health* matters more than test *volume*: skip/xfail markers, a chronically
 | 1. Unit | Vitest | none | none | local + CI, seconds |
 | 2. Integration | Vitest | **real Postgres+pgvector** | fake gateway | local (compose) + CI (disposable service containers) |
 | 3. Contract (MCP + REST) | Vitest + MCP client SDK | real | fake gateway | local + CI |
-| 4. E2E | Playwright | real (staging) | fake gateway | CI on `staging` merges only |
+| 4. E2E | Browser QA | isolated test environment or staging | depends on environment | manual; no engine CI browser lane |
 | Evals | `eval/` harness | real | deterministic slice: cached embeddings, **blocking**; model-judged slices: real models, **advisory** until stability is proven | CI slice per PR + nightly full |
 
 ### 1. Unit — `packages/schema`, `packages/core` pure logic
@@ -43,11 +43,34 @@ Pure functions only: schema validation, supersession resolution, commitment FSM 
 
 ### 4. E2E — minimal by design
 
-Playwright against the staging deployment after `staging` merges: login → remember via MCP → see it in dashboard → revise → search. One critical-path spec file, not a sprawling E2E suite. E2E failures page the author; they do not gate feature PRs.
+The managed dashboard lives in `3ngram-platform`. Browser QA drives the changed
+surface and records its evidence in the PR. Neither repository currently has a
+Playwright workflow; do not treat a staging merge as proof of a browser pass.
+
+## Consequence-loop coverage (#322)
+
+These synthetic scenarios run in the existing suites and CI shards. They need no
+paid model calls or separate end-to-end framework. Paths below are relative to
+each package's `test/` directory; integration files end in `.int.test.ts`.
+
+| Consequence | Existing executable evidence | CI lane |
+|---|---|---|
+| Explicit deadline → project briefing → overdue at injected time; no deadline invented from prose | core `integration/remember-briefing-resolve`; server `integration/parity`; schema `write.test.ts` | `integration (core)`, `integration (server)`, `quality (unit)` |
+| Off/default/require write scope; explicit scope wins; rejection writes nothing | core `integration/write-scope-policy`; server `integration/write-scope` | `integration (core)`, `integration (server)` |
+| Recall stays inside tenant/project; resolved hits retain lifecycle labels | server `integration/mcp`, `integration/parity`; db `integration/search-filters` | `integration (server)`, `integration (db-search)` |
+| Searching an open commitment leaves its status and audit unchanged | server `integration/parity` (REST and MCP) | `integration (server)` |
+| Proposal walks neither skip nor repeat rows; foreign cursors fail closed | server `integration/proposals-pagination` | `integration (server)` |
+| Account identity is stable within an account and isolated across accounts | server `integration/account-identity` | `integration (server)` |
+| Closer cannot select an unbriefed ID; an empty completion verdict is valid | core `session-closer.test.ts` | `quality (unit)` |
+
+Integration shards are path-gated by `.github/workflows/ci.yml`. The closer's
+deterministic tests prove ID containment and write guards. Whether a model falsely
+classifies a briefed commitment as completed remains model-quality work under
+#166/#224; these tests do not claim to prove that judgment correct.
 
 ## LLM policy in tests
 
-- **Layers 1–4 never call a real model.** `packages/llm` ships a `FakeGateway` (deterministic embeddings via seeded hash → vector; canned completions per operation key; canned `decide()` answers per operation, with a fixed low default probability so a test that forgets one fails closed). Tests assert on *our* logic, not model behavior.
+- **Automated layers 1–3 never call a real model.** `packages/llm` ships a `FakeGateway` (deterministic embeddings via seeded hash → vector; canned completions per operation key; canned `decide()` answers per operation, with a fixed low default probability so a test that forgets one fails closed). Tests assert on *our* logic, not model behavior. Browser QA against a shared deployment uses that environment's configured gateway; isolated QA can inject the fake.
 - **Model behavior is the eval harness's job** — that's the separation: tests prove the machine is wired right; evals prove the memory is good. A PR can't compensate for a golden-set regression with passing unit tests, and vice versa.
 - Recorded-fixture mode (capture a real gateway response once, replay) is allowed for extraction-shaped logic, stored under `__fixtures__/`, refreshed deliberately — never auto-recorded in CI.
 
