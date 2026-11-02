@@ -11,9 +11,13 @@
 import { sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eraseAccountData } from '../../src/account-delete.js'
-import { lockSessionAttach, withTenant } from '../../src/client.js'
+import { lockSessionAttach, type TenantTx, withTenant } from '../../src/client.js'
 import { AccountDeletedError } from '../../src/credential-guard.js'
-import { EpisodicSupersessionError, SuccessorNotLiveError } from '../../src/proposals-apply.js'
+import {
+  applyProposal,
+  EpisodicSupersessionError,
+  SuccessorNotLiveError,
+} from '../../src/proposals-apply.js'
 import { listRetentionProposalsAfter } from '../../src/proposals-page.js'
 import { ProposalNotFoundError } from '../../src/proposals-read.js'
 import {
@@ -72,6 +76,36 @@ const events = async (memoryId: string) =>
   ).rows.map((r) => r.event_kind)
 const accept = (userId: string, proposalId: string) =>
   withTenant(userId, (tx) => acceptRetentionProposal(tx, userId, proposalId, 'user_mcp'))
+
+async function supersessionCase(path: string) {
+  const older = await seedMemory(userA, 'decision', 60)
+  const newer = await seedMemory(userA, 'decision', 10)
+  const id =
+    path === 'retention'
+      ? await seedProposal(userA, older, 'supersede', { related: newer })
+      : (
+          await ownerPool.query<{ id: string }>(
+            `INSERT INTO consolidation_proposals (user_id, from_id, to_id, edge_type, memory_type, similarity)
+       VALUES ($1, $2, $3, 'supersedes', 'decision', 0.95) RETURNING id`,
+            [userA, newer, older],
+          )
+        ).rows[0]?.id
+  if (id === undefined) throw new Error('proposal seed returned no id')
+  return {
+    older,
+    newer,
+    id,
+    apply: (tx: TenantTx) =>
+      path === 'retention'
+        ? acceptRetentionProposal(tx, userA, id, 'user_mcp')
+        : applyProposal(tx, userA, id, 'user_mcp'),
+    status: async () =>
+      path === 'retention'
+        ? proposalStatus(id)
+        : (await ownerPool.query('SELECT status FROM consolidation_proposals WHERE id = $1', [id]))
+            .rows[0]?.status,
+  }
+}
 
 beforeEach(async () => {
   await resetDomainTables()
@@ -180,6 +214,42 @@ describe('accept', () => {
 })
 
 describe('accept: refusals and races', () => {
+  it.each([
+    'retention',
+    'consolidation',
+  ])('%s holds the successor live until commit', async (path) => {
+    const { older, newer, apply } = await supersessionCase(path)
+    const applied = holdOpen(userA, apply)
+    await applied.ready
+    const retire = track(
+      withTenant(userA, (tx) =>
+        tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
+      ),
+    )
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: applied.pid })
+    await applied.commit()
+    await retire
+    expect(await events(older)).toEqual(['supersede'])
+  })
+
+  it.each([
+    'retention',
+    'consolidation',
+  ])('%s rechecks successor liveness after waiting for retirement', async (path) => {
+    const { older, newer, apply, status } = await supersessionCase(path)
+    const retire = holdOpen(userA, (tx) =>
+      tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
+    )
+    await retire.ready
+    const applied = track(withTenant(userA, apply))
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: retire.pid })
+    await retire.commit()
+    await expect(applied).rejects.toBeInstanceOf(SuccessorNotLiveError)
+    expect(await memoryState(older)).toEqual({ status: 'active', closed: false })
+    expect(await status()).toBe('proposed')
+    expect(await events(older)).toEqual([])
+  })
+
   it('supersede: refuses an older memory that is no longer live, and rolls back', async () => {
     const older = await seedMemory(userA, 'decision', 60)
     const newer = await seedMemory(userA, 'decision', 10)
@@ -188,6 +258,29 @@ describe('accept: refusals and races', () => {
     await expect(accept(userA, id)).rejects.toBeInstanceOf(RetentionProposalNotApplicableError)
     expect(await proposalStatus(id)).toBe('proposed')
     expect(await memoryState(older)).toEqual({ status: 'archived', closed: false })
+  })
+
+  it('opposite retention and consolidation pairs serialize without closing both memories', async () => {
+    const { older, newer, apply } = await supersessionCase('consolidation')
+    const reverse = await seedProposal(userA, newer, 'supersede', { related: older })
+    const first = [older, newer].sort()[0]
+    const pause = holdOpen(userA, (tx) =>
+      tx.execute(sql`SELECT 1 FROM memories WHERE id = ${first} FOR UPDATE`),
+    )
+    await pause.ready
+    const consolidation = track(withTenant(userA, apply))
+    const [consolidationPid] = await waitForLockWait({ locktype: ROW_LOCK, blockedBy: pause.pid })
+    const retention = track(accept(userA, reverse))
+    // PostgreSQL queues the second row-lock waiter behind the first waiter.
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: consolidationPid })
+    await pause.commit()
+    const results = await Promise.allSettled([consolidation, retention])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason,
+    ).toBeInstanceOf(SuccessorNotLiveError)
+    const states = await Promise.all([memoryState(older), memoryState(newer)])
+    expect(states.filter((s) => s.closed)).toHaveLength(1)
   })
 
   it('supersede: refuses an event-type memory, and rolls back', async () => {
@@ -227,6 +320,18 @@ describe('accept: refusals and races', () => {
 })
 
 describe('accept: account erasure', () => {
+  it('consolidation refuses an account erased before its endpoint locks', async () => {
+    const { older, apply, status } = await supersessionCase('consolidation')
+    const erase = holdOpen(userA, (tx) => eraseAccountData(tx, userA, new Date()))
+    await erase.ready
+    const applied = track(withTenant(userA, apply))
+    await waitForLockWait({ locktype: 'advisory', blockedBy: erase.pid })
+    await erase.commit()
+    await expect(applied).rejects.toBeInstanceOf(AccountDeletedError)
+    expect(await status()).toBe('proposed')
+    expect(await events(older)).toEqual([])
+  })
+
   it.each([
     'archive',
     'supersede',

@@ -116,6 +116,7 @@
 import type { ActorKind, EdgeType } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { insertEdge } from './memory-edges.js'
 import { PredecessorAlreadySupersededError } from './memory-revise.js'
 import { ProposalNotFoundError } from './proposals-read.js'
@@ -263,6 +264,7 @@ export async function applyProposal(
   proposalId: string,
   actorKind: ActorKind,
 ): Promise<AppliedProposalRow> {
+  await guardSessionMutation(tx, userId)
   // Read the open proposal (RLS hides cross-tenant rows). Pin status='proposed'
   // so an already-decided / missing / not-owned id is one not-found mapping, and
   // no edge is inserted for a proposal that cannot be applied.
@@ -545,7 +547,9 @@ async function carryOrResolvePredecessorCommitment(
  * live. Returned, NOT thrown, because the guard only binds on the FRESH-apply
  * path (edge absent): on the idempotent pre-existing-edge path a dead from_id
  * is fine — the prior write chain already handled it. Folding the read in here
- * keeps it one query (stale-successor finding).
+ * keeps it one query (stale-successor finding). Both endpoints are locked in
+ * id order until commit, so a concurrent revise cannot retire the successor
+ * after this check. Retention acceptance and staging use the same order.
  *
  * @returns whether from_id is live (the caller throws
  * {@link SuccessorNotLiveError} on the fresh path when it is not).
@@ -570,6 +574,8 @@ async function assertNoEpisodicEndpoint(
     })
     .from(memories)
     .where(and(eq(memories.userId, userId), inArray(memories.id, [open.fromId, open.toId])))
+    .orderBy(memories.id)
+    .for('update')
   for (const endpoint of endpoints) {
     if (endpoint.memoryType === 'event') {
       throw new EpisodicSupersessionError(proposalId, endpoint.memoryType)
