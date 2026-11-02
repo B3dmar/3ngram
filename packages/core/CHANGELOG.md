@@ -58,11 +58,15 @@
   - **Core:** turns candidates into items (pairs first, a single in a pair judged once, a stale blocker only with newer neighbours). It renders batched `decide()` requests of at most 12 items and 48k characters, with all memory text in one fenced data block and questions that name items by positional ref only. It maps choice answers back to retention verdicts at the starting thresholds (0.85 archive and supersede, 0.6 conflict).
   - **db:** `RetentionVerdictWrite` gains an optional `dismissed` flag. A verdict below its threshold is stored dismissed with its real action, so calibration keeps it and the pass does not judge an uncertain memory again every day.
   - **Shared helpers:** the closer's fencing helper is split into `fenceJson` and `jsonLiteral`, now shared by both passes. The closer's behaviour is unchanged.
+- 081f4d3: Refuse fact proposals from retired sources before changing current facts, serialize retention acceptance with account erasure, and exclude both sides of open retention proposals from conflict candidates.
 - Updated dependencies [e1171f5]
 - Updated dependencies [87d0245]
 - Updated dependencies [df582bf]
 - Updated dependencies [eb0b4ad]
 - Updated dependencies [b16fc73]
+- Updated dependencies [12540ae]
+- Updated dependencies [081f4d3]
+- Updated dependencies [272b5fb]
 - Updated dependencies [57551f2]
 - Updated dependencies [5c72da6]
 - Updated dependencies [df0c449]

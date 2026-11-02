@@ -42,11 +42,13 @@
   - **`range` reads** are unchanged and still return every generation.
 
   `revise` cannot carry facts, so revising a memory retires its facts. Write a still-true value again through `remember` to keep it current.
+- 081f4d3: Refuse fact proposals from retired sources before changing current facts, serialize retention acceptance with account erasure, and exclude both sides of open retention proposals from conflict candidates.
 - 12540a7: The `review_proposals` tool description names all four proposal kinds (consolidation edges, extracted facts, resolution proposals, retention proposals from the forgetting pass) instead of two. The tool-selection embeddings are regenerated for the changed text, one consolidation scenario becomes a retention one so the five scenarios cover the kinds the tool reviews, and the eval gate passes at the current floors.
 - Updated dependencies [87d0245]
 - Updated dependencies [eb0b4ad]
 - Updated dependencies [b16fc73]
 - Updated dependencies [5ae8329]
+- Updated dependencies [081f4d3]
 - Updated dependencies [57551f2]
 - Updated dependencies [df0c449]
   - @3ngram/schema@0.14.0
