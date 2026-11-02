@@ -288,6 +288,11 @@ class SuccessorNotLiveError extends Error {
     this.fromId = fromId
   }
 }
+class FactProposalSourceNotLiveError extends Error {
+  constructor(readonly proposalId: string) {
+    super('source no longer live')
+  }
+}
 class RetentionProposalNotApplicableError extends Error {
   readonly proposalId: string
   readonly reason: string
@@ -360,6 +365,7 @@ vi.mock('@3ngram/core', () => ({
   EpisodicSupersessionError,
   SuccessorNotLiveError,
   RetentionProposalNotApplicableError,
+  FactProposalSourceNotLiveError,
 }))
 
 const { TOOLS, runTool } = await import('../src/mcp/tools.js')
@@ -3468,6 +3474,17 @@ describe('review_proposals: the retention kind (forgetting pass)', () => {
         .structuredContent,
     )
     expect(rejected.action).toBe('rejected_retention')
+  })
+
+  it('accept: reports a stale fact source as a conflict', async () => {
+    acceptProposalAnyKind.mockRejectedValue(new FactProposalSourceNotLiveError(RETENTION_ID))
+    const result = await call(
+      'review_proposals',
+      { action: 'accept', proposalId: RETENTION_ID },
+      ctx(),
+    )
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain('source is no longer live')
   })
 
   it('accept: maps a verdict that can no longer be applied to conflict, naming no content', async () => {

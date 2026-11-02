@@ -8,8 +8,11 @@
 // predecessor, conflict as a review only); a refused verdict rolls the claim
 // back; a dismissed row cannot be decided; another tenant's proposal is
 // invisible.
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { sql } from 'drizzle-orm'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { eraseAccountData } from '../../src/account-delete.js'
 import { withTenant } from '../../src/client.js'
+import { AccountDeletedError } from '../../src/credential-guard.js'
 import { EpisodicSupersessionError, SuccessorNotLiveError } from '../../src/proposals-apply.js'
 import { listRetentionProposalsAfter } from '../../src/proposals-page.js'
 import { ProposalNotFoundError } from '../../src/proposals-read.js'
@@ -19,6 +22,7 @@ import {
   decideRetentionProposal,
   RetentionProposalNotApplicableError,
 } from '../../src/retention-proposals.js'
+import { holdOpen, ROW_LOCK, releaseHeld, track, waitForLockWait } from './concurrency.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 let userA: string
@@ -74,6 +78,8 @@ beforeEach(async () => {
   userA = await seedUser(`retention-review-a-${crypto.randomUUID()}@test.local`)
   userB = await seedUser(`retention-review-b-${crypto.randomUUID()}@test.local`)
 })
+
+afterEach(releaseHeld)
 
 afterAll(async () => {
   await resetDomainTables()
@@ -212,5 +218,45 @@ describe('accept: refusals and races', () => {
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
     const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
     expect(lost.reason).toBeInstanceOf(ProposalNotFoundError)
+  })
+})
+
+describe('accept: account erasure', () => {
+  it.each([
+    'archive',
+    'supersede',
+  ])('%s refuses a tombstoned account without deciding', async (action) => {
+    const older = await seedMemory(userA)
+    const newer = await seedMemory(userA, 'decision', 1)
+    const id = await seedProposal(userA, older, action, {
+      related: action === 'supersede' ? newer : undefined,
+    })
+    const erase = holdOpen(userA, (tx) => eraseAccountData(tx, userA, new Date()))
+    await erase.ready
+    const apply = track(accept(userA, id))
+    await waitForLockWait({ locktype: 'advisory', blockedBy: erase.pid })
+    await erase.commit()
+    await expect(apply).rejects.toBeInstanceOf(AccountDeletedError)
+    expect(await proposalStatus(id)).toBe('proposed')
+    expect(await events(older)).toEqual([])
+  })
+
+  it('takes the lifecycle lock before the memory lock, so erasure waits without a cycle', async () => {
+    const m = await seedMemory(userA)
+    const id = await seedProposal(userA, m, 'archive')
+    const pause = holdOpen(userA, (tx) =>
+      tx.execute(sql`SELECT 1 FROM memories WHERE id = ${m} FOR UPDATE`),
+    )
+    await pause.ready
+    const apply = track(accept(userA, id))
+    const [applyPid] = await waitForLockWait({ locktype: ROW_LOCK, blockedBy: pause.pid })
+    const erase = track(withTenant(userA, (tx) => eraseAccountData(tx, userA, new Date())))
+    await waitForLockWait({ locktype: 'advisory', blockedBy: applyPid })
+    await pause.commit()
+    expect((await apply).status).toBe('applied')
+    expect((await erase)?.alreadyErased).toBe(false)
+    expect(
+      (await ownerPool.query('SELECT content FROM memories WHERE id = $1', [m])).rows[0]?.content,
+    ).toBe('[erased]')
   })
 })

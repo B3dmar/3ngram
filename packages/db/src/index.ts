@@ -180,6 +180,7 @@ export {
 export {
   type AppliedFactProposal,
   applyFactProposal,
+  FactProposalSourceNotLiveError,
 } from './fact-proposals-apply.js'
 // --- bi-temporal facts read (slice 2) — appended as its own block ---
 export {

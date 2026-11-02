@@ -34,6 +34,7 @@ import { resolveCommitmentByMemoryId } from '../write/commitments.js'
 export {
   type AppliedProposalRow,
   EpisodicSupersessionError,
+  FactProposalSourceNotLiveError,
   ProposalNotFoundError,
   RetentionProposalNotApplicableError,
   SuccessorNotLiveError,

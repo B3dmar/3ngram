@@ -287,6 +287,7 @@ its row here even when its name and kind are unchanged.
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
 | `FactProposalRecord` | type | `6627d74a9d46` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactRow` | interface | `e6493ad6346b` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `ForgettingCandidates` | interface | `95fdd84a114c` |
@@ -689,6 +690,7 @@ its row here even when its name and kind are unchanged.
 | `ExportWriteScopePolicyRow` | interface | `106fae184c34` |
 | `FACT_PROPOSAL_COLUMNS` | const | `af88aa95dcf6` |
 | `FactProposalRow` | interface | `c0b1af29d06d` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |

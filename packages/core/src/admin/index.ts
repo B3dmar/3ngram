@@ -48,6 +48,7 @@ export {
   type DecidedProposal,
   EpisodicSupersessionError,
   type FactProposalRecord,
+  FactProposalSourceNotLiveError,
   listAllProposals,
   listProposals,
   ProposalNotFoundError,

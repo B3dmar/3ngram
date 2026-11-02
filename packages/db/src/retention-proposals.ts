@@ -17,6 +17,7 @@
 import type { ActorKind, RetentionAction, RetentionProposalStatus } from '@3ngram/schema'
 import { and, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { archiveMemoryIn } from './memory-disposition.js'
 import { materializeEdgeIn } from './proposals-apply.js'
 import { ProposalNotFoundError } from './proposals-read.js'
@@ -224,7 +225,7 @@ export async function decideRetentionProposal(
  * Any throw rolls the claim back with everything else, so a refused verdict
  * leaves the proposal open.
  *
- * LOCK ORDER: the judged memory is locked FOR UPDATE before the proposal is
+ * LOCK ORDER: account lifecycle first, then the judged memory FOR UPDATE before the proposal is
  * claimed. Staging locks the memory (FOR SHARE) before it inserts a proposal,
  * so both take the memory first and cannot deadlock on each other.
  */
@@ -234,6 +235,7 @@ export async function acceptRetentionProposal(
   proposalId: string,
   actorKind: ActorKind,
 ): Promise<RetentionProposalRow> {
+  await guardSessionMutation(tx, userId)
   const [open] = await tx
     .select({ memoryId: retentionProposals.memoryId })
     .from(retentionProposals)
