@@ -9,7 +9,8 @@
 // extractor is a no-op" is only true against a real database. The unit test
 // (test/fact-proposals.test.ts) pins the emitted SQL; this proves the database
 // accepts that inference and behaves as intended.
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { sql } from 'drizzle-orm'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
 import {
   type FactProposalWrite,
@@ -17,8 +18,12 @@ import {
   listFactProposals,
   rejectFactProposal,
 } from '../../src/fact-proposals.js'
-import { applyFactProposal } from '../../src/fact-proposals-apply.js'
+import {
+  applyFactProposal,
+  FactProposalSourceNotLiveError,
+} from '../../src/fact-proposals-apply.js'
 import { ProposalNotFoundError } from '../../src/proposals-read.js'
+import { holdOpen, ROW_LOCK, releaseHeld, track, waitForLockWait } from './concurrency.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 let uid: string
@@ -69,6 +74,8 @@ beforeEach(async () => {
   memoryId = await seedMemory(uid, `fp-${Date.now()}-${Math.random()}`)
   otherMemoryId = await seedMemory(otherUid, `fp-other-${Date.now()}-${Math.random()}`)
 })
+
+afterEach(releaseHeld)
 
 afterAll(async () => {
   await resetDomainTables()
@@ -201,17 +208,46 @@ describe('applyFactProposal', () => {
     expect(await countFacts(uid)).toBe(1)
   })
 
-  it('applies against a SUPERSEDED source memory (reviewed decision)', async () => {
+  it.each([
+    'superseded',
+    'archived',
+  ])('refuses a %s source without closing existing facts', async (state) => {
+    const live = await seedMemory(uid, crypto.randomUUID())
+    await ownerPool.query(
+      `INSERT INTO facts (user_id, memory_id, subject, predicate, value)
+      VALUES ($1, $2, 'lift.back_squat', 'top_set.weight_kg', '100')`,
+      [uid, live],
+    )
     await insert([candidate()])
     const [open] = await list()
-    // Close the source memory's validity, as a revise would.
-    await ownerPool.query('UPDATE memories SET valid_to = now() WHERE id = $1', [memoryId])
+    await ownerPool.query(`UPDATE memories SET status = $2, valid_to = $3 WHERE id = $1`, [
+      memoryId,
+      state === 'archived' ? 'archived' : 'active',
+      state === 'superseded' ? new Date() : null,
+    ])
+    await expect(
+      withTenant(uid, (tx) => applyFactProposal(tx, uid, open?.id as string)),
+    ).rejects.toBeInstanceOf(FactProposalSourceNotLiveError)
+    expect((await list())[0]?.status).toBe('proposed')
+    const facts = await ownerPool.query('SELECT value, valid_to FROM facts WHERE user_id = $1', [
+      uid,
+    ])
+    expect(facts.rows).toEqual([{ value: '100', valid_to: null }])
+  })
 
-    // The FK guarantees the source EXISTS, not that it is live; a fact carries
-    // its own validity and stands on its own once asserted.
-    const { factId } = await withTenant(uid, (tx) => applyFactProposal(tx, uid, open?.id as string))
-    expect(factId).toBeTruthy()
-    expect(await countFacts(uid)).toBe(1)
+  it('rechecks source liveness after waiting for a concurrent retirement', async () => {
+    await insert([candidate()])
+    const [open] = await list()
+    const retire = holdOpen(uid, (tx) =>
+      tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${memoryId}`),
+    )
+    await retire.ready
+    const apply = track(withTenant(uid, (tx) => applyFactProposal(tx, uid, open?.id as string)))
+    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: retire.pid })
+    await retire.commit()
+    await expect(apply).rejects.toBeInstanceOf(FactProposalSourceNotLiveError)
+    expect((await list())[0]?.status).toBe('proposed')
+    expect(await countFacts(uid)).toBe(0)
   })
 })
 

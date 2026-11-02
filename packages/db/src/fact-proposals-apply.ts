@@ -16,10 +16,38 @@
 // memory content and is never logged.
 import { and, eq, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { FACT_PROPOSAL_COLUMNS, type FactProposalRow } from './fact-proposals.js'
 import { insertFact } from './facts-write.js'
 import { ProposalNotFoundError } from './proposals-read.js'
-import { factProposals } from './schema/memory.js'
+import { factProposals, memories } from './schema/memory.js'
+
+export class FactProposalSourceNotLiveError extends Error {
+  constructor(readonly proposalId: string) {
+    super(`fact proposal ${proposalId} source is no longer live`)
+    this.name = 'FactProposalSourceNotLiveError'
+  }
+}
+
+async function lockLiveSource(tx: TenantTx, userId: string, proposalId: string): Promise<void> {
+  const [source] = await tx
+    .select({ status: memories.status, validTo: memories.validTo })
+    .from(memories)
+    .innerJoin(factProposals, eq(factProposals.memoryId, memories.id))
+    .where(
+      and(
+        eq(factProposals.userId, userId),
+        eq(factProposals.id, proposalId),
+        eq(factProposals.status, 'proposed'),
+        eq(memories.userId, userId),
+      ),
+    )
+    .for('share', { of: memories })
+  if (source === undefined) throw new ProposalNotFoundError(proposalId)
+  if (source.status !== 'active' || source.validTo !== null) {
+    throw new FactProposalSourceNotLiveError(proposalId)
+  }
+}
 
 /** The applied proposal and the id of the fact it produced. */
 export interface AppliedFactProposal {
@@ -31,11 +59,11 @@ export interface AppliedFactProposal {
  * Apply an OPEN fact proposal: flip it to 'applied' and write the fact it
  * proposed, in the caller's transaction.
  *
- * THE STATUS FLIP GOES FIRST, and its WHERE pins status = 'proposed'. That
+ * After locking the live source, the status flip pins status = 'proposed'. That
  * UPDATE is the claim: whichever transaction wins it owns the transition, so a
  * concurrent double-apply finds zero rows and raises
- * {@link ProposalNotFoundError} instead of writing the fact twice. A
- * SELECT-then-write ordering would leave that race open under READ COMMITTED.
+ * {@link ProposalNotFoundError} instead of writing the fact twice.
+ * The conditional UPDATE still decides the race under READ COMMITTED.
  * An already-rejected or already-applied proposal fails the same way — a
  * reviewer learns the decision did not take, never a silent no-op.
  *
@@ -46,19 +74,19 @@ export interface AppliedFactProposal {
  * table's CHECK already guarantees a `valid_to` cannot arrive without a
  * `valid_from`, so this cannot produce a window that ends before it begins.
  *
- * SUPERSEDED SOURCE MEMORY: applying against a memory that has since been
- * superseded is ALLOWED (reviewed decision). The composite FK guarantees the
- * source EXISTS and belongs to the tenant; it says nothing about liveness. A
- * fact carries its own bi-temporal validity and stands on its own once
- * asserted, and the reviewer accepted the claim, not the prose version. Facts
- * extracted from a memory that was revised while awaiting review would
- * otherwise be silently undecidable.
+ * SOURCE LIVENESS: current fact reads hide retired parents (#369). Lock the
+ * source before claiming the proposal or closing existing values, so a stale
+ * proposal cannot replace current truth with an invisible fact. A refusal
+ * leaves it open for rejection; never silently retarget it to a successor.
+ * Lock order is account lifecycle, source memory, proposal, then fact key.
  */
 export async function applyFactProposal(
   tx: TenantTx,
   userId: string,
   proposalId: string,
 ): Promise<AppliedFactProposal> {
+  await guardSessionMutation(tx, userId)
+  await lockLiveSource(tx, userId, proposalId)
   const [proposal] = await tx
     .update(factProposals)
     .set({ status: 'applied', decidedAt: sql`now()` })
