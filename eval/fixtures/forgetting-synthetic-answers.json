@@ -1,0 +1,112 @@
+{
+  "p0": {
+    "type": "choice",
+    "choice": "supersede_older",
+    "confidence": 0.93,
+    "probabilities": {
+      "keep_both": 0.02,
+      "archive_older": 0.03,
+      "supersede_older": 0.93,
+      "conflict": 0.02
+    }
+  },
+  "p1": {
+    "type": "choice",
+    "choice": "conflict",
+    "confidence": 0.72,
+    "probabilities": {
+      "keep_both": 0.1,
+      "archive_older": 0.08,
+      "supersede_older": 0.1,
+      "conflict": 0.72
+    }
+  },
+  "p2": {
+    "type": "choice",
+    "choice": "supersede_older",
+    "confidence": 0.55,
+    "probabilities": {
+      "keep_both": 0.3,
+      "archive_older": 0.1,
+      "supersede_older": 0.55,
+      "conflict": 0.05
+    }
+  },
+  "p3": {
+    "type": "choice",
+    "choice": "keep_both",
+    "confidence": 0.6,
+    "probabilities": {
+      "keep_both": 0.6,
+      "archive_older": 0.05,
+      "supersede_older": 0.3,
+      "conflict": 0.05
+    }
+  },
+  "s0": {
+    "type": "choice",
+    "choice": "archive",
+    "confidence": 0.92,
+    "probabilities": { "keep": 0.08, "archive": 0.92 }
+  },
+  "s1": {
+    "type": "choice",
+    "choice": "archive",
+    "confidence": 0.9,
+    "probabilities": { "keep": 0.1, "archive": 0.9 }
+  },
+  "s2": {
+    "type": "choice",
+    "choice": "archive",
+    "confidence": 0.6,
+    "probabilities": { "keep": 0.4, "archive": 0.6 }
+  },
+  "s3": {
+    "type": "choice",
+    "choice": "archive",
+    "confidence": 0.88,
+    "probabilities": { "keep": 0.05, "archive": 0.88, "supersede_by:s3n0": 0.07 }
+  },
+  "s4": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.95,
+    "probabilities": { "keep": 0.95, "archive": 0.05 }
+  },
+  "s5": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.9,
+    "probabilities": { "keep": 0.9, "archive": 0.04, "supersede_by:s5n0": 0.06 }
+  },
+  "s6": {
+    "type": "choice",
+    "choice": "archive",
+    "confidence": 0.88,
+    "probabilities": { "keep": 0.12, "archive": 0.88 }
+  },
+  "s7": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.85,
+    "probabilities": { "keep": 0.85, "archive": 0.15 }
+  },
+  "s8": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.96,
+    "probabilities": { "keep": 0.96, "archive": 0.04 }
+  },
+  "s9": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.94,
+    "probabilities": { "keep": 0.94, "archive": 0.06 }
+  },
+  "s10": {
+    "type": "choice",
+    "choice": "keep",
+    "confidence": 0.8,
+    "probabilities": { "keep": 0.8, "archive": 0.1, "supersede_by:s10n0": 0.1 }
+  }
+}

@@ -44,6 +44,7 @@ Run one worker mode per database; both at once double-runs every pass.
 | `consolidation` | `0 * * * *` |
 | `gc-clients` | `10 3 * * *` |
 | `session-sweep` | `5,25,45 * * * *` (only while `SESSION_CLOSER_ENABLED=true`) |
+| `forgetting-pass` | `30 4 * * *` (only while `FORGETTING_PASS_ENABLED=true`) |
 
 Set the scheduler's retry limit to 3 (it replaces BullMQ's attempts) and each
 execution timeout below the job's cadence as the overlap guard: advisory locks
@@ -53,6 +54,8 @@ are not safe on a transaction-mode pooler such as Neon's. Passes are idempotent.
 the sweep, deduped by (run, epoch). A failed closer is not retried in-process:
 its row backs off and the next sweep tick retries it, and the execution exits
 `1`. With `SESSION_CLOSER_ENABLED=false` it exits `0` without sweeping.
+
+`forgetting-pass` walks every tenant once a day. A tenant that has not opted in to judgment is skipped after one read of its opt-in. For the others it stages archive, supersede and conflict proposals for review ([Forgetting pass](/concepts/forgetting-pass)). It never changes a memory itself. One tenant's failure does not stop the others, but the execution exits `1`. Without a judgment gateway (`JEV_API_KEY` and `JEV_MODEL` beside the LLM gateway pair) it is a no-op. With `FORGETTING_PASS_ENABLED=false` it exits `0` without running. On the resident worker it shares the queue, which runs one job at a time, so a long pass delays the next consolidation, sweep or closer job until it finishes.
 
 ## Deploy verification
 
@@ -172,3 +175,6 @@ path before declaring the incident closed.
   [Session continuity](/concepts/session-continuity)); with it off the sweep
   scheduler is removed and closer jobs no-op, while consolidation, surfacing,
   and OAuth-client GC always run.
+- The forgetting pass ships on the worker but stays `FORGETTING_PASS_ENABLED=false`
+  until its eval sets the thresholds and proposals can be reviewed through
+  `review_proposals`; with it off the scheduler is removed and its jobs no-op.

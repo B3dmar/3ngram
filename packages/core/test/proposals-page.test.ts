@@ -12,6 +12,8 @@ const countProposals = vi.fn()
 const countFactProposals = vi.fn()
 const listResolutionProposalsAfter = vi.fn()
 const countResolutionProposals = vi.fn()
+const listRetentionProposalsAfter = vi.fn(async (..._args: unknown[]): Promise<unknown[]> => [])
+const countRetentionProposals = vi.fn(async (..._args: unknown[]) => 0)
 const withTenant = vi.fn((_userId: string, fn: (tx: unknown) => unknown, _config?: unknown) =>
   fn('tx'),
 )
@@ -25,6 +27,8 @@ vi.mock('@3ngram/db', () => ({
   countFactProposals: (...args: unknown[]) => countFactProposals(...args),
   listResolutionProposalsAfter: (...args: unknown[]) => listResolutionProposalsAfter(...args),
   countResolutionProposals: (...args: unknown[]) => countResolutionProposals(...args),
+  listRetentionProposalsAfter: (...args: unknown[]) => listRetentionProposalsAfter(...args),
+  countRetentionProposals: (...args: unknown[]) => countRetentionProposals(...args),
 }))
 
 const { listEdgeProposalsPage, listProposalsPage, mergeProposalStreams } = await import(
@@ -113,6 +117,8 @@ describe('listProposalsPage', () => {
     expect(countFactProposals).toHaveBeenCalledWith('tx', USER, 'proposed')
     expect(listResolutionProposalsAfter).toHaveBeenCalledWith('tx', USER, expected)
     expect(countResolutionProposals).toHaveBeenCalledWith('tx', USER, 'proposed')
+    expect(listRetentionProposalsAfter).toHaveBeenCalledWith('tx', USER, expected)
+    expect(countRetentionProposals).toHaveBeenCalledWith('tx', USER, 'proposed')
     expect(withTenant.mock.calls[0]?.[2]).toEqual({
       isolationLevel: 'repeatable read',
       accessMode: 'read only',
@@ -120,7 +126,7 @@ describe('listProposalsPage', () => {
     expect(page.proposals.map((p) => p.id)).toEqual(['a2'])
     expect(page.factProposals.map((p) => p.id)).toEqual(['b1'])
     expect(page.resolutionProposals).toEqual([])
-    expect(page.totals).toEqual({ edge: 7, fact: 4, resolution: 2 })
+    expect(page.totals).toEqual({ edge: 7, fact: 4, resolution: 2, retention: 0 })
     expect(page.hasMore).toBe(true)
     expect(page.next).toEqual({ createdAt: T1, id: 'a2' })
   })
@@ -165,5 +171,48 @@ describe('listProposalsPage — the resolution kind (issue #229)', () => {
     expect(page.proposals).toEqual([])
     expect(page.hasMore).toBe(true)
     expect(page.next).toEqual({ createdAt: T0, id: 'c1' })
+  })
+})
+
+describe('listProposalsPage — the retention kind (forgetting pass)', () => {
+  it('merges retention proposals into the same order, partitions and counts them', async () => {
+    vi.clearAllMocks()
+    listProposalsAfter.mockResolvedValue([row(T0, 'a1')])
+    listFactProposalsAfter.mockResolvedValue([])
+    listResolutionProposalsAfter.mockResolvedValue([])
+    listRetentionProposalsAfter.mockResolvedValue([row(T1, 'd2')])
+    countProposals.mockResolvedValue(1)
+    countFactProposals.mockResolvedValue(0)
+    countResolutionProposals.mockResolvedValue(0)
+    countRetentionProposals.mockResolvedValue(5)
+
+    const page = await listProposalsPage(USER, { limit: 1 })
+
+    expect(page.retentionProposals.map((p) => p.id)).toEqual(['d2'])
+    expect(page.proposals).toEqual([])
+    expect(page.totals.retention).toBe(5)
+    expect(page.hasMore).toBe(true)
+    expect(page.next).toEqual({ createdAt: T1, id: 'd2' })
+  })
+
+  it('interleaves the kinds at one instant by id DESC, and partitions each row to its kind', async () => {
+    vi.clearAllMocks()
+    listProposalsAfter.mockResolvedValue([row(T1, 'a4')])
+    listFactProposalsAfter.mockResolvedValue([row(T1, 'b1')])
+    listResolutionProposalsAfter.mockResolvedValue([row(T1, 'c3')])
+    listRetentionProposalsAfter.mockResolvedValue([row(T1, 'd2'), row(T0, 'd9')])
+    countProposals.mockResolvedValue(1)
+    countFactProposals.mockResolvedValue(1)
+    countResolutionProposals.mockResolvedValue(1)
+    countRetentionProposals.mockResolvedValue(2)
+
+    const page = await listProposalsPage(USER, { limit: 3 })
+
+    expect(page.proposals.map((p) => p.id)).toEqual([])
+    expect(page.resolutionProposals.map((p) => p.id)).toEqual(['c3'])
+    expect(page.retentionProposals.map((p) => p.id)).toEqual(['d2'])
+    expect(page.factProposals.map((p) => p.id)).toEqual(['b1'])
+    expect(page.hasMore).toBe(true)
+    expect(page.next).toEqual({ createdAt: T1, id: 'b1' })
   })
 })

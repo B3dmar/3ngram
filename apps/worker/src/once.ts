@@ -5,10 +5,16 @@
 // job modules and the pg graph behind them are DYNAMIC imports.
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadEnv, loadSessionCloserConfig, log } from '@3ngram/config'
+import { loadEnv, loadForgettingPassConfig, loadSessionCloserConfig, log } from '@3ngram/config'
 import { flushObservability, initObservability } from '@3ngram/config/otel'
 
-export const ONCE_JOBS = ['consolidation', 'surfacing', 'gc-clients', 'session-sweep'] as const
+export const ONCE_JOBS = [
+  'consolidation',
+  'surfacing',
+  'gc-clients',
+  'session-sweep',
+  'forgetting-pass',
+] as const
 export type OnceJob = (typeof ONCE_JOBS)[number]
 
 export class UnknownOnceJobError extends Error {
@@ -55,6 +61,18 @@ async function runSessionSweepOnce(job: OnceJob): Promise<unknown> {
   return { sweep, ...drained }
 }
 
+/** The one-shot forgetting pass: a no-op exit 0 while the flag is off. */
+async function runForgettingPassOnce(job: OnceJob): Promise<unknown> {
+  if (!loadForgettingPassConfig().enabled) {
+    log().info({ job, skipped: 'forgetting-disabled' }, 'worker once: forgetting pass disabled')
+    return { skipped: 'forgetting-disabled' }
+  }
+  const { buildCloserDeps } = await import('./closer-deps.js')
+  const { runForgettingPassJob } = await import('./jobs/forgetting-pass.js')
+  const { gateway, budget } = buildCloserDeps()
+  return runForgettingPassJob(gateway, budget)
+}
+
 export async function runOnce(job: OnceJob): Promise<unknown> {
   switch (job) {
     case 'consolidation':
@@ -65,6 +83,8 @@ export async function runOnce(job: OnceJob): Promise<unknown> {
       return (await import('./jobs/gc-clients.js')).runGcClients()
     case 'session-sweep':
       return runSessionSweepOnce(job)
+    case 'forgetting-pass':
+      return runForgettingPassOnce(job)
   }
 }
 

@@ -24,7 +24,7 @@ describe('migration round-trip structure', () => {
 
   // PHYSICAL TABLE COUNT: bump EXPECTED_TABLES (and the ledger below) when a
   // migration adds a table, RLS or not.
-  const EXPECTED_TABLES = 31
+  const EXPECTED_TABLES = 32
   it(`all ${EXPECTED_TABLES} tables exist`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM information_schema.tables
@@ -37,12 +37,13 @@ describe('migration round-trip structure', () => {
     // + user_write_scope_policy (0039) = 28
     // + rate_limits (0042) = 29
     // + user_judgment_policy (0043) = 30, + resolution_proposals (0044) = 31
+    // + retention_proposals (0045) = 32
     expect(Number(r.rows[0].n)).toBe(EXPECTED_TABLES)
   })
 
   // TENANT POLICY COUNT: bump only for a table that gets a tenant_isolation
   // policy (a system table without RLS leaves this unchanged).
-  const EXPECTED_TENANT_POLICIES = 25
+  const EXPECTED_TENANT_POLICIES = 26
   it(`${EXPECTED_TENANT_POLICIES} tenant_isolation policies, all with the NULLIF guard`, async () => {
     const r = await ownerPool.query(
       `SELECT count(*) AS n FROM pg_policies WHERE policyname = 'tenant_isolation'
@@ -54,6 +55,7 @@ describe('migration round-trip structure', () => {
     // + user_retrieval_policy (0030) = 20, + fact_proposals (0031) = 21
     // + agent_sessions (0032) = 22, + user_write_scope_policy (0039) = 23
     // + user_judgment_policy (0043) = 24, + resolution_proposals (0044) = 25
+    // + retention_proposals (0045) = 26
     // (the two 0022 service/global tables have no RLS)
     expect(Number(r.rows[0].n)).toBe(EXPECTED_TENANT_POLICIES)
   })

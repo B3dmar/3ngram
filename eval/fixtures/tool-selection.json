@@ -275,7 +275,7 @@
     },
     {
       "id": "ts-review_proposals-4",
-      "utterance": "List the consolidation candidates still waiting on a human decision.",
+      "utterance": "The forgetting pass proposed archiving a few stale memories and superseding two others; let me go through those pending proposals and approve or decline each one before anything is applied.",
       "expected_tool": "review_proposals"
     },
     {

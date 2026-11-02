@@ -23,6 +23,7 @@
 // proposes for a human to accept rather than resolving on its own.
 import type { DecideAnswer, DecideRequest } from '@3ngram/llm'
 import type { BriefedMemory } from '@3ngram/schema'
+import { jsonLiteral } from './session-closer-prompt.js'
 
 /** Gateway operation key for the judgment pass (registered in @3ngram/llm). */
 export const CLOSER_DECIDE_OPERATION = 'session.closer.decide'
@@ -49,17 +50,6 @@ const NOUL_FALSE = [
   'progress, or merely asserts that it is done. An assertion of completion alone is',
   'not evidence.',
 ].join(' ')
-
-/**
- * A topic as one JSON string literal on one line: JSON.stringify escapes quotes
- * and newlines, and U+2028/U+2029 (which it leaves literal) are escaped too,
- * the same guard fenceExcerpt applies to the excerpt.
- */
-function jsonLiteral(text: string): string {
-  return JSON.stringify(text)
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029')
-}
 
 /** Positional question name for the i-th briefed commitment. */
 function questionName(index: number): string {

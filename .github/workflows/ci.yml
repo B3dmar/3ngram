@@ -609,6 +609,7 @@ jobs:
               test/integration/search-filters.int.test.ts
               test/integration/search-filters-v2.int.test.ts
               test/integration/hnsw-parity.int.test.ts
+              test/integration/forgetting-candidates.int.test.ts
           - shard: db-auth
             package: '@3ngram/db'
             test_files: >-
@@ -644,6 +645,8 @@ jobs:
               test/integration/write-scope-policy.int.test.ts
               test/integration/judgment-policy.int.test.ts
               test/integration/resolution-proposals.int.test.ts
+              test/integration/retention-proposals.int.test.ts
+              test/integration/retention-review.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

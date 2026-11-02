@@ -5,24 +5,26 @@
 // NO business logic (hard rule 5) — every job body delegates to src/jobs/*,
 // which delegate to @3ngram/core.
 //
-// One queue, four repeatable schedulers (upsertJobScheduler is idempotent: a
-// re-deploy upserts the schedule rather than duplicating it) plus ONE on-demand
-// job name: the session closer runs per enqueued run, not on a clock, because
-// its unit of work is a session that ended rather than an interval. The
-// processor switches on job.name to the right runner.
+// One queue, up to five repeatable schedulers (upsertJobScheduler is
+// idempotent: a re-deploy upserts the schedule rather than duplicating it) plus
+// ONE on-demand job name: the session closer runs per enqueued run, not on a
+// clock, because its unit of work is a session that ended rather than an
+// interval. The session sweep and the forgetting pass are scheduled only while
+// their flags are on. The processor switches on job.name to the right runner.
 //
 // The session sweep and closer are DEFAULT-OFF (docs/concepts/session-continuity.mdx
 // layer 5) and the flag is a real KILL SWITCH, not merely a first-boot default:
 // turning it off REMOVES the durable scheduler from Redis and makes the two
 // processors no-op, so a deployment that once ran with it on stops closing rows
 // and stops billing generation as soon as it restarts with the flag off.
-import { loadSessionCloserConfig, log } from '@3ngram/config'
+import { loadForgettingPassConfig, loadSessionCloserConfig, log } from '@3ngram/config'
 import type { BudgetEnforcement, CloserEnqueueRequest } from '@3ngram/core'
 import type { Gateway } from '@3ngram/llm'
 import { type Job, Queue, Worker } from 'bullmq'
 import type { Redis } from 'ioredis'
 import { buildCloserDeps } from './closer-deps.js'
 import { CONSOLIDATION_JOB, runConsolidation } from './jobs/consolidation.js'
+import { FORGETTING_PASS_JOB, runForgettingPassJob } from './jobs/forgetting-pass.js'
 import { GC_CLIENTS_JOB, runGcClients } from './jobs/gc-clients.js'
 import { runSessionCloser, SESSION_CLOSER_JOB, sessionCloserJobId } from './jobs/session-closer.js'
 import { runSessionSweep, SESSION_SWEEP_JOB } from './jobs/session-sweep.js'
@@ -59,6 +61,14 @@ export const GC_CLIENTS_CRON = '0 10 3 * * *'
  * silently breaks the "base is one tick" claim documented there.
  */
 export const SESSION_SWEEP_CRON = '0 5,25,45 * * * *'
+
+/**
+ * The forgetting pass (docs/concepts/forgetting-pass.mdx): daily at 04:30,
+ * clear of the hourly consolidation tick and the 03:10 OAuth GC. Daily is
+ * enough: a memory is judged only after it changes, and the stale window is 30
+ * days.
+ */
+export const FORGETTING_PASS_CRON = '0 30 4 * * *'
 
 /**
  * Retry policy stamped on every scheduled job via the scheduler template.
@@ -200,7 +210,7 @@ async function process(
   queue: Queue,
   gateway: Gateway | undefined,
   budget: BudgetEnforcement,
-  closerEnabled: boolean,
+  flags: { closer: boolean; forgetting: boolean },
 ): Promise<unknown> {
   switch (job.name) {
     case CONSOLIDATION_JOB:
@@ -210,14 +220,23 @@ async function process(
     case GC_CLIENTS_JOB:
       return runGcClients()
     case SESSION_SWEEP_JOB:
-      if (!closerEnabled) return closerDisabled(job.name)
+      if (!flags.closer) return closerDisabled(job.name)
       return runSessionSweep(closerEnqueuer(queue))
     case SESSION_CLOSER_JOB:
-      if (!closerEnabled) return closerDisabled(job.name)
+      if (!flags.closer) return closerDisabled(job.name)
       return runSessionCloser(job.data, gateway, budget, isLastAttempt(job))
+    case FORGETTING_PASS_JOB:
+      if (!flags.forgetting) return forgettingDisabled(job.name)
+      return runForgettingPassJob(gateway, budget)
     default:
       throw new Error(`worker: unknown job name ${job.name}`)
   }
+}
+
+/** A residual forgetting job after the flag was turned off: a completed no-op, as for the closer. */
+function forgettingDisabled(jobName: string): { skipped: 'forgetting-disabled' } {
+  log().info({ jobName }, 'worker: forgetting pass disabled; skipping residual job')
+  return { skipped: 'forgetting-disabled' }
 }
 
 /**
@@ -259,16 +278,17 @@ export function logBullmqError(source: 'queue' | 'worker', err: unknown): void {
 export async function startQueues(connection: Redis): Promise<WorkerHandles> {
   const queue = new Queue(QUEUE_NAME, { connection })
   queue.on('error', (err) => logBullmqError('queue', err))
-  // The closer is the only job that needs generation. Its gateway and budget are
-  // resolved ONCE at boot, by the same builder the one-shot session-sweep uses
-  // (src/closer-deps.ts), so the two worker modes cannot drift apart again.
+  // The closer and the forgetting pass are the jobs that call a model. Their
+  // gateway and budget are resolved ONCE at boot, by the same builder the
+  // one-shot jobs use (src/closer-deps.ts), so the two worker modes cannot
+  // drift apart again.
   const { gateway, budget } = buildCloserDeps()
   const closer = loadSessionCloserConfig()
-  const worker = new Worker(
-    QUEUE_NAME,
-    (job) => process(job, queue, gateway, budget, closer.enabled),
-    { connection },
-  )
+  const forgetting = loadForgettingPassConfig()
+  const flags = { closer: closer.enabled, forgetting: forgetting.enabled }
+  const worker = new Worker(QUEUE_NAME, (job) => process(job, queue, gateway, budget, flags), {
+    connection,
+  })
   worker.on('error', (err) => logBullmqError('worker', err))
 
   worker.on('failed', (job, err) => {
@@ -341,8 +361,30 @@ export async function startQueues(connection: Redis): Promise<WorkerHandles> {
     await queue.removeJobScheduler(SESSION_SWEEP_JOB)
   }
 
+  // The forgetting pass is default-off and a kill switch in the same way: the
+  // flag off removes the durable scheduler, and `process` no-ops a residual job.
+  // It walks every tenant in one job on this one-at-a-time queue, so a long pass
+  // delays the jobs behind it; 04:30 keeps it clear of the other schedules.
+  if (forgetting.enabled) {
+    await queue.upsertJobScheduler(
+      FORGETTING_PASS_JOB,
+      { pattern: FORGETTING_PASS_CRON },
+      {
+        name: FORGETTING_PASS_JOB,
+        opts: JOB_RETRY_OPTS,
+      },
+    )
+  } else {
+    await queue.removeJobScheduler(FORGETTING_PASS_JOB)
+  }
+
   log().info(
-    { queue: QUEUE_NAME, sessionCloser: closer.enabled, gateway: gateway !== undefined },
+    {
+      queue: QUEUE_NAME,
+      sessionCloser: closer.enabled,
+      forgettingPass: forgetting.enabled,
+      gateway: gateway !== undefined,
+    },
     'worker: queues started',
   )
   return { queue, worker }

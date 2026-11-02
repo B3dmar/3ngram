@@ -1,5 +1,32 @@
 # @3ngram/worker
 
+## 1.11.0
+
+### Minor Changes
+
+- 5ae8329: Schedule the forgetting pass on the worker (docs/concepts/forgetting-pass.mdx), default off.
+
+  - **`FORGETTING_PASS_ENABLED`** (default `false`, loaded with `loadForgettingPassConfig`) gates a daily `forgetting-pass` job at 04:30 UTC. It is a kill switch in the same way the closer's flag is: with it off the durable scheduler is removed and a residual job is a completed no-op.
+  - **The one-shot worker** gains `node dist/once.js forgetting-pass`. It exits `0` without running while the flag is off, and `1` when a tenant's pass failed.
+  - **Core** adds `forgetAllTenants`. It runs the pass for every tenant: a tenant without the judgment opt-in is skipped without reads, one tenant's failure is counted without stopping the others, and a missing judgment gateway ends the loop.
+  - **Operations:** the job uses the closer's gateway and budget, built once per process. It only stages proposals for review and never changes a memory.
+
+  The flag is wired through `.env.example`, `.env.selfhost.example` and both Compose files. The job is in the operate guide's job table.
+
+### Patch Changes
+
+- Updated dependencies [87d0245]
+- Updated dependencies [eb0b4ad]
+- Updated dependencies [b16fc73]
+- Updated dependencies [5ae8329]
+- Updated dependencies [081f4d3]
+- Updated dependencies [57551f2]
+- Updated dependencies [df0c449]
+  - @3ngram/schema@0.14.0
+  - @3ngram/core@0.16.0
+  - @3ngram/llm@0.5.0
+  - @3ngram/config@0.7.0
+
 ## 1.10.1
 
 ### Patch Changes
@@ -17,7 +44,7 @@
 
 - 1c874bf: `loadEnv` and `parseEnv` take an optional `{ role: 'server' | 'worker' }`. The worker now validates its env as role `worker`, which skips the server-only production requirements: `OAUTH_JWKS` (the worker signs no tokens) and `REDIS_URL` (only the server's rate limiter needs it; the resident BullMQ worker still fails at boot without it). `BASE_URL`, `LOG_HASH_SALT` and the `DATABASE_URL` checks still apply. With no argument, `loadEnv()` behaves as before (server role), and asking for a different role once the env is resolved throws. The exported `envSchema` is now the role-agnostic base and no longer carries the server-only production rules; validate through `parseEnv`/`loadEnv`. Closes #204, refs #315.
 - dc5dd43: Add `Gateway.decide()` for typed judgments and a Jev (TypeSafe AI) provider (issue #225). `createJevGateway` uses raw fetch with one bounded attempt and no retries. It checks every answer against the questions asked, and its errors carry counts only. `createOpenAIGateway().decide()` throws `NotImplementedError`. `composeGateway` routes `decide` to Jev, and the fake gateway records `calls.decide` with a fail-closed low default. New env vars `JEV_API_URL`, `JEV_API_KEY` and `JEV_MODEL` take an explicit model pin and refuse `-latest`. The new metered operation is `session.closer.decide`. Nothing calls `decide()` yet, and judgment stays off unless `JEV_*` is configured.
-  
+
   Breaking for custom `Gateway` implementations: `decide` is now a required method. A wrapper or test double that implements `Gateway` by hand must add one. It can reject with `NotImplementedError('decide')`, as the OpenAI gateway does.
 - Updated dependencies [0888ff0]
 - Updated dependencies [1c874bf]

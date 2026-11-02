@@ -159,6 +159,7 @@ export {
   type ExportMemoryRow,
   type ExportProposalRow,
   type ExportResolutionProposalRow,
+  type ExportRetentionProposalRow,
   type ExportRetrievalPolicyRow,
   type ExportScopeRow,
   type ExportUserProfileRow,
@@ -179,6 +180,7 @@ export {
 export {
   type AppliedFactProposal,
   applyFactProposal,
+  FactProposalSourceNotLiveError,
 } from './fact-proposals-apply.js'
 // --- bi-temporal facts read (slice 2) — appended as its own block ---
 export {
@@ -196,6 +198,18 @@ export {
   insertFacts,
   type MemoryFactWrite,
 } from './facts-write.js'
+// --- forgetting-pass candidates (docs/concepts/forgetting-pass.mdx) ---
+export {
+  type ConflictPair,
+  type ConflictPairsOptions,
+  conflictPairs,
+  type ForgettingMemory,
+  type NewerNeighbour,
+  type NewerNeighboursOptions,
+  newerNeighbours,
+  type StaleSinglesOptions,
+  staleSingles,
+} from './forgetting-candidates.js'
 // --- judgment opt-in store (issue #225) ---
 export {
   getJudgmentPolicy,
@@ -303,6 +317,7 @@ export {
   listFactProposalsAfter,
   listProposalsAfter,
   listResolutionProposalsAfter,
+  listRetentionProposalsAfter,
   type ProposalKeyset,
   type ProposalPageQuery,
 } from './proposals-page.js'
@@ -337,6 +352,17 @@ export {
   reopenResolutionProposal,
 } from './resolution-proposals.js'
 export { ResourceLimitExceededError } from './resource-limits.js'
+// --- retention proposals: forgetting-pass verdicts (docs/concepts/forgetting-pass.mdx) ---
+export {
+  acceptRetentionProposal,
+  countRetentionProposals,
+  decideRetentionProposal,
+  insertRetentionProposals,
+  RETENTION_PROPOSAL_COLUMNS,
+  RetentionProposalNotApplicableError,
+  type RetentionProposalRow,
+  type RetentionVerdictWrite,
+} from './retention-proposals.js'
 // --- retrieval-scope policy store (issue #47) ---
 export {
   getRetrievalPolicy,

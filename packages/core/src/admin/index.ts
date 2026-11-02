@@ -18,6 +18,21 @@ export {
   type InlineFacets,
 } from './environment.js'
 export {
+  dbForgettingRepo,
+  type ForgettingCandidates,
+  type ForgettingPassOptions,
+  type ForgettingPassResult,
+  type ForgettingRepo,
+  type ForgettingStop,
+  type ForgettingUsage,
+  runForgettingPass,
+} from './forgetting-pass.js'
+export {
+  type ForgettingSweepOptions,
+  type ForgettingSweepResult,
+  forgetAllTenants,
+} from './forgetting-sweep.js'
+export {
   dbGcClientsRepo,
   GC_CLIENT_IDLE_DAYS,
   type GcClientsOptions,
@@ -33,12 +48,15 @@ export {
   type DecidedProposal,
   EpisodicSupersessionError,
   type FactProposalRecord,
+  FactProposalSourceNotLiveError,
   listAllProposals,
   listProposals,
   ProposalNotFoundError,
   type ProposalRecord,
   type ProposalsListQuery,
   type ResolutionProposalRecord,
+  RetentionProposalNotApplicableError,
+  type RetentionProposalRecord,
   rejectProposal,
   rejectProposalAnyKind,
   SuccessorNotLiveError,

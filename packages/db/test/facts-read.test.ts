@@ -14,6 +14,7 @@ import { PgDialect } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import {
   getFacts,
+  parentLivePredicate,
   transactionTimePredicate,
   validityOverlapPredicate,
   validTimePredicate,
@@ -134,6 +135,31 @@ describe('transactionTimePredicate (transaction-time axis)', () => {
     const { sql, params } = compile(predicate as ReturnType<typeof validTimePredicate>)
     expect(sql).toContain('recorded_at')
     expect(sql.toLowerCase()).toContain('<=')
+    expect(params).toEqual([at.toISOString()])
+  })
+})
+
+describe('parentLivePredicate (parent memory liveness, #369)', () => {
+  it('correlates the parent through the composite key on the outer facts row', () => {
+    const { sql } = compile(parentLivePredicate())
+    expect(sql).toContain('EXISTS (SELECT 1 FROM "memories"')
+    expect(sql).toContain('"memories"."user_id" = "facts"."user_id"')
+    expect(sql).toContain('"memories"."id" = "facts"."memory_id"')
+  })
+
+  it('a current read requires a parent neither superseded nor archived', () => {
+    const { sql, params } = compile(parentLivePredicate())
+    expect(sql).toContain('"memories"."valid_to" is null')
+    expect(sql).toContain('"memories"."status" = $1')
+    expect(params).toEqual(['active'])
+  })
+
+  it('an asOf read requires only that the parent was not yet superseded at validAt', () => {
+    const at = new Date('2026-03-01T00:00:00.000Z')
+    const { sql, params } = compile(parentLivePredicate(at))
+    expect(sql).toContain('"memories"."valid_to" is null or "memories"."valid_to" > $1')
+    expect(sql).not.toContain('"memories"."valid_from"')
+    expect(sql).not.toContain('"memories"."status"')
     expect(params).toEqual([at.toISOString()])
   })
 })

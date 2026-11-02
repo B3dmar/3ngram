@@ -34,9 +34,9 @@
 //
 // Content discipline (hard rule 6): subject/predicate/value are content-
 // adjacent and are NEVER logged here; callers log lengths/ids only.
-import { and, asc, desc, eq, gt, isNull, lt, lte, or, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNull, lt, lte, or, type SQL, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
-import { facts } from './schema/memory.js'
+import { facts, memories } from './schema/memory.js'
 
 /** One fact row, typed from the bi-temporal facts table. */
 export interface FactRow {
@@ -130,6 +130,33 @@ export function validTimePredicate(validAt?: Date): SQL {
     lte(facts.validFrom, validAt),
     or(isNull(facts.validTo), gt(facts.validTo, validAt)),
   ) as SQL
+}
+
+/**
+ * PARENT-LIVENESS predicate (issue #369). A fact is the projection of the
+ * memory that asserted it, so it stops being current when that memory does:
+ *
+ * - Current read (no `validAt`, including an `asKnownAt`-only read): the parent
+ *   memory is live, meaning it has not been superseded (`valid_to IS NULL`) and
+ *   has not been archived (`status = 'active'`).
+ * - `asOf` read with `validAt`: the parent had not been superseded at
+ *   `validAt`. Only the parent's `valid_to` is checked, never its `valid_from`,
+ *   because a fact may be backdated before the memory that records it was
+ *   written. Archive carries no timestamp, so an archived parent's facts stay
+ *   visible to time travel.
+ *
+ * Range mode does not apply it: a time-series read surfaces every generation.
+ * The lookup is a probe of the unique `(user_id, id)` index on memories.
+ *
+ * Exported for unit testing in isolation.
+ */
+export function parentLivePredicate(validAt?: Date): SQL {
+  const sameParent = and(eq(memories.userId, facts.userId), eq(memories.id, facts.memoryId))
+  const live =
+    validAt === undefined
+      ? and(isNull(memories.validTo), eq(memories.status, 'active'))
+      : or(isNull(memories.validTo), gt(memories.validTo, validAt))
+  return sql`EXISTS (SELECT 1 FROM ${memories} WHERE ${and(sameParent, live)})`
 }
 
 /**
@@ -254,6 +281,7 @@ export async function getFacts(
     ? requireRangeCondition(query.range as FactsRange)
     : validTimePredicate(query.asOf?.validAt)
   const conditions: SQL[] = [eq(facts.userId, userId), validityCondition]
+  if (!rangeMode) conditions.push(parentLivePredicate(query.asOf?.validAt))
 
   const txTime = transactionTimePredicate(query.asOf?.asKnownAt)
   if (txTime !== undefined) conditions.push(txTime)

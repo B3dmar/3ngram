@@ -102,7 +102,10 @@ describe('insertFactProposals', () => {
 })
 
 /** Capture the SQL + bound params a tx-taking helper emits, without a database. */
-async function emitted(run: (tx: never) => Promise<unknown>): Promise<{
+async function emitted(
+  run: (tx: never) => Promise<unknown>,
+  precedingRows: unknown[][][] = [],
+): Promise<{
   sql: string
   params: unknown[]
 }> {
@@ -112,12 +115,13 @@ async function emitted(run: (tx: never) => Promise<unknown>): Promise<{
   const client = {
     query: async (config: { text: string }, params: unknown[] = []) => {
       seen.push({ sql: config.text, params })
-      return { rows: [], rowCount: 0 }
+      const rows = precedingRows[seen.length - 1] ?? []
+      return { rows, rowCount: rows.length }
     },
   }
   const db = drizzle(client as never)
   await run(db as never).catch(() => undefined)
-  const [first] = seen
+  const first = seen[precedingRows.length]
   if (first === undefined) throw new Error('no statement emitted')
   return first
 }
@@ -151,7 +155,10 @@ describe('tenant binding is two-layer (explicit user_id, not RLS alone)', () => 
   })
 
   it('applyFactProposal pins user_id on the claiming update', async () => {
-    const { sql, params } = await emitted((tx) => applyFactProposal(tx, USER, PROPOSAL))
+    const { sql, params } = await emitted(
+      (tx) => applyFactProposal(tx, USER, PROPOSAL),
+      [[], [['live@test.local', 'hash']], [['active', null]]],
+    )
     expect(sql).toContain('update "fact_proposals"')
     expect(sql).toContain('"user_id" =')
     expect(params).toEqual(expect.arrayContaining([USER, PROPOSAL, 'proposed']))

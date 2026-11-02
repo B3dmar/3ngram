@@ -24,15 +24,22 @@ import {
   countFactProposals,
   countProposals,
   countResolutionProposals,
+  countRetentionProposals,
   type KeyedProposal,
   listFactProposalsAfter,
   listProposalsAfter,
   listResolutionProposalsAfter,
+  listRetentionProposalsAfter,
   type ProposalKeyset,
   type TenantTx,
   withTenant,
 } from '@3ngram/db'
-import type { FactProposalRecord, ProposalRecord, ResolutionProposalRecord } from './proposals.js'
+import type {
+  FactProposalRecord,
+  ProposalRecord,
+  ResolutionProposalRecord,
+  RetentionProposalRecord,
+} from './proposals.js'
 
 /** A position in the merged `created_at DESC, id DESC` proposal order. */
 export type ProposalPosition = ProposalKeyset
@@ -57,8 +64,9 @@ export interface ProposalsPage {
   proposals: ProposalRecord[]
   factProposals: FactProposalRecord[]
   resolutionProposals: ResolutionProposalRecord[]
+  retentionProposals: RetentionProposalRecord[]
   /** Live per-kind count of rows matching the status filter, as of this page's read. */
-  totals: { edge: number; fact: number; resolution: number }
+  totals: { edge: number; fact: number; resolution: number; retention: number }
   hasMore: boolean
   next: ProposalPosition | undefined
 }
@@ -101,6 +109,7 @@ type Tagged =
   | { kind: 'edge'; position: ProposalPosition; record: ProposalRecord }
   | { kind: 'fact'; position: ProposalPosition; record: FactProposalRecord }
   | { kind: 'resolution'; position: ProposalPosition; record: ResolutionProposalRecord }
+  | { kind: 'retention'; position: ProposalPosition; record: RetentionProposalRecord }
 
 const tag =
   <K extends Tagged['kind']>(kind: K) =>
@@ -122,24 +131,36 @@ async function readAllKinds(
   const resolutions = (await listResolutionProposalsAfter(tx, userId, dbQuery)).map(
     tag('resolution'),
   )
+  const retentions = (await listRetentionProposalsAfter(tx, userId, dbQuery)).map(tag('retention'))
   const { page, hasMore, next } = mergeProposalStreams<Tagged>(
-    [edges, facts, resolutions],
+    [edges, facts, resolutions, retentions],
     query.limit,
   )
   const proposals: ProposalRecord[] = []
   const factProposals: FactProposalRecord[] = []
   const resolutionProposals: ResolutionProposalRecord[] = []
+  const retentionProposals: RetentionProposalRecord[] = []
   for (const row of page) {
     if (row.kind === 'edge') proposals.push(row.record)
     else if (row.kind === 'fact') factProposals.push(row.record)
-    else resolutionProposals.push(row.record)
+    else if (row.kind === 'resolution') resolutionProposals.push(row.record)
+    else retentionProposals.push(row.record)
   }
   const totals = {
     edge: await countProposals(tx, query.status),
     fact: await countFactProposals(tx, userId, query.status),
     resolution: await countResolutionProposals(tx, userId, query.status),
+    retention: await countRetentionProposals(tx, userId, query.status),
   }
-  return { proposals, factProposals, resolutionProposals, totals, hasMore, next }
+  return {
+    proposals,
+    factProposals,
+    resolutionProposals,
+    retentionProposals,
+    totals,
+    hasMore,
+    next,
+  }
 }
 
 /**

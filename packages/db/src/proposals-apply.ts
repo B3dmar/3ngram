@@ -116,6 +116,7 @@
 import type { ActorKind, EdgeType } from '@3ngram/schema'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
+import { guardSessionMutation } from './credential-guard.js'
 import { insertEdge } from './memory-edges.js'
 import { PredecessorAlreadySupersededError } from './memory-revise.js'
 import { ProposalNotFoundError } from './proposals-read.js'
@@ -263,6 +264,7 @@ export async function applyProposal(
   proposalId: string,
   actorKind: ActorKind,
 ): Promise<AppliedProposalRow> {
+  await guardSessionMutation(tx, userId)
   // Read the open proposal (RLS hides cross-tenant rows). Pin status='proposed'
   // so an already-decided / missing / not-owned id is one not-found mapping, and
   // no edge is inserted for a proposal that cannot be applied.
@@ -284,6 +286,38 @@ export async function applyProposal(
     .limit(1)
   if (open === undefined) throw new ProposalNotFoundError(proposalId)
 
+  await materializeEdgeIn(tx, userId, open, actorKind, proposalId)
+  return flipApplied(tx, userId, proposalId)
+}
+
+/** The edge to materialize, from_id -> to_id. `memoryType` is a proposal's denormalized type, when it has one. */
+export interface EdgeToMaterialize {
+  fromId: string
+  toId: string
+  edgeType: string
+  memoryType?: string | undefined
+}
+
+/**
+ * Materialize one typed edge inside the caller's transaction: steps (1) to (3)
+ * of {@link applyProposal}, without deciding any proposal. An edge that already
+ * exists returns without writing. A supersedes or updates edge first passes the
+ * episodic and live-successor guards, then closes the predecessor, records its
+ * `supersede` event and carries its commitment. Shared by edge-proposal apply
+ * and retention-proposal accept, so both close a predecessor identically.
+ * `proposalId` only labels the errors.
+ *
+ * @throws {@link EpisodicSupersessionError} an event-type endpoint.
+ * @throws {@link PredecessorAlreadySupersededError} fresh edge over a dead predecessor.
+ * @throws {@link SuccessorNotLiveError} fresh edge whose successor is no longer live.
+ */
+export async function materializeEdgeIn(
+  tx: TenantTx,
+  userId: string,
+  edge: EdgeToMaterialize,
+  actorKind: ActorKind,
+  proposalId: string,
+): Promise<void> {
   // docs/concepts/memory-model.mdx "Consolidation is advisory" episodic exclusion: refuse to close an event-type memory's
   // validity. A supersedes/updates proposal targeting an event-type pair is a
   // malformed/legacy row (the consolidator may at most emit advisory `extends`
@@ -294,8 +328,8 @@ export async function applyProposal(
   // The same read also reports whether from_id (the proposed successor) is
   // still LIVE — enforced further down, on the FRESH-apply path only.
   let successorLive = true
-  if (CLOSES_PREDECESSOR.has(open.edgeType)) {
-    successorLive = await assertNoEpisodicEndpoint(tx, userId, proposalId, open)
+  if (CLOSES_PREDECESSOR.has(edge.edgeType)) {
+    successorLive = await assertNoEpisodicEndpoint(tx, userId, proposalId, edge)
   }
 
   // Pre-existing edge (Codex WARNING): detect the proposed edge UP FRONT, before
@@ -315,13 +349,13 @@ export async function applyProposal(
     .where(
       and(
         eq(memoryEdges.userId, userId),
-        eq(memoryEdges.fromId, open.fromId),
-        eq(memoryEdges.toId, open.toId),
-        eq(memoryEdges.edgeType, open.edgeType),
+        eq(memoryEdges.fromId, edge.fromId),
+        eq(memoryEdges.toId, edge.toId),
+        eq(memoryEdges.edgeType, edge.edgeType),
       ),
     )
     .limit(1)
-  if (existingEdge !== undefined) return flipApplied(tx, userId, proposalId)
+  if (existingEdge !== undefined) return
 
   // No pre-existing edge: this is a fresh application. For a superseding/updating
   // edge, close the PREDECESSOR (to_id) validity FIRST — valid_to ONLY, content
@@ -347,26 +381,26 @@ export async function applyProposal(
   // throw BEFORE any write. The proposal stays `proposed` (the strict output
   // union cannot express a rejected-stale outcome, and a rejection write
   // would roll back with this throw) — re-propose or reject manually.
-  if (CLOSES_PREDECESSOR.has(open.edgeType)) {
-    if (!successorLive) throw new SuccessorNotLiveError(proposalId, open.fromId)
+  if (CLOSES_PREDECESSOR.has(edge.edgeType)) {
+    if (!successorLive) throw new SuccessorNotLiveError(proposalId, edge.fromId)
     const closed = await tx
       .update(memories)
       .set({ validTo: sql`now()`, updatedAt: sql`now()` })
-      .where(and(eq(memories.userId, userId), eq(memories.id, open.toId), isNull(memories.validTo)))
+      .where(and(eq(memories.userId, userId), eq(memories.id, edge.toId), isNull(memories.validTo)))
       .returning({ id: memories.id })
     if (closed.length === 0) {
-      throw new PredecessorAlreadySupersededError(open.toId)
+      throw new PredecessorAlreadySupersededError(edge.toId)
     }
     await tx.insert(memoryEvents).values({
       userId,
-      memoryId: open.toId,
+      memoryId: edge.toId,
       eventKind: 'supersede',
       actorKind,
     })
     // The close above is the IDENTICAL close reviseMemory performs, so the
     // obligation riding the predecessor needs the carryCommitment equivalent
     // (Codex P1) — same tx, right after the live close succeeded.
-    await carryOrResolvePredecessorCommitment(tx, userId, open.fromId, open.toId, actorKind)
+    await carryOrResolvePredecessorCommitment(tx, userId, edge.fromId, edge.toId, actorKind)
   }
 
   // Materialize the proposed edge verbatim (from_id -> to_id). The pre-existing
@@ -375,13 +409,11 @@ export async function applyProposal(
   // CHECK-constrained enum value from the proposal row.
   await insertEdge(tx, {
     userId,
-    fromId: open.fromId,
-    toId: open.toId,
-    edgeType: open.edgeType as EdgeType,
+    fromId: edge.fromId,
+    toId: edge.toId,
+    edgeType: edge.edgeType as EdgeType,
     createdBy: actorKind,
   })
-
-  return flipApplied(tx, userId, proposalId)
 }
 
 /**
@@ -515,7 +547,9 @@ async function carryOrResolvePredecessorCommitment(
  * live. Returned, NOT thrown, because the guard only binds on the FRESH-apply
  * path (edge absent): on the idempotent pre-existing-edge path a dead from_id
  * is fine — the prior write chain already handled it. Folding the read in here
- * keeps it one query (stale-successor finding).
+ * keeps it one query (stale-successor finding). Both endpoints are locked in
+ * id order until commit, so a concurrent revise cannot retire the successor
+ * after this check. Retention acceptance and staging use the same order.
  *
  * @returns whether from_id is live (the caller throws
  * {@link SuccessorNotLiveError} on the fresh path when it is not).
@@ -526,7 +560,7 @@ async function assertNoEpisodicEndpoint(
   tx: TenantTx,
   userId: string,
   proposalId: string,
-  open: { fromId: string; toId: string; memoryType: string },
+  open: { fromId: string; toId: string; memoryType?: string | undefined },
 ): Promise<boolean> {
   if (open.memoryType === 'event') {
     throw new EpisodicSupersessionError(proposalId, open.memoryType)
@@ -540,6 +574,8 @@ async function assertNoEpisodicEndpoint(
     })
     .from(memories)
     .where(and(eq(memories.userId, userId), inArray(memories.id, [open.fromId, open.toId])))
+    .orderBy(memories.id)
+    .for('update')
   for (const endpoint of endpoints) {
     if (endpoint.memoryType === 'event') {
       throw new EpisodicSupersessionError(proposalId, endpoint.memoryType)

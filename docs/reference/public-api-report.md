@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.6.0
+## `@3ngram/config` 0.7.0
 
 ### `.`
 
@@ -35,6 +35,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
 | `EnvRole` | type | `3d4c8d58bbd2` |
+| `ForgettingPassConfig` | interface | `111e8ca77fd5` |
 | `JevGatewayConfig` | interface | `3e4b1203d762` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
@@ -60,13 +61,14 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `e72520eca715` |
+| `envSchema` | const | `f2cecb307a49` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
+| `loadForgettingPassConfig` | function | `9c52f0ce959e` |
 | `loadJevGatewayConfig` | function | `d10f4742421d` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
@@ -110,6 +112,7 @@ its row here even when its name and kind are unchanged.
 | `BudgetConfig` | interface | `d853449dce9f` |
 | `Env` | type | `a4d38ca55e34` |
 | `EnvRole` | type | `3d4c8d58bbd2` |
+| `ForgettingPassConfig` | interface | `111e8ca77fd5` |
 | `JevGatewayConfig` | interface | `3e4b1203d762` |
 | `LOG_LEVELS` | const | `d9d3d3b2faff` |
 | `LlmGatewayConfig` | interface | `bdcb02115282` |
@@ -122,10 +125,11 @@ its row here even when its name and kind are unchanged.
 | `SessionTriageConfig` | interface | `96052892588f` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `e72520eca715` |
+| `envSchema` | const | `f2cecb307a49` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
+| `loadForgettingPassConfig` | function | `9c52f0ce959e` |
 | `loadJevGatewayConfig` | function | `d10f4742421d` |
 | `loadLlmGatewayConfig` | function | `e6f4d3b6468b` |
 | `loadMcpAllowedOrigins` | function | `afc825777bf5` |
@@ -189,7 +193,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.15.0
+## `@3ngram/core` 0.16.0
 
 ### `.`
 
@@ -257,7 +261,7 @@ its row here even when its name and kind are unchanged.
 | `DashboardSearchPage` | interface | `77168fc773d5` |
 | `DebriefBriefedMemory` | interface | `82f24b49a983` |
 | `DebriefPromptContext` | interface | `8ca9a0260c74` |
-| `DecidedProposal` | type | `3e983d9a9cd5` |
+| `DecidedProposal` | type | `af703c94b7ca` |
 | `DeleteAccountOptions` | interface | `fd986a00ec9a` |
 | `DuplicateEmailError` | class | `4f7a078f9631` |
 | `DuplicateMemoryError` | class | `93f0fe6bc97d` |
@@ -283,8 +287,17 @@ its row here even when its name and kind are unchanged.
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
 | `FactProposalRecord` | type | `6627d74a9d46` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactRow` | interface | `e6493ad6346b` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
+| `ForgettingCandidates` | interface | `95fdd84a114c` |
+| `ForgettingPassOptions` | interface | `0f6797b4fb83` |
+| `ForgettingPassResult` | interface | `d6e421e96c99` |
+| `ForgettingRepo` | interface | `66b546ebc6b4` |
+| `ForgettingStop` | type | `daa781ee5103` |
+| `ForgettingSweepOptions` | interface | `337882bef481` |
+| `ForgettingSweepResult` | interface | `4de89d2ae361` |
+| `ForgettingUsage` | interface | `c2e1f465c371` |
 | `FrozenOrdering` | interface | `4e9572ab5ac1` |
 | `FullBriefing` | interface | `2b54af8c1c89` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
@@ -337,7 +350,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalPosition` | type | `6f6bf52d77ac` |
 | `ProposalRecord` | type | `7ef93d00e3ad` |
 | `ProposalsListQuery` | interface | `cd92940b612e` |
-| `ProposalsPage` | interface | `8e2513277fce` |
+| `ProposalsPage` | interface | `c461e0ef4d40` |
 | `ProposalsPageQuery` | interface | `443bc668abd5` |
 | `ProvisionedUser` | interface | `b84d0fce56f0` |
 | `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
@@ -348,6 +361,8 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
 | `ResourceLimitKind` | type | `38affb7e6a60` |
 | `ResourceLimits` | type | `413a8884f475` |
+| `RetentionProposalNotApplicableError` | class | `92c39a416fe4` |
+| `RetentionProposalRecord` | type | `43504b15b089` |
 | `RetrievalPolicy` | type | `f18dae676991` |
 | `RetrievalPolicySetting` | interface | `00de86dea7c9` |
 | `RetryFailedEmbedsOptions` | interface | `3d4311ea6720` |
@@ -382,7 +397,7 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UnscopedRetrievalError` | class | `8be3356bc4b7` |
 | `UnscopedWriteError` | class | `836d2ad0275b` |
-| `UserDataExport` | interface | `59f762ceb045` |
+| `UserDataExport` | interface | `fa7b25dcf613` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `WriteScopePolicySetting` | interface | `ab65eda55f36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
@@ -407,6 +422,7 @@ its row here even when its name and kind are unchanged.
 | `createScope` | function | `1e8f58a54fe9` |
 | `createUser` | function | `41cb089db439` |
 | `dbConsolidateRepo` | const | `d157d777ed45` |
+| `dbForgettingRepo` | const | `8458a5770e0a` |
 | `dbGcClientsRepo` | const | `9758cf7041e4` |
 | `dbSessionCloserRepo` | const | `0d7316e7ffee` |
 | `dbSessionSweepRepo` | function | `a35dac85f439` |
@@ -418,6 +434,7 @@ its row here even when its name and kind are unchanged.
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
+| `forgetAllTenants` | function | `f40d741129a6` |
 | `formatUnscopedRetrievalDetail` | function | `49eb76d99f6a` |
 | `formatUnscopedWriteDetail` | function | `458c8da8d442` |
 | `garbageCollectClients` | function | `20d3eb15b5a5` |
@@ -469,6 +486,7 @@ its row here even when its name and kind are unchanged.
 | `retryFailedEmbeds` | function | `814fcebeb911` |
 | `revise` | function | `3f4cc72c85ff` |
 | `reviseDisposition` | function | `e2beadf99fb3` |
+| `runForgettingPass` | function | `63e714847e72` |
 | `search` | function | `d758daa35086` |
 | `searchChronological` | function | `69f06a2d43e4` |
 | `searchDashboardPage` | function | `502bab9d7535` |
@@ -586,7 +604,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.14.0
+## `@3ngram/db` 0.15.0
 
 ### `.`
 
@@ -635,6 +653,8 @@ its row here even when its name and kind are unchanged.
 | `CommitmentWrite` | interface | `dd9c21233475` |
 | `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
+| `ConflictPair` | interface | `4738af51ed62` |
+| `ConflictPairsOptions` | interface | `5732feddd5bd` |
 | `ConsumedOauthCode` | interface | `0a34533f0664` |
 | `DEFAULT_FUSION_WEIGHTS` | const | `729d1df4de70` |
 | `DEFAULT_RECENCY_HALF_LIFE_DAYS` | const | `f8e82bdcf21b` |
@@ -663,17 +683,20 @@ its row here even when its name and kind are unchanged.
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
 | `ExportProposalRow` | interface | `bfdfabd2f739` |
 | `ExportResolutionProposalRow` | type | `75f251182ce5` |
+| `ExportRetentionProposalRow` | type | `496d6809608d` |
 | `ExportRetrievalPolicyRow` | interface | `2c15c6c22150` |
 | `ExportScopeRow` | interface | `7145ffb6676a` |
 | `ExportUserProfileRow` | interface | `6fdf9a407dac` |
 | `ExportWriteScopePolicyRow` | interface | `106fae184c34` |
 | `FACT_PROPOSAL_COLUMNS` | const | `af88aa95dcf6` |
 | `FactProposalRow` | interface | `c0b1af29d06d` |
+| `FactProposalSourceNotLiveError` | class | `45b25314500f` |
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |
-| `FactWrite` | interface | `373a924698db` |
+| `FactWrite` | interface | `38b489370192` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
+| `ForgettingMemory` | interface | `5193705c6910` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
 | `HeartbeatSessionResult` | interface | `2f2f116773fa` |
 | `IllegalCommitmentTransitionError` | class | `f0d748c08600` |
@@ -716,6 +739,8 @@ its row here even when its name and kind are unchanged.
 | `NewOauthCode` | interface | `2e6e2540b16a` |
 | `NewOauthToken` | interface | `3a3e001a15de` |
 | `NewPasswordResetToken` | interface | `2ba6c8796e81` |
+| `NewerNeighbour` | interface | `90c8231632f3` |
+| `NewerNeighboursOptions` | interface | `aa8b5d1da21e` |
 | `NotCommitmentMemoryError` | class | `49766470a113` |
 | `OAuthClientRow` | interface | `1a2affe71574` |
 | `OpenSessionResult` | interface | `8bc9849332ff` |
@@ -730,6 +755,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalsQuery` | interface | `60bf10951af6` |
 | `RATE_LIMIT_TABLE` | const | `e2baee33b68d` |
 | `RESOLUTION_PROPOSAL_COLUMNS` | const | `8436389f787c` |
+| `RETENTION_PROPOSAL_COLUMNS` | const | `dd2e6cb40d46` |
 | `ReaffirmOutcome` | type | `3f19d3b45ae0` |
 | `ReaffirmWrite` | type | `932c546d55f0` |
 | `ResolutionProposalRow` | interface | `80b6b1ed0256` |
@@ -738,6 +764,9 @@ its row here even when its name and kind are unchanged.
 | `ResolvedOauthToken` | interface | `476671b8cf0e` |
 | `ResolvedSession` | interface | `b94d810c770d` |
 | `ResourceLimitExceededError` | class | `68af9f321e79` |
+| `RetentionProposalNotApplicableError` | class | `92c39a416fe4` |
+| `RetentionProposalRow` | interface | `03aab7dafc56` |
+| `RetentionVerdictWrite` | interface | `46ec12d432d0` |
 | `RetrievalPolicyRow` | interface | `9e5d8fba2eba` |
 | `ReviseWrite` | interface | `e0b4d7ac9cc4` |
 | `RevisedMemory` | interface | `d8080d7c6e2a` |
@@ -754,6 +783,7 @@ its row here even when its name and kind are unchanged.
 | `SessionEventsPage` | interface | `c712271609d4` |
 | `SignupEmailVerificationToken` | interface | `d97e5d87001a` |
 | `SimilarPair` | interface | `4acfe8cd4a10` |
+| `StaleSinglesOptions` | interface | `b091c1c4bd89` |
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingSweepResult` | interface | `7be2206cfb1b` |
 | `TenantTx` | type | `62a38afad7f6` |
@@ -762,12 +792,13 @@ its row here even when its name and kind are unchanged.
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
 | `UserBudgetWrite` | interface | `8e6b2933fc5b` |
-| `UserDataExport` | interface | `59f762ceb045` |
+| `UserDataExport` | interface | `fa7b25dcf613` |
 | `UserIdentityRow` | interface | `73012f115901` |
 | `UserRow` | interface | `0d5553e9b368` |
 | `WriteScopePolicyRow` | interface | `982129ab2c36` |
 | `WrittenCommitment` | interface | `537a8a5e4203` |
 | `WrittenMemory` | interface | `bec591e2c3d0` |
+| `acceptRetentionProposal` | function | `0a977ff486cc` |
 | `activeBlockers` | function | `ff4df9d1adf9` |
 | `activePreferences` | function | `5ac7c5d85202` |
 | `agentSessions` | const | `a8e7698df3bc` |
@@ -791,6 +822,7 @@ its row here even when its name and kind are unchanged.
 | `closerBackoffDelayMs` | function | `a90ec2357606` |
 | `commitments` | const | `eb38994078d2` |
 | `completeSessionTriage` | function | `3a3467b20029` |
+| `conflictPairs` | function | `4b3462ffbe92` |
 | `consolidationProposals` | const | `c87ade1c93dc` |
 | `consumeOauthCode` | function | `60c538284d80` |
 | `consumePasswordResetToken` | function | `577e6ea7d054` |
@@ -799,10 +831,12 @@ its row here even when its name and kind are unchanged.
 | `countProposals` | function | `7c68fb735bcd` |
 | `countProposalsByStatus` | function | `83536379eed5` |
 | `countResolutionProposals` | function | `732fbcf08ef4` |
+| `countRetentionProposals` | function | `6b94c49d527f` |
 | `createCommitment` | function | `fb2e38368ac8` |
 | `createPostgresRateLimiter` | function | `1eb239efb024` |
 | `createScope` | function | `f1efc67b328e` |
 | `decideResolutionProposal` | function | `6b38198b213a` |
+| `decideRetentionProposal` | function | `71ab3fac3ee5` |
 | `deleteClients` | function | `334ed01d1965` |
 | `deleteOtherSessions` | function | `ece21eaa52e9` |
 | `deleteScope` | function | `d948256373ca` |
@@ -843,9 +877,9 @@ its row here even when its name and kind are unchanged.
 | `insertAuditLog` | function | `5ab559d1a0ae` |
 | `insertEdge` | function | `5b307f86e993` |
 | `insertEmailVerificationToken` | function | `99496a4c2342` |
-| `insertFact` | function | `5dde86949a36` |
+| `insertFact` | function | `3065c864e73d` |
 | `insertFactProposals` | function | `c40d814e2c79` |
-| `insertFacts` | function | `b8e1b02e0c6b` |
+| `insertFacts` | function | `7d9f241c95b7` |
 | `insertImportedFact` | function | `eba63a98444e` |
 | `insertLlmUsage` | function | `343a613f2a45` |
 | `insertMemoryWithEvent` | function | `3f4a50bb32bc` |
@@ -854,6 +888,7 @@ its row here even when its name and kind are unchanged.
 | `insertPasswordResetToken` | function | `97640b502405` |
 | `insertProposals` | function | `d9da67f8e0da` |
 | `insertResolutionProposals` | function | `a6e1fa5ab1c1` |
+| `insertRetentionProposals` | function | `10d22eed7eea` |
 | `insertSession` | function | `3952aa8da8b9` |
 | `insertUnverifiedUserWithEmailVerificationToken` | function | `6891a4ff6db3` |
 | `insertUser` | function | `1526ee55b233` |
@@ -869,6 +904,7 @@ its row here even when its name and kind are unchanged.
 | `listProposals` | function | `ca00070826cc` |
 | `listProposalsAfter` | function | `6d212688eabe` |
 | `listResolutionProposalsAfter` | function | `935db4d96a7e` |
+| `listRetentionProposalsAfter` | function | `fb69f9c0a43b` |
 | `listScopes` | function | `38d9a9aee782` |
 | `listSessionEvents` | function | `38bf91400471` |
 | `listTenantIds` | function | `71356a9ecac7` |
@@ -880,6 +916,7 @@ its row here even when its name and kind are unchanged.
 | `memoryEdges` | const | `52088e26ee30` |
 | `memoryEvents` | const | `8b52656b3790` |
 | `moveMemory` | function | `4a4ea0fdfcc4` |
+| `newerNeighbours` | function | `304c82c3bb72` |
 | `oauthClients` | const | `afb1565e898e` |
 | `oauthCodes` | const | `bfa4d83807b7` |
 | `oauthTokens` | const | `5309b692908e` |
@@ -917,6 +954,7 @@ its row here even when its name and kind are unchanged.
 | `resolveApiKey` | function | `d219083527a2` |
 | `resolveOauthToken` | function | `a806d3b97eb9` |
 | `resolveSession` | function | `9c6c2aec9b4c` |
+| `retentionProposals` | const | `a7bc64be5b8e` |
 | `retryUnverifiedSignupWithEmailVerificationToken` | function | `b4a3ba8d69ed` |
 | `reviseMemory` | function | `de0e1f8d434c` |
 | `revokeApiKey` | function | `44d18e5177c8` |
@@ -934,6 +972,7 @@ its row here even when its name and kind are unchanged.
 | `setScopeAliases` | function | `7c6087427d8f` |
 | `setUserBudget` | function | `471e3e73021e` |
 | `staleCandidates` | function | `3199c50b0ece` |
+| `staleSingles` | function | `02e02e501537` |
 | `sweepCommitments` | function | `61fdca16f338` |
 | `sweepExpiredLeases` | function | `9814898ac80b` |
 | `sweepFloor` | function | `2212e4e03aa8` |
@@ -968,7 +1007,7 @@ its row here even when its name and kind are unchanged.
 |---|---|---|
 | `runMigrations` | function | `a706d127a172` |
 
-## `@3ngram/llm` 0.4.0
+## `@3ngram/llm` 0.5.0
 
 ### `.`
 
@@ -1006,7 +1045,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_DECIDE_STATE_CHARS` | const | `df1d3cc28cf6` |
 | `METERED_EMBED_OPERATIONS` | const | `201351990a48` |
 | `METERED_GENERATION_OPERATIONS` | const | `7ad0575de8c3` |
-| `METERED_JUDGMENT_OPERATIONS` | const | `a0593d023c14` |
+| `METERED_JUDGMENT_OPERATIONS` | const | `3d70f8676fc5` |
 | `MeteredEmbedOperation` | type | `2767f0fd1b01` |
 | `MeteredGenerationOperation` | type | `7208de8ee2e3` |
 | `MeteredJudgmentOperation` | type | `ef1be6209a68` |
@@ -1035,7 +1074,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `4bf3968c5c87` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.13.0
+## `@3ngram/schema` 0.14.0
 
 ### `.`
 
@@ -1245,12 +1284,14 @@ its row here even when its name and kind are unchanged.
 | `ProposalEdgeTotals` | type | `a20b221efc92` |
 | `ProposalKindCounts` | type | `28e7864043af` |
 | `ProposalKindCountsV3` | type | `2410ed9cbacd` |
+| `ProposalKindCountsV4` | type | `506aa4398c67` |
 | `ProposalRecordOutput` | type | `8a269415e658` |
 | `ProposalRejectBody` | type | `2fb4de60f87a` |
 | `ProposalStatus` | type | `184c3cc32f4f` |
 | `ProposalsCursorPayload` | type | `46ce4ee6353d` |
 | `ProposalsListQueryInput` | type | `7665b8f7ad17` |
 | `ProposalsListResponse` | type | `280d03d07ed7` |
+| `RETENTION_ACTIONS_WITH_RELATED` | const | `b5176ad84636` |
 | `ReaffirmEventPayload` | type | `78e435d55dca` |
 | `RecordedRangeIssue` | interface | `1f880cb5f300` |
 | `RememberInput` | type | `6eea6a370e3e` |
@@ -1270,12 +1311,16 @@ its row here even when its name and kind are unchanged.
 | `ResourceLimitKind` | type | `38affb7e6a60` |
 | `ResourceLimits` | type | `413a8884f475` |
 | `RestErrorResponse` | type | `a66b13d0a81f` |
+| `RetentionAction` | type | `2ffd7ac28002` |
+| `RetentionProposalRecordOutput` | type | `0377b2b59af0` |
+| `RetentionProposalStatus` | type | `f735e0aea5ce` |
 | `RetrievalScopeMode` | type | `8ed013f1984e` |
 | `RetrievalScopePolicy` | type | `655e702851b3` |
 | `ReviewProposalsInput` | type | `869d9b031012` |
 | `ReviewProposalsOutput` | type | `9775221bd01d` |
 | `ReviewProposalsOutputV2` | type | `99fbce14eee0` |
 | `ReviewProposalsOutputV3` | type | `cfaadd706087` |
+| `ReviewProposalsOutputV4` | type | `a11a6025d062` |
 | `ReviseDispositionKind` | type | `94d9ffd08b65` |
 | `ReviseDispositionOutcome` | type | `4191aeeac157` |
 | `ReviseDispositionOutcomeKind` | type | `ac0a6e1f1c44` |
@@ -1428,7 +1473,7 @@ its row here even when its name and kind are unchanged.
 | `exceedsRecordedBoundPrecision` | function | `b6ca070a8ac1` |
 | `factProposalRecordSchema` | const | `78ec1dbc2134` |
 | `factSchema` | const | `8222b4b77888` |
-| `factWriteSchema` | const | `ccd8c23e9889` |
+| `factWriteSchema` | const | `57d4f949c886` |
 | `factsQueryInputSchema` | const | `072db1556589` |
 | `factsQueryInputV2Schema` | const | `7b55759b2b58` |
 | `factsRangeSchema` | const | `68943816c6ea` |
@@ -1481,7 +1526,7 @@ its row here even when its name and kind are unchanged.
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
-| `nativeRememberInputSchema` | const | `6f61f82c064f` |
+| `nativeRememberInputSchema` | const | `a2688055a272` |
 | `nativeReviseDispositionBodySchema` | const | `99e911f9716e` |
 | `nativeReviseDispositionInputSchema` | const | `bc3a92c87d8a` |
 | `nativeReviseInputSchema` | const | `008be3067068` |
@@ -1499,6 +1544,7 @@ its row here even when its name and kind are unchanged.
 | `proposalEdgeTotalsSchema` | const | `3b06e6383471` |
 | `proposalKindCountsSchema` | const | `5d10c63012dd` |
 | `proposalKindCountsV3Schema` | const | `b41c4f35455f` |
+| `proposalKindCountsV4Schema` | const | `7086ee4f3f11` |
 | `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |
@@ -1511,10 +1557,10 @@ its row here even when its name and kind are unchanged.
 | `redirectUriSchema` | const | `fd884c385be1` |
 | `rememberInputSchema` | const | `16100440a692` |
 | `rememberToolInputSchema` | const | `1489c4354420` |
-| `rememberToolInputV2Schema` | const | `ae2e1d96dec6` |
+| `rememberToolInputV2Schema` | const | `021133fc9b6a` |
 | `rememberToolOutputSchema` | const | `91a0502f9fa9` |
 | `rememberToolOutputV2Schema` | const | `5dd2d2f6afec` |
-| `rememberWithFactsInputSchema` | const | `d539bf0b16cf` |
+| `rememberWithFactsInputSchema` | const | `bcf589cf23b1` |
 | `resendVerificationInputSchema` | const | `258740cf44b0` |
 | `resetPasswordInputSchema` | const | `33f21153f1c1` |
 | `resolutionProposalRecordSchema` | const | `4b0cc3664f2d` |
@@ -1525,6 +1571,9 @@ its row here even when its name and kind are unchanged.
 | `resourceLimitKindSchema` | const | `ba462cc09a99` |
 | `resourceLimitsSchema` | const | `db1d186cc9a5` |
 | `restErrorResponseSchema` | const | `f7252b5b657d` |
+| `retentionActionSchema` | const | `c1ffd933371e` |
+| `retentionProposalRecordSchema` | const | `c5ba3128d863` |
+| `retentionProposalStatusSchema` | const | `edde6b2adcb2` |
 | `retrievalScopeModeSchema` | const | `341a6d63e822` |
 | `retrievalScopePolicySchema` | const | `8fe9bd2568c5` |
 | `retrievalScopePolicyScopeRequirements` | const | `e9d9207e7728` |
@@ -1532,6 +1581,7 @@ its row here even when its name and kind are unchanged.
 | `reviewProposalsOutputSchema` | const | `9b97544b2f22` |
 | `reviewProposalsOutputV2Schema` | const | `c44e9b2087ea` |
 | `reviewProposalsOutputV3Schema` | const | `a196245ef29e` |
+| `reviewProposalsOutputV4Schema` | const | `4c5f9e2af870` |
 | `reviewProposalsRegisterOutputShape` | const | `757ba51be480` |
 | `reviewProposalsRegisterOutputShapeV2` | const | `a43afb37177a` |
 | `reviewProposalsRegisterShape` | const | `c147835e9d4d` |
@@ -1599,7 +1649,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.10.1
+## `@3ngram/server` 1.11.0
 
 ### `./app`
 

@@ -343,3 +343,68 @@ describe('get_facts — tenant isolation (RLS on every path)', () => {
     }
   })
 })
+
+// Issue #369: a fact stops being current when the memory that asserted it
+// does. The parent's state is set owner-side, the column-level outcome of
+// `revise` (valid_to closed) and of the archive disposition (status archived).
+describe('get_facts: parent liveness (#369)', () => {
+  const SUPERSEDED_AT = '2024-06-01T00:00:00.000Z'
+
+  it('hides a superseded parent from current reads, but not from asOf before it or from range', async () => {
+    const memoryId = await seedMemory(uid)
+    await seedFact(uid, memoryId, 'parent:superseded', 'status', 'open', T0, null, R0)
+    // The parent's valid_from defaults to now(); backdate it so the closed
+    // window passes memories_validity_check.
+    await ownerPool.query(
+      'UPDATE memories SET valid_from = $2::timestamptz, valid_to = $3::timestamptz WHERE id = $1',
+      [memoryId, T0, SUPERSEDED_AT],
+    )
+    const read = (query: Parameters<typeof getFacts>[2]) =>
+      withTenant(uid, (tx) => getFacts(tx, uid, { subject: 'parent:superseded', ...query }))
+
+    expect(await read({})).toEqual([])
+    const before = await read({ asOf: { validAt: new Date('2024-01-01T00:00:00.000Z') } })
+    expect(before.map((f) => f.value)).toEqual(['open'])
+    const after = await read({ asOf: { validAt: new Date('2025-01-01T00:00:00.000Z') } })
+    expect(after).toEqual([])
+    const range = await read({ range: { from: new Date(T0) } })
+    expect(range.map((f) => f.value)).toEqual(['open'])
+  })
+
+  it('ignores the parent valid_from for a backdated fact, and closes at the parent valid_to', async () => {
+    // A memory recorded in 2024 asserting a value true since 2020.
+    const memoryId = await seedMemory(uid)
+    await seedFact(uid, memoryId, 'parent:backdated', 'status', 'open', T0, null, R0)
+    await ownerPool.query(
+      'UPDATE memories SET valid_from = $2::timestamptz, valid_to = $3::timestamptz WHERE id = $1',
+      [memoryId, '2024-01-01T00:00:00.000Z', SUPERSEDED_AT],
+    )
+    const asOf = (validAt: string) =>
+      withTenant(uid, (tx) =>
+        getFacts(tx, uid, { subject: 'parent:backdated', asOf: { validAt: new Date(validAt) } }),
+      )
+
+    expect((await asOf(T1)).map((f) => f.value)).toEqual(['open'])
+    // Half-open: the parent's valid_to is the first instant it is superseded.
+    expect(await asOf(SUPERSEDED_AT)).toEqual([])
+  })
+
+  it('hides an archived parent from current reads only', async () => {
+    const memoryId = await seedMemory(uid)
+    await seedFact(uid, memoryId, 'parent:archived', 'status', 'open', T0, null, R0)
+    await ownerPool.query(`UPDATE memories SET status = 'archived' WHERE id = $1`, [memoryId])
+    const read = (query: Parameters<typeof getFacts>[2]) =>
+      withTenant(uid, (tx) => getFacts(tx, uid, { subject: 'parent:archived', ...query }))
+
+    expect(await read({})).toEqual([])
+    const asOf = await read({ asOf: { validAt: new Date('2024-01-01T00:00:00.000Z') } })
+    expect(asOf.map((f) => f.value)).toEqual(['open'])
+  })
+
+  it('keeps the facts of a live parent current', async () => {
+    const memoryId = await seedMemory(uid)
+    await seedFact(uid, memoryId, 'parent:live', 'status', 'open', T0, null, R0)
+    const current = await withTenant(uid, (tx) => getFacts(tx, uid, { subject: 'parent:live' }))
+    expect(current.map((f) => f.value)).toEqual(['open'])
+  })
+})

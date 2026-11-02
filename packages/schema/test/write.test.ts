@@ -259,6 +259,13 @@ describe('factWrite', () => {
     expect(factWriteSchema.safeParse({ ...validFact, validFrom: 'yesterday' }).success).toBe(false)
   })
 
+  it('takes an optional cardinality of one or many (#369)', () => {
+    expect(factWriteSchema.parse(validFact).cardinality).toBeUndefined()
+    expect(factWriteSchema.parse({ ...validFact, cardinality: 'many' }).cardinality).toBe('many')
+    expect(factWriteSchema.parse({ ...validFact, cardinality: 'one' }).cardinality).toBe('one')
+    expect(factWriteSchema.safeParse({ ...validFact, cardinality: 'several' }).success).toBe(false)
+  })
+
   it('rejects a validTo with no validFrom (a window that ends but never begins)', () => {
     // Mirrors fact_proposals_validity_check: unrepresentable downstream, so it
     // fails at the validation boundary rather than as a constraint violation.

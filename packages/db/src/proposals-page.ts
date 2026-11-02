@@ -20,13 +20,19 @@
 //
 // Observability (hard rule 6): this module logs nothing; rationale and the
 // proposed claim are content and never leave the returned rows.
-import { and, count, desc, eq, type SQL, sql } from 'drizzle-orm'
+import { and, count, desc, eq, ne, type SQL, sql } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 import type { TenantTx } from './client.js'
 import { FACT_PROPOSAL_COLUMNS, type FactProposalRow } from './fact-proposals.js'
 import type { ProposalRow } from './proposals-read.js'
 import { RESOLUTION_PROPOSAL_COLUMNS, type ResolutionProposalRow } from './resolution-proposals.js'
-import { consolidationProposals, factProposals, resolutionProposals } from './schema/memory.js'
+import { RETENTION_PROPOSAL_COLUMNS, type RetentionProposalRow } from './retention-proposals.js'
+import {
+  consolidationProposals,
+  factProposals,
+  resolutionProposals,
+  retentionProposals,
+} from './schema/memory.js'
 
 /** A position in the `created_at DESC, id DESC` order: full-microsecond ISO text + uuid. */
 export interface ProposalKeyset {
@@ -141,6 +147,33 @@ export async function listResolutionProposalsAfter(
     .where(
       and(
         eq(t.userId, userId),
+        query.status === undefined ? undefined : eq(t.status, query.status),
+        afterPredicate(t.createdAt, t.id, query.after),
+      ),
+    )
+    .orderBy(desc(t.createdAt), desc(t.id))
+    .limit(query.limit)
+  return rows.map(keyed)
+}
+
+/**
+ * Retention proposals (the forgetting pass) after `query.after`, most-recent
+ * first, at most `query.limit`. Dismissed rows (keep verdicts and verdicts
+ * below their threshold) are never listed, whatever the status filter.
+ */
+export async function listRetentionProposalsAfter(
+  tx: TenantTx,
+  userId: string,
+  query: ProposalPageQuery,
+): Promise<KeyedProposal<RetentionProposalRow>[]> {
+  const t = retentionProposals
+  const rows = await tx
+    .select({ ...RETENTION_PROPOSAL_COLUMNS, createdAtIso: createdAtIso(t.createdAt) })
+    .from(t)
+    .where(
+      and(
+        eq(t.userId, userId),
+        ne(t.status, 'dismissed'),
         query.status === undefined ? undefined : eq(t.status, query.status),
         afterPredicate(t.createdAt, t.id, query.after),
       ),

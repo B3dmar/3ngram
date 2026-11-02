@@ -241,9 +241,24 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // (`rejected_resolution`, `applied_resolution`). Input and description
       // unchanged (no embeddings regen); CLI and REST unchanged. MEASURED on
       // staging 0d32dd9 plus #349/#352/#354, not summed.
-      mcp: [32530, 262056, 65250],
+      // MCP +67/+536/+130, REST +67/+67/+67 (issue #369, single-valued facts):
+      // the optional `cardinality` field and its description join the fact
+      // write schema, which rides `remember` on tools/list every MCP turn and
+      // the REST request surface once. CLI unchanged. MEASURED on staging
+      // f917856, not summed.
+      // MCP +2563/+20504/+4998 (forgetting pass, review_proposals V4): the output
+      // grows `retentionProposals` on the list variant, a `retention` key in
+      // counts/totals, and two decision variants (`rejected_retention`,
+      // `applied_retention`). Input and description unchanged (no embeddings
+      // regen); CLI and REST unchanged. MEASURED on staging 28bb31f, not summed.
+      // MCP +10/+80/+20 (review_proposals description names all four kinds:
+      // "Two kinds" -> "Four kinds", plus "; resolution proposals; and retention
+      // proposals from the forgetting pass"). Embeddings regenerated for the
+      // changed text; CLI and REST unchanged. MEASURED on staging 9d3ff21 plus
+      // this change, not summed.
+      mcp: [35170, 283176, 70398],
       cli: [333, 1236, 1236],
-      rest: [4636, 5653, 5653],
+      rest: [4703, 5720, 5720],
     },
   )
 })

@@ -316,6 +316,13 @@
       "when": 1792953413378,
       "tag": "0044_resolution_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793091956734,
+      "tag": "0045_retention_proposals",
+      "breakpoints": true
     }
   ]
 }

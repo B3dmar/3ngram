@@ -280,7 +280,10 @@ export async function eraseAccountData(
   // resolution_proposals (issue #229) are deliberately NOT touched: the table
   // has no text columns (ids, a probability, status, timestamps), so there is
   // nothing to redact, and with no DELETE grant the rows stay as the skeleton
-  // the other proposal tables keep.
+  // the other proposal tables keep. retention_proposals (the forgetting pass)
+  // are left alone for the same reason: ids, an action, probabilities keyed by
+  // action names and item refs, the judge's model name, status and timestamps,
+  // and no user text.
 
   // Revoke credentials. Sessions are deletable (not append-only memory); api keys
   // and oauth tokens are revoked in place (revoked_at) — only the still-live ones.

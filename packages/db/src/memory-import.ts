@@ -242,6 +242,8 @@ export type ImportedFactWrite = FactWrite
 export async function insertImportedFact(input: ImportedFactWrite): Promise<{ id: string }> {
   return withTenant(input.userId, async (tx) => {
     await requireMemory(tx, input.userId, input.memoryId)
-    return insertFact(tx, input)
+    // Import replays exported validity windows verbatim, so it never chains
+    // single-valued keys (issue #369): the export already says which value ended when.
+    return insertFact(tx, input, { supersede: false })
   })
 }
