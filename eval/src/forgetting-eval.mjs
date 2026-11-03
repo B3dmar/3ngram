@@ -19,14 +19,28 @@
 // committed fixtures/forgetting-synthetic.json is a small invented mirror that
 // exercises every slice so CI can test the wiring.
 //
+// THRESHOLDS (forgetting-thresholds.mjs): --select-thresholds runs only on the
+// public calibration fixture and writes the thresholds its dev split selects;
+// --thresholds scores any golden file, the private one included, with those
+// frozen thresholds instead of the pass's built-in ones, and prints no sweep.
+//
 // Observability (hard rule 6): the report and the out file carry memory IDS,
-// counts and scores only. No topic or content string is ever printed or written.
+// counts, hashes and scores only. No topic or content string is ever printed or written.
 //
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
-//          [--live] [--out <path>]
+//          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  CALIBRATION_SHA256,
+  fileSha256,
+  labelsSha256,
+  loadFrozenThresholds,
+  proposedUnder,
+  SELECTION_RULE,
+  selectThresholds,
+} from './forgetting-thresholds.mjs'
 import { parseFlag } from './lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -184,10 +198,11 @@ export function calibrationError(scored, bins = ECE_BINS) {
 /**
  * Score one set of labels against the captured verdicts. A labelled memory with
  * no verdict was excluded upstream and counts as kept: nothing was proposed.
+ * `isProposedBy` defaults to the pass's own thresholds; frozen ones replace it.
  */
-export function scoreLabels(verdicts, labels, types) {
+export function scoreLabels(verdicts, labels, types, isProposedBy = isProposed) {
   const labelled = verdicts.filter((v) => Object.hasOwn(labels, v.memoryId))
-  const proposed = labelled.filter(isProposed)
+  const proposed = labelled.filter(isProposedBy)
   const byAction = (action) => proposed.filter((v) => v.action === action)
   const byType = {}
   for (const v of proposed.filter((v) => v.action !== 'conflict')) {
@@ -297,15 +312,52 @@ async function createGateway({ live, answersPath, env }) {
   return { gateway, mode: 'live' }
 }
 
+/** Refuse a selection off the calibration fixture, and a selection that is also frozen. */
+function assertThresholdMode(options, calibration) {
+  if (options.selectPath === undefined) return
+  if (options.thresholdsPath !== undefined) {
+    throw new Error('--select-thresholds and --thresholds cannot be combined')
+  }
+  if (!calibration) {
+    throw new Error('thresholds are selected only on eval/fixtures/forgetting-calibration.json')
+  }
+}
+
+/** Write the selected thresholds with their provenance; return them. */
+function writeSelection(path, metrics, mode) {
+  const selection = {
+    version: 1,
+    rule: SELECTION_RULE,
+    source: {
+      fixture: 'forgetting-calibration.json',
+      sha256: metrics.golden.sha256,
+      labelsSha256: metrics.golden.labelsSha256,
+      split: metrics.thresholds.split,
+    },
+    mode,
+    model: metrics.model,
+    thresholds: selectThresholds(metrics.thresholds),
+  }
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(selection, null, 2)}\n`)
+  return selection.thresholds
+}
+
 /**
  * Run the pass over a golden file and score the captured verdicts. Returns
  * `{ skipped }` when --live has no credentials, else the metrics object that
- * was written to `outPath`. Throws on a missing file or a bad schema.
+ * was written to `outPath`. Throws on a missing file or a bad schema, and on a
+ * threshold step that breaks the protocol (forgetting-thresholds.mjs).
  */
 export async function runForgettingEval(options = {}) {
   const goldenPath = options.goldenPath ?? DEFAULT_GOLDEN
   const outPath = options.outPath ?? DEFAULT_OUT
   const golden = loadGolden(goldenPath)
+  const goldenSha256 = fileSha256(goldenPath)
+  const calibration = goldenSha256 === CALIBRATION_SHA256
+  assertThresholdMode(options, calibration)
+  const frozen =
+    options.thresholdsPath === undefined ? null : loadFrozenThresholds(options.thresholdsPath)
   const judge = await createGateway({
     live: options.live === true,
     answersPath: options.answersPath ?? DEFAULT_ANSWERS,
@@ -316,6 +368,11 @@ export async function runForgettingEval(options = {}) {
   const { repo, staged } = createFixtureRepo(golden.candidates)
   const pass = await runForgettingPass(EVAL_USER, { gateway: judge.gateway, repo, now: golden.now })
   if (judge.answerRefs) assertAnswersMatchQuestions(judge.answerRefs, judge.gateway.calls.decide)
+  const model = staged[0]?.model ?? null
+  if (frozen && frozen.model !== model) {
+    throw new Error(`thresholds were selected with model ${frozen.model}; this run used ${model}`)
+  }
+  const proposedBy = frozen ? proposedUnder(frozen.thresholds) : isProposed
   const types = memoryTypes(golden.candidates)
   const bySlice = Object.fromEntries(
     SLICES.map((s) => [s, Object.values(golden.labels).filter((l) => l.slice === s).length]),
@@ -324,22 +381,35 @@ export async function runForgettingEval(options = {}) {
     version: 1,
     reportOnly: true,
     mode: judge.mode,
-    model: staged[0]?.model ?? null,
-    golden: { memories: types.size, labels: Object.keys(golden.labels).length, bySlice },
+    model,
+    golden: {
+      sha256: goldenSha256,
+      labelsSha256: labelsSha256(golden.labels),
+      calibration,
+      memories: types.size,
+      labels: Object.keys(golden.labels).length,
+      bySlice,
+    },
     pass,
     verdicts: {
       total: staged.length,
-      proposed: staged.filter(isProposed).length,
-      dismissed: staged.filter((v) => v.action !== 'keep' && v.dismissed === true).length,
+      proposed: staged.filter(proposedBy).length,
+      dismissed: staged.filter((v) => v.action !== 'keep' && !proposedBy(v)).length,
       keep: staged.filter((v) => v.action === 'keep').length,
     },
     splits: {
-      all: scoreLabels(staged, golden.labels, types),
+      all: scoreLabels(staged, golden.labels, types, proposedBy),
       ...Object.fromEntries(
-        SPLITS.map((s) => [s, scoreLabels(staged, pickSplit(golden.labels, s), types)]),
+        SPLITS.map((s) => [s, scoreLabels(staged, pickSplit(golden.labels, s), types, proposedBy)]),
       ),
     },
-    thresholds: thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
+    // Frozen scoring carries no sweep, so nothing in it can feed a new selection.
+    thresholds: frozen
+      ? { frozen: frozen.thresholds, model: frozen.model, source: frozen.source }
+      : thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
+  }
+  if (options.selectPath !== undefined) {
+    metrics.selected = writeSelection(options.selectPath, metrics, judge.mode)
   }
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, `${JSON.stringify(metrics, null, 2)}\n`)
@@ -354,7 +424,7 @@ const col = (s, w) => String(s).padEnd(w)
 export function formatReport(m) {
   const lines = [
     `forgetting eval (report-only, not gated): mode ${m.mode}, model ${m.model ?? 'n/a'}`,
-    `golden: ${m.golden.memories} memories, ${m.golden.labels} labels (${Object.entries(
+    `golden ${m.golden.sha256.slice(0, 12)}: ${m.golden.memories} memories, ${m.golden.labels} labels (${Object.entries(
       m.golden.bySlice,
     )
       .map(([s, n]) => `${s} ${n}`)
@@ -378,9 +448,19 @@ export function formatReport(m) {
     const parts = Object.entries(actions).map(([a, p]) => `${a} ${cell(p)}`)
     lines.push(`  ${col(type, 12)}${parts.join('  ')}`)
   }
+  const actions = (t) =>
+    ['archive', 'supersede', 'conflict'].map((a) => `${a} ${t[a] ?? 'none'}`).join(', ')
+  if (m.thresholds.frozen) {
+    lines.push(
+      '',
+      `frozen thresholds (calibration ${m.thresholds.source.sha256.slice(0, 12)}, model ${m.thresholds.model}): ${actions(m.thresholds.frozen)}`,
+    )
+    return lines.join('\n')
+  }
+  const use = m.golden.calibration ? 'selection input' : 'diagnostic only, never a selection'
   lines.push(
     '',
-    `threshold sweep on the ${m.thresholds.split} split (precision, correct/proposals):`,
+    `threshold sweep on the ${m.thresholds.split} split (${use}; precision, correct/proposals):`,
   )
   lines.push(`  ${col('t', 6)}${col('archive', 16)}${col('supersede', 16)}conflict`)
   for (const [i, row] of m.thresholds.archive.entries()) {
@@ -389,6 +469,7 @@ export function formatReport(m) {
       `  ${col(row.threshold.toFixed(2), 6)}${col(at('archive'), 16)}${col(at('supersede'), 16)}${at('conflict')}`,
     )
   }
+  if (m.selected) lines.push('', `selected by the pre-registered rule: ${actions(m.selected)}`)
   return lines.join('\n')
 }
 
@@ -399,6 +480,8 @@ async function main(args) {
     answersPath: flag('answers', DEFAULT_ANSWERS),
     outPath: flag('out', DEFAULT_OUT),
     live: args.includes('--live'),
+    selectPath: flag('select-thresholds', undefined),
+    thresholdsPath: flag('thresholds', undefined),
   })
   if (result.skipped) {
     process.stdout.write(`forgetting eval --live skipped: ${result.skipped} (exit 0)\n`)
