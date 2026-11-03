@@ -8,7 +8,7 @@ import { parseEnvelope } from './lib/contract.ts'
 import { classifyEmptyOutput, classifySpawnError } from './lib/process.ts'
 import type { FailureKind, PanelEvent, PanelState } from './lib/state.ts'
 import { initialState, needsVerification, reduce, unconfirmed, visibleDetail } from './lib/state.ts'
-import { detailView, panelView, statusLine } from './lib/view.ts'
+import { detailView, listNotice, panelView, statusLine } from './lib/view.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
 // commitments`. Everything it shows comes from that binary's JSON envelopes;
@@ -22,7 +22,6 @@ const PROCESS_CEILING_MS = 12_000
 const PROBE_CEILING_MS = 3_000
 const MIN_REFRESH_MS = 60_000
 const MAX_STDOUT = 8 * 1024 * 1024
-const MAX_LABEL = 90
 
 const panel = atom({ plugin: '3ngram', key: 'panel' } as const, initialState)
 
@@ -526,11 +525,6 @@ async function settleHeld($: EngineInterface, options: PluginOptions): Promise<b
   return verifyIfNeeded($, options)
 }
 
-function clip(text: string, max: number): string {
-  const chars = [...text]
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : text
-}
-
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     // First, before any await: nothing the host kept draws until the current
@@ -629,6 +623,7 @@ export const register: Register = (on, options) => {
     const shownDetail = visibleDetail(s)
     if (shownDetail) {
       const d = detailView(shownDetail)
+      const notice = listNotice(s)
       const lines = (prefix: string, items: string[], dim: boolean) =>
         items.map((line, i) => (
           <Text key={`${prefix}-${i}`} dimColor={dim}>
@@ -640,6 +635,7 @@ export const register: Register = (on, options) => {
           <Box>
             <Button key="back" label="Back" hotkey="b" onPress={() => fire($, closeDetail($))} />
           </Box>
+          {notice !== null ? <Text bold>{notice}</Text> : null}
           <Text bold>{d.title}</Text>
           <Text bold={d.status.tone === 'error'} dimColor={d.status.tone === 'busy'}>
             {d.status.label}
@@ -698,10 +694,14 @@ export const register: Register = (on, options) => {
               <Box key={`row-${row.memoryId}`} flexDirection="column">
                 <Button
                   key={`open-${row.memoryId}`}
-                  label={clip(row.title, MAX_LABEL)}
                   plain
                   onPress={() => fire($, openDetail($, options, row.memoryId))}
-                />
+                >
+                  {/* One row per title, cut at the pane's edge by the surface,
+                      which measures wide characters; the detail shows it whole.
+                      The labels below wrap: they carry the row's state. */}
+                  <Text wrap="truncate-end">{row.title}</Text>
+                </Button>
                 <Text dimColor>{row.labels.join(' · ')}</Text>
               </Box>
             ))}

@@ -24,9 +24,9 @@ Run `/commitments` to open the panel. Change the options with `/plugin configure
 |---|---|---|
 | `scope` | empty | Read within this 3ngram scope. Empty reads the project in any scope |
 | `include_unscoped` | off | Also show the scope's commitments written without a project. Needs a scope |
-| `refresh_minutes` | 5 | Background refresh interval, at least 1 |
+| `refresh_minutes` | 5 | Background refresh interval, 1 to 60 |
 | `github_evidence` | on | Look up the GitHub issues and pull requests commitments mention, read-only |
-| `auto_open` | off | Open the panel at session start, on a terminal wide enough to dock it |
+| `auto_open` | off | Open the panel at session start. Claude Code draws a pane opened unasked only from 144 terminal columns (110 once you have opened it yourself), and holds it until then |
 
 ## The bundled hooks
 
@@ -41,7 +41,7 @@ The plugin also registers the four 3ngram session hooks (SessionStart briefing, 
 - **No background reads where nothing draws.** A `claude -p` run or an Agent SDK session reads nothing in the background, so it makes no REST reads and runs no `gh`. The background reads start if a client attaches to that session later, and stop again when the last one detaches; a startup read whose timer has already fired can still run once after that ([#269](https://github.com/B3dmar/3ngram/issues/269)).
 - **Unscoped means verified.** A row is labelled unscoped only after its memory is read back with no project; otherwise it is "filing unknown".
 - **Owners and sources.** Native writes never record an owner, and the read API does not expose the session a memory was written in, so the panel says "owner unclear (not recorded)" and "source session: not exposed" instead of guessing.
-- **Stale rows are marked, an open detail is not yet.** When a refresh fails under the same context, the list keeps its rows marked stale with the reason. While a detail is open it keeps showing its last answer, and the stale mark and reason appear only after Back ([#269](https://github.com/B3dmar/3ngram/issues/269)).
+- **Stale rows are marked, and say how old they are.** When a refresh fails under the same context, the list keeps its rows marked stale with the reason, the time it first failed and the time the rows were read. An open detail shows the same line. While a refresh runs, the rows it keeps showing say when they were read. Times are UTC, and a deadline shows its time of day unless it is midnight UTC.
 - **Evidence is for review.** A newer memory that updates or supersedes a commitment, a pending proposal touching it, or a merged pull request it mentions is shown as related evidence. "No evidence found in the inspected window" says how far the search looked, and when no source could be read at all the panel says that nothing was searched.
 - **Partial results are labelled.** A truncated list, an unavailable account, an unfinished check or a GitHub lookup that stopped is named in a note under the list.
 

@@ -39,7 +39,8 @@ const FAILURE_TEXT: Record<string, string> = {
   rate_limited: 'The 3ngram API is rate limiting this key.',
   route_missing: 'This 3ngram server is too old for the panel.',
   selector_mismatch: 'The server answered for a wider selection than asked; nothing is shown.',
-  invalid_selector: 'The selection is not valid. Including unscoped records needs a scope.',
+  invalid_selector:
+    'The selection is not valid: including unscoped records needs a scope. Set a scope, or turn off include_unscoped, with /plugin configure 3ngram.',
   bad_response: 'The server sent a response the panel cannot read.',
   bad_request: 'The server refused the request.',
   context_changed: 'The account or selection changed; refreshing.',
@@ -53,6 +54,16 @@ const FAILURE_TEXT: Record<string, string> = {
 
 export function failureText(kind: string): string {
   return FAILURE_TEXT[kind] ?? `The read failed (${kind}).`
+}
+
+// Why the binary stopped looking up GitHub references (githubParts in
+// cmd/3ngram-hook); a reason not named here is shown as it came.
+const GITHUB_REASON: Record<string, string> = {
+  lookup_cap: 'the per-read lookup limit',
+  gh_missing: 'gh is not on PATH',
+  gh_unauthenticated: 'gh is not signed in: run `gh auth login`',
+  rate_limited: 'GitHub is rate limiting gh',
+  timeout: 'the lookups timed out',
 }
 
 function time(ms: number): string {
@@ -163,7 +174,7 @@ export function partialNote(p: PartialPart): string {
       }
       return `Unscoped check: verified ${n(p.returned)} of ${n(p.total)} rows (${p.reason}); the rest are labelled "filing unknown".`
     case 'github':
-      return `GitHub: checked ${n(p.returned)} of ${n(p.total)} references (${p.reason}).`
+      return `GitHub: checked ${n(p.returned)} of ${n(p.total)} references (${GITHUB_REASON[p.reason] ?? p.reason}).`
     default:
       return `${p.part}: incomplete (${p.reason}).`
   }
@@ -200,6 +211,12 @@ export function panelView(s: PanelState): PanelView {
   return view
 }
 
+// rowsFrom says how old the rows still on show are, while a refresh runs or
+// after one failed.
+function rowsFrom(s: PanelState): string {
+  return s.record ? ` Rows from ${time(s.record.fetchedAt)}.` : ''
+}
+
 function statusOf(s: PanelState): { label: string; tone: Tone } {
   switch (s.status) {
     case 'idle':
@@ -207,7 +224,7 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
     case 'loading':
       return { label: 'Loading…', tone: 'busy' }
     case 'refreshing':
-      return { label: 'Refreshing…', tone: 'busy' }
+      return { label: `Refreshing…${rowsFrom(s)}`, tone: 'busy' }
     case 'checking':
     case 'verifying':
       return { label: 'Checking the account and selection…', tone: 'busy' }
@@ -215,7 +232,7 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
       return { label: `Updated ${s.record ? time(s.record.fetchedAt) : ''}`.trim(), tone: 'normal' }
     case 'stale':
       return {
-        label: `STALE since ${s.stale ? time(s.stale.since) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}`,
+        label: `STALE since ${s.stale ? time(s.stale.since) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s)}`,
         tone: 'stale',
       }
     case 'error': {
@@ -226,6 +243,12 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
       return { label: `ERROR: ${failureText(kind)}${unverified}`, tone: 'error' }
     }
   }
+}
+
+// listNotice is what an open detail says about the list behind it: that the
+// list went stale, which would otherwise show only after Back.
+export function listNotice(s: PanelState): string | null {
+  return s.status === 'stale' ? statusOf(s).label : null
 }
 
 // statusLine is the status-bar entry: counts only, never a topic.

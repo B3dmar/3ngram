@@ -6,8 +6,10 @@ import type { PanelState } from '../hooks/lib/state.ts'
 import { initialState, reduce } from '../hooks/lib/state.ts'
 import {
   detailView,
+  failureText,
   githubLabel,
   headerLines,
+  listNotice,
   MAX_CONTENT,
   panelView,
   partialNote,
@@ -100,12 +102,27 @@ test('partial notes say how much was read', () => {
   )
   assert.equal(
     partialNote({ part: 'github', reason: 'timeout', returned: 0, total: 3 }),
-    'GitHub: checked 0 of 3 references (timeout).',
+    'GitHub: checked 0 of 3 references (the lookups timed out).',
   )
   assert.equal(
     partialNote({ part: 'filing', reason: 'strict_read_selector_mismatch' }),
     'Unscoped check: the strict read failed (selector_mismatch), so rows were checked one by one, up to the lookup limit.',
   )
+})
+
+test('a GitHub lookup that stopped says why in words, and what to do', () => {
+  const note = (reason: string) => partialNote({ part: 'github', reason, returned: 0, total: 3 })
+  assert.equal(note('gh_missing'), 'GitHub: checked 0 of 3 references (gh is not on PATH).')
+  assert.equal(
+    note('gh_unauthenticated'),
+    'GitHub: checked 0 of 3 references (gh is not signed in: run `gh auth login`).',
+  )
+  assert.equal(note('lookup_cap'), 'GitHub: checked 0 of 3 references (the per-read lookup limit).')
+  assert.equal(note('something_new'), 'GitHub: checked 0 of 3 references (something_new).')
+})
+
+test('an invalid selection names the option to change', () => {
+  assert.match(failureText('invalid_selector'), /needs a scope.*\/plugin configure 3ngram/)
 })
 
 test('stale and error states say so in words, not only by tone', () => {
@@ -124,9 +141,22 @@ test('stale and error states say so in words, not only by tone', () => {
     fingerprint: FP_A,
     at: Date.UTC(2026, 9, 7, 13, 5),
   })
-  assert.equal(panelView(verified).status.label, 'STALE since 13:05 UTC: The read timed out.')
+  assert.equal(
+    panelView(verified).status.label,
+    'STALE since 13:05 UTC: The read timed out. Rows from 12:30 UTC.',
+  )
   assert.equal(panelView(verified).status.tone, 'stale')
   assert.equal(statusLine(verified), '3ngram: 4 open · 1 overdue (stale)')
+  // An open detail says so too, rather than only once Back is pressed.
+  assert.equal(listNotice(verified), panelView(verified).status.label)
+  assert.equal(listNotice(ready), null)
+  const refreshing = reduce(ready, {
+    type: 'refresh_started',
+    gen: 2,
+    selectionKey: 'k',
+    fingerprint: FP_A,
+  })
+  assert.equal(panelView(refreshing).status.label, 'Refreshing… Rows from 12:30 UTC.')
 
   const cleared = reduce(stale, { type: 'context_verified', gen: 2, fingerprint: 'other', at: 0 })
   const view = panelView(cleared)

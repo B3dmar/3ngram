@@ -335,6 +335,20 @@ describe('the read-only data path', () => {
 })
 
 describe('rows keep their address', () => {
+  test('a long title is drawn whole, cut at the pane edge rather than wrapped', async ($, on) => {
+    const long = 'Ship '.repeat(51).trim()
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A, long) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await mountPane($, surface)
+      const title = (await ui.findAll({ type: 'Text' })).find((el) => el.text === long)
+      expect(title?.props.wrap).toBe('truncate-end')
+      expect((await ui.find({ key: OPEN_ROW }))?.text).toBe(long)
+    }
+  })
+
   // A surface finds a Button again by its key after a redraw, so a key that
   // names a position moves the focus to whichever row lands there next.
   test('a commitment keeps its row key when a refresh reorders the rows', async ($, on) => {
@@ -1178,5 +1192,51 @@ describe('cancellation and lifecycle', () => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }), { cwdThrows: true })
     await start($, w.clock)
     expect(await textOf(await mountPane($))).toContain('ERROR')
+  })
+})
+
+describe('the age of what is shown stays visible', () => {
+  // #269: a refresh that fails under the same context keeps an open detail,
+  // and its stale mark showed only after Back.
+  test('an open detail says the list went stale, and how old its rows are', async ($, on) => {
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+      return ++reads === 1
+        ? { stdout: listEnvelope(FP_A) }
+        : { stdout: errorEnvelope('unavailable', FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await ui.press({ key: OPEN_ROW })
+    await w.clock.advance(1)
+    await w.clock.advance(5 * 60_000)
+    const text = await textOf(ui)
+    expect(text).toContain('Full commitment text')
+    expect(text).toContain('STALE since 12:05 UTC')
+    expect(text).toContain('Rows from 12:00 UTC')
+  })
+
+  test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
+    let reads = 0
+    let release: () => void = () => undefined
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (++reads === 1) return { stdout: listEnvelope(FP_A) }
+      const wait = new Promise<void>((r) => {
+        release = r
+      })
+      return { wait, stdout: listEnvelope(FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await w.clock.advance(5 * 60_000)
+    const text = await textOf(ui)
+    expect(text).toContain(TOPIC)
+    expect(text).toContain('Refreshing… Rows from 12:00 UTC')
+    release()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Updated 12:05 UTC')
   })
 })
