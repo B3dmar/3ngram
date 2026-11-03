@@ -58,6 +58,16 @@ const OPERATIONS = new Set(['context', 'list', 'show'])
 const VALUE_FLAGS = new Set(['--cwd', '--scope', '--expect-fingerprint'])
 const BARE_FLAGS = new Set(['--json', '--include-unscoped', '--github'])
 
+// refusalKind says, for the message alone, what made isAllowedArgv refuse an
+// argv. The scope is the one value a person types in: a refusal it caused
+// says so. Anything else is the panel's own (its directory, or an id or a
+// fingerprint an envelope carried), never an option to change.
+export function refusalKind(argv: readonly string[]): 'refused_scope' | 'refused' {
+  const at = argv.indexOf('--scope')
+  const scope = at === -1 ? undefined : argv[at + 1]
+  return scope?.startsWith('-') ? 'refused_scope' : 'refused'
+}
+
 // isAllowedArgv accepts exactly the shapes the builders produce: the hook
 // binary, `commitments`, one read operation (show with its id), and only the
 // read flags. A value can never smuggle a flag in, since every value position

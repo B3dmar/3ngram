@@ -474,6 +474,99 @@ describe('detail', () => {
     assert.equal(s.detail?.status, 'error')
     assert.equal(s.detail?.envelope, null)
   })
+
+  // #269: a row listed with filing `unknown` is opened, the memory moves to
+  // unscoped in place, and a refresh lands while the detail still loads.
+  test('a detail answering for a filing the refreshed row contradicts is not shown', () => {
+    const row = listA.commitments?.[3]
+    assert.ok(row && row.filing === 'unknown' && show.commitment)
+    const moved: Envelope = {
+      ...listA,
+      commitments: (listA.commitments ?? []).map((r) =>
+        r.memoryId === row.memoryId ? { ...r, filing: 'unscoped' } : r,
+      ),
+    }
+    const commitment = { ...show.commitment, memoryId: row.memoryId }
+    const answer: Envelope = { ...show, commitment: { ...commitment, filing: 'project' } }
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId: row.memoryId },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 2, envelope: moved, at: 2000 },
+        { type: 'detail_envelope', seq: 1, envelope: answer },
+      ],
+      showingA,
+    )
+    assert.equal(s.detail?.status, 'error')
+    assert.equal(s.detail?.error?.kind, 'row_changed')
+    assert.equal(s.detail?.envelope, null)
+    // Opened again under the refreshed list, the same answer is the newer read.
+    const reopened = run(
+      [
+        { type: 'detail_requested', memoryId: row.memoryId },
+        {
+          type: 'detail_envelope',
+          seq: 2,
+          envelope: { ...show, commitment: { ...commitment, filing: 'unscoped' } },
+        },
+      ],
+      s,
+    )
+    assert.equal(reopened.detail?.status, 'ready')
+  })
+
+  // With no refresh between the open and the answer, the answer is the newer
+  // read of the commitment: it is shown, whatever the held row says.
+  test('a detail newer than its row is shown when no refresh landed meanwhile', () => {
+    assert.ok(show.commitment)
+    for (const change of [{ commitmentStatus: 'waiting' }, { filing: 'unscoped' as const }]) {
+      const answer: Envelope = { ...show, commitment: { ...show.commitment, ...change } }
+      const s = run(
+        [
+          { type: 'detail_requested', memoryId },
+          { type: 'detail_envelope', seq: 1, envelope: answer },
+        ],
+        showingA,
+      )
+      assert.equal(s.detail?.status, 'ready', JSON.stringify(change))
+    }
+  })
+})
+
+describe('a list that stays stale', () => {
+  const failed = (gen: number, at: number): PanelEvent[] => [
+    { type: 'refresh_started', gen, selectionKey: KEY_A, fingerprint: FP_A },
+    { type: 'list_failed', gen, failure: 'timeout', at },
+    { type: 'context_verified', gen, fingerprint: FP_A, at },
+  ]
+
+  test('keeps the time it went stale across later failed refreshes', () => {
+    const s = run([...failed(2, 2000), ...failed(3, 3000)], showingA)
+    assert.equal(s.status, 'stale')
+    assert.equal(s.stale?.since, 2000)
+    const again = run(
+      [
+        { type: 'refresh_started', gen: 4, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 4, envelope: errorEnvelope('unavailable', FP_A), at: 4000 },
+      ],
+      s,
+    )
+    assert.equal(again.stale?.since, 2000)
+    assert.equal(again.stale?.reason, 'unavailable')
+  })
+
+  test('starts over once a refresh succeeds', () => {
+    const s = run(
+      [
+        ...failed(2, 2000),
+        { type: 'refresh_started', gen: 3, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 3, envelope: listA, at: 3000 },
+        ...failed(4, 4000),
+      ],
+      showingA,
+    )
+    assert.equal(s.stale?.since, 4000)
+  })
 })
 
 describe('the probe before each refresh', () => {

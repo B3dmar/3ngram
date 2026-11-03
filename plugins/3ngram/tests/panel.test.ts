@@ -17,6 +17,8 @@ const PANE = '3ngram-commitments'
 const FP_A = 'aaaaaaaaaaaaaaaa'
 const FP_B = 'bbbbbbbbbbbbbbbb'
 const TOPIC = 'Ship the commitment panel'
+// The row Button of the one commitment listEnvelope lists.
+const OPEN_ROW = 'open-00000000-0000-4000-8000-a00000000001'
 
 function context(fingerprint: string) {
   return {
@@ -51,6 +53,19 @@ function listEnvelope(fingerprint: string, topic = TOPIC): string {
     ],
     missing: ['owner', 'sourceSession'],
   })
+}
+
+// rowsEnvelope lists open commitments by [memory id suffix, topic], in order.
+function rowsEnvelope(fingerprint: string, rows: [string, string][]): string {
+  const list = JSON.parse(listEnvelope(fingerprint))
+  const [template] = list.commitments
+  list.commitments = rows.map(([id, topic]) => ({
+    ...template,
+    memoryId: `00000000-0000-4000-8000-a0000000000${id}`,
+    topic,
+  }))
+  list.counts = { ...list.counts, openOrWaiting: rows.length, returned: rows.length }
+  return JSON.stringify(list)
 }
 
 function contextEnvelope(fingerprint: string): string {
@@ -302,6 +317,60 @@ describe('the read-only data path', () => {
     await start($, w.clock)
     expect(await textOf(await mountPane($))).toContain('has no commitments command')
   })
+
+  // No scope starts with "-" (packages/schema), and the allowlist refuses
+  // one before anything runs: the binary is not the one to blame.
+  test(
+    'options the allowlist refuses run nothing and say so',
+    { options: { scope: '-work' } },
+    async ($, on) => {
+      const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
+      await start($, w.clock)
+      const text = await textOf(await mountPane($))
+      expect(w.spawned).toEqual([])
+      expect(text).not.toContain('3ngram-hook answered')
+      expect(text).toContain('scope option')
+    },
+  )
+})
+
+describe('rows keep their address', () => {
+  // A surface finds a Button again by its key after a redraw, so a key that
+  // names a position moves the focus to whichever row lands there next.
+  test('a commitment keeps its row key when a refresh reorders the rows', async ($, on) => {
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+      return ++reads === 1
+        ? {
+            stdout: rowsEnvelope(FP_A, [
+              ['1', 'First'],
+              ['2', 'Second'],
+            ]),
+          }
+        : {
+            stdout: rowsEnvelope(FP_A, [
+              ['2', 'Second'],
+              ['1', 'First'],
+            ]),
+          }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    const keyOf = async (topic: string) =>
+      (await ui.findAll({ type: 'Button' })).find((el) => el.text === topic)?.key
+    const before = await keyOf('First')
+    expect(before).toBeDefined()
+    await w.clock.advance(5 * 60_000)
+    expect(reads).toBe(2)
+    expect(await keyOf('First')).toBe(before)
+    await ui.press({ key: String(before) })
+    await w.clock.advance(1)
+    expect(w.spawned.find((argv) => argv[2] === 'show')?.[3]).toBe(
+      '00000000-0000-4000-8000-a00000000001',
+    )
+  })
 })
 
 describe('switching accounts cannot show the previous context', () => {
@@ -417,7 +486,7 @@ describe('switching accounts cannot show the previous context', () => {
     )
     await start($, w.clock)
     const ui = await mountPane($)
-    await ui.press({ key: 'open-0-0' })
+    await ui.press({ key: OPEN_ROW })
     await w.clock.advance(1)
     expect(await textOf(ui)).toContain('Full commitment text')
     // The reload, under another selection: the host keeps the ready rows and
@@ -531,7 +600,7 @@ describe('switching accounts cannot show the previous context', () => {
     )
     await start($, w.clock)
     const ui = await mountPane($)
-    await ui.press({ key: 'open-0-0' })
+    await ui.press({ key: OPEN_ROW })
     await w.clock.advance(1)
     expect(await textOf(ui)).toContain('Full commitment text')
     current = FP_B
@@ -706,7 +775,7 @@ describe('switching accounts cannot show the previous context', () => {
     })
     await start($, w.clock)
     const ui = await mountPane($)
-    fire(ui.press({ key: 'open-0-0' }))
+    fire(ui.press({ key: OPEN_ROW }))
     await w.clock.advance(1)
     current = FP_B
     release()
@@ -893,9 +962,9 @@ describe('cancellation and lifecycle', () => {
     })
     await start($, w.clock)
     const ui = await mountPane($)
-    await ui.press({ key: 'open-0-0' })
+    await ui.press({ key: OPEN_ROW })
     expect(await textOf(ui)).toContain('Full commitment text')
-    fire(ui.press({ key: 'back' }).then(() => ui.press({ key: 'open-0-0' })))
+    fire(ui.press({ key: 'back' }).then(() => ui.press({ key: OPEN_ROW })))
     await w.clock.advance(5 * 60_000)
     release()
     await w.clock.advance(1)
@@ -982,7 +1051,7 @@ describe('cancellation and lifecycle', () => {
     })
     await start($, w.clock)
     const ui = await mountPane($)
-    fire(ui.press({ key: 'open-0-0' }))
+    fire(ui.press({ key: OPEN_ROW }))
     await w.clock.advance(1)
     expect(w.spawned.some((argv) => argv[2] === 'show')).toBe(true)
     // The key changed: the refresh's context check answers another
@@ -1084,7 +1153,7 @@ describe('cancellation and lifecycle', () => {
     })
     await start($, w.clock)
     const ui = await mountPane($)
-    fire(ui.press({ key: 'open-0-0' }))
+    fire(ui.press({ key: OPEN_ROW }))
     await w.clock.advance(1)
     // A reload runs session.start again with the state the host kept.
     await start($, w.clock)

@@ -32,6 +32,10 @@ export type FailureKind =
   | 'cancelled'
   | 'context_changed'
   | 'context_moved'
+  // The allowlist refused the argv before any spawn: for its scope option, or
+  // for a value of the panel's own.
+  | 'refused_scope'
+  | 'refused'
 
 export type PanelStatus =
   | 'idle'
@@ -49,6 +53,9 @@ export type DetailState = {
   seq: number
   memoryId: string
   fingerprint: string
+  // The fetchedAt of the list read it was opened from: a list read since then
+  // is the only one its answer can be older than.
+  listAt: number
   status: 'loading' | 'ready' | 'error'
   envelope: Envelope | null
   error: PanelError | null
@@ -111,6 +118,12 @@ function cleared(s: PanelState, status: PanelStatus, error: PanelError | null): 
   return { ...s, status, error, record: null, detail: null, stale: null, pending: null }
 }
 
+// staleFrom keeps the time the rows first went stale: a later failed refresh
+// changes the reason, never how long they have been stale.
+function staleFrom(s: PanelState, at: number, reason: string): PanelState['stale'] {
+  return { since: s.stale?.since ?? at, reason }
+}
+
 export function reduce(s: PanelState, e: PanelEvent): PanelState {
   switch (e.type) {
     case 'check_started':
@@ -141,7 +154,7 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
         e.fingerprint !== null &&
         e.fingerprint === s.record.envelope.context.fingerprint
       ) {
-        return { ...s, status: 'stale', stale: { since: e.at, reason }, pending: null }
+        return { ...s, status: 'stale', stale: staleFrom(s, e.at, reason), pending: null }
       }
       return cleared(s, 'error', { kind: reason, contextUnverified: true })
     }
@@ -228,7 +241,7 @@ function onListEnvelope(s: PanelState, envelope: Envelope, at: number): PanelSta
   const sameContext =
     s.record !== null && s.record.envelope.context.fingerprint === envelope.context.fingerprint
   if (sameContext && TRANSIENT.has(kind)) {
-    return { ...s, status: 'stale', stale: { since: at, reason: kind }, pending: null }
+    return { ...s, status: 'stale', stale: staleFrom(s, at, kind), pending: null }
   }
   const error: PanelError = envelope.error?.hint ? { kind, hint: envelope.error.hint } : { kind }
   return cleared(s, 'error', error)
@@ -278,6 +291,7 @@ function onDetailRequested(s: PanelState, memoryId: string): PanelState {
       seq,
       memoryId,
       fingerprint: s.record.envelope.context.fingerprint,
+      listAt: s.record.fetchedAt,
       status: 'loading',
       envelope: null,
       error: null,
@@ -306,7 +320,25 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
     const error: PanelError = { kind: envelope.error?.kind ?? 'unknown' }
     return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
   }
+  // Only a list read that landed after the open can be newer than the answer:
+  // with none, the answer is the newer read and is shown as it is.
+  if (s.record.fetchedAt !== detail.listAt && contradictsRow(s, detail.memoryId, envelope)) {
+    const error: PanelError = { kind: 'row_changed' }
+    return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
+  }
   return { ...s, detail: { ...detail, status: 'ready', envelope, error: null } }
+}
+
+// contradictsRow reports whether a detail answer disagrees with the row a
+// refresh listed while the detail loaded. That refresh can know more than the
+// row the detail was opened from (a filing `unknown` then, known now), so
+// sameRow could not catch the change; the answer is checked on arrival.
+function contradictsRow(s: PanelState, memoryId: string, envelope: Envelope): boolean {
+  const row = s.record?.envelope.commitments?.find((r) => r.memoryId === memoryId)
+  const c = envelope.commitment
+  if (!row || !c) return false
+  if (c.commitmentStatus !== undefined && c.commitmentStatus !== row.status) return true
+  return row.filing !== 'unknown' && c.filing !== 'unknown' && c.filing !== row.filing
 }
 
 // visibleRows is the ONLY way the view reads rows: none while a load, a
