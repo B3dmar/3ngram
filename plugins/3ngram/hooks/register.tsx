@@ -624,10 +624,12 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
+    // Decides only whether a time shown needs its date: every refresh redraws.
+    // Read first: the gate below must follow the render's last await, or a
+    // session.start landing in it would draw what it closed the gate on.
+    const now = await $.clock.now()
     const held = await readPanel($)
     const s = selectionConfirmed ? held : unconfirmed(held)
-    // Decides only whether a time shown needs its date: every refresh redraws.
-    const now = await $.clock.now()
 
     const shownDetail = visibleDetail(s)
     if (shownDetail) {
