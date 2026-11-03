@@ -626,11 +626,13 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const held = await readPanel($)
     const s = selectionConfirmed ? held : unconfirmed(held)
+    // Decides only whether a time shown needs its date: every refresh redraws.
+    const now = await $.clock.now()
 
     const shownDetail = visibleDetail(s)
     if (shownDetail) {
       const d = detailView(shownDetail)
-      const notice = listNotice(s)
+      const notice = listNotice(s, now)
       const lines = (prefix: string, items: string[], dim: boolean) =>
         items.map((line, i) => (
           <Text key={`${prefix}-${i}`} dimColor={dim}>
@@ -660,7 +662,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const view = panelView(s)
+    const view = panelView(s, now)
     return (
       <Box flexDirection="column">
         {view.header.map((line, i) => (

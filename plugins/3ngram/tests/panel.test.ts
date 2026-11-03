@@ -1218,6 +1218,29 @@ describe('the age of what is shown stays visible', () => {
     expect(text).toContain('Rows from 12:00 UTC')
   })
 
+  test(
+    'stale rows from an earlier day carry their date',
+    { options: { refresh_minutes: 60 } },
+    async ($, on) => {
+      let reads = 0
+      const w = world(on, (argv) => {
+        if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+        return ++reads === 1
+          ? { stdout: listEnvelope(FP_A) }
+          : { stdout: errorEnvelope('unavailable', FP_A) }
+      })
+      await start($, w.clock)
+      const ui = await mountPane($)
+      await w.clock.advance(60 * 60_000)
+      expect(await textOf(ui)).toContain('STALE since 13:00 UTC')
+      // Past midnight UTC, the next failed refresh redraws on the new day.
+      await w.clock.advance(12 * 60 * 60_000)
+      const text = await textOf(ui)
+      expect(text).toContain('STALE since 2026-10-07 13:00 UTC')
+      expect(text).toContain('Rows from 2026-10-07 12:00 UTC')
+    },
+  )
+
   test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
     let reads = 0
     let release: () => void = () => undefined

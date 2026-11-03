@@ -68,8 +68,13 @@ const GITHUB_REASON: Record<string, string> = {
   timeout: 'the lookups timed out',
 }
 
-function time(ms: number): string {
-  return `${new Date(ms).toISOString().slice(11, 16)} UTC`
+// time is an instant as the panel shows it, in UTC: its date too unless it is
+// on the UTC day the view is drawn (now), so rows read yesterday never pass
+// for today's.
+function time(ms: number, now: number): string {
+  const iso = new Date(ms).toISOString()
+  const date = day(iso) === day(new Date(now).toISOString()) ? '' : `${day(iso)} `
+  return `${date}${iso.slice(11, 16)} UTC`
 }
 
 function day(iso: string): string {
@@ -202,12 +207,14 @@ function listNotes(envelope: Envelope): string[] {
   return notes
 }
 
-export function panelView(s: PanelState): PanelView {
+// now is when the view is drawn ($.clock.now()), which decides whether a
+// time it shows needs its date.
+export function panelView(s: PanelState, now: number): PanelView {
   const rows = visibleRows(s)
   const envelope = rows ? s.record?.envelope : undefined
   const view: PanelView = {
     header: envelope ? headerLines(envelope) : ['3ngram commitments'],
-    status: statusOf(s),
+    status: statusOf(s, now),
     sections: rows ? sections(rows) : [],
     notes: envelope ? listNotes(envelope) : [],
     empty: null,
@@ -219,26 +226,28 @@ export function panelView(s: PanelState): PanelView {
 
 // rowsFrom says how old the rows still on show are, while a refresh runs or
 // after one failed.
-function rowsFrom(s: PanelState): string {
-  return s.record ? ` Rows from ${time(s.record.fetchedAt)}.` : ''
+function rowsFrom(s: PanelState, now: number): string {
+  return s.record ? ` Rows from ${time(s.record.fetchedAt, now)}.` : ''
 }
 
-function statusOf(s: PanelState): { label: string; tone: Tone } {
+function statusOf(s: PanelState, now: number): { label: string; tone: Tone } {
   switch (s.status) {
     case 'idle':
       return { label: 'Not loaded yet.', tone: 'normal' }
     case 'loading':
       return { label: 'Loading…', tone: 'busy' }
     case 'refreshing':
-      return { label: `Refreshing…${rowsFrom(s)}`, tone: 'busy' }
+      return { label: `Refreshing…${rowsFrom(s, now)}`, tone: 'busy' }
     case 'checking':
     case 'verifying':
       return { label: 'Checking the account and selection…', tone: 'busy' }
-    case 'ready':
-      return { label: `Updated ${s.record ? time(s.record.fetchedAt) : ''}`.trim(), tone: 'normal' }
+    case 'ready': {
+      const at = s.record ? time(s.record.fetchedAt, now) : ''
+      return { label: `Updated ${at}`.trim(), tone: 'normal' }
+    }
     case 'stale':
       return {
-        label: `STALE since ${s.stale ? time(s.stale.since) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s)}`,
+        label: `STALE since ${s.stale ? time(s.stale.since, now) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s, now)}`,
         tone: 'stale',
       }
     case 'error': {
@@ -253,8 +262,8 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
 
 // listNotice is what an open detail says about the list behind it: that the
 // list went stale, which would otherwise show only after Back.
-export function listNotice(s: PanelState): string | null {
-  return s.status === 'stale' ? statusOf(s).label : null
+export function listNotice(s: PanelState, now: number): string | null {
+  return s.status === 'stale' ? statusOf(s, now).label : null
 }
 
 // statusLine is the status-bar entry: counts only, never a topic.

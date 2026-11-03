@@ -23,6 +23,8 @@ const ready: PanelState = [
   { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A } as const,
   { type: 'list_envelope', gen: 1, envelope: list, at: Date.UTC(2026, 9, 7, 12, 30) } as const,
 ].reduce(reduce, initialState)
+// The time the view is drawn at: the day of every time in the fixtures.
+const NOW = Date.UTC(2026, 9, 7, 14)
 
 test('the header names backend, account, project and its source, scope and unscoped opt-in', () => {
   const [backend, selection] = headerLines(list)
@@ -73,7 +75,7 @@ test('overdue rows are listed most overdue first', () => {
     { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
   )
   assert.deepEqual(
-    panelView(s).sections[0]?.rows.map((r) => r.title),
+    panelView(s, NOW).sections[0]?.rows.map((r) => r.title),
     ['Due 1 Oct', 'Due 5 Oct'],
   )
 })
@@ -91,13 +93,13 @@ test('an overdue row whose deadline does not parse sorts last, the rest by deadl
     { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
   )
   assert.deepEqual(
-    panelView(s).sections[0]?.rows.map((r) => r.title),
+    panelView(s, NOW).sections[0]?.rows.map((r) => r.title),
     ['Due 1 Oct', 'Due 5 Oct', 'Unreadable'],
   )
 })
 
 test('the panel groups rows and labels every partial part and what is missing', () => {
-  const view = panelView(ready)
+  const view = panelView(ready, NOW)
   assert.deepEqual(
     view.sections.map((s) => s.title),
     ['Overdue (1)', 'Open (2)', 'Waiting (1)'],
@@ -160,24 +162,35 @@ test('stale and error states say so in words, not only by tone', () => {
     at: Date.UTC(2026, 9, 7, 13, 5),
   })
   assert.equal(
-    panelView(verified).status.label,
+    panelView(verified, NOW).status.label,
     'STALE since 13:05 UTC: The read timed out. Rows from 12:30 UTC.',
   )
-  assert.equal(panelView(verified).status.tone, 'stale')
+  assert.equal(panelView(verified, NOW).status.tone, 'stale')
   assert.equal(statusLine(verified), '3ngram: 4 open · 1 overdue (stale)')
   // An open detail says so too, rather than only once Back is pressed.
-  assert.equal(listNotice(verified), panelView(verified).status.label)
-  assert.equal(listNotice(ready), null)
+  assert.equal(listNotice(verified, NOW), panelView(verified, NOW).status.label)
+  assert.equal(listNotice(ready, NOW), null)
   const refreshing = reduce(ready, {
     type: 'refresh_started',
     gen: 2,
     selectionKey: 'k',
     fingerprint: FP_A,
   })
-  assert.equal(panelView(refreshing).status.label, 'Refreshing… Rows from 12:30 UTC.')
+  assert.equal(panelView(refreshing, NOW).status.label, 'Refreshing… Rows from 12:30 UTC.')
+  // Drawn on a later day, a time without its date would read as today's.
+  const tomorrow = Date.UTC(2026, 9, 8, 9)
+  assert.equal(
+    panelView(verified, tomorrow).status.label,
+    'STALE since 2026-10-07 13:05 UTC: The read timed out. Rows from 2026-10-07 12:30 UTC.',
+  )
+  assert.equal(
+    panelView(refreshing, tomorrow).status.label,
+    'Refreshing… Rows from 2026-10-07 12:30 UTC.',
+  )
+  assert.equal(panelView(ready, tomorrow).status.label, 'Updated 2026-10-07 12:30 UTC')
 
   const cleared = reduce(stale, { type: 'context_verified', gen: 2, fingerprint: 'other', at: 0 })
-  const view = panelView(cleared)
+  const view = panelView(cleared, NOW)
   assert.equal(view.sections.length, 0)
   assert.match(
     view.status.label,
@@ -199,9 +212,9 @@ test('nothing is shown while loading, even with a record held', () => {
     selectionKey: 'other',
     fingerprint: FP_A,
   })
-  assert.equal(panelView(loading).sections.length, 0)
-  assert.deepEqual(panelView(loading).header, ['3ngram commitments'])
-  assert.equal(panelView(loading).canCancel, true)
+  assert.equal(panelView(loading, NOW).sections.length, 0)
+  assert.deepEqual(panelView(loading, NOW).header, ['3ngram commitments'])
+  assert.equal(panelView(loading, NOW).canCancel, true)
 })
 
 test('a pull request closed without merging says so', () => {
