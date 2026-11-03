@@ -15,6 +15,7 @@ import (
 )
 
 const testRunID = "0197f5b2-1c9a-7b3d-8f21-4a6c9e2d5b70"
+const testAccountID = "0197f5b2-1c9a-7b3d-8f21-4a6c9e2d5a00"
 
 // captureHook drives one hook subcommand end to end with `payload` on stdin and
 // returns whatever it wrote to stdout. Same pipe swap captureRunPrecheck uses;
@@ -61,6 +62,7 @@ func captureHook(t *testing.T, payload string, run func() int) string {
 type recordedRequest struct {
 	path string
 	body []byte
+	key  string
 }
 
 // lifecycleServer is an httptest backend that records every lifecycle POST and
@@ -75,6 +77,8 @@ type lifecycleServer struct {
 	// clear-probe-failure rules are about.
 	briefingCode  int
 	heartbeatCode int
+	accountCode   int
+	accountBody   string
 	// heartbeatResurrected is echoed back on the heartbeat response.
 	heartbeatResurrected bool
 }
@@ -95,15 +99,21 @@ func newLifecycleServer(t *testing.T, briefingBody string) *lifecycleServer {
 		briefingBody:  briefingBody,
 		briefingCode:  http.StatusOK,
 		heartbeatCode: http.StatusOK,
+		accountCode:   http.StatusOK,
+		accountBody:   fmt.Sprintf(`{"id":%q}`, testAccountID),
 	}
 	ls.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		ls.mu.Lock()
-		ls.requests = append(ls.requests, recordedRequest{path: r.URL.Path, body: body})
+		ls.requests = append(ls.requests, recordedRequest{path: r.URL.Path, body: body, key: r.Header.Get("X-API-Key")})
 		beatCode, briefCode, resurrected := ls.heartbeatCode, ls.briefingCode, ls.heartbeatResurrected
+		accountCode, accountBody := ls.accountCode, ls.accountBody
 		ls.mu.Unlock()
 
 		switch r.URL.Path {
+		case "/api/v1/me":
+			w.WriteHeader(accountCode)
+			_, _ = w.Write([]byte(accountBody))
 		case "/api/v1/briefing":
 			if briefCode != http.StatusOK {
 				http.Error(w, "briefing unavailable", briefCode)
@@ -640,7 +650,7 @@ func TestRunBriefingOmitsUnknownProject(t *testing.T) {
 // runSessionStartForTest drives the lifecycle branch alone, with an explicit
 // project, so the project rule can be pinned without a git fixture.
 func runSessionStartForTest(sessionID, source, project string) int {
-	runSessionStart(
+	resolveReadConfig().runSessionStart(
 		sessionStartInput{SessionID: sessionID, Source: source},
 		nil,
 		project,

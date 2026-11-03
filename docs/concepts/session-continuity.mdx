@@ -490,7 +490,14 @@ resolve/unresolve/archive inputs. `.strict()` stays.
 3. **There is no MCP adapter the hook owns.** `3ngram-hook` is a separate
    SessionStart/Stop process; tool calls go client → `/mcp` directly. Attribution
    on the hooked path is **best-effort and model-mediated**: SessionStart injects
-   the `sessionRunId` plus instructions to pass it on writes. Concurrent hooked
+   the `sessionRunId` and the authenticated account ID from `GET /api/v1/me`.
+   That read runs alongside the briefing with a 1 s deadline; both reads and
+   the lifecycle call share one captured backend and credential. The instruction
+   permits attribution only when the intended connector's
+   `describe_environment.account.id` matches. An unavailable identity or
+   credential exposes no run ID; without a valid run ID for the intended account, the instruction
+   defers writes and reports the account boundary. Account selection stays with
+   the launch environment, never the scope or project. Concurrent hooked
    sessions and agents that omit the field fall through to (4). Do not claim the
    hooked path always sends the id. The Stop hook heartbeats **unconditionally**,
    nudge or no nudge, so the lease stays fresh during *completed* turns and

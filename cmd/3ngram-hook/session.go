@@ -195,7 +195,7 @@ func normalizeAgent(raw string) string {
 
 // sessionOpen posts SessionStart and returns the sessionRunId the model is told
 // to pass on writes. Returns "" on every failure path.
-func sessionOpen(key agentSessionKey, source, project string, selector briefingSelector, briefed *[]briefedMemory) string {
+func (cfg readConfig) sessionOpen(key agentSessionKey, source, project string, selector briefingSelector, briefed *[]briefedMemory) string {
 	req := sessionOpenRequest{
 		Agent:           key.Agent,
 		SessionID:       key.SessionID,
@@ -219,7 +219,7 @@ func sessionOpen(key agentSessionKey, source, project string, selector briefingS
 	if err != nil {
 		return ""
 	}
-	respBody, status, err := apiRequest("POST", "/api/v1/agent-sessions/open", body, 3*time.Second)
+	respBody, status, err := cfg.request("POST", "/api/v1/agent-sessions/open", body, 3*time.Second)
 	if err != nil || status >= 400 {
 		logSessionFailure("agent-sessions/open", status, err)
 		return ""
@@ -240,6 +240,10 @@ func sessionOpen(key agentSessionKey, source, project string, selector briefingS
 // 5xx, malformed body — is {@link heartbeatFailed} and must never be read as an
 // existence answer.
 func sessionHeartbeat(key agentSessionKey, excerpt string, timeout time.Duration) heartbeatResult {
+	return resolveReadConfig().sessionHeartbeat(key, excerpt, timeout)
+}
+
+func (cfg readConfig) sessionHeartbeat(key agentSessionKey, excerpt string, timeout time.Duration) heartbeatResult {
 	body, err := json.Marshal(sessionHeartbeatRequest{
 		Agent:              key.Agent,
 		SessionID:          key.SessionID,
@@ -248,7 +252,7 @@ func sessionHeartbeat(key agentSessionKey, excerpt string, timeout time.Duration
 	if err != nil {
 		return heartbeatResult{}
 	}
-	respBody, status, err := apiRequest("POST", "/api/v1/agent-sessions/heartbeat", body, timeout)
+	respBody, status, err := cfg.request("POST", "/api/v1/agent-sessions/heartbeat", body, timeout)
 	if err != nil {
 		logSessionFailure("agent-sessions/heartbeat", status, err)
 		return heartbeatResult{}
@@ -335,11 +339,18 @@ func runeSafeCut(s string, n int) int {
 // pass it on writes. Attribution on the hooked path is best-effort — an agent
 // that omits the field falls through to the server's single-open-session
 // default — so the wording names the tools rather than assuming a transport.
-func sessionRunInstruction(sessionRunID string) string {
+func sessionRunInstruction(sessionRunID, accountID string) string {
+	if accountID == "" || sessionRunID == "" {
+		return "\n3ngram: Hook account or session identity unavailable; no valid session run ID can be supplied. " +
+			"Defer `remember` / `revise` / `resolve` and report the account boundary. Do not reuse a prior run ID."
+	}
 	return fmt.Sprintf(
-		"\n**3ngram session run**: `%s`\n"+
-			"Pass `sessionRunId: \"%s\"` on every 3ngram `remember` / `revise` / `resolve` call in this session "+
-			"so the writes are attributed to this run.",
-		sessionRunID, sessionRunID,
+		"\n**3ngram session run**: `%s`\n**3ngram account**: `%s`\n"+
+			"Pass `sessionRunId: \"%s\"` on `remember` / `revise` / `resolve` only when the target connector's "+
+			"`describe_environment.account.id` matches `%s`. Never pass this ID to a different or unverified account. "+
+			"Choose the account for the task first; scope and project do not identify it. "+
+			"If no valid run ID is available for the intended account, defer these writes and report the account boundary. "+
+			"Do not switch accounts to match this ID or reuse a prior run ID.",
+		sessionRunID, accountID, sessionRunID, accountID,
 	)
 }
