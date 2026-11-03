@@ -198,7 +198,7 @@ async function runHook(
   ceilingMs: number,
   onStart?: (stop: () => void) => void,
 ): Promise<RunOutcome> {
-  if (!isAllowedArgv(argv)) return { kind: 'failure', failure: 'contract' }
+  if (!isAllowedArgv(argv)) return { kind: 'failure', failure: 'refused' }
   let stdout = ''
   let stderr = ''
   let stopped: 'timeout' | 'cancelled' | 'crash' | null = null
@@ -691,10 +691,13 @@ export const register: Register = (on, options) => {
         {view.sections.map((section, si) => (
           <Box key={`section-${si}`} flexDirection="column" marginTop={1}>
             <Text bold>{section.title}</Text>
-            {section.rows.map((row, ri) => (
-              <Box key={`row-${si}-${ri}`} flexDirection="column">
+            {/* Keyed by memory id: the surface finds a Button again by its
+                key after a redraw, so a key naming a position would move the
+                focus to whichever row a refresh puts there. */}
+            {section.rows.map((row) => (
+              <Box key={`row-${row.memoryId}`} flexDirection="column">
                 <Button
-                  key={`open-${si}-${ri}`}
+                  key={`open-${row.memoryId}`}
                   label={clip(row.title, MAX_LABEL)}
                   plain
                   onPress={() => fire($, openDetail($, options, row.memoryId))}

@@ -43,6 +43,9 @@ const FAILURE_TEXT: Record<string, string> = {
   bad_response: 'The server sent a response the panel cannot read.',
   bad_request: 'The server refused the request.',
   context_changed: 'The account or selection changed; refreshing.',
+  refused:
+    'The panel did not run 3ngram-hook: an argument would read as a flag. Check that the scope option does not start with "-".',
+  row_changed: 'This commitment changed while it was being read. Go back and open it again.',
   outside_selector: 'That commitment is outside the current selection.',
   not_found: 'That commitment no longer exists.',
   usage: 'The panel called 3ngram-hook wrongly. Please report this.',
@@ -58,6 +61,23 @@ function time(ms: number): string {
 
 function day(iso: string): string {
   return iso.slice(0, 10)
+}
+
+// dueLabel reads a deadline as the instant it is (packages/schema stores a
+// UTC instant): its time of day is shown, in UTC, unless it is midnight.
+function dueLabel(iso: string): string {
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return `due ${iso}`
+  const utc = new Date(ms).toISOString()
+  const clock = utc.slice(11, 16)
+  return clock === '00:00' ? `due ${day(utc)}` : `due ${day(utc)} ${clock} UTC`
+}
+
+// byDue orders rows by deadline, earliest first; an undated row goes last.
+function byDue(a: CommitmentRow, b: CommitmentRow): number {
+  const at = (r: CommitmentRow) =>
+    r.dueAt === null ? Number.POSITIVE_INFINITY : Date.parse(r.dueAt)
+  return at(a) - at(b) || 0
 }
 
 export function headerLines(envelope: Envelope): string[] {
@@ -102,7 +122,7 @@ export function rowView(row: CommitmentRow): RowView {
   const labels: string[] = []
   if (row.overdue) labels.push('OVERDUE')
   labels.push(row.status)
-  labels.push(row.dueAt ? `due ${day(row.dueAt)}` : 'no due date recorded')
+  labels.push(row.dueAt ? dueLabel(row.dueAt) : 'no due date recorded')
   if (row.filing === 'unscoped') labels.push('unscoped (no project)')
   if (row.filing === 'unknown') labels.push('filing unknown')
   labels.push(
@@ -114,8 +134,11 @@ export function rowView(row: CommitmentRow): RowView {
   return { memoryId: row.memoryId, title: row.topic, labels }
 }
 
+// Open and waiting rows keep the server's order (its surfacing order); the
+// overdue ones are re-sorted, since the binary appends the overdue split's
+// rows after the commitments slice.
 function sections(rows: CommitmentRow[]): SectionView[] {
-  const overdue = rows.filter((r) => r.overdue)
+  const overdue = rows.filter((r) => r.overdue).sort(byDue)
   const open = rows.filter((r) => !r.overdue && r.status !== 'waiting')
   const waiting = rows.filter((r) => !r.overdue && r.status === 'waiting')
   return [

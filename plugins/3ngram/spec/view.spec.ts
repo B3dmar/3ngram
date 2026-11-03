@@ -46,6 +46,36 @@ test('rows say what is and is not recorded, in words', () => {
   assert.ok(rowView(unknown).labels.includes('filing unknown'))
 })
 
+// A deadline is an instant (packages/schema: "a UTC ISO-8601 instant ending
+// in Z (e.g. 2026-11-30T17:00:00Z)"), not a calendar date.
+test('a deadline with a time of day shows that time, and its zone', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  const at = (dueAt: string) => rowView({ ...row, dueAt }).labels
+  assert.ok(at('2026-11-30T17:00:00.000Z').includes('due 2026-11-30 17:00 UTC'))
+  assert.ok(at('2026-11-30T23:30:00.000Z').includes('due 2026-11-30 23:30 UTC'))
+  assert.ok(at('2026-10-01T00:00:00.000Z').includes('due 2026-10-01'))
+})
+
+test('overdue rows are listed most overdue first', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  // The binary lists the commitments slice first and appends the overdue
+  // split, so an overdue row it cut from the slice comes after a later one.
+  const rows = [
+    { ...row, memoryId: 'm1', topic: 'Due 5 Oct', dueAt: '2026-10-05T00:00:00.000Z' },
+    { ...row, memoryId: 'm2', topic: 'Due 1 Oct', dueAt: '2026-10-01T00:00:00.000Z' },
+  ]
+  const s = reduce(
+    reduce(initialState, { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A }),
+    { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
+  )
+  assert.deepEqual(
+    panelView(s).sections[0]?.rows.map((r) => r.title),
+    ['Due 1 Oct', 'Due 5 Oct'],
+  )
+})
+
 test('the panel groups rows and labels every partial part and what is missing', () => {
   const view = panelView(ready)
   assert.deepEqual(
