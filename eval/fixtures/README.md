@@ -57,8 +57,10 @@ diagnostic, never a selection.
 
 Pre-registered by the owner decision of 2026-11-03: "Judge thresholds are selected only on the dev
 split of a public synthetic fixture in the engine's eval/. Every personal item, historical or fresh,
-is held-out evidence only." The enablement bar is unchanged and is read only on the private set's
-held-out split. A result on this fixture never satisfies it, and nothing here enables the pass.
+is held-out evidence only." The enablement bar is unchanged. It is read over every personal item,
+whatever its fixed split label (the private set's two `dev`-labelled items included), scored with
+thresholds frozen from this fixture's dev split. Synthetic results, this fixture's included, never
+count toward it, and nothing here enables the pass.
 
 Same schema, wholly invented: a fictional software studio (projects wren, heron, sorrel, larkspur,
 kestrel, studio-ops) and its lead's fictional personal life, written without reference to any
@@ -77,18 +79,25 @@ Every single is stale (older than 30 days at `now`), in the candidate query's or
 three newer same-type neighbours. Some neighbours are evidence, such as a project parked or a car
 sold, and the rest are unrelated memories. Hard cases include near-duplicate pairs where both sides
 hold, a series of episodes whose later entry reads like a correction, and old, dated items that
-still hold. Archive items carry no give-away words. Supersede newers signal an update; conflict
-newers give no sign of which side holds. Memory type identifies the episodic slice and the kind (single
-or pair) separates pair labels from single labels, both by design. Within those groups,
-`eval/test/forgetting-calibration.test.mjs` checks that no length, position, age, neighbour-count or
-similarity threshold recovers a label more than 0.15 above the majority baseline. The highest such
-gain in this fixture is 0.109. There are no blockers: they cannot be archived, so a blocker would
-only ever be a keep.
+still hold. No memory or neighbour carries a give-away word. Supersede newers signal an update, as
+real ones do; conflict newers give no sign of which side holds. The same cue words (since, from,
+now, after, new and the like) also appear in other senses on conflict and keep newers, so the words
+alone do not separate the pairs. Memory type identifies the episodic slice and the kind (single or
+pair) separates pair labels from single labels, both by design. Within those groups,
+`eval/test/forgetting-calibration.test.mjs` checks that no single feature recovers a label more than
+0.15 above the majority baseline:
+
+- structural features: length, position, age, neighbour count and similarity, with a highest gain
+  of 0.109;
+- cue-word lists: update words on a pair's newer side (gain 0.000) and time-bound words on a single
+  (gain 0.067).
+
+There are no blockers: they cannot be archived, so a blocker would only ever be a keep.
 
 **Frozen in #399, before any judge run.** The harness pins both checksums
 (`eval/src/forgetting-thresholds.mjs`) and the unit test recomputes them:
 
-- file SHA-256: `6e3653884804a257255bf3c8a5fa7997fd637a081d50009207f95e59a6920b3b`;
+- file SHA-256: `7a06d172a117f614ce7f475ccc51dedeed9d1d90b7d6d8d9b2f3a82ef0e464d8`;
 - label checksum: `8aaf06abc1243a575d2e8dd87de81fdcbe1d6b4495144abea8c2e87ffd70a7b0`, the SHA-256 of
   `JSON.stringify` over the labels sorted by id, each as `[id, slice, expected, relatedMemoryId or
   null, split]`.
@@ -109,8 +118,24 @@ node eval/src/forgetting-eval.mjs --golden eval/private/<golden>.json \
 ```
 
 The selection rule (`SELECTION_RULE`) takes, per action, the lowest swept threshold whose dev
-precision reaches 0.95 for archive and supersede, or 0.80 for conflict, over at least 10 proposals.
-When no threshold qualifies, it selects none, and that action proposes nothing. Step 2 refuses a
-thresholds file whose source hash is not the pinned fixture, or whose model differs from the run's.
-In a frozen run the `pass` counts still use the pass's built-in thresholds, while `verdicts` and
-every split use the frozen ones.
+precision reaches 0.97 for archive and supersede, or 0.80 for conflict, over at least 10 proposals.
+When no threshold qualifies, it selects none, and that action proposes nothing. The 0.97 is a
+deliberate margin over the 0.95 bar: a wrong archive costs more than a missed one, and selecting at
+the bar leaves no held-out margin.
+
+Step 2 refuses a thresholds file that does not match what step 1 writes for the pinned fixture:
+
+- the fixture hash and the label checksum;
+- the rule;
+- a threshold that is null or on the swept grid;
+- the run's model.
+
+That is a guard against applying the wrong file by accident, not proof of where a file came from:
+a hand-written file with the same fields passes. A threshold flag given without a path is an
+error, never a silent fallback.
+
+A frozen run reports the bar's inputs over every item together, whatever its split label, beside
+the per-split breakdown. These are archive precision with its proposal count, and recurring-episodic
+collapses. They are personal evidence only when the file is the private set. The `pass` line still
+uses the pass's built-in thresholds, and says so. `verdicts`, every split and the bar evidence use
+the frozen ones.
