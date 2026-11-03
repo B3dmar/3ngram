@@ -85,7 +85,7 @@ similarity threshold recovers a label more than 0.15 above the majority baseline
 gain in this fixture is 0.109. There are no blockers: they cannot be archived, so a blocker would
 only ever be a keep.
 
-**Frozen in #TBD, before any judge run.** The harness pins both checksums
+**Frozen in #399, before any judge run.** The harness pins both checksums
 (`eval/src/forgetting-thresholds.mjs`) and the unit test recomputes them:
 
 - file SHA-256: `6e3653884804a257255bf3c8a5fa7997fd637a081d50009207f95e59a6920b3b`;
