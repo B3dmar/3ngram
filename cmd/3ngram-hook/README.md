@@ -77,10 +77,18 @@ Nothing here writes a memory.
   bookkeeping write are independent calls, and Stop never creates a missing row —
   so the session would otherwise run unattributed because one read went wrong.
   `briefedMemories` is omitted in that case, since no briefing was delivered.
-- The `sessionRunId` and an instruction to pass it on `remember` / `revise` /
-  `resolve` are appended to the injected briefing. Propagation is
-  **model-mediated and best-effort** — a write that omits it falls back to the
-  server's single-open-session default.
+- The `sessionRunId` and authenticated account ID are appended to the injected
+  briefing. The account comes from `GET /api/v1/me`, read alongside the briefing
+  with a 1 s deadline and the same captured credential as the lifecycle call.
+  The instruction permits `remember` / `revise` / `resolve` attribution only
+  when the intended connector's `describe_environment.account.id` matches.
+  If identity or the credential is unavailable, no run ID is exposed. A session
+  event with no credential emits the same defer-write instruction without a
+  network call; manual calls without a session ID and suppressed hooks stay
+  silent. Without a valid run ID for the intended account, the instruction
+  defers writes and reports the boundary;
+  it never tells the agent to switch accounts to fit the ID. Propagation remains
+  **model-mediated and best-effort**; the server still rejects foreign run IDs.
 - **Stop** (`stop`) keeps the lease live across completed turns. That half is
   unconditional and always silent. The [debrief nudge](#stop-nudge-default-off)
   is additive and **off unless `THREENGRAM_STOP_NUDGE=1`**.
@@ -90,6 +98,11 @@ Nothing here writes a memory.
 Sub-agents (`THREENGRAM_HOOK_ROLE=subagent`) and secondary git worktrees are
 skipped by all three, exactly as the briefing auto-pull already was. Register
 main-agent `Stop` only — never `SubagentStop`.
+
+Account selection belongs to the launch environment: use the same API key for
+SessionStart, Stop and SessionEnd. Scope and project only filter that account;
+they do not select it. This account check does not route desktop or CLI sessions
+to another account. Keep existing sessions on their original credential.
 
 ## Stop nudge (default-off)
 
@@ -258,8 +271,9 @@ Each release carries per-target `.tar.gz` archives for Linux and macOS
 ## Bootstrap
 
 The briefing and precheck hooks need an API key to read from the REST API.
-Without one they exit silently — hooks must never block your tool calls — and
-print a one-shot banner to stderr at most once per hour.
+Without one they make no requests and exit 0. A briefing session event emits
+the defer-write instruction above so resume or compact cannot retain an earlier
+run ID as usable; manual calls without a session ID and precheck stay silent.
 
 1. **Create an API key** at https://app.3ngram.ai/settings/api-keys. The full
    key is shown once (format: `3ng_<prefix>_<secret>`). Copy it immediately.

@@ -82,7 +82,7 @@ type sessionStartInput struct {
 // from GET /api/v1/briefing (replacing the old 4× dashboard reads), renders it
 // as a compact markdown summary on stdout, and drives the session-lifecycle row
 // (docs/concepts/session-continuity.mdx layer 1, the `source` table). Pure
-// context — it never blocks the session and stays silent on every failure path.
+// context — it never blocks the session; unavailable identity defers writes.
 func runBriefing(args []string) int {
 	cwd, _ := os.Getwd()
 	project := deriveProject(cwd)
@@ -97,8 +97,12 @@ func runBriefing(args []string) int {
 		return 0
 	}
 
-	if apiKey() == "" {
-		return 0
+	cfg := resolveReadConfig()
+	if cfg.key == "" {
+		// Manual no-key calls must not wait on a terminal for hook JSON.
+		if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return 0
+		}
 	}
 
 	// Tolerant: a harness that sends no stdin (or a manual invocation) still gets
@@ -107,18 +111,31 @@ func runBriefing(args []string) int {
 	var input sessionStartInput
 	_ = json.NewDecoder(os.Stdin).Decode(&input)
 
+	if cfg.key == "" {
+		if strings.TrimSpace(input.SessionID) != "" {
+			fmt.Println(sessionRunInstruction("", ""))
+		}
+		return 0
+	}
+
+	// Read identity alongside the briefing, under the same credential. Await it
+	// before returning; a failed read must never leave an unbound run id behind.
+	account := make(chan string, 1)
+	go func() { account <- sessionAccountID(cfg, input.SessionID) }()
 	requested := deriveBriefingSelector(project)
-	rendered := fetchBriefing(project, requested, envInt("BRIEFING_MAX_TOKENS", 2000)*4)
+	rendered := cfg.fetchBriefing(project, requested, envInt("BRIEFING_MAX_TOKENS", 2000)*4)
 
 	// A FAILED briefing does not skip the lifecycle. The session still needs its
 	// row, its lease and a sessionRunId — the Stop heartbeat deliberately never
 	// creates a missing row, so skipping here would leave the whole session
 	// unattributed because one read went wrong.
 	output := rendered.text
-	if runID := runSessionStart(input, args, project, rendered.selector, rendered.stamp()); runID != "" {
+	runID := cfg.runSessionStart(input, args, project, rendered.selector, rendered.stamp())
+	accountID := <-account
+	if strings.TrimSpace(input.SessionID) != "" {
 		// Appended AFTER the truncation so the run id can never be the thing the
 		// budget cuts off.
-		output += sessionRunInstruction(runID)
+		output += sessionRunInstruction(runID, accountID)
 	}
 
 	fmt.Println(output)
@@ -152,14 +169,14 @@ func (r briefingRender) stamp() *[]briefedMemory {
 // fetchBriefing reads, renders and locally truncates the briefing. Every
 // failure path returns the fallback line rather than nothing: the caller prints
 // what it gets and opens the session either way.
-func fetchBriefing(project string, requested briefingSelector, maxChars int) briefingRender {
+func (cfg readConfig) fetchBriefing(project string, requested briefingSelector, maxChars int) briefingRender {
 	out := briefingRender{
 		text:     fmt.Sprintf("3ngram: Run /briefing for %s context (recent decisions, blockers, commitments)", project),
 		briefed:  []briefedMemory{},
 		selector: requested,
 	}
 
-	body, status, err := apiRequest("GET", "/api/v1/briefing"+buildBriefingQuery(requested), nil, 5*time.Second)
+	body, status, err := cfg.request("GET", "/api/v1/briefing"+buildBriefingQuery(requested), nil, 5*time.Second)
 	if err != nil || status >= 400 {
 		logSessionFailure("briefing", status, err)
 		return out
@@ -237,7 +254,7 @@ const sessionProbeTimeout = 2 * time.Second
 // answer. It degrades exactly like a failed open: deliver the briefing, skip the
 // lifecycle, log one line. Guessing `startup` there would 409 against a live row
 // whose stored params differ and cost the session its reinjection outright.
-func runSessionStart(input sessionStartInput, args []string, project string, selector briefingSelector, briefed *[]briefedMemory) string {
+func (cfg readConfig) runSessionStart(input sessionStartInput, args []string, project string, selector briefingSelector, briefed *[]briefedMemory) string {
 	sessionID := strings.TrimSpace(input.SessionID)
 	if sessionID == "" {
 		return ""
@@ -246,20 +263,20 @@ func runSessionStart(input sessionStartInput, args []string, project string, sel
 
 	switch strings.TrimSpace(input.Source) {
 	case "compact":
-		return sessionHeartbeat(key, "", sessionProbeTimeout).sessionRunID
+		return cfg.sessionHeartbeat(key, "", sessionProbeTimeout).sessionRunID
 	case "resume":
-		return sessionOpen(key, "resume", project, selector, nil)
+		return cfg.sessionOpen(key, "resume", project, selector, nil)
 	case "clear":
-		switch probe := sessionHeartbeat(key, "", sessionProbeTimeout); probe.outcome {
+		switch probe := cfg.sessionHeartbeat(key, "", sessionProbeTimeout); probe.outcome {
 		case heartbeatOK:
 			return probe.sessionRunID
 		case heartbeatNoRow:
-			return sessionOpen(key, "startup", project, selector, briefed)
+			return cfg.sessionOpen(key, "startup", project, selector, briefed)
 		default:
 			return ""
 		}
 	default:
-		return sessionOpen(key, "startup", project, selector, briefed)
+		return cfg.sessionOpen(key, "startup", project, selector, briefed)
 	}
 }
 

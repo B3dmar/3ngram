@@ -86,6 +86,29 @@ func TestApiKey_EmptyWhenMissing(t *testing.T) {
 	}
 }
 
+func TestApiKey_DefaultFilePrecedence(t *testing.T) {
+	isolateKeyFiles(t)
+	t.Setenv("THREENGRAM_API_KEY", "")
+	paths := apiKeyFilePaths()
+	for i, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte([]string{"3ng_xdg", "3ng_home"}[i]), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if apiKey() != "3ng_xdg" {
+		t.Fatal("XDG credential must precede home credential")
+	}
+	if err := os.WriteFile(paths[0], []byte(" \n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if apiKey() != "3ng_home" {
+		t.Fatal("empty XDG credential must preserve home fallback")
+	}
+}
+
 func TestWarnMissingAPIKey_PrintsOnceAndIsSilenced(t *testing.T) {
 	// Isolate the sync.Once and stderr so the test is deterministic.
 	warnOnce = sync.Once{}
