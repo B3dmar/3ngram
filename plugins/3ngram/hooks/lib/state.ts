@@ -32,7 +32,9 @@ export type FailureKind =
   | 'cancelled'
   | 'context_changed'
   | 'context_moved'
-  // The allowlist refused the argv before any spawn.
+  // The allowlist refused the argv before any spawn: for its scope option, or
+  // for a value of the panel's own.
+  | 'refused_scope'
   | 'refused'
 
 export type PanelStatus =
@@ -51,6 +53,9 @@ export type DetailState = {
   seq: number
   memoryId: string
   fingerprint: string
+  // The fetchedAt of the list read it was opened from: a list read since then
+  // is the only one its answer can be older than.
+  listAt: number
   status: 'loading' | 'ready' | 'error'
   envelope: Envelope | null
   error: PanelError | null
@@ -286,6 +291,7 @@ function onDetailRequested(s: PanelState, memoryId: string): PanelState {
       seq,
       memoryId,
       fingerprint: s.record.envelope.context.fingerprint,
+      listAt: s.record.fetchedAt,
       status: 'loading',
       envelope: null,
       error: null,
@@ -314,16 +320,18 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
     const error: PanelError = { kind: envelope.error?.kind ?? 'unknown' }
     return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
   }
-  if (contradictsRow(s, detail.memoryId, envelope)) {
+  // Only a list read that landed after the open can be newer than the answer:
+  // with none, the answer is the newer read and is shown as it is.
+  if (s.record.fetchedAt !== detail.listAt && contradictsRow(s, detail.memoryId, envelope)) {
     const error: PanelError = { kind: 'row_changed' }
     return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
   }
   return { ...s, detail: { ...detail, status: 'ready', envelope, error: null } }
 }
 
-// contradictsRow reports whether a detail answer disagrees with the row now
-// listed for it. A refresh that lands while the detail loads can know more
-// than the row it was opened from (a filing `unknown` then, known now), so
+// contradictsRow reports whether a detail answer disagrees with the row a
+// refresh listed while the detail loaded. That refresh can know more than the
+// row the detail was opened from (a filing `unknown` then, known now), so
 // sameRow could not catch the change; the answer is checked on arrival.
 function contradictsRow(s: PanelState, memoryId: string, envelope: Envelope): boolean {
   const row = s.record?.envelope.commitments?.find((r) => r.memoryId === memoryId)

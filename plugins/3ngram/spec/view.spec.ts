@@ -76,6 +76,24 @@ test('overdue rows are listed most overdue first', () => {
   )
 })
 
+test('an overdue row whose deadline does not parse sorts last, the rest by deadline', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  const rows = [
+    { ...row, memoryId: 'm0', topic: 'Unreadable', dueAt: 'not a date' },
+    { ...row, memoryId: 'm1', topic: 'Due 5 Oct', dueAt: '2026-10-05T00:00:00.000Z' },
+    { ...row, memoryId: 'm2', topic: 'Due 1 Oct', dueAt: '2026-10-01T00:00:00.000Z' },
+  ]
+  const s = reduce(
+    reduce(initialState, { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A }),
+    { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
+  )
+  assert.deepEqual(
+    panelView(s).sections[0]?.rows.map((r) => r.title),
+    ['Due 1 Oct', 'Due 5 Oct', 'Unreadable'],
+  )
+})
+
 test('the panel groups rows and labels every partial part and what is missing', () => {
   const view = panelView(ready)
   assert.deepEqual(
@@ -209,6 +227,7 @@ test('the detail view frames evidence for review and states the window', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: show,
@@ -242,6 +261,7 @@ test('a detail with nothing found says so, without claiming nothing exists', () 
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: none,
@@ -269,6 +289,7 @@ test('a detail where no source could be read never says nothing was found', () =
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: unread,
@@ -282,6 +303,7 @@ test('a failed detail shows the reason', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'error',
     envelope: null,
@@ -301,6 +323,7 @@ test('a failed history read does not claim the creation is outside the window', 
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: failed,
@@ -321,6 +344,7 @@ test('an unavailable events section leaves creation unknown, not outside the win
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: degraded,
@@ -336,6 +360,7 @@ test('long content is cut to a bound the drawing can hold, and says so', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: { ...show, commitment: { ...show.commitment, content: long } },
@@ -352,6 +377,7 @@ test('long content is cut to a bound the drawing can hold, and says so', () => {
   const short = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: { ...show, commitment: { ...show.commitment, content: 'short' } },
