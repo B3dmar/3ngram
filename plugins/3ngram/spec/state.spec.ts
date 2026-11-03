@@ -486,10 +486,8 @@ describe('detail', () => {
         r.memoryId === row.memoryId ? { ...r, filing: 'unscoped' } : r,
       ),
     }
-    const answer: Envelope = {
-      ...show,
-      commitment: { ...show.commitment, memoryId: row.memoryId, filing: 'project' },
-    }
+    const commitment = { ...show.commitment, memoryId: row.memoryId }
+    const answer: Envelope = { ...show, commitment: { ...commitment, filing: 'project' } }
     const s = run(
       [
         { type: 'detail_requested', memoryId: row.memoryId },
@@ -502,6 +500,36 @@ describe('detail', () => {
     assert.equal(s.detail?.status, 'error')
     assert.equal(s.detail?.error?.kind, 'row_changed')
     assert.equal(s.detail?.envelope, null)
+    // Opened again under the refreshed list, the same answer is the newer read.
+    const reopened = run(
+      [
+        { type: 'detail_requested', memoryId: row.memoryId },
+        {
+          type: 'detail_envelope',
+          seq: 2,
+          envelope: { ...show, commitment: { ...commitment, filing: 'unscoped' } },
+        },
+      ],
+      s,
+    )
+    assert.equal(reopened.detail?.status, 'ready')
+  })
+
+  // With no refresh between the open and the answer, the answer is the newer
+  // read of the commitment: it is shown, whatever the held row says.
+  test('a detail newer than its row is shown when no refresh landed meanwhile', () => {
+    assert.ok(show.commitment)
+    for (const change of [{ commitmentStatus: 'waiting' }, { filing: 'unscoped' as const }]) {
+      const answer: Envelope = { ...show, commitment: { ...show.commitment, ...change } }
+      const s = run(
+        [
+          { type: 'detail_requested', memoryId },
+          { type: 'detail_envelope', seq: 1, envelope: answer },
+        ],
+        showingA,
+      )
+      assert.equal(s.detail?.status, 'ready', JSON.stringify(change))
+    }
   })
 })
 

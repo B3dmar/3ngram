@@ -44,8 +44,10 @@ const FAILURE_TEXT: Record<string, string> = {
   bad_response: 'The server sent a response the panel cannot read.',
   bad_request: 'The server refused the request.',
   context_changed: 'The account or selection changed; refreshing.',
+  refused_scope:
+    'The panel did not run 3ngram-hook: the scope option starts with "-", and no scope does. Change it with /plugin configure 3ngram.',
   refused:
-    'The panel did not run 3ngram-hook: an argument would read as a flag. Check that the scope option does not start with "-".',
+    'The panel did not run 3ngram-hook: one of its own arguments would have read as a flag or was not one word. Please report this.',
   row_changed: 'This commitment changed while it was being read. Go back and open it again.',
   outside_selector: 'That commitment is outside the current selection.',
   not_found: 'That commitment no longer exists.',
@@ -84,11 +86,15 @@ function dueLabel(iso: string): string {
   return clock === '00:00' ? `due ${day(utc)}` : `due ${day(utc)} ${clock} UTC`
 }
 
-// byDue orders rows by deadline, earliest first; an undated row goes last.
+// byDue orders rows by deadline, earliest first. An undated row, or one whose
+// deadline does not parse, goes last: NaN would make the order inconsistent.
 function byDue(a: CommitmentRow, b: CommitmentRow): number {
-  const at = (r: CommitmentRow) =>
-    r.dueAt === null ? Number.POSITIVE_INFINITY : Date.parse(r.dueAt)
-  return at(a) - at(b) || 0
+  const at = (r: CommitmentRow) => {
+    const ms = r.dueAt === null ? Number.NaN : Date.parse(r.dueAt)
+    return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
+  }
+  const [x, y] = [at(a), at(b)]
+  return x === y ? 0 : x < y ? -1 : 1
 }
 
 export function headerLines(envelope: Envelope): string[] {

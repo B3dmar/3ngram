@@ -3,7 +3,14 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import type { Selection } from './lib/argv.ts'
-import { contextArgv, isAllowedArgv, listArgv, selectionKey, showArgv } from './lib/argv.ts'
+import {
+  contextArgv,
+  isAllowedArgv,
+  listArgv,
+  refusalKind,
+  selectionKey,
+  showArgv,
+} from './lib/argv.ts'
 import { parseEnvelope } from './lib/contract.ts'
 import { classifyEmptyOutput, classifySpawnError } from './lib/process.ts'
 import type { FailureKind, PanelEvent, PanelState } from './lib/state.ts'
@@ -197,7 +204,7 @@ async function runHook(
   ceilingMs: number,
   onStart?: (stop: () => void) => void,
 ): Promise<RunOutcome> {
-  if (!isAllowedArgv(argv)) return { kind: 'failure', failure: 'refused' }
+  if (!isAllowedArgv(argv)) return { kind: 'failure', failure: refusalKind(argv) }
   let stdout = ''
   let stderr = ''
   let stopped: 'timeout' | 'cancelled' | 'crash' | null = null
