@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { formatReport, loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
+import { cliOptions, formatReport, loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
 import {
   CALIBRATION_FAKE_ANSWERS,
   CALIBRATION_GOLDEN,
@@ -18,6 +18,7 @@ import {
   fileSha256,
   labelsSha256,
   loadFrozenThresholds,
+  SELECTION_RULE,
   selectThresholds,
 } from '../src/forgetting-thresholds.mjs'
 
@@ -83,6 +84,10 @@ test('every label is a judged candidate, in the candidate query shape', () => {
   }
 })
 
+// Cue words a lexical shortcut would use: update words on a pair's newer side, time-bound words on a single.
+const UPDATE_CUE = /\b(since|from|now|after|moved|new|became|changed|switched)\b/i
+const TIME_CUE = /\b(during|until|while|this|next|before|week|weekend|day)\b/i
+
 /** Best one-feature threshold rule's accuracy above the majority baseline. */
 function stumpGain(xs, ys) {
   const pos = ys.filter(Boolean).length
@@ -117,6 +122,7 @@ test('no label is recoverable from a trivial feature', () => {
         age: (r) => age(r.m.lastTouchedAt),
         neighbours: (r) => nb(r.m).length,
         topSimilarity: (r) => Math.max(0, ...nb(r.m).map((n) => n.similarity)),
+        timeCue: (r) => (TIME_CUE.test(r.m.content) ? 1 : 0),
       },
     ],
     ...['supersede', 'conflict', 'keep'].map((want) => [
@@ -129,6 +135,7 @@ test('no label is recoverable from a trivial feature', () => {
         newerLength: (r) => r.p.newer.content.length,
         lengthGap: (r) => r.p.newer.content.length - r.p.older.content.length,
         olderAge: (r) => age(r.p.older.lastTouchedAt),
+        updateCue: (r) => (UPDATE_CUE.test(r.p.newer.content) ? 1 : 0),
       },
     ]),
   ]
@@ -140,7 +147,7 @@ test('no label is recoverable from a trivial feature', () => {
   }
   const giveaway =
     /\b(obsolete|supersed\w*|deprecat\w*|outdated|no longer|stale|legacy|archiv\w*|replac\w*|instead of|anymore|formerly|previously|used to|old|expired)\b/i
-  for (const m of [...singles, ...pairs.flatMap((p) => [p.older, p.newer])]) {
+  for (const m of [...singles, ...neighbours, ...pairs.flatMap((p) => [p.older, p.newer])]) {
     assert.ok(!giveaway.test(`${m.topic} ${m.content}`), `give-away word in ${m.id}`)
   }
 })
@@ -156,8 +163,9 @@ test('thresholds selected on the calibration dev split score another fixture fro
   })
   assert.equal(calibration.golden.calibration, true)
   assert.equal(calibration.splits.dev.labelled, 190)
-  // Pinned on the fake answers: supersede reaches 0.95 only below 10 proposals, so none.
-  const selected = { archive: 0.65, supersede: null, conflict: 0.5 }
+  // Pinned on the fake answers: archive first reaches 0.97 at 0.70 (0.959 at 0.65 is short of
+  // the margin); supersede reaches it only below 10 proposals, so none.
+  const selected = { archive: 0.7, supersede: null, conflict: 0.5 }
   assert.deepEqual(calibration.selected, selected)
   assert.match(formatReport(calibration), /selected by the pre-registered rule/)
   const file = loadFrozenThresholds(selectPath)
@@ -180,8 +188,15 @@ test('thresholds selected on the calibration dev split score another fixture fro
   })
   assert.equal(frozen.splits.all.precision.supersede.proposed, 0)
   assert.equal(frozen.verdicts.proposed, 5)
+  // The bar reads every item whatever its split label: the mirror's dev and heldout together.
+  assert.deepEqual(frozen.barEvidence.archive, frozen.splits.all.precision.archive)
+  assert.equal(frozen.barEvidence.recurringEpisodicCollapses, 0)
+  assert.equal(frozen.barEvidence.bar.minArchiveProposals, 40)
+  assert.equal(calibration.barEvidence, undefined, 'no bar evidence from the calibration fixture')
   const report = formatReport(frozen)
   assert.match(report, /frozen thresholds/)
+  assert.match(report, /^pass \(built-in thresholds\):/m)
+  assert.match(report, /bar evidence, all items whatever their split/)
   assert.doesNotMatch(report, /threshold sweep/)
 })
 
@@ -201,30 +216,69 @@ test('the protocol refuses a selection off the fixture and foreign thresholds', 
   }
   const good = {
     version: 1,
-    source: { sha256: CALIBRATION_SHA256 },
+    rule: SELECTION_RULE,
+    source: { sha256: CALIBRATION_SHA256, labelsSha256: CALIBRATION_LABELS_SHA256 },
     model: 'jev-x',
     thresholds: { archive: 0.9, supersede: 0.9, conflict: null },
   }
-  assert.throws(
-    () => loadFrozenThresholds(write({ ...good, source: { sha256: 'f'.repeat(64) } })),
-    /not selected on the pinned/,
-  )
-  assert.throws(
-    () => loadFrozenThresholds(write({ ...good, thresholds: { archive: 2 } })),
-    /archive must be null/,
-  )
+  const forged = [
+    [{ source: { ...good.source, sha256: 'f'.repeat(64) } }, /not selected on the pinned/],
+    [{ source: { ...good.source, labelsSha256: 'f'.repeat(64) } }, /pinned label checksum/],
+    [{ rule: { ...SELECTION_RULE, archive: { minPrecision: 0.9, minProposals: 10 } } }, /rule/],
+    [{ thresholds: { ...good.thresholds, archive: 0.83 } }, /archive must be null or a swept/],
+    [{ thresholds: { ...good.thresholds, conflict: 2 } }, /conflict must be null or a swept/],
+  ]
+  for (const [edit, refusal] of forged) {
+    assert.throws(() => loadFrozenThresholds(write({ ...good, ...edit })), refusal)
+  }
   await assert.rejects(
     runForgettingEval({ outPath: out, thresholdsPath: write(good) }),
     /selected with model jev-x/,
+  )
+  await assert.rejects(
+    runForgettingEval({
+      goldenPath: CALIBRATION_GOLDEN,
+      outPath: out,
+      selectPath: join(dir, 's.json'),
+      thresholdsPath: write(good),
+    }),
+    /cannot be combined/,
+  )
+})
+
+test('a threshold flag without a path throws instead of falling back', () => {
+  for (const args of [
+    ['--thresholds'],
+    ['--thresholds', '--live'],
+    ['--thresholds='],
+    ['--select-thresholds'],
+    ['--select-thresholds', '--out', 'x.json'],
+  ]) {
+    assert.throws(() => cliOptions(args), /needs a path/, args.join(' '))
+  }
+  const options = cliOptions(['--thresholds', 't.json', '--select-thresholds=s.json'])
+  assert.deepEqual([options.thresholdsPath, options.selectPath], ['t.json', 's.json'])
+  assert.deepEqual(
+    [cliOptions([]).thresholdsPath, cliOptions([]).selectPath],
+    [undefined, undefined],
   )
 })
 
 test('selection takes the lowest qualifying threshold, and none when none qualifies', () => {
   const row = (threshold, proposed, precision) => ({ threshold, proposed, correct: 0, precision })
   const sweep = {
-    archive: [row(0.5, 30, 0.9), row(0.55, 20, 0.96), row(0.6, 12, 1)],
+    // 0.96 clears the 0.95 bar but not the deliberate 0.97 margin.
+    archive: [row(0.5, 30, 0.9), row(0.55, 20, 0.96), row(0.6, 12, 0.97), row(0.65, 11, 1)],
     supersede: [row(0.5, 9, 1), row(0.55, 4, 1)],
     conflict: [row(0.5, 0, null)],
   }
-  assert.deepEqual(selectThresholds(sweep), { archive: 0.55, supersede: null, conflict: null })
+  assert.deepEqual(selectThresholds(sweep), { archive: 0.6, supersede: null, conflict: null })
+  assert.deepEqual(
+    [SELECTION_RULE.archive.minPrecision, SELECTION_RULE.supersede.minPrecision],
+    [0.97, 0.97],
+  )
+  assert.deepEqual(
+    [SELECTION_RULE.conflict.minPrecision, SELECTION_RULE.conflict.minProposals],
+    [0.8, 10],
+  )
 })

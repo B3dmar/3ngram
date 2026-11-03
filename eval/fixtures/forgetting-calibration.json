@@ -1441,7 +1441,7 @@
         "id": "019f1876-2b5d-7ec8-b648-8a69419e5706",
         "memoryType": "fact",
         "topic": "Flat energy",
-        "content": "The flat's heating is district heating, billed with the rent.",
+        "content": "The flat's heating is district heating, billed with the rent since the new meters went in.",
         "recordedAt": "2026-06-30T12:17:05.373Z",
         "similarity": 0.5061
       },
@@ -1477,7 +1477,7 @@
         "id": "019dc14a-b41d-774c-8d5a-c4e7a16cafac",
         "memoryType": "preference",
         "topic": "Store screenshots",
-        "content": "Store screenshots show dark mode, with the widget on the first one.",
+        "content": "Store screenshots show dark mode, with the new widget on the first one.",
         "recordedAt": "2026-04-24T20:59:51.709Z",
         "similarity": 0.6335
       },
@@ -1720,7 +1720,7 @@
         "id": "019ea8c3-4bdc-73da-86f5-3b3117192b5a",
         "memoryType": "decision",
         "topic": "Commit messages",
-        "content": "Heron pull request titles follow conventional commits too, with the same scopes.",
+        "content": "Since June, heron pull request titles follow conventional commits too, with the same scopes.",
         "recordedAt": "2026-06-08T19:43:51.772Z",
         "similarity": 0.604
       },
@@ -1990,7 +1990,7 @@
         "id": "01a0d7cb-4240-7e28-8e24-6cb017c99c24",
         "memoryType": "fact",
         "topic": "Latency target",
-        "content": "The p95 latency target for heron is 150 ms, measured at the load balancer over a rolling week.",
+        "content": "The p95 latency target for heron is 150 ms, measured at the load balancer from a rolling week of traffic.",
         "recordedAt": "2026-09-25T09:00:17.344Z",
         "similarity": 0.3643
       },
@@ -2062,7 +2062,7 @@
         "id": "01a0d7cb-4240-7e28-8e24-6cb017c99c24",
         "memoryType": "fact",
         "topic": "Latency target",
-        "content": "The p95 latency target for heron is 150 ms, measured at the load balancer over a rolling week.",
+        "content": "The p95 latency target for heron is 150 ms, measured at the load balancer from a rolling week of traffic.",
         "recordedAt": "2026-09-25T09:00:17.344Z",
         "similarity": 0.5376
       },
@@ -2314,7 +2314,7 @@
         "id": "01a06670-7e5b-77c5-9c05-26cbf78ce1f3",
         "memoryType": "decision",
         "topic": "Free tier",
-        "content": "Free users can track five habits, and reminders work the same as on the paid plan.",
+        "content": "Free users can track five habits, and reminders work the same as on the paid plan from day one.",
         "recordedAt": "2026-09-03T08:44:03.547Z",
         "similarity": 0.5716
       },
@@ -2827,7 +2827,7 @@
         "id": "01a06670-7e5b-77c5-9c05-26cbf78ce1f3",
         "memoryType": "decision",
         "topic": "Free tier",
-        "content": "Free users can track five habits, and reminders work the same as on the paid plan.",
+        "content": "Free users can track five habits, and reminders work the same as on the paid plan from day one.",
         "recordedAt": "2026-09-03T08:44:03.547Z",
         "similarity": 0.6039
       },
@@ -3394,7 +3394,7 @@
         "id": "019f1876-2b5d-7ec8-b648-8a69419e5706",
         "memoryType": "fact",
         "topic": "Flat energy",
-        "content": "The flat's heating is district heating, billed with the rent.",
+        "content": "The flat's heating is district heating, billed with the rent since the new meters went in.",
         "recordedAt": "2026-06-30T12:17:05.373Z",
         "similarity": 0.4285
       },
@@ -3412,7 +3412,7 @@
         "id": "01a0258e-a977-7d30-b32d-01b2d705e52d",
         "memoryType": "fact",
         "topic": "Dispatch hours",
-        "content": "On summer timetables the dispatch office opens at 04:30.",
+        "content": "On summer timetables, from June to August, the dispatch office opens at 04:30.",
         "recordedAt": "2026-08-21T18:21:41.623Z",
         "similarity": 0.5742
       },
@@ -3484,7 +3484,7 @@
         "id": "01a06670-7e5b-77c5-9c05-26cbf78ce1f3",
         "memoryType": "decision",
         "topic": "Free tier",
-        "content": "Free users can track five habits, and reminders work the same as on the paid plan.",
+        "content": "Free users can track five habits, and reminders work the same as on the paid plan from day one.",
         "recordedAt": "2026-09-03T08:44:03.547Z",
         "similarity": 0.3616
       },
@@ -3493,7 +3493,7 @@
         "id": "01a0258e-a977-7d30-b32d-01b2d705e52d",
         "memoryType": "fact",
         "topic": "Dispatch hours",
-        "content": "On summer timetables the dispatch office opens at 04:30.",
+        "content": "On summer timetables, from June to August, the dispatch office opens at 04:30.",
         "recordedAt": "2026-08-21T18:21:41.623Z",
         "similarity": 0.6158
       },
@@ -3763,7 +3763,7 @@
         "id": "01a12f4c-6638-75d3-ab42-fb3364402b6d",
         "memoryType": "fact",
         "topic": "Monthly active users",
-        "content": "Wren's monthly active users are around 11,000.",
+        "content": "Wren's monthly active users are around 11,000, from the analytics export.",
         "recordedAt": "2026-10-12T08:48:18.488Z",
         "similarity": 0.6034
       },
@@ -3880,7 +3880,7 @@
         "id": "01a094f4-2972-7c07-b40b-77b5679171b4",
         "memoryType": "preference",
         "topic": "Hotel rooms",
-        "content": "A ground-floor room when travelling, close to the exit.",
+        "content": "A ground-floor room when travelling, close to the exit and away from the lifts.",
         "recordedAt": "2026-09-12T09:30:24.498Z",
         "similarity": 0.6092
       },
@@ -4052,7 +4052,7 @@
           "scope": "work",
           "project": "heron",
           "topic": "Latency target",
-          "content": "The p95 latency target for heron is 150 ms, measured at the load balancer over a rolling week.",
+          "content": "The p95 latency target for heron is 150 ms, measured at the load balancer from a rolling week of traffic.",
           "recordedAt": "2026-09-25T09:00:17.344Z",
           "lastTouchedAt": "2026-09-25T09:00:17.344Z"
         },
@@ -4076,7 +4076,7 @@
           "scope": "work",
           "project": "wren",
           "topic": "Free tier",
-          "content": "Free users can track five habits, and reminders work the same as on the paid plan.",
+          "content": "Free users can track five habits, and reminders work the same as on the paid plan from day one.",
           "recordedAt": "2026-09-03T08:44:03.547Z",
           "lastTouchedAt": "2026-09-03T08:44:03.547Z"
         },
@@ -4268,7 +4268,7 @@
           "scope": "work",
           "project": "heron",
           "topic": "Commit messages",
-          "content": "Heron pull request titles follow conventional commits too, with the same scopes.",
+          "content": "Since June, heron pull request titles follow conventional commits too, with the same scopes.",
           "recordedAt": "2026-06-08T19:43:51.772Z",
           "lastTouchedAt": "2026-06-08T19:43:51.772Z"
         },
@@ -4556,7 +4556,7 @@
           "scope": "work",
           "project": "larkspur",
           "topic": "Dispatch hours",
-          "content": "On summer timetables the dispatch office opens at 04:30.",
+          "content": "On summer timetables, from June to August, the dispatch office opens at 04:30.",
           "recordedAt": "2026-08-21T18:21:41.623Z",
           "lastTouchedAt": "2026-08-21T18:21:41.623Z"
         },
@@ -4604,7 +4604,7 @@
           "scope": "work",
           "project": "wren",
           "topic": "Store screenshots",
-          "content": "Store screenshots show dark mode, with the widget on the first one.",
+          "content": "Store screenshots show dark mode, with the new widget on the first one.",
           "recordedAt": "2026-04-24T20:59:51.709Z",
           "lastTouchedAt": "2026-04-24T20:59:51.709Z"
         },
@@ -4628,7 +4628,7 @@
           "scope": "work",
           "project": "heron",
           "topic": "Pull request size",
-          "content": "Generated files don't count toward the pull request size limit.",
+          "content": "Generated files don't count toward the pull request size limit, and nor do files moved without edits.",
           "recordedAt": "2026-08-04T12:17:43.533Z",
           "lastTouchedAt": "2026-08-04T12:17:43.533Z"
         },
@@ -4652,7 +4652,7 @@
           "scope": "personal",
           "project": null,
           "topic": "Hotel rooms",
-          "content": "A ground-floor room when travelling, close to the exit.",
+          "content": "A ground-floor room when travelling, close to the exit and away from the lifts.",
           "recordedAt": "2026-09-12T09:30:24.498Z",
           "lastTouchedAt": "2026-09-12T09:30:24.498Z"
         },
@@ -4748,7 +4748,7 @@
           "scope": "work",
           "project": "studio-ops",
           "topic": "Expense claims",
-          "content": "Expense claims are due by the 5th of the following month, with the receipt photo attached.",
+          "content": "Expense claims are due by the 5th of the month after the purchase, with the receipt photo attached.",
           "recordedAt": "2026-04-08T11:24:46.783Z",
           "lastTouchedAt": "2026-04-08T11:24:46.783Z"
         },
@@ -4892,7 +4892,7 @@
           "scope": "work",
           "project": "studio-ops",
           "topic": "Payment terms",
-          "content": "Invoices to public-sector clients are due within 14 days, as their procurement rules require.",
+          "content": "From May, invoices to public-sector clients are due within 14 days, as their procurement rules require.",
           "recordedAt": "2026-05-19T14:20:59.319Z",
           "lastTouchedAt": "2026-05-19T14:20:59.319Z"
         },
@@ -5108,7 +5108,7 @@
           "scope": "personal",
           "project": null,
           "topic": "Flat energy",
-          "content": "The flat's heating is district heating, billed with the rent.",
+          "content": "The flat's heating is district heating, billed with the rent since the new meters went in.",
           "recordedAt": "2026-06-30T12:17:05.373Z",
           "lastTouchedAt": "2026-06-30T12:17:05.373Z"
         },
@@ -5228,7 +5228,7 @@
           "scope": "work",
           "project": "wren",
           "topic": "Monthly active users",
-          "content": "Wren's monthly active users are around 11,000.",
+          "content": "Wren's monthly active users are around 11,000, from the analytics export.",
           "recordedAt": "2026-10-12T08:48:18.488Z",
           "lastTouchedAt": "2026-10-12T08:48:18.488Z"
         },
@@ -5252,7 +5252,7 @@
           "scope": "work",
           "project": "sorrel",
           "topic": "Case studies",
-          "content": "Case studies on sorrel name client staff by first name only, even with approval.",
+          "content": "Case studies on sorrel name client staff by first name only, even after approval.",
           "recordedAt": "2026-10-19T19:16:29.868Z",
           "lastTouchedAt": "2026-10-19T19:16:29.868Z"
         },

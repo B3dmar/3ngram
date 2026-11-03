@@ -3,8 +3,9 @@
 //
 // REPORT-ONLY, NOT GATED: nothing here changes an exit code on a metric, and
 // run.mjs never imports this module (the gate runs with no install). The pass
-// stays report-only until the ADR's bars hold on the held-out split: archive
-// precision >= 0.95 over >= 40 proposals, and zero recurring-episodic collapses.
+// stays report-only until the ADR's bars hold over every personal item, scored
+// with frozen thresholds: archive precision >= 0.95 over >= 40 proposals, and
+// zero recurring-episodic collapses. Synthetic results never count.
 //
 // HOW IT RUNS. The real `runForgettingPass` is driven through an injected
 // in-memory ForgettingRepo built from a golden file: the candidates are what the
@@ -22,7 +23,8 @@
 // THRESHOLDS (forgetting-thresholds.mjs): --select-thresholds runs only on the
 // public calibration fixture and writes the thresholds its dev split selects;
 // --thresholds scores any golden file, the private one included, with those
-// frozen thresholds instead of the pass's built-in ones, and prints no sweep.
+// frozen thresholds instead of the pass's built-in ones, prints no sweep, and
+// reports the bar's inputs over every item, whatever its split label.
 //
 // Observability (hard rule 6): the report and the out file carry memory IDS,
 // counts, hashes and scores only. No topic or content string is ever printed or written.
@@ -33,15 +35,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
+  assertThresholdMode,
+  barEvidence,
   CALIBRATION_SHA256,
   fileSha256,
   labelsSha256,
   loadFrozenThresholds,
   proposedUnder,
-  SELECTION_RULE,
-  selectThresholds,
+  THRESHOLD_GRID,
+  writeSelection,
 } from './forgetting-thresholds.mjs'
-import { parseFlag } from './lib.mjs'
+import { parseFlag, parsePathFlag } from './lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
@@ -263,8 +267,7 @@ export function thresholdSweep(verdicts, labels, split) {
   const sweep = { split }
   for (const action of PROPOSAL_ACTIONS) {
     sweep[action] = []
-    for (let k = 50; k <= 95; k += 5) {
-      const threshold = k / 100
+    for (const threshold of THRESHOLD_GRID) {
       const at = labelled.filter((v) => v.action === action && v.probability >= threshold)
       sweep[action].push({ threshold, ...precision(at, labels) })
     }
@@ -310,37 +313,6 @@ async function createGateway({ live, answersPath, env }) {
     ...(env.JEV_API_URL ? { baseUrl: env.JEV_API_URL } : {}),
   })
   return { gateway, mode: 'live' }
-}
-
-/** Refuse a selection off the calibration fixture, and a selection that is also frozen. */
-function assertThresholdMode(options, calibration) {
-  if (options.selectPath === undefined) return
-  if (options.thresholdsPath !== undefined) {
-    throw new Error('--select-thresholds and --thresholds cannot be combined')
-  }
-  if (!calibration) {
-    throw new Error('thresholds are selected only on eval/fixtures/forgetting-calibration.json')
-  }
-}
-
-/** Write the selected thresholds with their provenance; return them. */
-function writeSelection(path, metrics, mode) {
-  const selection = {
-    version: 1,
-    rule: SELECTION_RULE,
-    source: {
-      fixture: 'forgetting-calibration.json',
-      sha256: metrics.golden.sha256,
-      labelsSha256: metrics.golden.labelsSha256,
-      split: metrics.thresholds.split,
-    },
-    mode,
-    model: metrics.model,
-    thresholds: selectThresholds(metrics.thresholds),
-  }
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(selection, null, 2)}\n`)
-  return selection.thresholds
 }
 
 /**
@@ -408,6 +380,8 @@ export async function runForgettingEval(options = {}) {
       ? { frozen: frozen.thresholds, model: frozen.model, source: frozen.source }
       : thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
   }
+  // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
+  if (frozen && !calibration) metrics.barEvidence = barEvidence(metrics.splits.all)
   if (options.selectPath !== undefined) {
     metrics.selected = writeSelection(options.selectPath, metrics, judge.mode)
   }
@@ -429,7 +403,7 @@ export function formatReport(m) {
     )
       .map(([s, n]) => `${s} ${n}`)
       .join(', ')})`,
-    `pass: items ${m.pass.items}, batches ${m.pass.batches}, proposed ${m.pass.proposed}, dismissed ${m.pass.dismissed}, skipped ${m.pass.skipped}`,
+    `pass${m.thresholds.frozen ? ' (built-in thresholds)' : ''}: items ${m.pass.items}, batches ${m.pass.batches}, proposed ${m.pass.proposed}, dismissed ${m.pass.dismissed}, skipped ${m.pass.skipped}`,
     `verdicts: ${m.verdicts.total} total, ${m.verdicts.proposed} proposed, ${m.verdicts.dismissed} below threshold, ${m.verdicts.keep} keep`,
     '',
     `${col('split', 8)}${col('archive', 14)}${col('supersede', 14)}${col('combined', 14)}${col('conflict', 14)}${col('keep-rate', 12)}${col('collapses', 10)}ece`,
@@ -455,6 +429,12 @@ export function formatReport(m) {
       '',
       `frozen thresholds (calibration ${m.thresholds.source.sha256.slice(0, 12)}, model ${m.thresholds.model}): ${actions(m.thresholds.frozen)}`,
     )
+    const e = m.barEvidence
+    if (e) {
+      lines.push(
+        `bar evidence, all items whatever their split (personal evidence only on the private set): archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}; episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}`,
+      )
+    }
     return lines.join('\n')
   }
   const use = m.golden.calibration ? 'selection input' : 'diagnostic only, never a selection'
@@ -473,16 +453,21 @@ export function formatReport(m) {
   return lines.join('\n')
 }
 
-async function main(args) {
+/** CLI args to options. A threshold flag given without a path throws: no silent fallback. */
+export function cliOptions(args) {
   const flag = (name, fallback) => parseFlag(args, name, fallback)
-  const result = await runForgettingEval({
+  return {
     goldenPath: flag('golden', DEFAULT_GOLDEN),
     answersPath: flag('answers', DEFAULT_ANSWERS),
     outPath: flag('out', DEFAULT_OUT),
     live: args.includes('--live'),
-    selectPath: flag('select-thresholds', undefined),
-    thresholdsPath: flag('thresholds', undefined),
-  })
+    selectPath: parsePathFlag(args, 'select-thresholds'),
+    thresholdsPath: parsePathFlag(args, 'thresholds'),
+  }
+}
+
+async function main(args) {
+  const result = await runForgettingEval(cliOptions(args))
   if (result.skipped) {
     process.stdout.write(`forgetting eval --live skipped: ${result.skipped} (exit 0)\n`)
     return
