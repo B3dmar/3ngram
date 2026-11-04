@@ -618,7 +618,7 @@ describe('the detail never outlives the context check of its list', () => {
     assert.equal(visibleDetail(open)?.status, 'ready')
   })
 
-  test('a failure without an envelope drops the detail with the rows', () => {
+  test('a failure without an envelope hides the detail with the rows until the probe answers', () => {
     const s = run(
       [
         { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
@@ -626,12 +626,33 @@ describe('the detail never outlives the context check of its list', () => {
       ],
       open,
     )
-    assert.equal(s.detail, null)
+    assert.equal(rowCount(s), null)
     assert.equal(visibleDetail(s), null)
-    // Confirmed: the rows come back, the detail does not.
+    // Confirmed: the rows and the detail come back, marked stale.
     const back = reduce(s, { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 })
+    assert.equal(back.status, 'stale')
     assert.equal(rowCount(back), 4)
-    assert.equal(back.detail, null)
+    assert.equal(visibleDetail(back)?.status, 'ready')
+    // Another context, or no answer: both are cleared.
+    for (const fingerprint of [FP_B, null]) {
+      const gone = reduce(s, { type: 'context_verified', gen: 2, fingerprint, at: 2100 })
+      assert.equal(gone.record, null)
+      assert.equal(gone.detail, null)
+    }
+  })
+
+  test('a failure without an envelope drops a detail still loading', () => {
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
+        { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 },
+      ],
+      open,
+    )
+    assert.equal(s.status, 'stale')
+    assert.equal(s.detail, null)
   })
 
   test('a cancel drops the detail with the rows', () => {

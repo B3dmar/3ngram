@@ -982,12 +982,62 @@ describe('cancellation and lifecycle', () => {
     await w.clock.advance(5 * 60_000)
     release()
     await w.clock.advance(1)
-    // The read failed without an answer; the rows return as stale, the
-    // detail does not.
+    // The read failed without an answer and the probe confirmed the context:
+    // the detail returns, marked stale, as the rows would.
     const text = await textOf(ui)
-    expect(text).not.toContain('Full commitment text')
+    expect(text).toContain('Full commitment text')
     expect(text).toContain('STALE since')
   })
+
+  // A failure without an envelope (here, output that is not one) keeps the
+  // open detail hidden while the probe checks the context, then shows it with
+  // the list's stale line, or clears it with the rows.
+  for (const [probed, kept] of [
+    [FP_A, true],
+    [FP_B, false],
+  ] as const) {
+    test(`an open detail a failed read hid ${kept ? 'returns stale' : 'is cleared'} when the probe ${kept ? 'confirms' : 'disagrees'}`, async ($, on) => {
+      let reads = 0
+      let failed = false
+      let releaseProbe: () => void = () => undefined
+      const w = world(on, (argv) => {
+        if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+        if (argv[2] === 'context') {
+          if (!failed) return { stdout: contextEnvelope(FP_A) }
+          // The probe that settles the failed read waits.
+          failed = false
+          const wait = new Promise<void>((r) => {
+            releaseProbe = r
+          })
+          return { wait, stdout: contextEnvelope(probed) }
+        }
+        if (++reads === 1) return { stdout: listEnvelope(FP_A) }
+        failed = true
+        return { stdout: 'not an envelope' }
+      })
+      await start($, w.clock)
+      const ui = await mountPane($)
+      await ui.press({ key: OPEN_ROW })
+      await w.clock.advance(1)
+      expect(await textOf(ui)).toContain('Full commitment text')
+      await w.clock.advance(5 * 60_000)
+      // While the probe runs, neither the detail nor the rows show.
+      const during = await textOf(ui)
+      expect(during).not.toContain('Full commitment text')
+      expect(during).not.toContain(TOPIC)
+      releaseProbe()
+      await w.clock.advance(1)
+      const after = await textOf(ui)
+      if (kept) {
+        expect(after).toContain('Full commitment text')
+        expect(after).toContain('STALE since 12:05 UTC')
+      } else {
+        expect(after).not.toContain('Full commitment text')
+        expect(after).not.toContain(TOPIC)
+        expect(after).toContain('could not be confirmed')
+      }
+    })
+  }
 
   test('/clear reads again once the state is reset, not before', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
