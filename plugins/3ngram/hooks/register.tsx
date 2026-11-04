@@ -569,7 +569,9 @@ export const register: Register = (on, options) => {
     // session.start fires again after a reload. Whatever this environment
     // still holds from an earlier start (its timers, a child) is ended first,
     // so timers never pile up; a read the reload interrupted counts as
-    // cancelled and its context is checked again.
+    // cancelled and its context is checked again. This also ends a midnight
+    // redraw that a draw during the await above armed; it is armed again only
+    // by the redraw that opening the gate makes (confirmSelection).
     disarmRefresh()
     const s = await readPanel($)
     if (s.status === 'loading' || s.status === 'checking' || s.status === 'refreshing') {

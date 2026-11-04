@@ -1095,10 +1095,13 @@ describe('cancellation and lifecycle', () => {
     await w.clock.advance(1)
     const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
     expect(lists()).toBe(1)
+    const ui = await mountPane($)
     roster.length = 0
     await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
-    await w.clock.advance(15 * 60_000)
+    // Past midnight UTC: no read, and the midnight redraw ended with them.
+    await w.clock.set(Date.UTC(2026, 9, 8))
     expect(lists()).toBe(1)
+    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
     // A later client arms them again.
     roster.push('mobile')
     await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
@@ -1309,6 +1312,13 @@ describe('the age of what is shown stays visible', () => {
     await w.clock.set(Date.UTC(2026, 9, 8))
     expect(await textOf(ui)).toContain('Updated 2026-10-07 12:00 UTC')
     expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+    // The redraw re-arms: a read on the next day is redrawn at its midnight.
+    await w.clock.set(Date.UTC(2026, 9, 8, 12))
+    await $.command.run({ command: 'commitments', args: '' } as never)
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
+    await w.clock.set(Date.UTC(2026, 9, 9))
+    expect(await textOf(ui)).toContain('Updated 2026-10-08 12:00 UTC')
   })
 
   test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
