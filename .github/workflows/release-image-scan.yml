@@ -26,7 +26,9 @@ on:
     # `edited` covers a base change: without it, a PR retargeted from staging
     # to main keeps its "not needed" success on the same head commit, which
     # main's required check would accept. Title and body edits re-run the
-    # same decision; that costs a rescan on PRs into main, never a skip.
+    # same decision; that costs a rescan on any PR that scans, never a skip.
+    # No job-level `if` (say, on open PRs only): a skipped job counts as a
+    # passing required check.
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
