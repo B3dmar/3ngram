@@ -61,3 +61,5 @@ claude plugin test plugins/3ngram                # engine-kit tests (local only)
 ```
 
 The engine-kit tests need the Claude Code CLI, which is not in the lockfile, so CI runs the specs under `spec/` and the engine tests are run locally before each change. The specs parse the binary's golden envelopes in `cmd/3ngram-hook/testdata/commitments/`, so a contract change fails on both sides.
+
+Installs from the marketplace are pinned to the `version` in `.claude-plugin/plugin.json`: Claude Code caches each version, and `/plugin update` or auto-update replaces an install only when that string changes ([Versions and updates](https://code.claude.com/docs/en/plugins/loading#versions-and-updates)). So the first PR that changes the plugin after each promotion to `main` bumps the version, in `plugin.json` and `package.json` together; later PRs before the next promotion leave it. Keep `version` out of `.claude-plugin/marketplace.json`, where `plugin.json` would override it.
