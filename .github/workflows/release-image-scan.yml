@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+# release-image-scan.yml — the release image scan, before a tag exists.
+#
+# release-publish.yml scans the server and worker runner images after a v* tag
+# is pushed, and `immutable-v-tags` burns the version when that scan fails
+# (v1.6.2, v1.8.0, v1.8.3, v1.9.0). This workflow runs the same composite
+# action (.github/actions/release-image-scan) earlier, on:
+#   - version PRs (head changeset-release/*);
+#   - the promotion PR (head staging, base main), the run closest to the tag;
+#   - PRs that change the scan definition or either runner Dockerfile, which
+#     covers Renovate's base-image digest bumps;
+#   - workflow_dispatch on any ref (`gh workflow run release-image-scan.yml
+#     --ref main`), for a last check right before tagging.
+# Every other PR passes after a cheap path check. Advisories can still land
+# between this run and the tag push; the post-tag scan stays as the backstop.
+#
+# RULE: actions pinned by full SHA, never tags (scripts/check-action-pins.sh).
+name: release-image-scan
+
+on:
+  pull_request:
+    branches: [staging, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-image-scan:
+    name: release-image-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2 # a PR's merge commit and both parents, for the path check
+          persist-credentials: false
+      # One job that always reports, so a required check fails closed: a
+      # broken gate fails this job rather than skipping the scan.
+      - name: Decide whether this run needs the release scan
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          scan=false
+          if [[ "$EVENT_NAME" != pull_request ]]; then
+            scan=true
+          elif [[ "$HEAD_REF" == changeset-release/* ]]; then
+            scan=true
+          elif [[ "$HEAD_REF" == staging && "$BASE_REF" == main ]]; then
+            scan=true
+          else
+            # HEAD is the PR merge commit; HEAD^1 is the base tip.
+            changed=$(git diff --name-only HEAD^1 HEAD)
+            if grep -qE '^(\.github/actions/release-image-scan/|\.github/workflows/release-image-scan\.yml$|apps/(server|worker)/Dockerfile$)' <<<"$changed"; then
+              scan=true
+            fi
+          fi
+          echo "event=${EVENT_NAME} head=${HEAD_REF:-n/a} base=${BASE_REF:-n/a} scan=${scan}"
+          echo "scan=${scan}" >> "$GITHUB_OUTPUT"
+      # Build caches are scoped per PR (or per dispatch run) and never use the
+      # `release` prefix, so the first scan of a PR builds cold like a tag run
+      # and nothing here can seed release-publish.yml's cache.
+      - name: Build and scan both runner images on both platforms
+        if: ${{ steps.gate.outputs.scan == 'true' }}
+        uses: ./.github/actions/release-image-scan
+        with:
+          image-tag: ${{ github.sha }}
+          cache-scope-prefix: pretag-${{ github.event.pull_request.number || github.run_id }}
