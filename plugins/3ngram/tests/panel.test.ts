@@ -1291,6 +1291,26 @@ describe('the age of what is shown stays visible', () => {
     },
   )
 
+  // #400: nothing else redraws a pane between refreshes, so one drawn before
+  // midnight UTC kept showing its time as today's.
+  test('a pane left as it is past midnight UTC is drawn again with the date', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+    )
+    // No surface at start, so no background refresh: the command's read is
+    // the only one, and only the midnight redraw can draw the pane again.
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    await $.command.run({ command: 'commitments', args: '' } as never)
+    await w.clock.advance(1)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
+    await w.clock.set(Date.UTC(2026, 9, 7, 23, 59))
+    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
+    await w.clock.set(Date.UTC(2026, 9, 8))
+    expect(await textOf(ui)).toContain('Updated 2026-10-07 12:00 UTC')
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+  })
+
   test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
     let reads = 0
     let release: () => void = () => undefined

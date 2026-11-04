@@ -81,6 +81,13 @@ function day(iso: string): string {
   return iso.slice(0, 10)
 }
 
+// nextUtcMidnight is when a view drawn at now goes out of date by the clock
+// alone: from then on, a time it showed without its date is yesterday's.
+export function nextUtcMidnight(now: number): number {
+  const d = new Date(now)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+}
+
 // dueLabel reads a deadline as the instant it is (packages/schema stores a
 // UTC instant): its time of day is shown, in UTC, unless it is midnight.
 function dueLabel(iso: string): string {

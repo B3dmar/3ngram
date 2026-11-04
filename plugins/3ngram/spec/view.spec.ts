@@ -11,6 +11,7 @@ import {
   headerLines,
   listNotice,
   MAX_CONTENT,
+  nextUtcMidnight,
   panelView,
   partialNote,
   rowView,
@@ -197,6 +198,18 @@ test('stale and error states say so in words, not only by tone', () => {
     /^ERROR: The read timed out\. The account or selection could not be confirmed/,
   )
   assert.equal(statusLine(cleared), '3ngram: unavailable')
+})
+
+// #400: a pane drawn just before midnight UTC is drawn again at it, when a
+// time it showed as today's becomes yesterday's.
+test('a view drawn on one UTC day goes out of date at the next midnight', () => {
+  const midnight = nextUtcMidnight(NOW)
+  assert.equal(midnight, Date.UTC(2026, 9, 8))
+  assert.equal(nextUtcMidnight(midnight - 1), midnight)
+  assert.equal(nextUtcMidnight(midnight), Date.UTC(2026, 9, 9))
+  assert.equal(nextUtcMidnight(Date.UTC(2026, 11, 31, 23, 59)), Date.UTC(2027, 0, 1))
+  assert.equal(panelView(ready, midnight - 1).status.label, 'Updated 12:30 UTC')
+  assert.equal(panelView(ready, midnight).status.label, 'Updated 2026-10-07 12:30 UTC')
 })
 
 test('the status line carries counts only, never a topic', () => {

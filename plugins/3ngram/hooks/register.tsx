@@ -15,7 +15,7 @@ import { parseEnvelope } from './lib/contract.ts'
 import { classifyEmptyOutput, classifySpawnError } from './lib/process.ts'
 import type { FailureKind, PanelEvent, PanelState } from './lib/state.ts'
 import { initialState, needsVerification, reduce, unconfirmed, visibleDetail } from './lib/state.ts'
-import { detailView, listNotice, panelView, statusLine } from './lib/view.ts'
+import { detailView, listNotice, nextUtcMidnight, panelView, statusLine } from './lib/view.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
 // commitments`. Everything it shows comes from that binary's JSON envelopes;
@@ -58,6 +58,9 @@ let detailRead: { seq: number; stop: () => void } | null = null
 // and transitions fire at once and are not kept.
 let tick: { cancel: () => void } | null = null
 let kick: { cancel: () => void } | null = null
+// midnight is the redraw armed for the next UTC midnight after a draw
+// (redrawAtMidnight), ended with the background reads.
+let midnight: { at: number; timer: { cancel: () => void } } | null = null
 // stops counts stopReads calls, so a read that had not started its child
 // when it was stopped still sees that it was, and never starts one.
 let stops = 0
@@ -140,13 +143,32 @@ function armRefresh($: EngineInterface, options: PluginOptions): void {
   tick = $.clock.every(refreshMs(options), () => fire($, refresh($, options)))
 }
 
-// disarmRefresh stops the background reads and anything they started.
+// disarmRefresh stops the background reads, anything they started, and the
+// midnight redraw.
 function disarmRefresh(): void {
   tick?.cancel()
   kick?.cancel()
+  midnight?.timer.cancel()
   tick = null
   kick = null
+  midnight = null
   stopReads()
+}
+
+// redrawAtMidnight keeps one redraw armed for the next UTC midnight after a
+// draw. A time is shown without its date only on the UTC day it is drawn,
+// and nothing else redraws a pane before its next refresh. A redraw already
+// armed for that midnight, or an earlier one, is kept: it redraws every
+// instance, and their next draws arm the following one.
+function redrawAtMidnight($: EngineInterface, now: number): void {
+  const at = nextUtcMidnight(now)
+  if (midnight !== null && midnight.at <= at) return
+  midnight?.timer.cancel()
+  const timer = $.clock.after(at - now, () => {
+    midnight = null
+    $.ui.invalidate('ui.render')
+  })
+  midnight = { at, timer }
 }
 
 function refreshMs(options: PluginOptions): number {
@@ -548,11 +570,7 @@ export const register: Register = (on, options) => {
     // still holds from an earlier start (its timers, a child) is ended first,
     // so timers never pile up; a read the reload interrupted counts as
     // cancelled and its context is checked again.
-    tick?.cancel()
-    kick?.cancel()
-    tick = null
-    kick = null
-    stopReads()
+    disarmRefresh()
     const s = await readPanel($)
     if (s.status === 'loading' || s.status === 'checking' || s.status === 'refreshing') {
       await dispatch($, { type: 'reloaded' })
@@ -624,12 +642,14 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    // Decides only whether a time shown needs its date: every refresh redraws.
-    // Read first: the gate below must follow the render's last await, or a
-    // session.start landing in it would draw what it closed the gate on.
+    // Decides only whether a time shown needs its date: every refresh redraws,
+    // and so does the next UTC midnight (redrawAtMidnight). Read first: the
+    // gate below must follow the render's last await, or a session.start
+    // landing in it would draw what it closed the gate on.
     const now = await $.clock.now()
     const held = await readPanel($)
     const s = selectionConfirmed ? held : unconfirmed(held)
+    redrawAtMidnight($, now)
 
     const shownDetail = visibleDetail(s)
     if (shownDetail) {
