@@ -655,16 +655,24 @@ describe('the detail never outlives the context check of its list', () => {
     assert.equal(s.detail, null)
   })
 
-  test('a cancel drops the detail with the rows', () => {
-    const s = run(
-      [
-        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
-        { type: 'cancel' },
-      ],
-      open,
-    )
-    assert.equal(s.detail, null)
-  })
+  // Unlike a failed read, on purpose (#400): a stop does not bring an
+  // answered detail back, even under a confirmed context.
+  for (const stop of ['cancel', 'reloaded'] as const) {
+    test(`a ${stop} drops an answered detail; a confirming probe brings back the rows only`, () => {
+      const s = run(
+        [
+          { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+          { type: stop },
+        ],
+        open,
+      )
+      assert.equal(s.detail, null)
+      const back = reduce(s, { type: 'context_verified', gen: 3, fingerprint: FP_A, at: 2100 })
+      assert.equal(back.status, 'stale')
+      assert.equal(rowCount(back), 4)
+      assert.equal(back.detail, null)
+    })
+  }
 
   test('a detail answer arriving while the list is verified is ignored', () => {
     const pendingDetail = run(

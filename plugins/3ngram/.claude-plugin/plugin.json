@@ -1,7 +1,7 @@
 {
   "name": "3ngram",
   "displayName": "3ngram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "3ngram for Claude Code: a read-only commitment panel over your 3ngram memory.",
   "author": { "name": "B3dmar", "url": "https://github.com/B3dmar" },
   "homepage": "https://github.com/B3dmar/3ngram/tree/main/plugins/3ngram",
