@@ -148,6 +148,10 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
     case 'cancel': {
       if (!IN_FLIGHT.has(s.status)) return s
       const next = { ...s, gen: s.gen + 1 }
+      // Unlike a failed read, a cancel (or a reload, which acts as one) drops
+      // the open detail even once its answer is in: a confirming probe brings
+      // back the rows, marked stale, not the detail. Conservative on purpose
+      // (#400); reopening it is one press.
       return s.record
         ? { ...next, status: 'verifying', pending: 'cancelled', detail: null }
         : cleared(next, 'error', { kind: 'cancelled' })
