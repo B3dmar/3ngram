@@ -15,8 +15,10 @@ import type { CommitmentRow, Envelope } from './contract.ts'
 //   fingerprint, or, when no envelope came back at all (a timeout, a missing
 //   binary, a crash, a cancel), by the local `commitments context` probe.
 //   Otherwise list and detail are both cleared.
-// - The detail view shows under exactly the conditions the rows do, and is
-//   dropped whenever the rows stop showing.
+// - The detail view shows under exactly the conditions the rows do. While the
+//   rows are hidden for a context check (checking, verifying) a detail with
+//   its answer is kept hidden, and it is dropped whenever the rows are
+//   cleared.
 // - An event the state does not take (an older generation, a verification
 //   already settled, a detail no longer open) returns the very state it was
 //   given, so a caller can tell its event was ignored.
@@ -135,9 +137,13 @@ export function reduce(s: PanelState, e: PanelEvent): PanelState {
     case 'list_failed': {
       if (e.gen !== s.gen) return s
       if (!s.record) return cleared(s, 'error', { kind: e.failure })
-      // The detail goes with the rows: neither shows while the context is
-      // unconfirmed, and a confirmed context brings back the rows only.
-      return { ...s, status: 'verifying', pending: e.failure, detail: null }
+      // Neither rows nor detail show while the context is unconfirmed
+      // (visibleDetail). A detail that has its answer is kept, hidden: a
+      // confirmed context brings it back with the rows, marked stale, and
+      // any other answer clears it with them. One still loading is dropped,
+      // since an answer that lands during verification is ignored.
+      const detail = s.detail?.status === 'loading' ? null : s.detail
+      return { ...s, status: 'verifying', pending: e.failure, detail }
     }
     case 'cancel': {
       if (!IN_FLIGHT.has(s.status)) return s

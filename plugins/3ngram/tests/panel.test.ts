@@ -335,6 +335,20 @@ describe('the read-only data path', () => {
 })
 
 describe('rows keep their address', () => {
+  test('a long title is drawn whole, cut at the pane edge rather than wrapped', async ($, on) => {
+    const long = 'Ship '.repeat(51).trim()
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A, long) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await mountPane($, surface)
+      const title = (await ui.findAll({ type: 'Text' })).find((el) => el.text === long)
+      expect(title?.props.wrap).toBe('truncate-end')
+      expect((await ui.find({ key: OPEN_ROW }))?.text).toBe(long)
+    }
+  })
+
   // A surface finds a Button again by its key after a redraw, so a key that
   // names a position moves the focus to whichever row lands there next.
   test('a commitment keeps its row key when a refresh reorders the rows', async ($, on) => {
@@ -968,12 +982,62 @@ describe('cancellation and lifecycle', () => {
     await w.clock.advance(5 * 60_000)
     release()
     await w.clock.advance(1)
-    // The read failed without an answer; the rows return as stale, the
-    // detail does not.
+    // The read failed without an answer and the probe confirmed the context:
+    // the detail returns, marked stale, as the rows would.
     const text = await textOf(ui)
-    expect(text).not.toContain('Full commitment text')
+    expect(text).toContain('Full commitment text')
     expect(text).toContain('STALE since')
   })
+
+  // A failure without an envelope (here, output that is not one) keeps the
+  // open detail hidden while the probe checks the context, then shows it with
+  // the list's stale line, or clears it with the rows.
+  for (const [probed, kept] of [
+    [FP_A, true],
+    [FP_B, false],
+  ] as const) {
+    test(`an open detail a failed read hid ${kept ? 'returns stale' : 'is cleared'} when the probe ${kept ? 'confirms' : 'disagrees'}`, async ($, on) => {
+      let reads = 0
+      let failed = false
+      let releaseProbe: () => void = () => undefined
+      const w = world(on, (argv) => {
+        if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+        if (argv[2] === 'context') {
+          if (!failed) return { stdout: contextEnvelope(FP_A) }
+          // The probe that settles the failed read waits.
+          failed = false
+          const wait = new Promise<void>((r) => {
+            releaseProbe = r
+          })
+          return { wait, stdout: contextEnvelope(probed) }
+        }
+        if (++reads === 1) return { stdout: listEnvelope(FP_A) }
+        failed = true
+        return { stdout: 'not an envelope' }
+      })
+      await start($, w.clock)
+      const ui = await mountPane($)
+      await ui.press({ key: OPEN_ROW })
+      await w.clock.advance(1)
+      expect(await textOf(ui)).toContain('Full commitment text')
+      await w.clock.advance(5 * 60_000)
+      // While the probe runs, neither the detail nor the rows show.
+      const during = await textOf(ui)
+      expect(during).not.toContain('Full commitment text')
+      expect(during).not.toContain(TOPIC)
+      releaseProbe()
+      await w.clock.advance(1)
+      const after = await textOf(ui)
+      if (kept) {
+        expect(after).toContain('Full commitment text')
+        expect(after).toContain('STALE since 12:05 UTC')
+      } else {
+        expect(after).not.toContain('Full commitment text')
+        expect(after).not.toContain(TOPIC)
+        expect(after).toContain('could not be confirmed')
+      }
+    })
+  }
 
   test('/clear reads again once the state is reset, not before', async ($, on) => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }))
@@ -1178,5 +1242,74 @@ describe('cancellation and lifecycle', () => {
     const w = world(on, () => ({ stdout: listEnvelope(FP_A) }), { cwdThrows: true })
     await start($, w.clock)
     expect(await textOf(await mountPane($))).toContain('ERROR')
+  })
+})
+
+describe('the age of what is shown stays visible', () => {
+  // #269: a refresh that fails under the same context keeps an open detail,
+  // and its stale mark showed only after Back.
+  test('an open detail says the list went stale, and how old its rows are', async ($, on) => {
+    let reads = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (argv[2] === 'show') return { stdout: showEnvelope(FP_A) }
+      return ++reads === 1
+        ? { stdout: listEnvelope(FP_A) }
+        : { stdout: errorEnvelope('unavailable', FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await ui.press({ key: OPEN_ROW })
+    await w.clock.advance(1)
+    await w.clock.advance(5 * 60_000)
+    const text = await textOf(ui)
+    expect(text).toContain('Full commitment text')
+    expect(text).toContain('STALE since 12:05 UTC')
+    expect(text).toContain('Rows from 12:00 UTC')
+  })
+
+  test(
+    'stale rows from an earlier day carry their date',
+    { options: { refresh_minutes: 60 } },
+    async ($, on) => {
+      let reads = 0
+      const w = world(on, (argv) => {
+        if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+        return ++reads === 1
+          ? { stdout: listEnvelope(FP_A) }
+          : { stdout: errorEnvelope('unavailable', FP_A) }
+      })
+      await start($, w.clock)
+      const ui = await mountPane($)
+      await w.clock.advance(60 * 60_000)
+      expect(await textOf(ui)).toContain('STALE since 13:00 UTC')
+      // Past midnight UTC, the next failed refresh redraws on the new day.
+      await w.clock.advance(12 * 60 * 60_000)
+      const text = await textOf(ui)
+      expect(text).toContain('STALE since 2026-10-07 13:00 UTC')
+      expect(text).toContain('Rows from 2026-10-07 12:00 UTC')
+    },
+  )
+
+  test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
+    let reads = 0
+    let release: () => void = () => undefined
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') return { stdout: contextEnvelope(FP_A) }
+      if (++reads === 1) return { stdout: listEnvelope(FP_A) }
+      const wait = new Promise<void>((r) => {
+        release = r
+      })
+      return { wait, stdout: listEnvelope(FP_A) }
+    })
+    await start($, w.clock)
+    const ui = await mountPane($)
+    await w.clock.advance(5 * 60_000)
+    const text = await textOf(ui)
+    expect(text).toContain(TOPIC)
+    expect(text).toContain('Refreshing… Rows from 12:00 UTC')
+    release()
+    await w.clock.advance(1)
+    expect(await textOf(ui)).toContain('Updated 12:05 UTC')
   })
 })

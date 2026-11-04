@@ -25,7 +25,7 @@
     "refresh_minutes": {
       "type": "number",
       "title": "Refresh interval (minutes)",
-      "description": "How often the panel re-reads in the background. At least 1.",
+      "description": "How often the panel re-reads in the background, from 1 to 60.",
       "default": 5,
       "min": 1,
       "max": 60
@@ -39,7 +39,7 @@
     "auto_open": {
       "type": "boolean",
       "title": "Open on start",
-      "description": "Open the panel when a session starts, on a terminal wide enough to dock it.",
+      "description": "Open the panel when a session starts. Claude Code draws it from 144 terminal columns (110 once you have opened it yourself) and holds it until then.",
       "default": false
     }
   }
