@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Fail if any GitHub Actions workflow uses an action by tag/branch instead of a full commit SHA.
+# Fail if any GitHub Actions workflow or local composite action uses an action
+# by tag/branch instead of a full commit SHA.
 # Supply-chain rule: docs/contributing.mdx.
 set -euo pipefail
 
-violations=$(grep -RnE 'uses:\s*[^.#]\S+@' .github/workflows/ \
+violations=$(grep -RnE 'uses:\s*[^.#]\S+@' .github/workflows/ .github/actions/ \
   | grep -vE '@[0-9a-f]{40}( |$|\s*#)' \
   | grep -vE '^\s*#' || true)
 
