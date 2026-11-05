@@ -295,6 +295,12 @@ export async function startup($: EngineInterface, options: PluginOptions): Promi
     settled = await reportUnexpected($, options)
   }
   if (settled) await confirmSelection($, epoch)
+  // Until refresh takes its token, startup holds none, so a stopReads cannot
+  // reach it. The background reads disarmed during the awaits above (the last
+  // client detached, or a reload into a session that draws nowhere) leave no
+  // interval: the read is not started. Checked here, after startup's last
+  // await, because refresh takes its token before its own first one.
+  if (runtime.tick === null) return
   // A record that is not settled yet is the refresh's to confirm: its probe
   // runs before the read, and refresh_started (or a reported failure) opens
   // the gate.

@@ -1109,6 +1109,41 @@ describe('cancellation and lifecycle', () => {
     expect(lists()).toBe(2)
   })
 
+  // #269: a startup whose timer has fired holds no refresh token while it
+  // settles what the host kept, so stopping the reads could not reach it.
+  test('the last client detaching while startup settles starts no read', async ($, on) => {
+    const roster: string[] = []
+    let armed = false
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { surfaces: roster, cwdHold: { armed: () => armed, until } },
+    )
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    roster.push('mobile')
+    armed = true
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    // The startup timer fires; startup waits on the session's directory.
+    await w.clock.advance(1)
+    expect(w.spawned).toEqual([])
+    roster.length = 0
+    await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(w.spawned).toEqual([])
+    // A later client still starts the reads, once.
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+  })
+
   test('a refresh that clears an open detail stops its read', async ($, on) => {
     let fingerprint = FP_A
     const w = world(on, (argv) => {

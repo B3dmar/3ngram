@@ -56,7 +56,8 @@ export const runtime: Runtime = {
   detailRead: null,
   // The refresh interval and the startup kick of the last session.start, ended
   // before a later session.start arms new ones. One-shot kicks from commands
-  // and transitions fire at once and are not kept.
+  // and transitions fire at once and are not kept. A startup whose kick has
+  // fired reads only while tick is still set (startup in reads.ts).
   tick: null,
   kick: null,
   // midnight is the redraw armed for the next UTC midnight after a draw
