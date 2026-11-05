@@ -283,7 +283,7 @@ describe('cancellation', () => {
   })
 
   test('a second verification of a settled reload is ignored, leaving the very same state', () => {
-    // register.tsx tells its own verification from one that settled first
+    // reads.ts tells its own verification from one that settled first
     // by this identity: only the one the reducer took settles a startup.
     const settled = run(
       [

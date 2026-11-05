@@ -5,7 +5,7 @@ import type { DetailState, PanelState } from './state.ts'
 import { visibleRows } from './state.ts'
 
 // The view model: everything the pane shows, as plain strings, so the wording
-// is tested here and register.tsx only lays it out. State is told apart by
+// is tested here and pane.tsx only lays it out. State is told apart by
 // words and emphasis (`tone` picks bold or dim), never by color alone.
 
 export type Tone = 'normal' | 'busy' | 'stale' | 'error'

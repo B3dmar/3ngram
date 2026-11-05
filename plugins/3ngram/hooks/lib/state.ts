@@ -2,7 +2,7 @@
 
 import type { CommitmentRow, Envelope } from './contract.ts'
 
-// The panel's state machine. It is pure: register.tsx runs the processes and
+// The panel's state machine. It is pure: reads.ts runs the processes and
 // feeds their outcomes in as events. The invariants it holds:
 //
 // - Rows exist only inside a record, next to the envelope (and so the context
