@@ -52,9 +52,10 @@ function awaitsAfterGate(source: string): string[] {
 }
 
 // suspensions lists what in a file could suspend a drawing: an await, a for
-// await, or a function marked async, whose promise the render hook would hand
-// on to settle after the gate. Read from the syntax tree, so a comment naming
-// an await is not one.
+// await, a function marked async, or a promise made without either (the name
+// Promise, or a `.then`), whose promise the render hook would hand on to
+// settle after the gate. Read from the syntax tree, so a comment naming an
+// await is not one.
 function suspensions(source: string): string[] {
   const file = ts.createSourceFile('pane.tsx', source, ts.ScriptTarget.Latest, true)
   const found: string[] = []
@@ -63,6 +64,8 @@ function suspensions(source: string): string[] {
     if (ts.isForOfStatement(node) && node.awaitModifier !== undefined) found.push('for await')
     const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
     if (modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) found.push('async')
+    if (ts.isIdentifier(node) && node.text === 'Promise') found.push('Promise')
+    if (ts.isPropertyAccessExpression(node) && node.name.text === 'then') found.push('.then')
     ts.forEachChild(node, visit)
   }
   visit(file)
@@ -85,7 +88,21 @@ test('the drawing check catches an async draw and an await inside it', () => {
   const asyncDraw = PANE_SOURCE.replace(head, 'export async function drawPane(')
   assert.deepEqual(suspensions(asyncDraw), ['async'])
   const awaiting = asyncDraw.replace(body, `${body}\n  await Promise.resolve()`)
-  assert.deepEqual(suspensions(awaiting), ['async', 'await'])
+  assert.deepEqual(suspensions(awaiting), ['async', 'await', 'Promise'])
+})
+
+// #415 review: a drawing can hand back a promise with no async and no await.
+test('the drawing check catches a promise returned without async', () => {
+  const tail = 'return drawList(ui, panelView(s, now), act)'
+  assert.ok(PANE_SOURCE.includes(tail))
+  const draw = 'drawList(ui, panelView(s, now), act)'
+  const chained = PANE_SOURCE.replace(tail, `return Promise.resolve().then(() => ${draw})`)
+  assert.deepEqual(suspensions(chained), ['.then', 'Promise'])
+  const made = PANE_SOURCE.replace(tail, `return Promise.resolve(${draw})`)
+  assert.deepEqual(suspensions(made), ['Promise'])
+  // A thenable from elsewhere, with no Promise named in this file.
+  const thenable = PANE_SOURCE.replace(tail, `return act.later().then(() => ${draw})`)
+  assert.deepEqual(suspensions(thenable), ['.then'])
 })
 
 test('the check reads the render hook alone, to its end', () => {

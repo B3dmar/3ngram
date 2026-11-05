@@ -711,9 +711,10 @@ describe('switching accounts cannot show the previous context', () => {
     await start($, w.clock)
     expect(probeHolds.length).toBe(2)
     // The older probe answers first and keeps the old rows as stale under
-    // the old key. The refresh that older startup goes on to is held at its
-    // directory read, so nothing else settles the state before the newer
-    // probe answers, which the reducer then ignores.
+    // the old key; that startup, stopped by the second reload, reads nothing
+    // more. Nothing else settles the state before the newer probe answers,
+    // which the reducer then ignores, and the refresh the newer startup goes
+    // on to is held at its directory read.
     let releaseCwd: () => void = () => undefined
     cwdBlock = new Promise<void>((r) => {
       releaseCwd = r
@@ -1107,6 +1108,303 @@ describe('cancellation and lifecycle', () => {
     await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
     await w.clock.advance(1)
     expect(lists()).toBe(2)
+  })
+
+  // #269: a startup whose timer has fired holds no refresh token while it
+  // settles what the host kept, so stopping the reads could not reach it.
+  test('the last client detaching while startup settles starts no read', async ($, on) => {
+    const roster: string[] = []
+    let armed = false
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { surfaces: roster, cwdHold: { armed: () => armed, until } },
+    )
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    roster.push('mobile')
+    armed = true
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    // The startup timer fires; startup waits on the session's directory.
+    await w.clock.advance(1)
+    expect(w.spawned).toEqual([])
+    roster.length = 0
+    await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(w.spawned).toEqual([])
+    // A later client still starts the reads, once.
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+  })
+
+  // A client that re-attaches before the old startup resumes arms a startup
+  // of its own: the old one, stopped by the detach, reads nothing.
+  test('a startup stopped by a detach reads nothing after a re-attach', async ($, on) => {
+    const roster: string[] = []
+    let armed = false
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { surfaces: roster, cwdHold: { armed: () => armed, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    roster.push('mobile')
+    armed = true
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    await w.clock.advance(1)
+    roster.length = 0
+    await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+  })
+
+  // Found in review of #416: a Cancel stops the reads without disarming
+  // them, so a startup still settling must see the stop itself.
+  test('a cancel while startup settles starts no read', async ($, on) => {
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    let hang = true
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] !== 'list') return { stdout: contextEnvelope(FP_A) }
+        return hang ? { hang: true } : { stdout: listEnvelope(FP_A) }
+      },
+      // The first directory read is startup's.
+      { cwdHold: { armed: () => true, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    expect(lists()).toBe(0)
+    // /commitments reads while startup waits; its read hangs, so the pane
+    // shows Cancel.
+    await $.command.run({ command: 'commitments', args: '' } as never)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    const ui = await mountPane($)
+    await ui.press({ key: 'cancel' })
+    hang = false
+    for (const release of w.holds.splice(0)) release()
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+  })
+
+  // /clear while startup settles: the read after the reset is the only one.
+  test('a /clear while startup settles reads once, after the reset', async ($, on) => {
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { cwdHold: { armed: () => true, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    await $.session.end({ reason: 'clear' } as never)
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+  })
+
+  // #269: a stop landing while a read records that its context moved
+  // mid-read must not be undone by that read queueing its one re-run.
+  for (const stop of ['cancel', 'detach'] as const) {
+    test(`a ${stop} while a read records a context change runs no further read`, async ($, on) => {
+      const roster: string[] = []
+      let probes = 0
+      let releaseSet: () => void = () => undefined
+      let holding = false
+      const w = world(
+        on,
+        (argv) => {
+          // The old key for the probe after the startup read and the one
+          // before the periodic read; rotated while that read runs.
+          if (argv[2] === 'context') return { stdout: contextEnvelope(++probes <= 2 ? FP_A : FP_B) }
+          return { stdout: listEnvelope(FP_A) }
+        },
+        { surfaces: roster },
+      )
+      // Holds the write that records the context change, until the stop.
+      on('state.set', async (_$, e, next) => {
+        const value = (e as { value?: { status?: string; pending?: string | null } }).value
+        if (!holding && value?.status === 'verifying' && value.pending === 'context_changed') {
+          holding = true
+          await new Promise<void>((r) => {
+            releaseSet = r
+          })
+        }
+        return next(e)
+      })
+      await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+      roster.push('mobile')
+      await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+      await w.clock.advance(1)
+      const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+      expect(lists()).toBe(1)
+      const ui = await mountPane($)
+      await w.clock.advance(5 * 60_000)
+      expect(holding).toBe(true)
+      expect(lists()).toBe(2)
+      if (stop === 'cancel') {
+        await ui.press({ key: 'cancel' })
+      } else {
+        roster.length = 0
+        await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+      }
+      releaseSet()
+      await w.clock.advance(1)
+      await w.clock.advance(1)
+      expect(lists()).toBe(2)
+      expect(await textOf(ui)).not.toContain(TOPIC)
+    })
+  }
+
+  // A detail read that finds its context changed asks for the list again:
+  // when its probe disagrees with its answer (probe), or when the answer
+  // itself names another context (answer). The write recording that is held,
+  // so a stop or a Back can land there. rotate() moves the key after the
+  // startup read.
+  function detailChange(
+    on: On,
+    path: 'probe' | 'answer',
+    opts: { surfaces?: string[]; hangLists?: () => boolean } = {},
+  ) {
+    let current = FP_A
+    let held = false
+    let release: () => void = () => undefined
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
+        if (argv[2] === 'show') return { stdout: showEnvelope(path === 'probe' ? FP_A : FP_B) }
+        if (opts.hangLists?.()) return { hang: true }
+        return {
+          stdout: listEnvelope(current, current === FP_A ? TOPIC : 'Read under the new key'),
+        }
+      },
+      { surfaces: opts.surfaces },
+    )
+    on('state.set', async (_$, e, next) => {
+      const value = (e as { value?: { detail?: { error?: { kind?: string } | null } | null } })
+        .value
+      if (!held && value?.detail?.error?.kind === 'context_changed') {
+        held = true
+        await new Promise<void>((r) => {
+          release = r
+        })
+      }
+      return next(e)
+    })
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    return {
+      w,
+      lists,
+      rotate: () => {
+        current = FP_B
+      },
+      held: () => held,
+      release: () => release(),
+    }
+  }
+
+  for (const path of ['probe', 'answer'] as const) {
+    test(`a detach while a detail records a context change (${path}) reads no more`, async ($, on) => {
+      const roster: string[] = []
+      const d = detailChange(on, path, { surfaces: roster })
+      await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+      roster.push('mobile')
+      await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+      await d.w.clock.advance(1)
+      expect(d.lists()).toBe(1)
+      const ui = await mountPane($)
+      d.rotate()
+      fire(ui.press({ key: OPEN_ROW }))
+      await d.w.clock.advance(1)
+      expect(d.held()).toBe(true)
+      roster.length = 0
+      await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+      d.release()
+      await d.w.clock.advance(1)
+      await d.w.clock.advance(1)
+      expect(d.lists()).toBe(1)
+    })
+  }
+
+  test('a cancel while a detail records a context change reads no more', async ($, on) => {
+    let hang = false
+    const d = detailChange(on, 'probe', { hangLists: () => hang })
+    await start($, d.w.clock)
+    const ui = await mountPane($)
+    d.rotate()
+    fire(ui.press({ key: OPEN_ROW }))
+    await d.w.clock.advance(1)
+    expect(d.held()).toBe(true)
+    // The periodic refresh finds the new key and clears the rows and the
+    // detail; its read hangs, so the list shows Cancel.
+    hang = true
+    await d.w.clock.advance(5 * 60_000)
+    expect(d.lists()).toBe(2)
+    await ui.press({ key: 'cancel' })
+    hang = false
+    d.release()
+    for (const release of d.w.holds.splice(0)) release()
+    await d.w.clock.advance(1)
+    await d.w.clock.advance(1)
+    expect(d.lists()).toBe(2)
+  })
+
+  // A Back is no stop: the rows behind the detail were read under the old
+  // key, and the list read the detail asked for still replaces them.
+  test('a Back while a detail records a context change still reads the list again', async ($, on) => {
+    const d = detailChange(on, 'probe')
+    await start($, d.w.clock)
+    expect(d.lists()).toBe(1)
+    const ui = await mountPane($)
+    d.rotate()
+    fire(ui.press({ key: OPEN_ROW }))
+    await d.w.clock.advance(1)
+    expect(d.held()).toBe(true)
+    await ui.press({ key: 'back' })
+    d.release()
+    await d.w.clock.advance(1)
+    await d.w.clock.advance(1)
+    expect(d.lists()).toBe(2)
+    const text = await textOf(ui)
+    expect(text).toContain('Read under the new key')
+    expect(text).not.toContain(TOPIC)
   })
 
   test('a refresh that clears an open detail stops its read', async ($, on) => {
