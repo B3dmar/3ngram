@@ -139,7 +139,7 @@ the per-split breakdown. These are archive precision with its proposal count, an
 collapses. Each condition, and the bar overall, prints `met` or `not met`, judged on the unrounded
 ratio of the counts rather than the rounded precision. The verdict is report-only and enables
 nothing. The inputs are personal evidence only when the file is the private set. A golden file whose
-bytes match any committed fixture in this folder, however it is reached, is marked as a committed
-synthetic fixture that never counts. The `pass` line still
+labels checksum matches any committed fixture in this folder, however it is reached or reformatted,
+is marked as a committed synthetic fixture that never counts. The `pass` line still
 uses the pass's built-in thresholds, and says so. `verdicts`, every split and the bar evidence use
 the frozen ones.

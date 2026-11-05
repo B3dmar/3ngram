@@ -219,22 +219,38 @@ test('thresholds selected on the calibration dev split score another fixture fro
   )
   assert.doesNotMatch(report, /threshold sweep/)
 
-  // Identity is the bytes, not the path: a copy or a symlink outside eval/fixtures/ is still
-  // the committed mirror, while a re-serialised file stands in for the private set.
+  // Identity is the labels, not the path or the bytes: a copy, a symlink or a re-serialised
+  // file outside eval/fixtures/ is still the committed mirror. A file whose labels differ, here
+  // by one split, stands in for the private set.
   const frozenOn = (goldenPath, name) =>
     runForgettingEval({ goldenPath, outPath: join(dir, name), thresholdsPath: selectPath })
+  const mirror = JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))
   const copy = join(dir, 'copy.json')
   copyFileSync(DEFAULT_GOLDEN, copy)
   const link = join(dir, 'link.json')
   symlinkSync(DEFAULT_GOLDEN, link)
+  const minified = join(dir, 'minified.json')
+  writeFileSync(minified, JSON.stringify(mirror))
   for (const [path, name] of [
     [copy, 'copy-out.json'],
     [link, 'link-out.json'],
+    [minified, 'minified-out.json'],
   ]) {
     assert.equal((await frozenOn(path, name)).barEvidence.synthetic, true, name)
   }
+  const [firstId] = Object.keys(mirror.labels)
+  const first = mirror.labels[firstId]
   const other = join(dir, 'other.json')
-  writeFileSync(other, JSON.stringify(JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))))
+  writeFileSync(
+    other,
+    JSON.stringify({
+      ...mirror,
+      labels: {
+        ...mirror.labels,
+        [firstId]: { ...first, split: first.split === 'dev' ? 'heldout' : 'dev' },
+      },
+    }),
+  )
   const personal = await frozenOn(other, 'other-out.json')
   assert.equal(personal.barEvidence.synthetic, false)
   assert.match(

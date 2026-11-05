@@ -54,13 +54,20 @@ export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
 const COMMITTED_FIXTURES = join(here, '../fixtures')
 
 /**
- * Every committed fixture is invented, so a golden file whose bytes match one is never bar
- * evidence, however it is reached: in place, through a symlink, or copied elsewhere.
+ * Every committed fixture is invented, so a golden file whose labels match one is never bar
+ * evidence, however it is reached or reformatted: in place, through a symlink, copied, or
+ * re-serialised. The labels checksum is order-independent and ignores formatting.
  */
-function isCommittedFixture(sha256) {
+function isCommittedFixture(labels) {
+  const checksum = labelsSha256(labels)
   return readdirSync(COMMITTED_FIXTURES, { recursive: true })
     .filter((name) => String(name).endsWith('.json'))
-    .some((name) => fileSha256(join(COMMITTED_FIXTURES, String(name))) === sha256)
+    .some((name) => {
+      const raw = JSON.parse(readFileSync(join(COMMITTED_FIXTURES, String(name)), 'utf8'))
+      const fixtureLabels = raw?.labels
+      if (fixtureLabels === null || typeof fixtureLabels !== 'object') return false
+      return labelsSha256(fixtureLabels) === checksum
+    })
 }
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
@@ -393,7 +400,7 @@ export async function runForgettingEval(options = {}) {
   }
   // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
   if (frozen && !calibration) {
-    const synthetic = isCommittedFixture(goldenSha256)
+    const synthetic = isCommittedFixture(golden.labels)
     metrics.barEvidence = { ...barEvidence(metrics.splits.all), synthetic }
   }
   if (options.selectPath !== undefined) {
