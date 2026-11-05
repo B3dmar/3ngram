@@ -6,9 +6,12 @@ import type { PanelState } from '../hooks/lib/state.ts'
 import { initialState, reduce } from '../hooks/lib/state.ts'
 import {
   detailView,
+  failureText,
   githubLabel,
   headerLines,
+  listNotice,
   MAX_CONTENT,
+  nextUtcMidnight,
   panelView,
   partialNote,
   rowView,
@@ -21,6 +24,8 @@ const ready: PanelState = [
   { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A } as const,
   { type: 'list_envelope', gen: 1, envelope: list, at: Date.UTC(2026, 9, 7, 12, 30) } as const,
 ].reduce(reduce, initialState)
+// The time the view is drawn at: the day of every time in the fixtures.
+const NOW = Date.UTC(2026, 9, 7, 14)
 
 test('the header names backend, account, project and its source, scope and unscoped opt-in', () => {
   const [backend, selection] = headerLines(list)
@@ -46,8 +51,56 @@ test('rows say what is and is not recorded, in words', () => {
   assert.ok(rowView(unknown).labels.includes('filing unknown'))
 })
 
+// A deadline is an instant (packages/schema: "a UTC ISO-8601 instant ending
+// in Z (e.g. 2026-11-30T17:00:00Z)"), not a calendar date.
+test('a deadline with a time of day shows that time, and its zone', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  const at = (dueAt: string) => rowView({ ...row, dueAt }).labels
+  assert.ok(at('2026-11-30T17:00:00.000Z').includes('due 2026-11-30 17:00 UTC'))
+  assert.ok(at('2026-11-30T23:30:00.000Z').includes('due 2026-11-30 23:30 UTC'))
+  assert.ok(at('2026-10-01T00:00:00.000Z').includes('due 2026-10-01'))
+})
+
+test('overdue rows are listed most overdue first', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  // The binary lists the commitments slice first and appends the overdue
+  // split, so an overdue row it cut from the slice comes after a later one.
+  const rows = [
+    { ...row, memoryId: 'm1', topic: 'Due 5 Oct', dueAt: '2026-10-05T00:00:00.000Z' },
+    { ...row, memoryId: 'm2', topic: 'Due 1 Oct', dueAt: '2026-10-01T00:00:00.000Z' },
+  ]
+  const s = reduce(
+    reduce(initialState, { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A }),
+    { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
+  )
+  assert.deepEqual(
+    panelView(s, NOW).sections[0]?.rows.map((r) => r.title),
+    ['Due 1 Oct', 'Due 5 Oct'],
+  )
+})
+
+test('an overdue row whose deadline does not parse sorts last, the rest by deadline', () => {
+  const [row] = list.commitments ?? []
+  assert.ok(row)
+  const rows = [
+    { ...row, memoryId: 'm0', topic: 'Unreadable', dueAt: 'not a date' },
+    { ...row, memoryId: 'm1', topic: 'Due 5 Oct', dueAt: '2026-10-05T00:00:00.000Z' },
+    { ...row, memoryId: 'm2', topic: 'Due 1 Oct', dueAt: '2026-10-01T00:00:00.000Z' },
+  ]
+  const s = reduce(
+    reduce(initialState, { type: 'refresh_started', gen: 1, selectionKey: 'k', fingerprint: FP_A }),
+    { type: 'list_envelope', gen: 1, envelope: { ...list, commitments: rows }, at: 0 },
+  )
+  assert.deepEqual(
+    panelView(s, NOW).sections[0]?.rows.map((r) => r.title),
+    ['Due 1 Oct', 'Due 5 Oct', 'Unreadable'],
+  )
+})
+
 test('the panel groups rows and labels every partial part and what is missing', () => {
-  const view = panelView(ready)
+  const view = panelView(ready, NOW)
   assert.deepEqual(
     view.sections.map((s) => s.title),
     ['Overdue (1)', 'Open (2)', 'Waiting (1)'],
@@ -70,12 +123,27 @@ test('partial notes say how much was read', () => {
   )
   assert.equal(
     partialNote({ part: 'github', reason: 'timeout', returned: 0, total: 3 }),
-    'GitHub: checked 0 of 3 references (timeout).',
+    'GitHub: checked 0 of 3 references (the lookups timed out).',
   )
   assert.equal(
     partialNote({ part: 'filing', reason: 'strict_read_selector_mismatch' }),
     'Unscoped check: the strict read failed (selector_mismatch), so rows were checked one by one, up to the lookup limit.',
   )
+})
+
+test('a GitHub lookup that stopped says why in words, and what to do', () => {
+  const note = (reason: string) => partialNote({ part: 'github', reason, returned: 0, total: 3 })
+  assert.equal(note('gh_missing'), 'GitHub: checked 0 of 3 references (gh is not on PATH).')
+  assert.equal(
+    note('gh_unauthenticated'),
+    'GitHub: checked 0 of 3 references (gh is not signed in: run `gh auth login`).',
+  )
+  assert.equal(note('lookup_cap'), 'GitHub: checked 0 of 3 references (the per-read lookup limit).')
+  assert.equal(note('something_new'), 'GitHub: checked 0 of 3 references (something_new).')
+})
+
+test('an invalid selection names the option to change', () => {
+  assert.match(failureText('invalid_selector'), /needs a scope.*\/plugin configure 3ngram/)
 })
 
 test('stale and error states say so in words, not only by tone', () => {
@@ -94,18 +162,54 @@ test('stale and error states say so in words, not only by tone', () => {
     fingerprint: FP_A,
     at: Date.UTC(2026, 9, 7, 13, 5),
   })
-  assert.equal(panelView(verified).status.label, 'STALE since 13:05 UTC: The read timed out.')
-  assert.equal(panelView(verified).status.tone, 'stale')
+  assert.equal(
+    panelView(verified, NOW).status.label,
+    'STALE since 13:05 UTC: The read timed out. Rows from 12:30 UTC.',
+  )
+  assert.equal(panelView(verified, NOW).status.tone, 'stale')
   assert.equal(statusLine(verified), '3ngram: 4 open · 1 overdue (stale)')
+  // An open detail says so too, rather than only once Back is pressed.
+  assert.equal(listNotice(verified, NOW), panelView(verified, NOW).status.label)
+  assert.equal(listNotice(ready, NOW), null)
+  const refreshing = reduce(ready, {
+    type: 'refresh_started',
+    gen: 2,
+    selectionKey: 'k',
+    fingerprint: FP_A,
+  })
+  assert.equal(panelView(refreshing, NOW).status.label, 'Refreshing… Rows from 12:30 UTC.')
+  // Drawn on a later day, a time without its date would read as today's.
+  const tomorrow = Date.UTC(2026, 9, 8, 9)
+  assert.equal(
+    panelView(verified, tomorrow).status.label,
+    'STALE since 2026-10-07 13:05 UTC: The read timed out. Rows from 2026-10-07 12:30 UTC.',
+  )
+  assert.equal(
+    panelView(refreshing, tomorrow).status.label,
+    'Refreshing… Rows from 2026-10-07 12:30 UTC.',
+  )
+  assert.equal(panelView(ready, tomorrow).status.label, 'Updated 2026-10-07 12:30 UTC')
 
   const cleared = reduce(stale, { type: 'context_verified', gen: 2, fingerprint: 'other', at: 0 })
-  const view = panelView(cleared)
+  const view = panelView(cleared, NOW)
   assert.equal(view.sections.length, 0)
   assert.match(
     view.status.label,
     /^ERROR: The read timed out\. The account or selection could not be confirmed/,
   )
   assert.equal(statusLine(cleared), '3ngram: unavailable')
+})
+
+// #400: a pane drawn just before midnight UTC is drawn again at it, when a
+// time it showed as today's becomes yesterday's.
+test('a view drawn on one UTC day goes out of date at the next midnight', () => {
+  const midnight = nextUtcMidnight(NOW)
+  assert.equal(midnight, Date.UTC(2026, 9, 8))
+  assert.equal(nextUtcMidnight(midnight - 1), midnight)
+  assert.equal(nextUtcMidnight(midnight), Date.UTC(2026, 9, 9))
+  assert.equal(nextUtcMidnight(Date.UTC(2026, 11, 31, 23, 59)), Date.UTC(2027, 0, 1))
+  assert.equal(panelView(ready, midnight - 1).status.label, 'Updated 12:30 UTC')
+  assert.equal(panelView(ready, midnight).status.label, 'Updated 2026-10-07 12:30 UTC')
 })
 
 test('the status line carries counts only, never a topic', () => {
@@ -121,9 +225,9 @@ test('nothing is shown while loading, even with a record held', () => {
     selectionKey: 'other',
     fingerprint: FP_A,
   })
-  assert.equal(panelView(loading).sections.length, 0)
-  assert.deepEqual(panelView(loading).header, ['3ngram commitments'])
-  assert.equal(panelView(loading).canCancel, true)
+  assert.equal(panelView(loading, NOW).sections.length, 0)
+  assert.deepEqual(panelView(loading, NOW).header, ['3ngram commitments'])
+  assert.equal(panelView(loading, NOW).canCancel, true)
 })
 
 test('a pull request closed without merging says so', () => {
@@ -179,6 +283,7 @@ test('the detail view frames evidence for review and states the window', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: show,
@@ -212,6 +317,7 @@ test('a detail with nothing found says so, without claiming nothing exists', () 
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: none,
@@ -239,6 +345,7 @@ test('a detail where no source could be read never says nothing was found', () =
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: unread,
@@ -252,6 +359,7 @@ test('a failed detail shows the reason', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'error',
     envelope: null,
@@ -271,6 +379,7 @@ test('a failed history read does not claim the creation is outside the window', 
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: failed,
@@ -291,6 +400,7 @@ test('an unavailable events section leaves creation unknown, not outside the win
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: degraded,
@@ -306,6 +416,7 @@ test('long content is cut to a bound the drawing can hold, and says so', () => {
   const view = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: { ...show, commitment: { ...show.commitment, content: long } },
@@ -322,6 +433,7 @@ test('long content is cut to a bound the drawing can hold, and says so', () => {
   const short = detailView({
     seq: 1,
     memoryId: 'm',
+    listAt: 0,
     fingerprint: FP_A,
     status: 'ready',
     envelope: { ...show, commitment: { ...show.commitment, content: 'short' } },

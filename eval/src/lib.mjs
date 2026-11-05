@@ -67,6 +67,18 @@ export function parseFlag(args, name, fallback) {
   return i !== -1 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : fallback
 }
 
+/**
+ * A path flag: `undefined` when absent, the path when given, and a throw when the
+ * flag is present without one (bare, `--name=`, or followed by another `--flag`),
+ * where `parseFlag` would fall back silently.
+ */
+export function parsePathFlag(args, name) {
+  if (!args.some((a) => a === `--${name}` || a.startsWith(`--${name}=`))) return undefined
+  const value = parseFlag(args, name, '')
+  if (value === '') throw new Error(`--${name} needs a path`)
+  return value
+}
+
 export function sessionText(session) {
   return session.turns.map((t) => t.content).join(' ')
 }

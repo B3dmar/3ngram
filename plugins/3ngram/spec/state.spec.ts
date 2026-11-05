@@ -474,6 +474,99 @@ describe('detail', () => {
     assert.equal(s.detail?.status, 'error')
     assert.equal(s.detail?.envelope, null)
   })
+
+  // #269: a row listed with filing `unknown` is opened, the memory moves to
+  // unscoped in place, and a refresh lands while the detail still loads.
+  test('a detail answering for a filing the refreshed row contradicts is not shown', () => {
+    const row = listA.commitments?.[3]
+    assert.ok(row && row.filing === 'unknown' && show.commitment)
+    const moved: Envelope = {
+      ...listA,
+      commitments: (listA.commitments ?? []).map((r) =>
+        r.memoryId === row.memoryId ? { ...r, filing: 'unscoped' } : r,
+      ),
+    }
+    const commitment = { ...show.commitment, memoryId: row.memoryId }
+    const answer: Envelope = { ...show, commitment: { ...commitment, filing: 'project' } }
+    const s = run(
+      [
+        { type: 'detail_requested', memoryId: row.memoryId },
+        { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 2, envelope: moved, at: 2000 },
+        { type: 'detail_envelope', seq: 1, envelope: answer },
+      ],
+      showingA,
+    )
+    assert.equal(s.detail?.status, 'error')
+    assert.equal(s.detail?.error?.kind, 'row_changed')
+    assert.equal(s.detail?.envelope, null)
+    // Opened again under the refreshed list, the same answer is the newer read.
+    const reopened = run(
+      [
+        { type: 'detail_requested', memoryId: row.memoryId },
+        {
+          type: 'detail_envelope',
+          seq: 2,
+          envelope: { ...show, commitment: { ...commitment, filing: 'unscoped' } },
+        },
+      ],
+      s,
+    )
+    assert.equal(reopened.detail?.status, 'ready')
+  })
+
+  // With no refresh between the open and the answer, the answer is the newer
+  // read of the commitment: it is shown, whatever the held row says.
+  test('a detail newer than its row is shown when no refresh landed meanwhile', () => {
+    assert.ok(show.commitment)
+    for (const change of [{ commitmentStatus: 'waiting' }, { filing: 'unscoped' as const }]) {
+      const answer: Envelope = { ...show, commitment: { ...show.commitment, ...change } }
+      const s = run(
+        [
+          { type: 'detail_requested', memoryId },
+          { type: 'detail_envelope', seq: 1, envelope: answer },
+        ],
+        showingA,
+      )
+      assert.equal(s.detail?.status, 'ready', JSON.stringify(change))
+    }
+  })
+})
+
+describe('a list that stays stale', () => {
+  const failed = (gen: number, at: number): PanelEvent[] => [
+    { type: 'refresh_started', gen, selectionKey: KEY_A, fingerprint: FP_A },
+    { type: 'list_failed', gen, failure: 'timeout', at },
+    { type: 'context_verified', gen, fingerprint: FP_A, at },
+  ]
+
+  test('keeps the time it went stale across later failed refreshes', () => {
+    const s = run([...failed(2, 2000), ...failed(3, 3000)], showingA)
+    assert.equal(s.status, 'stale')
+    assert.equal(s.stale?.since, 2000)
+    const again = run(
+      [
+        { type: 'refresh_started', gen: 4, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 4, envelope: errorEnvelope('unavailable', FP_A), at: 4000 },
+      ],
+      s,
+    )
+    assert.equal(again.stale?.since, 2000)
+    assert.equal(again.stale?.reason, 'unavailable')
+  })
+
+  test('starts over once a refresh succeeds', () => {
+    const s = run(
+      [
+        ...failed(2, 2000),
+        { type: 'refresh_started', gen: 3, selectionKey: KEY_A, fingerprint: FP_A },
+        { type: 'list_envelope', gen: 3, envelope: listA, at: 3000 },
+        ...failed(4, 4000),
+      ],
+      showingA,
+    )
+    assert.equal(s.stale?.since, 4000)
+  })
 })
 
 describe('the probe before each refresh', () => {
@@ -525,7 +618,7 @@ describe('the detail never outlives the context check of its list', () => {
     assert.equal(visibleDetail(open)?.status, 'ready')
   })
 
-  test('a failure without an envelope drops the detail with the rows', () => {
+  test('a failure without an envelope hides the detail with the rows until the probe answers', () => {
     const s = run(
       [
         { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
@@ -533,24 +626,53 @@ describe('the detail never outlives the context check of its list', () => {
       ],
       open,
     )
-    assert.equal(s.detail, null)
+    assert.equal(rowCount(s), null)
     assert.equal(visibleDetail(s), null)
-    // Confirmed: the rows come back, the detail does not.
+    // Confirmed: the rows and the detail come back, marked stale.
     const back = reduce(s, { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 })
+    assert.equal(back.status, 'stale')
     assert.equal(rowCount(back), 4)
-    assert.equal(back.detail, null)
+    assert.equal(visibleDetail(back)?.status, 'ready')
+    // Another context, or no answer: both are cleared.
+    for (const fingerprint of [FP_B, null]) {
+      const gone = reduce(s, { type: 'context_verified', gen: 2, fingerprint, at: 2100 })
+      assert.equal(gone.record, null)
+      assert.equal(gone.detail, null)
+    }
   })
 
-  test('a cancel drops the detail with the rows', () => {
+  test('a failure without an envelope drops a detail still loading', () => {
     const s = run(
       [
+        { type: 'detail_requested', memoryId },
         { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
-        { type: 'cancel' },
+        { type: 'list_failed', gen: 2, failure: 'timeout', at: 2000 },
+        { type: 'context_verified', gen: 2, fingerprint: FP_A, at: 2100 },
       ],
       open,
     )
+    assert.equal(s.status, 'stale')
     assert.equal(s.detail, null)
   })
+
+  // Unlike a failed read, on purpose (#400): a stop does not bring an
+  // answered detail back, even under a confirmed context.
+  for (const stop of ['cancel', 'reloaded'] as const) {
+    test(`a ${stop} drops an answered detail; a confirming probe brings back the rows only`, () => {
+      const s = run(
+        [
+          { type: 'refresh_started', gen: 2, selectionKey: KEY_A, fingerprint: FP_A },
+          { type: stop },
+        ],
+        open,
+      )
+      assert.equal(s.detail, null)
+      const back = reduce(s, { type: 'context_verified', gen: 3, fingerprint: FP_A, at: 2100 })
+      assert.equal(back.status, 'stale')
+      assert.equal(rowCount(back), 4)
+      assert.equal(back.detail, null)
+    })
+  }
 
   test('a detail answer arriving while the list is verified is ignored', () => {
     const pendingDetail = run(

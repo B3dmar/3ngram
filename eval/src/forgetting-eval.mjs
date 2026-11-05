@@ -3,8 +3,9 @@
 //
 // REPORT-ONLY, NOT GATED: nothing here changes an exit code on a metric, and
 // run.mjs never imports this module (the gate runs with no install). The pass
-// stays report-only until the ADR's bars hold on the held-out split: archive
-// precision >= 0.95 over >= 40 proposals, and zero recurring-episodic collapses.
+// stays report-only until the ADR's bars hold over every personal item, scored
+// with frozen thresholds: archive precision >= 0.95 over >= 40 proposals, and
+// zero recurring-episodic collapses. Synthetic results never count.
 //
 // HOW IT RUNS. The real `runForgettingPass` is driven through an injected
 // in-memory ForgettingRepo built from a golden file: the candidates are what the
@@ -19,20 +20,69 @@
 // committed fixtures/forgetting-synthetic.json is a small invented mirror that
 // exercises every slice so CI can test the wiring.
 //
+// THRESHOLDS (forgetting-thresholds.mjs): --select-thresholds runs only on the
+// public calibration fixture and writes the thresholds its dev split selects;
+// --thresholds scores any golden file, the private one included, with those
+// frozen thresholds instead of the pass's built-in ones, prints no sweep, and
+// reports the bar's inputs over every item, whatever its split label.
+//
 // Observability (hard rule 6): the report and the out file carry memory IDS,
-// counts and scores only. No topic or content string is ever printed or written.
+// counts, hashes and scores only. No topic or content string is ever printed or written.
 //
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
-//          [--live] [--out <path>]
+//          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { parseFlag } from './lib.mjs'
+import {
+  assertThresholdMode,
+  barEvidence,
+  CALIBRATION_GOLDEN,
+  CALIBRATION_SHA256,
+  fileSha256,
+  labelsSha256,
+  loadFrozenThresholds,
+  proposedUnder,
+  THRESHOLD_GRID,
+  writeSelection,
+} from './forgetting-thresholds.mjs'
+import { parseFlag, parsePathFlag } from './lib.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
 export const DEFAULT_ANSWERS = join(here, '../fixtures/forgetting-synthetic-answers.json')
 export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
+
+/**
+ * Every committed forgetting golden file. A new one must be listed here (a test checks the
+ * folder's file names). The list is explicit, never a scan of eval/fixtures/, because other
+ * eval tests rewrite and rename files in that folder while this module reads.
+ */
+export const COMMITTED_GOLDEN_FIXTURES = Object.freeze([DEFAULT_GOLDEN, CALIBRATION_GOLDEN])
+
+/**
+ * What the bar reads of the labels: every item's id, slice, expected verdict and related id.
+ * Splits are left out because the bar ignores them. Order-independent, formatting-free.
+ */
+function barLabelsSha256(labels) {
+  const rows = Object.keys(labels)
+    .sort()
+    .map((id) => [id, labels[id]?.slice, labels[id]?.expected, labels[id]?.relatedMemoryId ?? null])
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+}
+
+/**
+ * Every committed fixture is invented, so a golden file whose bar-relevant labels match one is
+ * never bar evidence, however it is reached, reformatted or re-split. An edited copy is a
+ * different dataset that no checksum can recognise; the verdict stays report-only regardless.
+ */
+function isCommittedFixture(labels) {
+  const checksum = barLabelsSha256(labels)
+  return COMMITTED_GOLDEN_FIXTURES.some(
+    (path) => barLabelsSha256(loadGolden(path).labels) === checksum,
+  )
+}
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
 export const FORGET_DECIDE_OPERATION = 'memory.forget.decide'
@@ -184,10 +234,11 @@ export function calibrationError(scored, bins = ECE_BINS) {
 /**
  * Score one set of labels against the captured verdicts. A labelled memory with
  * no verdict was excluded upstream and counts as kept: nothing was proposed.
+ * `isProposedBy` defaults to the pass's own thresholds; frozen ones replace it.
  */
-export function scoreLabels(verdicts, labels, types) {
+export function scoreLabels(verdicts, labels, types, isProposedBy = isProposed) {
   const labelled = verdicts.filter((v) => Object.hasOwn(labels, v.memoryId))
-  const proposed = labelled.filter(isProposed)
+  const proposed = labelled.filter(isProposedBy)
   const byAction = (action) => proposed.filter((v) => v.action === action)
   const byType = {}
   for (const v of proposed.filter((v) => v.action !== 'conflict')) {
@@ -248,8 +299,7 @@ export function thresholdSweep(verdicts, labels, split) {
   const sweep = { split }
   for (const action of PROPOSAL_ACTIONS) {
     sweep[action] = []
-    for (let k = 50; k <= 95; k += 5) {
-      const threshold = k / 100
+    for (const threshold of THRESHOLD_GRID) {
       const at = labelled.filter((v) => v.action === action && v.probability >= threshold)
       sweep[action].push({ threshold, ...precision(at, labels) })
     }
@@ -300,12 +350,18 @@ async function createGateway({ live, answersPath, env }) {
 /**
  * Run the pass over a golden file and score the captured verdicts. Returns
  * `{ skipped }` when --live has no credentials, else the metrics object that
- * was written to `outPath`. Throws on a missing file or a bad schema.
+ * was written to `outPath`. Throws on a missing file or a bad schema, and on a
+ * threshold step that breaks the protocol (forgetting-thresholds.mjs).
  */
 export async function runForgettingEval(options = {}) {
   const goldenPath = options.goldenPath ?? DEFAULT_GOLDEN
   const outPath = options.outPath ?? DEFAULT_OUT
   const golden = loadGolden(goldenPath)
+  const goldenSha256 = fileSha256(goldenPath)
+  const calibration = goldenSha256 === CALIBRATION_SHA256
+  assertThresholdMode(options, calibration)
+  const frozen =
+    options.thresholdsPath === undefined ? null : loadFrozenThresholds(options.thresholdsPath)
   const judge = await createGateway({
     live: options.live === true,
     answersPath: options.answersPath ?? DEFAULT_ANSWERS,
@@ -316,6 +372,11 @@ export async function runForgettingEval(options = {}) {
   const { repo, staged } = createFixtureRepo(golden.candidates)
   const pass = await runForgettingPass(EVAL_USER, { gateway: judge.gateway, repo, now: golden.now })
   if (judge.answerRefs) assertAnswersMatchQuestions(judge.answerRefs, judge.gateway.calls.decide)
+  const model = staged[0]?.model ?? null
+  if (frozen && frozen.model !== model) {
+    throw new Error(`thresholds were selected with model ${frozen.model}; this run used ${model}`)
+  }
+  const proposedBy = frozen ? proposedUnder(frozen.thresholds) : isProposed
   const types = memoryTypes(golden.candidates)
   const bySlice = Object.fromEntries(
     SLICES.map((s) => [s, Object.values(golden.labels).filter((l) => l.slice === s).length]),
@@ -324,22 +385,40 @@ export async function runForgettingEval(options = {}) {
     version: 1,
     reportOnly: true,
     mode: judge.mode,
-    model: staged[0]?.model ?? null,
-    golden: { memories: types.size, labels: Object.keys(golden.labels).length, bySlice },
+    model,
+    golden: {
+      sha256: goldenSha256,
+      labelsSha256: labelsSha256(golden.labels),
+      calibration,
+      memories: types.size,
+      labels: Object.keys(golden.labels).length,
+      bySlice,
+    },
     pass,
     verdicts: {
       total: staged.length,
-      proposed: staged.filter(isProposed).length,
-      dismissed: staged.filter((v) => v.action !== 'keep' && v.dismissed === true).length,
+      proposed: staged.filter(proposedBy).length,
+      dismissed: staged.filter((v) => v.action !== 'keep' && !proposedBy(v)).length,
       keep: staged.filter((v) => v.action === 'keep').length,
     },
     splits: {
-      all: scoreLabels(staged, golden.labels, types),
+      all: scoreLabels(staged, golden.labels, types, proposedBy),
       ...Object.fromEntries(
-        SPLITS.map((s) => [s, scoreLabels(staged, pickSplit(golden.labels, s), types)]),
+        SPLITS.map((s) => [s, scoreLabels(staged, pickSplit(golden.labels, s), types, proposedBy)]),
       ),
     },
-    thresholds: thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
+    // Frozen scoring carries no sweep, so nothing in it can feed a new selection.
+    thresholds: frozen
+      ? { frozen: frozen.thresholds, model: frozen.model, source: frozen.source }
+      : thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
+  }
+  // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
+  if (frozen && !calibration) {
+    const synthetic = isCommittedFixture(golden.labels)
+    metrics.barEvidence = { ...barEvidence(metrics.splits.all), synthetic }
+  }
+  if (options.selectPath !== undefined) {
+    metrics.selected = writeSelection(options.selectPath, metrics, judge.mode)
   }
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, `${JSON.stringify(metrics, null, 2)}\n`)
@@ -354,12 +433,12 @@ const col = (s, w) => String(s).padEnd(w)
 export function formatReport(m) {
   const lines = [
     `forgetting eval (report-only, not gated): mode ${m.mode}, model ${m.model ?? 'n/a'}`,
-    `golden: ${m.golden.memories} memories, ${m.golden.labels} labels (${Object.entries(
+    `golden ${m.golden.sha256.slice(0, 12)}: ${m.golden.memories} memories, ${m.golden.labels} labels (${Object.entries(
       m.golden.bySlice,
     )
       .map(([s, n]) => `${s} ${n}`)
       .join(', ')})`,
-    `pass: items ${m.pass.items}, batches ${m.pass.batches}, proposed ${m.pass.proposed}, dismissed ${m.pass.dismissed}, skipped ${m.pass.skipped}`,
+    `pass${m.thresholds.frozen ? ' (built-in thresholds)' : ''}: items ${m.pass.items}, batches ${m.pass.batches}, proposed ${m.pass.proposed}, dismissed ${m.pass.dismissed}, skipped ${m.pass.skipped}`,
     `verdicts: ${m.verdicts.total} total, ${m.verdicts.proposed} proposed, ${m.verdicts.dismissed} below threshold, ${m.verdicts.keep} keep`,
     '',
     `${col('split', 8)}${col('archive', 14)}${col('supersede', 14)}${col('combined', 14)}${col('conflict', 14)}${col('keep-rate', 12)}${col('collapses', 10)}ece`,
@@ -378,9 +457,29 @@ export function formatReport(m) {
     const parts = Object.entries(actions).map(([a, p]) => `${a} ${cell(p)}`)
     lines.push(`  ${col(type, 12)}${parts.join('  ')}`)
   }
+  const actions = (t) =>
+    ['archive', 'supersede', 'conflict'].map((a) => `${a} ${t[a] ?? 'none'}`).join(', ')
+  if (m.thresholds.frozen) {
+    lines.push(
+      '',
+      `frozen thresholds (calibration ${m.thresholds.source.sha256.slice(0, 12)}, model ${m.thresholds.model}): ${actions(m.thresholds.frozen)}`,
+    )
+    const e = m.barEvidence
+    if (e) {
+      const verdict = (met) => (met ? 'met' : 'not met')
+      lines.push(
+        'bar evidence, all items whatever their split (personal evidence only on the private set):',
+        `  archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}: ${verdict(e.met.archive)}`,
+        `  episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}: ${verdict(e.met.recurringEpisodicCollapses)}`,
+        `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}${e.synthetic ? ' (committed synthetic fixture: never counts)' : ''}`,
+      )
+    }
+    return lines.join('\n')
+  }
+  const use = m.golden.calibration ? 'selection input' : 'diagnostic only, never a selection'
   lines.push(
     '',
-    `threshold sweep on the ${m.thresholds.split} split (precision, correct/proposals):`,
+    `threshold sweep on the ${m.thresholds.split} split (${use}; precision, correct/proposals):`,
   )
   lines.push(`  ${col('t', 6)}${col('archive', 16)}${col('supersede', 16)}conflict`)
   for (const [i, row] of m.thresholds.archive.entries()) {
@@ -389,17 +488,25 @@ export function formatReport(m) {
       `  ${col(row.threshold.toFixed(2), 6)}${col(at('archive'), 16)}${col(at('supersede'), 16)}${at('conflict')}`,
     )
   }
+  if (m.selected) lines.push('', `selected by the pre-registered rule: ${actions(m.selected)}`)
   return lines.join('\n')
 }
 
-async function main(args) {
+/** CLI args to options. A threshold flag given without a path throws: no silent fallback. */
+export function cliOptions(args) {
   const flag = (name, fallback) => parseFlag(args, name, fallback)
-  const result = await runForgettingEval({
+  return {
     goldenPath: flag('golden', DEFAULT_GOLDEN),
     answersPath: flag('answers', DEFAULT_ANSWERS),
     outPath: flag('out', DEFAULT_OUT),
     live: args.includes('--live'),
-  })
+    selectPath: parsePathFlag(args, 'select-thresholds'),
+    thresholdsPath: parsePathFlag(args, 'thresholds'),
+  }
+}
+
+async function main(args) {
+  const result = await runForgettingEval(cliOptions(args))
   if (result.skipped) {
     process.stdout.write(`forgetting eval --live skipped: ${result.skipped} (exit 0)\n`)
     return

@@ -210,6 +210,8 @@ func TestRunBriefingRendersRichOutput(t *testing.T) {
 	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/me":
+			_, _ = w.Write([]byte(`{"id":"` + testAccountID + `"}`))
 		case "/api/v1/briefing":
 			if r.URL.Query().Get("kind") == "" {
 				http.Error(w, "missing kind selector", http.StatusBadRequest)

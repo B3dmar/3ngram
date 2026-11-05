@@ -39,10 +39,16 @@ const FAILURE_TEXT: Record<string, string> = {
   rate_limited: 'The 3ngram API is rate limiting this key.',
   route_missing: 'This 3ngram server is too old for the panel.',
   selector_mismatch: 'The server answered for a wider selection than asked; nothing is shown.',
-  invalid_selector: 'The selection is not valid. Including unscoped records needs a scope.',
+  invalid_selector:
+    'The selection is not valid: including unscoped records needs a scope. Set a scope, or turn off include_unscoped, with /plugin configure 3ngram.',
   bad_response: 'The server sent a response the panel cannot read.',
   bad_request: 'The server refused the request.',
   context_changed: 'The account or selection changed; refreshing.',
+  refused_scope:
+    'The panel did not run 3ngram-hook: the scope option starts with "-", and no scope does. Change it with /plugin configure 3ngram.',
+  refused:
+    'The panel did not run 3ngram-hook: one of its own arguments would have read as a flag or was not one word. Please report this.',
+  row_changed: 'This commitment changed while it was being read. Go back and open it again.',
   outside_selector: 'That commitment is outside the current selection.',
   not_found: 'That commitment no longer exists.',
   usage: 'The panel called 3ngram-hook wrongly. Please report this.',
@@ -52,12 +58,55 @@ export function failureText(kind: string): string {
   return FAILURE_TEXT[kind] ?? `The read failed (${kind}).`
 }
 
-function time(ms: number): string {
-  return `${new Date(ms).toISOString().slice(11, 16)} UTC`
+// Why the binary stopped looking up GitHub references (githubParts in
+// cmd/3ngram-hook); a reason not named here is shown as it came.
+const GITHUB_REASON: Record<string, string> = {
+  lookup_cap: 'the per-read lookup limit',
+  gh_missing: 'gh is not on PATH',
+  gh_unauthenticated: 'gh is not signed in: run `gh auth login`',
+  rate_limited: 'GitHub is rate limiting gh',
+  timeout: 'the lookups timed out',
+}
+
+// time is an instant as the panel shows it, in UTC: its date too unless it is
+// on the UTC day the view is drawn (now), so rows read yesterday never pass
+// for today's.
+function time(ms: number, now: number): string {
+  const iso = new Date(ms).toISOString()
+  const date = day(iso) === day(new Date(now).toISOString()) ? '' : `${day(iso)} `
+  return `${date}${iso.slice(11, 16)} UTC`
 }
 
 function day(iso: string): string {
   return iso.slice(0, 10)
+}
+
+// nextUtcMidnight is when a view drawn at now goes out of date by the clock
+// alone: from then on, a time it showed without its date is yesterday's.
+export function nextUtcMidnight(now: number): number {
+  const d = new Date(now)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+}
+
+// dueLabel reads a deadline as the instant it is (packages/schema stores a
+// UTC instant): its time of day is shown, in UTC, unless it is midnight.
+function dueLabel(iso: string): string {
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return `due ${iso}`
+  const utc = new Date(ms).toISOString()
+  const clock = utc.slice(11, 16)
+  return clock === '00:00' ? `due ${day(utc)}` : `due ${day(utc)} ${clock} UTC`
+}
+
+// byDue orders rows by deadline, earliest first. An undated row, or one whose
+// deadline does not parse, goes last: NaN would make the order inconsistent.
+function byDue(a: CommitmentRow, b: CommitmentRow): number {
+  const at = (r: CommitmentRow) => {
+    const ms = r.dueAt === null ? Number.NaN : Date.parse(r.dueAt)
+    return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
+  }
+  const [x, y] = [at(a), at(b)]
+  return x === y ? 0 : x < y ? -1 : 1
 }
 
 export function headerLines(envelope: Envelope): string[] {
@@ -102,7 +151,7 @@ export function rowView(row: CommitmentRow): RowView {
   const labels: string[] = []
   if (row.overdue) labels.push('OVERDUE')
   labels.push(row.status)
-  labels.push(row.dueAt ? `due ${day(row.dueAt)}` : 'no due date recorded')
+  labels.push(row.dueAt ? dueLabel(row.dueAt) : 'no due date recorded')
   if (row.filing === 'unscoped') labels.push('unscoped (no project)')
   if (row.filing === 'unknown') labels.push('filing unknown')
   labels.push(
@@ -114,8 +163,11 @@ export function rowView(row: CommitmentRow): RowView {
   return { memoryId: row.memoryId, title: row.topic, labels }
 }
 
+// Open and waiting rows keep the server's order (its surfacing order); the
+// overdue ones are re-sorted, since the binary appends the overdue split's
+// rows after the commitments slice.
 function sections(rows: CommitmentRow[]): SectionView[] {
-  const overdue = rows.filter((r) => r.overdue)
+  const overdue = rows.filter((r) => r.overdue).sort(byDue)
   const open = rows.filter((r) => !r.overdue && r.status !== 'waiting')
   const waiting = rows.filter((r) => !r.overdue && r.status === 'waiting')
   return [
@@ -140,7 +192,7 @@ export function partialNote(p: PartialPart): string {
       }
       return `Unscoped check: verified ${n(p.returned)} of ${n(p.total)} rows (${p.reason}); the rest are labelled "filing unknown".`
     case 'github':
-      return `GitHub: checked ${n(p.returned)} of ${n(p.total)} references (${p.reason}).`
+      return `GitHub: checked ${n(p.returned)} of ${n(p.total)} references (${GITHUB_REASON[p.reason] ?? p.reason}).`
     default:
       return `${p.part}: incomplete (${p.reason}).`
   }
@@ -162,12 +214,14 @@ function listNotes(envelope: Envelope): string[] {
   return notes
 }
 
-export function panelView(s: PanelState): PanelView {
+// now is when the view is drawn ($.clock.now()), which decides whether a
+// time it shows needs its date.
+export function panelView(s: PanelState, now: number): PanelView {
   const rows = visibleRows(s)
   const envelope = rows ? s.record?.envelope : undefined
   const view: PanelView = {
     header: envelope ? headerLines(envelope) : ['3ngram commitments'],
-    status: statusOf(s),
+    status: statusOf(s, now),
     sections: rows ? sections(rows) : [],
     notes: envelope ? listNotes(envelope) : [],
     empty: null,
@@ -177,22 +231,30 @@ export function panelView(s: PanelState): PanelView {
   return view
 }
 
-function statusOf(s: PanelState): { label: string; tone: Tone } {
+// rowsFrom says how old the rows still on show are, while a refresh runs or
+// after one failed.
+function rowsFrom(s: PanelState, now: number): string {
+  return s.record ? ` Rows from ${time(s.record.fetchedAt, now)}.` : ''
+}
+
+function statusOf(s: PanelState, now: number): { label: string; tone: Tone } {
   switch (s.status) {
     case 'idle':
       return { label: 'Not loaded yet.', tone: 'normal' }
     case 'loading':
       return { label: 'Loading…', tone: 'busy' }
     case 'refreshing':
-      return { label: 'Refreshing…', tone: 'busy' }
+      return { label: `Refreshing…${rowsFrom(s, now)}`, tone: 'busy' }
     case 'checking':
     case 'verifying':
       return { label: 'Checking the account and selection…', tone: 'busy' }
-    case 'ready':
-      return { label: `Updated ${s.record ? time(s.record.fetchedAt) : ''}`.trim(), tone: 'normal' }
+    case 'ready': {
+      const at = s.record ? time(s.record.fetchedAt, now) : ''
+      return { label: `Updated ${at}`.trim(), tone: 'normal' }
+    }
     case 'stale':
       return {
-        label: `STALE since ${s.stale ? time(s.stale.since) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}`,
+        label: `STALE since ${s.stale ? time(s.stale.since, now) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s, now)}`,
         tone: 'stale',
       }
     case 'error': {
@@ -203,6 +265,12 @@ function statusOf(s: PanelState): { label: string; tone: Tone } {
       return { label: `ERROR: ${failureText(kind)}${unverified}`, tone: 'error' }
     }
   }
+}
+
+// listNotice is what an open detail says about the list behind it: that the
+// list went stale, which would otherwise show only after Back.
+export function listNotice(s: PanelState, now: number): string | null {
+  return s.status === 'stale' ? statusOf(s, now).label : null
 }
 
 // statusLine is the status-bar entry: counts only, never a topic.

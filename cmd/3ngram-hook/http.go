@@ -70,18 +70,24 @@ func apiKeyFilePaths() []string {
 // 503 = resolver/DB unavailable. Capture is fire-and-forget: every failure path
 // exits 0 so the hook never blocks the user's workflow.
 func apiRequest(method, path string, body []byte, timeout time.Duration) ([]byte, int, error) {
+	return resolveReadConfig().request(method, path, body, timeout)
+}
+
+// request keeps a multi-request hook on one backend and credential, even if a
+// key file rotates between the briefing, account lookup and lifecycle call.
+func (cfg readConfig) request(method, path string, body []byte, timeout time.Duration) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequest(method, apiBaseURL()+path, bodyReader)
+	req, err := http.NewRequest(method, cfg.base+path, bodyReader)
 	if err != nil {
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if key := apiKey(); key != "" {
-		req.Header.Set("X-API-Key", key)
+	if cfg.key != "" {
+		req.Header.Set("X-API-Key", cfg.key)
 	}
 
 	client := &http.Client{Timeout: timeout}

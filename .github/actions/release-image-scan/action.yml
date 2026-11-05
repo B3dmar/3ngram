@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: Apache-2.0
+# release-image-scan — build the server and worker runner images for
+# linux/amd64 and linux/arm64 and fail on a fixable HIGH/CRITICAL finding.
+#
+# The ONE definition of the release image scan. Two callers:
+#   - release-publish.yml `container-scan`: the post-tag gate before publish.
+#   - release-image-scan.yml: the same scan before a tag exists (version PR,
+#     promotion PR, scan-definition changes, manual dispatch), because
+#     `immutable-v-tags` burns a version whose post-tag scan fails.
+#
+# Inputs only; this file reads no event context (no github.event.*, head_ref),
+# so a run on a pull request exercises exactly what a tag run will execute.
+# The caller checks out the commit to scan first.
+name: Release image scan
+description: Build both runner images on both platforms and Trivy-scan them with the release flags.
+
+inputs:
+  image-tag:
+    description: Tag for the locally loaded scan images, e.g. the commit being scanned.
+    required: true
+  cache-scope-prefix:
+    description: >-
+      Prefix for the GitHub Actions build-cache scopes. release-publish.yml
+      passes `release`, which its publish jobs read back; any other caller must
+      use a different prefix so it never seeds a tag run's cache.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Require explicit inputs
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        CACHE_SCOPE_PREFIX: ${{ inputs.cache-scope-prefix }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$IMAGE_TAG" || -z "$CACHE_SCOPE_PREFIX" ]]; then
+          echo "release-image-scan needs non-empty image-tag and cache-scope-prefix inputs" >&2
+          exit 1
+        fi
+    - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      with:
+        platforms: arm64
+    - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+    - name: Build linux/amd64 image for pre-publish scan
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: apps/server/Dockerfile
+        target: runner
+        platforms: linux/amd64
+        pull: true
+        load: true
+        tags: 3ngram-release-scan:${{ inputs.image-tag }}-amd64
+        cache-from: type=gha,scope=${{ inputs.cache-scope-prefix }}-amd64
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope-prefix }}-amd64
+        provenance: false
+        sbom: false
+    - name: Scan linux/amd64 fixed high and critical vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: image
+        image-ref: 3ngram-release-scan:${{ inputs.image-tag }}-amd64
+        format: table
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: os,library
+        severity: HIGH,CRITICAL
+    - name: Build linux/arm64 image for pre-publish scan
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: apps/server/Dockerfile
+        target: runner
+        platforms: linux/arm64
+        pull: true
+        load: true
+        tags: 3ngram-release-scan:${{ inputs.image-tag }}-arm64
+        cache-from: type=gha,scope=${{ inputs.cache-scope-prefix }}-arm64
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope-prefix }}-arm64
+        provenance: false
+        sbom: false
+    - name: Scan linux/arm64 fixed high and critical vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: image
+        image-ref: 3ngram-release-scan:${{ inputs.image-tag }}-arm64
+        format: table
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: os,library
+        severity: HIGH,CRITICAL
+        skip-setup-trivy: true
+    - name: Build linux/amd64 worker image for pre-publish scan
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: apps/worker/Dockerfile
+        target: runner
+        platforms: linux/amd64
+        pull: true
+        load: true
+        tags: 3ngram-worker-release-scan:${{ inputs.image-tag }}-amd64
+        cache-from: type=gha,scope=${{ inputs.cache-scope-prefix }}-worker-amd64
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope-prefix }}-worker-amd64
+        provenance: false
+        sbom: false
+    - name: Scan linux/amd64 worker fixed high and critical vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: image
+        image-ref: 3ngram-worker-release-scan:${{ inputs.image-tag }}-amd64
+        format: table
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: os,library
+        severity: HIGH,CRITICAL
+        skip-setup-trivy: true
+    - name: Build linux/arm64 worker image for pre-publish scan
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: apps/worker/Dockerfile
+        target: runner
+        platforms: linux/arm64
+        pull: true
+        load: true
+        tags: 3ngram-worker-release-scan:${{ inputs.image-tag }}-arm64
+        cache-from: type=gha,scope=${{ inputs.cache-scope-prefix }}-worker-arm64
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope-prefix }}-worker-arm64
+        provenance: false
+        sbom: false
+    - name: Scan linux/arm64 worker fixed high and critical vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: image
+        image-ref: 3ngram-worker-release-scan:${{ inputs.image-tag }}-arm64
+        format: table
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: os,library
+        severity: HIGH,CRITICAL
+        skip-setup-trivy: true

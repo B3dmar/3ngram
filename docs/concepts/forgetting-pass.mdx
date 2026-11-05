@@ -4,7 +4,7 @@ description: "ADR draft: a scheduled, proposals-only pass that finds stale and c
 icon: "broom"
 ---
 
-**Status: shipped, default-off.** This ADR was accepted on 2026-10-27, and the open questions at the end stay open. The pass ships on the worker behind `FORGETTING_PASS_ENABLED` (default off), and its proposals are reviewed through `review_proposals`. It only ever writes proposals. The thresholds are starting values until the eval sets them. The report-only harness and its synthetic mirror ship in `eval/` (`eval/src/forgetting-eval.mjs`, run nightly, never gated); the private golden set is still to come.
+**Status: shipped, default-off.** This ADR was accepted on 2026-10-27, and the open questions at the end stay open. The pass ships on the worker behind `FORGETTING_PASS_ENABLED` (default off), and its proposals are reviewed through `review_proposals`. It only ever writes proposals. The thresholds are starting values until the eval sets them. The report-only harness, its synthetic mirror and the public calibration fixture ship in `eval/` (`eval/src/forgetting-eval.mjs`, run nightly, never gated); the private golden set is still to come.
 
 ## Context
 
@@ -193,19 +193,22 @@ The pattern is `SESSION_CLOSER_ENABLED`:
 | still valid | 60 | keep | the review's reaffirms, plus standing decisions and preferences |
 | recurring episodic | 30 | never collapse | digests, debriefs, standups: `event` and dated `note` entries |
 
+**Calibration fixture.** Judge thresholds are selected on `eval/fixtures/forgetting-calibration.json`, a public fixture of wholly invented memories with exactly the slice mix above: 60 archive, 40 pairs (25 supersede, 15 conflict), 60 keep and 30 recurring episodic, all in the `dev` split. It includes hard cases: near-duplicate pairs that both hold, dated episodes whose later entries read like corrections, and old, dated items that still hold. A unit test pins its counts and checks that no label follows from a structural feature (length, position, age, neighbour count or similarity) or from a cue-word list. Supersede newers signal an update, as real ones do, but the same words also appear in other senses on conflict and keep newers, so the words alone recover nothing. `eval/fixtures/README.md` documents it, with the commands for both threshold steps.
+
 The recurring-episodic slice must stay at **zero false collapses**. The fixture-backed eval measures judge verdicts on supplied candidates; it does not exercise production candidate selection. Neither `event` nor `note` rows enter stale singles or conflict pairing in the shipped pass. The core `forgetting-pass.int.test.ts` integration suite checks both exclusions through `dbForgettingRepo.readCandidates`, with otherwise-eligible recurring episodes and a decision-pair positive control.
 
 **Metrics.**
 - **Headline:** precision on archive and supersede proposals, each separately and then combined, reported per memory type as ADR-0005 asks. A wrong archive costs more than a missed one, so recall is secondary.
 - **Also reported:** conflict precision, the keep rate on still-valid items, and calibration (expected calibration error) of the judge's confidences.
 
-**Protocol.** It follows the #166 pre-registration:
-- labels are frozen before the first judged run;
-- thresholds are chosen on a development split, and precision is reported on a held-out split;
-- recorded Jev responses become fixtures for deterministic CI, as `jev-recorded.test.ts` does;
-- a live re-measurement runs whenever `JEV_MODEL` changes.
+**Protocol.** It follows the #166 pre-registration, amended by the owner decision of 2026-11-03: "Judge thresholds are selected only on the dev split of a public synthetic fixture in the engine's eval/. Every personal item, historical or fresh, is held-out evidence only." The private set has two split-safe development items, too few to calibrate on.
+- Labels are frozen before the first judged run. The calibration fixture froze in #399, before any judge run, at SHA-256 `7a06d172a117f614ce7f475ccc51dedeed9d1d90b7d6d8d9b2f3a82ef0e464d8`, with label checksum `8aaf06abc1243a575d2e8dd87de81fdcbe1d6b4495144abea8c2e87ffd70a7b0`. A changed byte makes a new fixture that needs a new pre-registration.
+- Thresholds are selected on the calibration fixture's dev split by a pre-registered rule. For each action it takes the lowest swept threshold (0.50 to 0.95 in steps of 0.05) whose precision reaches 0.97 for archive and supersede, or 0.80 for conflict, over at least 10 proposals. When no threshold qualifies, that action proposes nothing. The 0.97 is a deliberate margin over the 0.95 bar: a wrong archive costs more than a missed one, and selecting at the bar leaves no held-out margin.
+- The private set is then scored with those thresholds frozen. No personal item feeds the selection, so a personal item's fixed split label is only a record. A frozen run reports no sweep, and it reports the bar's inputs over all items together beside the per-split breakdown, with a met or not-met verdict per condition and for the bar overall. The verdict is report-only. The harness refuses a thresholds file that does not match what selection writes for the pinned fixture. That is a guard against applying the wrong file by accident, not proof of where a file came from.
+- Recorded Jev responses become fixtures for deterministic CI, as `jev-recorded.test.ts` does.
+- A live re-measurement runs whenever `JEV_MODEL` changes. Thresholds belong to the model that selected them, and the harness refuses a frozen run on another model.
 
-**Bars.** The pass stays report-only, like the `revise#disposition` slice, until both hold on the held-out split:
+**Bars.** The pass stays report-only, like the `revise#disposition` slice, until both hold over every personal item, whatever its fixed split label, scored with thresholds frozen from the synthetic dev split. Synthetic results, the calibration fixture's included, never count toward a bar:
 - archive precision of at least 0.95 with at least 40 proposals;
 - zero recurring-episodic collapses.
 

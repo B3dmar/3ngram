@@ -3,7 +3,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Selection } from '../hooks/lib/argv.ts'
-import { contextArgv, isAllowedArgv, listArgv, selectionKey, showArgv } from '../hooks/lib/argv.ts'
+import {
+  contextArgv,
+  isAllowedArgv,
+  listArgv,
+  refusalKind,
+  selectionKey,
+  showArgv,
+} from '../hooks/lib/argv.ts'
 
 const sel: Selection = { cwd: '/repo', scope: 'work', includeUnscoped: true, github: true }
 
@@ -72,6 +79,20 @@ test('a value never looks like a flag, and an id is one plain word', () => {
     isAllowedArgv(['3ngram-hook', 'commitments', 'show', 'mem-1', '--expect-fingerprint', '-f']),
     false,
   )
+})
+
+test('a refusal names the scope only when the scope is what was refused', () => {
+  assert.equal(refusalKind(listArgv({ ...sel, scope: '-work' })), 'refused_scope')
+  assert.equal(refusalKind(contextArgv({ ...sel, scope: '--all' })), 'refused_scope')
+  for (const argv of [
+    listArgv({ ...sel, cwd: '-repo' }),
+    showArgv(sel, '-mem', 'fp'),
+    showArgv(sel, 'mem 1', 'fp'),
+    showArgv(sel, 'mem-1', '-fp'),
+  ]) {
+    assert.equal(isAllowedArgv(argv), false, argv.join(' '))
+    assert.equal(refusalKind(argv), 'refused', argv.join(' '))
+  }
 })
 
 test('the selection key changes with everything a read depends on', () => {
