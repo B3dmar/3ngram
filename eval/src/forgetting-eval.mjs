@@ -32,12 +32,13 @@
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
 //          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   assertThresholdMode,
   barEvidence,
+  CALIBRATION_GOLDEN,
   CALIBRATION_SHA256,
   fileSha256,
   labelsSha256,
@@ -52,7 +53,13 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
 export const DEFAULT_ANSWERS = join(here, '../fixtures/forgetting-synthetic-answers.json')
 export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
-const COMMITTED_FIXTURES = join(here, '../fixtures')
+
+/**
+ * Every committed forgetting golden file. A new one must be listed here (a test checks the
+ * folder's file names). The list is explicit, never a scan of eval/fixtures/, because other
+ * eval tests rewrite and rename files in that folder while this module reads.
+ */
+export const COMMITTED_GOLDEN_FIXTURES = Object.freeze([DEFAULT_GOLDEN, CALIBRATION_GOLDEN])
 
 /**
  * What the bar reads of the labels: every item's id, slice, expected verdict and related id.
@@ -72,14 +79,9 @@ function barLabelsSha256(labels) {
  */
 function isCommittedFixture(labels) {
   const checksum = barLabelsSha256(labels)
-  return readdirSync(COMMITTED_FIXTURES, { recursive: true })
-    .filter((name) => String(name).endsWith('.json'))
-    .some((name) => {
-      const raw = JSON.parse(readFileSync(join(COMMITTED_FIXTURES, String(name)), 'utf8'))
-      const fixtureLabels = raw?.labels
-      if (fixtureLabels === null || typeof fixtureLabels !== 'object') return false
-      return barLabelsSha256(fixtureLabels) === checksum
-    })
+  return COMMITTED_GOLDEN_FIXTURES.some(
+    (path) => barLabelsSha256(loadGolden(path).labels) === checksum,
+  )
 }
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
