@@ -5,7 +5,7 @@
 // tell, and thresholds selected on it score another fixture frozen. Fake answers
 // only: no network, no database, nothing written outside a temp dir.
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -219,14 +219,23 @@ test('thresholds selected on the calibration dev split score another fixture fro
   )
   assert.doesNotMatch(report, /threshold sweep/)
 
-  // The same file outside eval/fixtures/ stands in for the private set: no synthetic label.
-  const outside = join(dir, 'golden.json')
-  copyFileSync(DEFAULT_GOLDEN, outside)
-  const personal = await runForgettingEval({
-    goldenPath: outside,
-    outPath: join(dir, 'outside.json'),
-    thresholdsPath: selectPath,
-  })
+  // Identity is the bytes, not the path: a copy or a symlink outside eval/fixtures/ is still
+  // the committed mirror, while a re-serialised file stands in for the private set.
+  const frozenOn = (goldenPath, name) =>
+    runForgettingEval({ goldenPath, outPath: join(dir, name), thresholdsPath: selectPath })
+  const copy = join(dir, 'copy.json')
+  copyFileSync(DEFAULT_GOLDEN, copy)
+  const link = join(dir, 'link.json')
+  symlinkSync(DEFAULT_GOLDEN, link)
+  for (const [path, name] of [
+    [copy, 'copy-out.json'],
+    [link, 'link-out.json'],
+  ]) {
+    assert.equal((await frozenOn(path, name)).barEvidence.synthetic, true, name)
+  }
+  const other = join(dir, 'other.json')
+  writeFileSync(other, JSON.stringify(JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))))
+  const personal = await frozenOn(other, 'other-out.json')
   assert.equal(personal.barEvidence.synthetic, false)
   assert.match(
     formatReport(personal),

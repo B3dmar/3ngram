@@ -31,8 +31,8 @@
 //
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
 //          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   assertThresholdMode,
@@ -51,8 +51,17 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
 export const DEFAULT_ANSWERS = join(here, '../fixtures/forgetting-synthetic-answers.json')
 export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
-// Every committed fixture is invented, so a golden file in this folder is never bar evidence.
-const COMMITTED_FIXTURES = resolve(here, '../fixtures')
+const COMMITTED_FIXTURES = join(here, '../fixtures')
+
+/**
+ * Every committed fixture is invented, so a golden file whose bytes match one is never bar
+ * evidence, however it is reached: in place, through a symlink, or copied elsewhere.
+ */
+function isCommittedFixture(sha256) {
+  return readdirSync(COMMITTED_FIXTURES, { recursive: true })
+    .filter((name) => String(name).endsWith('.json'))
+    .some((name) => fileSha256(join(COMMITTED_FIXTURES, String(name))) === sha256)
+}
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
 export const FORGET_DECIDE_OPERATION = 'memory.forget.decide'
@@ -384,7 +393,7 @@ export async function runForgettingEval(options = {}) {
   }
   // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
   if (frozen && !calibration) {
-    const synthetic = dirname(resolve(goldenPath)) === COMMITTED_FIXTURES
+    const synthetic = isCommittedFixture(goldenSha256)
     metrics.barEvidence = { ...barEvidence(metrics.splits.all), synthetic }
   }
   if (options.selectPath !== undefined) {
