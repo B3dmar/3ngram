@@ -149,8 +149,8 @@ export function loadFrozenThresholds(path) {
 
 /**
  * The bar's inputs over every labelled item, whatever its split label, and whether each
- * condition holds. Precision is compared from the exact counts, never the rounded figure,
- * so 0.94996 cannot pass as 0.95. Report-only: `met` enables nothing.
+ * condition holds. Precision is compared as the unrounded ratio of the counts, never the
+ * 4-decimal figure, so 1899/1999 cannot pass as 0.95. Report-only: `met` enables nothing.
  */
 export function barEvidence(all) {
   const archive = all.precision.archive

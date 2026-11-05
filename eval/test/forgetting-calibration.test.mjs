@@ -5,11 +5,17 @@
 // tell, and thresholds selected on it score another fixture frozen. Fake answers
 // only: no network, no database, nothing written outside a temp dir.
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { cliOptions, formatReport, loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
+import {
+  cliOptions,
+  DEFAULT_GOLDEN,
+  formatReport,
+  loadGolden,
+  runForgettingEval,
+} from '../src/forgetting-eval.mjs'
 import {
   barEvidence,
   CALIBRATION_FAKE_ANSWERS,
@@ -206,11 +212,29 @@ test('thresholds selected on the calibration dev split score another fixture fro
   assert.match(report, /bar evidence, all items whatever their split/)
   assert.match(report, /^ {2}archive 0\.750 \(3\/4\), needs >= 0\.95 over >= 40: not met$/m)
   assert.match(report, /^ {2}episodic collapses 0, needs 0: met$/m)
-  assert.match(report, /^ {2}bar overall \(report-only, enables nothing\): not met$/m)
+  assert.equal(frozen.barEvidence.synthetic, true, 'the committed mirror is synthetic')
+  assert.match(
+    report,
+    /^ {2}bar overall \(report-only, enables nothing\): not met \(committed synthetic fixture: never counts\)$/m,
+  )
   assert.doesNotMatch(report, /threshold sweep/)
+
+  // The same file outside eval/fixtures/ stands in for the private set: no synthetic label.
+  const outside = join(dir, 'golden.json')
+  copyFileSync(DEFAULT_GOLDEN, outside)
+  const personal = await runForgettingEval({
+    goldenPath: outside,
+    outPath: join(dir, 'outside.json'),
+    thresholdsPath: selectPath,
+  })
+  assert.equal(personal.barEvidence.synthetic, false)
+  assert.match(
+    formatReport(personal),
+    /^ {2}bar overall \(report-only, enables nothing\): not met$/m,
+  )
 })
 
-test('the bar verdict reads exact counts, not the rounded precision', () => {
+test('the bar verdict reads the unrounded ratio, not the rounded precision', () => {
   const evidence = (proposed, correct, collapses) =>
     barEvidence({
       precision: {

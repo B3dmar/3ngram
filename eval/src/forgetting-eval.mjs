@@ -32,7 +32,7 @@
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
 //          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   assertThresholdMode,
@@ -51,6 +51,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
 export const DEFAULT_ANSWERS = join(here, '../fixtures/forgetting-synthetic-answers.json')
 export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
+// Every committed fixture is invented, so a golden file in this folder is never bar evidence.
+const COMMITTED_FIXTURES = resolve(here, '../fixtures')
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
 export const FORGET_DECIDE_OPERATION = 'memory.forget.decide'
@@ -381,7 +383,10 @@ export async function runForgettingEval(options = {}) {
       : thresholdSweep(staged, pickSplit(golden.labels, 'dev'), 'dev'),
   }
   // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
-  if (frozen && !calibration) metrics.barEvidence = barEvidence(metrics.splits.all)
+  if (frozen && !calibration) {
+    const synthetic = dirname(resolve(goldenPath)) === COMMITTED_FIXTURES
+    metrics.barEvidence = { ...barEvidence(metrics.splits.all), synthetic }
+  }
   if (options.selectPath !== undefined) {
     metrics.selected = writeSelection(options.selectPath, metrics, judge.mode)
   }
@@ -436,7 +441,7 @@ export function formatReport(m) {
         'bar evidence, all items whatever their split (personal evidence only on the private set):',
         `  archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}: ${verdict(e.met.archive)}`,
         `  episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}: ${verdict(e.met.recurringEpisodicCollapses)}`,
-        `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}`,
+        `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}${e.synthetic ? ' (committed synthetic fixture: never counts)' : ''}`,
       )
     }
     return lines.join('\n')
