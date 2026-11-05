@@ -1,6 +1,6 @@
 # 3ngram for Claude Code
 
-A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog. It also keeps a record, for the session, of the memories the agent read and changed through 3ngram's MCP tools, so a later version can show you what the agent used; nothing shows that record yet.
+A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a memory and never adds a backlog. Its Session tab shows the memories the agent was observed reading and changing through 3ngram's MCP tools during the session.
 
 Needs Claude Code 2.1.287 or later in the terminal (2.1.286 or later in the Desktop app's Code tab), where mods are on by default; no feature flag is needed, and the early-access `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is ignored from 2.1.287. Tested with 2.1.291 and 2.1.292. The plugin API (mods) is early access and can change between releases.
 
