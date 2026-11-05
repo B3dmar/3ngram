@@ -31,6 +31,7 @@
 //
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
 //          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -54,19 +55,30 @@ export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
 const COMMITTED_FIXTURES = join(here, '../fixtures')
 
 /**
- * Every committed fixture is invented, so a golden file whose labels match one is never bar
- * evidence, however it is reached or reformatted: in place, through a symlink, copied, or
- * re-serialised. The labels checksum is order-independent and ignores formatting.
+ * What the bar reads of the labels: every item's id, slice, expected verdict and related id.
+ * Splits are left out because the bar ignores them. Order-independent, formatting-free.
+ */
+function barLabelsSha256(labels) {
+  const rows = Object.keys(labels)
+    .sort()
+    .map((id) => [id, labels[id]?.slice, labels[id]?.expected, labels[id]?.relatedMemoryId ?? null])
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+}
+
+/**
+ * Every committed fixture is invented, so a golden file whose bar-relevant labels match one is
+ * never bar evidence, however it is reached, reformatted or re-split. An edited copy is a
+ * different dataset that no checksum can recognise; the verdict stays report-only regardless.
  */
 function isCommittedFixture(labels) {
-  const checksum = labelsSha256(labels)
+  const checksum = barLabelsSha256(labels)
   return readdirSync(COMMITTED_FIXTURES, { recursive: true })
     .filter((name) => String(name).endsWith('.json'))
     .some((name) => {
       const raw = JSON.parse(readFileSync(join(COMMITTED_FIXTURES, String(name)), 'utf8'))
       const fixtureLabels = raw?.labels
       if (fixtureLabels === null || typeof fixtureLabels !== 'object') return false
-      return labelsSha256(fixtureLabels) === checksum
+      return barLabelsSha256(fixtureLabels) === checksum
     })
 }
 

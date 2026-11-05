@@ -219,9 +219,9 @@ test('thresholds selected on the calibration dev split score another fixture fro
   )
   assert.doesNotMatch(report, /threshold sweep/)
 
-  // Identity is the labels, not the path or the bytes: a copy, a symlink or a re-serialised
-  // file outside eval/fixtures/ is still the committed mirror. A file whose labels differ, here
-  // by one split, stands in for the private set.
+  // Identity is what the bar reads of the labels, not the path, the bytes or the splits: a
+  // copy, a symlink, a re-serialised or a re-split file is still the committed mirror. A file
+  // whose expected verdict differs for one item stands in for the private set.
   const frozenOn = (goldenPath, name) =>
     runForgettingEval({ goldenPath, outPath: join(dir, name), thresholdsPath: selectPath })
   const mirror = JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))
@@ -231,26 +231,24 @@ test('thresholds selected on the calibration dev split score another fixture fro
   symlinkSync(DEFAULT_GOLDEN, link)
   const minified = join(dir, 'minified.json')
   writeFileSync(minified, JSON.stringify(mirror))
+  const [firstId] = Object.keys(mirror.labels)
+  const first = mirror.labels[firstId]
+  const withLabel = (label) =>
+    JSON.stringify({ ...mirror, labels: { ...mirror.labels, [firstId]: label } })
+  const resplit = join(dir, 'resplit.json')
+  writeFileSync(resplit, withLabel({ ...first, split: first.split === 'dev' ? 'heldout' : 'dev' }))
   for (const [path, name] of [
     [copy, 'copy-out.json'],
     [link, 'link-out.json'],
     [minified, 'minified-out.json'],
+    [resplit, 'resplit-out.json'],
   ]) {
     assert.equal((await frozenOn(path, name)).barEvidence.synthetic, true, name)
   }
-  const [firstId] = Object.keys(mirror.labels)
-  const first = mirror.labels[firstId]
+  // A keep becomes an archive, or anything else becomes a keep; no relatedMemoryId is needed.
+  const flipped = first.expected === 'keep' ? 'archive' : 'keep'
   const other = join(dir, 'other.json')
-  writeFileSync(
-    other,
-    JSON.stringify({
-      ...mirror,
-      labels: {
-        ...mirror.labels,
-        [firstId]: { ...first, split: first.split === 'dev' ? 'heldout' : 'dev' },
-      },
-    }),
-  )
+  writeFileSync(other, withLabel({ ...first, expected: flipped, relatedMemoryId: undefined }))
   const personal = await frozenOn(other, 'other-out.json')
   assert.equal(personal.barEvidence.synthetic, false)
   assert.match(
