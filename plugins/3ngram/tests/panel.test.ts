@@ -1197,6 +1197,121 @@ describe('cancellation and lifecycle', () => {
     })
   }
 
+  // A detail read that finds its context changed asks for the list again:
+  // when its probe disagrees with its answer (probe), or when the answer
+  // itself names another context (answer). The write recording that is held,
+  // so a stop or a Back can land there. rotate() moves the key after the
+  // startup read.
+  function detailChange(
+    on: On,
+    path: 'probe' | 'answer',
+    opts: { surfaces?: string[]; hangLists?: () => boolean } = {},
+  ) {
+    let current = FP_A
+    let held = false
+    let release: () => void = () => undefined
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] === 'context') return { stdout: contextEnvelope(current) }
+        if (argv[2] === 'show') return { stdout: showEnvelope(path === 'probe' ? FP_A : FP_B) }
+        if (opts.hangLists?.()) return { hang: true }
+        return {
+          stdout: listEnvelope(current, current === FP_A ? TOPIC : 'Read under the new key'),
+        }
+      },
+      { surfaces: opts.surfaces },
+    )
+    on('state.set', async (_$, e, next) => {
+      const value = (e as { value?: { detail?: { error?: { kind?: string } | null } | null } })
+        .value
+      if (!held && value?.detail?.error?.kind === 'context_changed') {
+        held = true
+        await new Promise<void>((r) => {
+          release = r
+        })
+      }
+      return next(e)
+    })
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    return {
+      w,
+      lists,
+      rotate: () => {
+        current = FP_B
+      },
+      held: () => held,
+      release: () => release(),
+    }
+  }
+
+  for (const path of ['probe', 'answer'] as const) {
+    test(`a detach while a detail records a context change (${path}) reads no more`, async ($, on) => {
+      const roster: string[] = []
+      const d = detailChange(on, path, { surfaces: roster })
+      await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+      roster.push('mobile')
+      await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+      await d.w.clock.advance(1)
+      expect(d.lists()).toBe(1)
+      const ui = await mountPane($)
+      d.rotate()
+      fire(ui.press({ key: OPEN_ROW }))
+      await d.w.clock.advance(1)
+      expect(d.held()).toBe(true)
+      roster.length = 0
+      await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+      d.release()
+      await d.w.clock.advance(1)
+      await d.w.clock.advance(1)
+      expect(d.lists()).toBe(1)
+    })
+  }
+
+  test('a cancel while a detail records a context change reads no more', async ($, on) => {
+    let hang = false
+    const d = detailChange(on, 'probe', { hangLists: () => hang })
+    await start($, d.w.clock)
+    const ui = await mountPane($)
+    d.rotate()
+    fire(ui.press({ key: OPEN_ROW }))
+    await d.w.clock.advance(1)
+    expect(d.held()).toBe(true)
+    // The periodic refresh finds the new key and clears the rows and the
+    // detail; its read hangs, so the list shows Cancel.
+    hang = true
+    await d.w.clock.advance(5 * 60_000)
+    expect(d.lists()).toBe(2)
+    await ui.press({ key: 'cancel' })
+    hang = false
+    d.release()
+    for (const release of d.w.holds.splice(0)) release()
+    await d.w.clock.advance(1)
+    await d.w.clock.advance(1)
+    expect(d.lists()).toBe(2)
+  })
+
+  // A Back is no stop: the rows behind the detail were read under the old
+  // key, and the list read the detail asked for still replaces them.
+  test('a Back while a detail records a context change still reads the list again', async ($, on) => {
+    const d = detailChange(on, 'probe')
+    await start($, d.w.clock)
+    expect(d.lists()).toBe(1)
+    const ui = await mountPane($)
+    d.rotate()
+    fire(ui.press({ key: OPEN_ROW }))
+    await d.w.clock.advance(1)
+    expect(d.held()).toBe(true)
+    await ui.press({ key: 'back' })
+    d.release()
+    await d.w.clock.advance(1)
+    await d.w.clock.advance(1)
+    expect(d.lists()).toBe(2)
+    const text = await textOf(ui)
+    expect(text).toContain('Read under the new key')
+    expect(text).not.toContain(TOPIC)
+  })
+
   test('a refresh that clears an open detail stops its read', async ($, on) => {
     let fingerprint = FP_A
     const w = world(on, (argv) => {

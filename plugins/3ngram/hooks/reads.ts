@@ -208,6 +208,9 @@ export async function openDetail(
   options: PluginOptions,
   memoryId: string,
 ): Promise<void> {
+  // Taken before the first await: a stop from here on means the list read a
+  // changed context asks for below is not started (halts in runtime.ts).
+  const halts = runtime.halts
   const s = await dispatch($, { type: 'detail_requested', memoryId })
   const detail = s.detail
   if (!detail || detail.memoryId !== memoryId) return
@@ -261,13 +264,19 @@ export async function openDetail(
       }
       if (now !== parsed.envelope.context.fingerprint) {
         await dispatch($, { type: 'detail_failed', seq, failure: 'context_changed' })
-        await refresh($, options)
+        // A stop (Cancel, /clear, a reload, the last detach) during the
+        // dispatch would otherwise be followed by this read. Checked after
+        // it, the last await before refresh takes its token; by halts, not
+        // stops, so a Back still reads the list again.
+        if (runtime.halts === halts) await refresh($, options)
         return
       }
     }
     const after = await dispatch($, { type: 'detail_envelope', seq, envelope: parsed.envelope })
-    // The binary refused because the context moved on: read the list again.
-    if (after.detail?.error?.kind === 'context_changed') await refresh($, options)
+    // The binary refused because the context moved on: read the list again,
+    // unless a stop landed during the dispatch (as above).
+    if (after.detail?.error?.kind === 'context_changed' && runtime.halts === halts)
+      await refresh($, options)
   } catch {
     await dispatch($, { type: 'detail_failed', seq, failure: 'crash' })
   }
