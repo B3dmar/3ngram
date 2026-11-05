@@ -147,11 +147,26 @@ export function loadFrozenThresholds(path) {
   return raw
 }
 
-/** The bar's inputs over every labelled item, whatever its split label. */
+/**
+ * The bar's inputs over every labelled item, whatever its split label, and whether each
+ * condition holds. Precision is compared from the exact counts, never the rounded figure,
+ * so 0.94996 cannot pass as 0.95. Report-only: `met` enables nothing.
+ */
 export function barEvidence(all) {
+  const archive = all.precision.archive
+  const collapses = all.falseCollapses.count
+  const archiveMet =
+    archive.proposed >= ENABLEMENT_BAR.minArchiveProposals &&
+    archive.correct / archive.proposed >= ENABLEMENT_BAR.archivePrecision
+  const collapsesMet = collapses <= ENABLEMENT_BAR.recurringEpisodicCollapses
   return {
-    archive: all.precision.archive,
-    recurringEpisodicCollapses: all.falseCollapses.count,
+    archive,
+    recurringEpisodicCollapses: collapses,
     bar: ENABLEMENT_BAR,
+    met: {
+      archive: archiveMet,
+      recurringEpisodicCollapses: collapsesMet,
+      overall: archiveMet && collapsesMet,
+    },
   }
 }

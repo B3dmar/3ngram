@@ -431,8 +431,12 @@ export function formatReport(m) {
     )
     const e = m.barEvidence
     if (e) {
+      const verdict = (met) => (met ? 'met' : 'not met')
       lines.push(
-        `bar evidence, all items whatever their split (personal evidence only on the private set): archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}; episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}`,
+        'bar evidence, all items whatever their split (personal evidence only on the private set):',
+        `  archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}: ${verdict(e.met.archive)}`,
+        `  episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}: ${verdict(e.met.recurringEpisodicCollapses)}`,
+        `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}`,
       )
     }
     return lines.join('\n')

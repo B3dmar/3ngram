@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { cliOptions, formatReport, loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
 import {
+  barEvidence,
   CALIBRATION_FAKE_ANSWERS,
   CALIBRATION_GOLDEN,
   CALIBRATION_LABELS_SHA256,
@@ -192,12 +193,49 @@ test('thresholds selected on the calibration dev split score another fixture fro
   assert.deepEqual(frozen.barEvidence.archive, frozen.splits.all.precision.archive)
   assert.equal(frozen.barEvidence.recurringEpisodicCollapses, 0)
   assert.equal(frozen.barEvidence.bar.minArchiveProposals, 40)
+  // 3/4 archives is short on precision and proposals; zero collapses holds.
+  assert.deepEqual(frozen.barEvidence.met, {
+    archive: false,
+    recurringEpisodicCollapses: true,
+    overall: false,
+  })
   assert.equal(calibration.barEvidence, undefined, 'no bar evidence from the calibration fixture')
   const report = formatReport(frozen)
   assert.match(report, /frozen thresholds/)
   assert.match(report, /^pass \(built-in thresholds\):/m)
   assert.match(report, /bar evidence, all items whatever their split/)
+  assert.match(report, /^ {2}archive 0\.750 \(3\/4\), needs >= 0\.95 over >= 40: not met$/m)
+  assert.match(report, /^ {2}episodic collapses 0, needs 0: met$/m)
+  assert.match(report, /^ {2}bar overall \(report-only, enables nothing\): not met$/m)
   assert.doesNotMatch(report, /threshold sweep/)
+})
+
+test('the bar verdict reads exact counts, not the rounded precision', () => {
+  const evidence = (proposed, correct, collapses) =>
+    barEvidence({
+      precision: {
+        archive: {
+          proposed,
+          correct,
+          precision: proposed === 0 ? null : +(correct / proposed).toFixed(4),
+        },
+      },
+      falseCollapses: { count: collapses },
+    }).met
+  assert.deepEqual(evidence(40, 38, 0), {
+    archive: true,
+    recurringEpisodicCollapses: true,
+    overall: true,
+  })
+  // 1899/1999 = 0.94997 rounds to 0.95 but sits below the bar.
+  assert.equal(evidence(1999, 1899, 0).archive, false)
+  assert.equal(evidence(39, 39, 0).archive, false, 'too few proposals')
+  assert.equal(evidence(0, 0, 0).archive, false, 'no proposals')
+  assert.deepEqual(evidence(40, 40, 1), {
+    archive: true,
+    recurringEpisodicCollapses: false,
+    overall: false,
+  })
 })
 
 test('the protocol refuses a selection off the fixture and foreign thresholds', async () => {
