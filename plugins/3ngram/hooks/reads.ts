@@ -299,6 +299,7 @@ export async function closeDetail($: EngineInterface): Promise<void> {
 // and they are cleared before any read, not when the next read lands.
 export async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
   const epoch = runtime.startEpoch
+  const halts = runtime.halts
   let settled = false
   try {
     settled = await settleHeld($, options)
@@ -309,11 +310,12 @@ export async function startup($: EngineInterface, options: PluginOptions): Promi
   }
   if (settled) await confirmSelection($, epoch)
   // Until refresh takes its token, startup holds none, so a stopReads cannot
-  // reach it. The background reads disarmed during the awaits above (the last
-  // client detached, or a reload into a session that draws nowhere) leave no
-  // interval: the read is not started. Checked here, after startup's last
-  // await, because refresh takes its token before its own first one.
-  if (runtime.tick === null) return
+  // reach it. A stop during the awaits above (a Cancel, /clear, a reload, or
+  // the last client detaching, which disarms through stopReads) means the
+  // read is not started: by halts, taken on entry, so a Cancel that leaves
+  // the interval armed counts too. Checked here, after startup's last await,
+  // because refresh takes its token before its own first one.
+  if (runtime.halts !== halts) return
   // A record that is not settled yet is the refresh's to confirm: its probe
   // runs before the read, and refresh_started (or a reported failure) opens
   // the gate.

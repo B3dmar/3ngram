@@ -57,8 +57,7 @@ export const runtime: Runtime = {
   detailRead: null,
   // The refresh interval and the startup kick of the last session.start, ended
   // before a later session.start arms new ones. One-shot kicks from commands
-  // and transitions fire at once and are not kept. A startup whose kick has
-  // fired reads only while tick is still set (startup in reads.ts).
+  // and transitions fire at once and are not kept.
   tick: null,
   kick: null,
   // midnight is the redraw armed for the next UTC midnight after a draw
@@ -68,9 +67,10 @@ export const runtime: Runtime = {
   // not started its child when it was stopped still sees that it was, and
   // never starts one.
   stops: 0,
-  // halts counts stopReads calls alone. A detail read that finds its context
+  // halts counts stopReads calls alone. A startup reads the list only if none
+  // came since it began (startup), and a detail read that finds its context
   // changed asks for the list again only if none came since it was asked for
-  // (openDetail); a Back is no stop, and its list read still runs.
+  // (openDetail); a Back is no stop, and that list read still runs.
   halts: 0,
   // wantedDetail is the sequence of the detail last asked for: a detail read
   // that is no longer it stops its child instead of registering it.

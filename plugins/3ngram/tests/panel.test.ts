@@ -711,9 +711,10 @@ describe('switching accounts cannot show the previous context', () => {
     await start($, w.clock)
     expect(probeHolds.length).toBe(2)
     // The older probe answers first and keeps the old rows as stale under
-    // the old key. The refresh that older startup goes on to is held at its
-    // directory read, so nothing else settles the state before the newer
-    // probe answers, which the reducer then ignores.
+    // the old key; that startup, stopped by the second reload, reads nothing
+    // more. Nothing else settles the state before the newer probe answers,
+    // which the reducer then ignores, and the refresh the newer startup goes
+    // on to is held at its directory read.
     let releaseCwd: () => void = () => undefined
     cwdBlock = new Promise<void>((r) => {
       releaseCwd = r
@@ -1142,6 +1143,100 @@ describe('cancellation and lifecycle', () => {
     await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
     await w.clock.advance(1)
     expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
+  })
+
+  // A client that re-attaches before the old startup resumes arms a startup
+  // of its own: the old one, stopped by the detach, reads nothing.
+  test('a startup stopped by a detach reads nothing after a re-attach', async ($, on) => {
+    const roster: string[] = []
+    let armed = false
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { surfaces: roster, cwdHold: { armed: () => armed, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+    roster.push('mobile')
+    armed = true
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+    await w.clock.advance(1)
+    roster.length = 0
+    await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+    roster.push('mobile')
+    await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+  })
+
+  // Found in review of #416: a Cancel stops the reads without disarming
+  // them, so a startup still settling must see the stop itself.
+  test('a cancel while startup settles starts no read', async ($, on) => {
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    let hang = true
+    const w = world(
+      on,
+      (argv) => {
+        if (argv[2] !== 'list') return { stdout: contextEnvelope(FP_A) }
+        return hang ? { hang: true } : { stdout: listEnvelope(FP_A) }
+      },
+      // The first directory read is startup's.
+      { cwdHold: { armed: () => true, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    expect(lists()).toBe(0)
+    // /commitments reads while startup waits; its read hangs, so the pane
+    // shows Cancel.
+    await $.command.run({ command: 'commitments', args: '' } as never)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    const ui = await mountPane($)
+    await ui.press({ key: 'cancel' })
+    hang = false
+    for (const release of w.holds.splice(0)) release()
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+  })
+
+  // /clear while startup settles: the read after the reset is the only one.
+  test('a /clear while startup settles reads once, after the reset', async ($, on) => {
+    let unblock: () => void = () => undefined
+    const until = new Promise<void>((r) => {
+      unblock = r
+    })
+    const w = world(
+      on,
+      (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      { cwdHold: { armed: () => true, until } },
+    )
+    const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await w.clock.advance(1)
+    await $.session.end({ reason: 'clear' } as never)
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
+    unblock()
+    await w.clock.advance(1)
+    await w.clock.advance(1)
+    expect(lists()).toBe(1)
   })
 
   // #269: a stop landing while a read records that its context moved
