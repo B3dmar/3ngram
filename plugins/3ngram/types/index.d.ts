@@ -30,6 +30,7 @@ declare module 'claude-code' {
       activity: { shape: string; value: ThreengramActivityState }
       // Persists across reloads, so auto_open opens only once per session.
       autoOpened: boolean
+      tab: 'commitments' | 'session'
     }
   }
 }

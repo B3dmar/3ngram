@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EngineInterface } from 'claude-code'
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { ActivityState } from './lib/activity.ts'
 import { fold, initialActivity } from './lib/activity.ts'
 import type { ObservedCall } from './lib/observe.ts'
 import { observe, threengramCall } from './lib/observe.ts'
+import { clearSessionStatus, sessionStatus } from './status.ts'
 
 // The session activity: what the agent read and changed through 3ngram MCP
 // tools, recorded from the tool.call hook in register.tsx. The model is
@@ -27,6 +28,10 @@ const timers = new Set<{ cancel: () => void }>()
 // be recorded in the new one even when the tool itself finishes late.
 export const activityEpoch = (): number => epoch
 
+export async function readActivity($: EngineInterface): Promise<ActivityState> {
+  return (await read($, activity)) as unknown as ActivityState
+}
+
 export async function stopActivity(): Promise<void> {
   epoch++
   for (const timer of timers) timer.cancel()
@@ -39,6 +44,7 @@ export async function stopActivity(): Promise<void> {
 export async function resetActivity($: EngineInterface): Promise<void> {
   await stopActivity()
   await update($, activity, () => initialActivity)
+  clearSessionStatus($)
 }
 
 type Call = Readonly<Record<string, unknown>>
@@ -92,7 +98,13 @@ async function record(
   // This module is the atom's only writer and every write goes through
   // fold(), so the value read back is an ActivityState.
   if (generation !== epoch) return
-  await update($, activity, (s) =>
-    generation === epoch ? fold(s as unknown as ActivityState, seen) : s,
-  )
+  let latest = initialActivity
+  await update($, activity, (s) => {
+    latest =
+      generation === epoch
+        ? fold(s as unknown as ActivityState, seen)
+        : (s as unknown as ActivityState)
+    return latest
+  })
+  if (generation === epoch) sessionStatus($, latest)
 }

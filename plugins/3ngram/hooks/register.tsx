@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Register } from 'claude-code'
-import { activityEpoch, resetActivity, stopActivity, watchCall } from './activity.ts'
+import { activityEpoch, readActivity, resetActivity, stopActivity, watchCall } from './activity.ts'
+import { initialActivity } from './lib/activity.ts'
 import { initialState, unconfirmed } from './lib/state.ts'
 import { hostZone } from './lib/time.ts'
 import { statusLine } from './lib/view.ts'
 import { drawPane } from './pane.tsx'
 import { cancel, closeDetail, openDetail, refresh } from './reads.ts'
 import { claimAutoOpen, dispatch, fire, readPanel, runtime, stopReads } from './runtime.ts'
+import { clearSessionStatus, commitmentStatus, sessionStatus } from './status.ts'
+import { readTab, selectTab } from './tabs.ts'
 import { armRefresh, disarmRefresh, redrawAtMidnight } from './timers.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
@@ -24,7 +27,7 @@ import { armRefresh, disarmRefresh, redrawAtMidnight } from './timers.ts'
 // drawing in pane.tsx, and the session activity in activity.ts.
 
 const PANE = '3ngram-commitments'
-const TITLE = '3ngram commitments'
+const TITLE = '3ngram'
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
@@ -33,10 +36,11 @@ export const register: Register = (on, options) => {
     runtime.selectionConfirmed = false
     runtime.startEpoch++
     $.ui.invalidate('ui.render')
-    $.ui.status(statusLine(unconfirmed(initialState)))
+    commitmentStatus($, statusLine(unconfirmed(initialState)))
+    const activityGeneration = activityEpoch()
     await $.command.register({
       name: 'commitments',
-      description: 'Open the read-only 3ngram commitment panel',
+      description: 'Open 3ngram commitments and session activity',
     })
     // session.start fires again after a reload. Whatever this environment
     // still holds from an earlier start (its timers, a child) is ended first,
@@ -53,6 +57,8 @@ export const register: Register = (on, options) => {
     // A detail read the reload killed would otherwise stay "Loading…" for good.
     if (s.detail?.status === 'loading')
       await dispatch($, { type: 'detail_closed', seq: s.detail.seq })
+    const observed = await readActivity($)
+    if (activityGeneration === activityEpoch()) sessionStatus($, observed)
     // Background work starts from timers, never inside this dispatch, so the
     // first prompt is never held by a read. A -p run or the SDK draws
     // nowhere (no surface), so it reads nothing in the background (no REST
@@ -84,7 +90,7 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('session.end', async (_$, e, next) => {
+  on('session.end', async ($, e, next) => {
     // /clear, /resume and /branch keep the module but end the conversation:
     // its reads stop now. Its $.state is reset to the defaults after this
     // hook, so the fresh read starts from classic.SessionStart below.
@@ -92,6 +98,7 @@ export const register: Register = (on, options) => {
       stopReads()
       runtime.resetPending = true
       await stopActivity()
+      clearSessionStatus($)
     }
     return next(e)
   })
@@ -103,6 +110,7 @@ export const register: Register = (on, options) => {
   // reads again; a launch with --fork-session costs one extra read.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
     await resetActivity($)
+    await selectTab($, 'commitments')
     if (runtime.resetPending || e.source === 'fork') {
       runtime.resetPending = false
       stopReads()
@@ -135,22 +143,36 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
+    const generation = activityEpoch()
     // Decides whether a time shown needs its date and how far a deadline is,
     // in calendar days of the host's zone: every refresh redraws, and so does
     // the next midnight there (redrawAtMidnight). Read first: the gate below
     // must follow the render's last await, or a session.start landing in it
     // would draw what it closed the gate on.
     const now = await $.clock.now()
+    const observed = await readActivity($)
+    const tab = await readTab($)
+    // A refresh can invalidate the held account while activity/tab reads
+    // settle. Read commitments last, immediately before their sync gate.
     const held = await readPanel($)
     const s = runtime.selectionConfirmed ? held : unconfirmed(held)
+    const activity = generation === activityEpoch() ? observed : initialActivity
     const clock = { now, zone: hostZone() }
     redrawAtMidnight($, clock)
     // The drawing is synchronous (pane.tsx): nothing suspends past the gate.
-    return drawPane(ui, s, clock, e.props.bodyColumns, {
-      back: () => fire($, closeDetail($)),
-      refresh: () => fire($, refresh($, options)),
-      cancel: () => fire($, cancel($, options)),
-      open: (memoryId) => fire($, openDetail($, options, memoryId)),
-    })
+    return drawPane(
+      ui,
+      s,
+      clock,
+      e.props.bodyColumns,
+      {
+        back: () => fire($, closeDetail($)),
+        refresh: () => fire($, refresh($, options)),
+        cancel: () => fire($, cancel($, options)),
+        open: (memoryId) => fire($, openDetail($, options, memoryId)),
+        tab: (selected) => fire($, selectTab($, selected)),
+      },
+      { tab: generation === activityEpoch() ? tab : 'commitments', activity },
+    )
   })
 }

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ElementTable, RenderElement } from 'claude-code'
+import type { ActivityState } from './lib/activity.ts'
+import { sessionView } from './lib/session-view.ts'
 import type { PanelState } from './lib/state.ts'
 import { visibleDetail, visibleRows } from './lib/state.ts'
 import type { Clock } from './lib/time.ts'
 import type { DetailView, PanelView } from './lib/view.ts'
 import { detailView, listNotice, panelView, sharesLine } from './lib/view.ts'
+import { drawSession } from './session-pane.tsx'
+import type { Tab } from './tabs.ts'
 
 // The pane's drawing: the detail view and the list view of the state the
 // render hook (register.tsx) hands it, laid out from the view model
@@ -21,11 +25,44 @@ export type PaneActions = {
   refresh: () => void
   cancel: () => void
   open: (memoryId: string) => void
+  tab: (tab: Tab) => void
 }
 
 // columns is the pane body's width (bodyColumns), which decides whether the
 // status shares the header's line.
 export function drawPane(
+  ui: ElementTable,
+  s: PanelState,
+  clock: Clock,
+  columns: number,
+  act: PaneActions,
+  session: { tab: Tab; activity: ActivityState },
+): RenderElement {
+  const { Box, Button } = ui
+  return (
+    <Box flexDirection="column">
+      <Box marginBottom={1}>
+        <Button
+          key="tab-commitments"
+          label={session.tab === 'commitments' ? '[Commitments]' : 'Commitments'}
+          hotkey="t"
+          onPress={() => act.tab('commitments')}
+        />
+        <Button
+          key="tab-session"
+          label={session.tab === 'session' ? '[Session]' : 'Session'}
+          hotkey="s"
+          onPress={() => act.tab('session')}
+        />
+      </Box>
+      {session.tab === 'session'
+        ? drawSession(ui, sessionView(session.activity, clock))
+        : drawCommitments(ui, s, clock, columns, act)}
+    </Box>
+  )
+}
+
+function drawCommitments(
   ui: ElementTable,
   s: PanelState,
   clock: Clock,

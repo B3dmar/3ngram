@@ -76,9 +76,34 @@ test('the pane reads its gate after the last await of the draw', () => {
   assert.deepEqual(awaitsAfterGate(SOURCE), [], 'no await after the gate')
 })
 
+function lastAwait(source: string): string | undefined {
+  const hook = renderHook(source)
+  const file = ts.createSourceFile('register.tsx', hook, ts.ScriptTarget.Latest, true)
+  const awaits: string[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isAwaitExpression(node)) awaits.push(node.expression.getText(file))
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return awaits.at(-1)
+}
+
+test('commitments are read last so no later state read can outlive their context', () => {
+  assert.equal(lastAwait(SOURCE), 'readPanel($)')
+  const changed = SOURCE.replace(
+    'const held = await readPanel($)',
+    'const held = await readPanel($)\n    await readActivity($)',
+  )
+  assert.equal(lastAwait(changed), 'readActivity($)', 'the guard detects an extra state read')
+})
+
 test('the drawing behind the gate never suspends', () => {
   assert.ok(renderHook(SOURCE).includes('return drawPane('), 'the render hook draws with pane.tsx')
   assert.deepEqual(suspensions(PANE_SOURCE), [], 'pane.tsx is synchronous')
+  for (const path of ['session-pane.tsx', 'lib/session-view.ts']) {
+    const source = readFileSync(new URL(`../hooks/${path}`, import.meta.url), 'utf8')
+    assert.deepEqual(suspensions(source), [], `${path} is synchronous`)
+  }
 })
 
 test('the drawing check catches an async draw and an await inside it', () => {
