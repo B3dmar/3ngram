@@ -31,14 +31,13 @@
 //
 // Usage: node eval/src/forgetting-eval.mjs [--golden <path>] [--answers <path>]
 //          [--live] [--out <path>] [--select-thresholds <path> | --thresholds <path>]
-import { createHash } from 'node:crypto'
+//          [--personal-evidence] (caller asserts personal corpus; requires --thresholds)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   assertThresholdMode,
   barEvidence,
-  CALIBRATION_GOLDEN,
   CALIBRATION_SHA256,
   fileSha256,
   labelsSha256,
@@ -53,36 +52,6 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_GOLDEN = join(here, '../fixtures/forgetting-synthetic.json')
 export const DEFAULT_ANSWERS = join(here, '../fixtures/forgetting-synthetic-answers.json')
 export const DEFAULT_OUT = join(here, '../../eval-metrics/forgetting.json')
-
-/**
- * Every committed forgetting golden file. A new one must be listed here (a test checks the
- * folder's file names). The list is explicit, never a scan of eval/fixtures/, because other
- * eval tests rewrite and rename files in that folder while this module reads.
- */
-export const COMMITTED_GOLDEN_FIXTURES = Object.freeze([DEFAULT_GOLDEN, CALIBRATION_GOLDEN])
-
-/**
- * What the bar reads of the labels: every item's id, slice, expected verdict and related id.
- * Splits are left out because the bar ignores them. Order-independent, formatting-free.
- */
-function barLabelsSha256(labels) {
-  const rows = Object.keys(labels)
-    .sort()
-    .map((id) => [id, labels[id]?.slice, labels[id]?.expected, labels[id]?.relatedMemoryId ?? null])
-  return createHash('sha256').update(JSON.stringify(rows)).digest('hex')
-}
-
-/**
- * Every committed fixture is invented, so a golden file whose bar-relevant labels match one is
- * never bar evidence, however it is reached, reformatted or re-split. An edited copy is a
- * different dataset that no checksum can recognise; the verdict stays report-only regardless.
- */
-function isCommittedFixture(labels) {
-  const checksum = barLabelsSha256(labels)
-  return COMMITTED_GOLDEN_FIXTURES.some(
-    (path) => barLabelsSha256(loadGolden(path).labels) === checksum,
-  )
-}
 
 /** Mirrors core's FORGET_DECIDE_OPERATION (not exported): the key the fake answers under. */
 export const FORGET_DECIDE_OPERATION = 'memory.forget.decide'
@@ -360,6 +329,9 @@ export async function runForgettingEval(options = {}) {
   const goldenSha256 = fileSha256(goldenPath)
   const calibration = goldenSha256 === CALIBRATION_SHA256
   assertThresholdMode(options, calibration)
+  if (options.personalEvidence === true && (options.thresholdsPath === undefined || calibration)) {
+    throw new Error('--personal-evidence requires --thresholds on a non-calibration golden set')
+  }
   const frozen =
     options.thresholdsPath === undefined ? null : loadFrozenThresholds(options.thresholdsPath)
   const judge = await createGateway({
@@ -382,7 +354,7 @@ export async function runForgettingEval(options = {}) {
     SLICES.map((s) => [s, Object.values(golden.labels).filter((l) => l.slice === s).length]),
   )
   const metrics = {
-    version: 1,
+    version: 2,
     reportOnly: true,
     mode: judge.mode,
     model,
@@ -414,8 +386,7 @@ export async function runForgettingEval(options = {}) {
   }
   // The bar reads every personal item, whatever its fixed split label (owner decision 2026-11-03).
   if (frozen && !calibration) {
-    const synthetic = isCommittedFixture(golden.labels)
-    metrics.barEvidence = { ...barEvidence(metrics.splits.all), synthetic }
+    metrics.barEvidence = barEvidence(metrics.splits.all, options.personalEvidence === true)
   }
   if (options.selectPath !== undefined) {
     metrics.selected = writeSelection(options.selectPath, metrics, judge.mode)
@@ -468,10 +439,12 @@ export function formatReport(m) {
     if (e) {
       const verdict = (met) => (met ? 'met' : 'not met')
       lines.push(
-        'bar evidence, all items whatever their split (personal evidence only on the private set):',
+        `bar diagnostics, all items whatever their split (provenance: ${e.provenance}):`,
         `  archive ${cell(e.archive)}, needs >= ${e.bar.archivePrecision} over >= ${e.bar.minArchiveProposals}: ${verdict(e.met.archive)}`,
         `  episodic collapses ${e.recurringEpisodicCollapses}, needs ${e.bar.recurringEpisodicCollapses}: ${verdict(e.met.recurringEpisodicCollapses)}`,
-        `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}${e.synthetic ? ' (committed synthetic fixture: never counts)' : ''}`,
+        e.met.overall === null
+          ? '  bar overall: not evaluated (personal evidence not asserted)'
+          : `  bar overall (report-only, enables nothing): ${verdict(e.met.overall)}`,
       )
     }
     return lines.join('\n')
@@ -500,6 +473,7 @@ export function cliOptions(args) {
     answersPath: flag('answers', DEFAULT_ANSWERS),
     outPath: flag('out', DEFAULT_OUT),
     live: args.includes('--live'),
+    personalEvidence: args.includes('--personal-evidence'),
     selectPath: parsePathFlag(args, 'select-thresholds'),
     thresholdsPath: parsePathFlag(args, 'thresholds'),
   }

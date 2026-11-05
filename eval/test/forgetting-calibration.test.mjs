@@ -5,19 +5,11 @@
 // tell, and thresholds selected on it score another fixture frozen. Fake answers
 // only: no network, no database, nothing written outside a temp dir.
 import assert from 'node:assert/strict'
-import {
-  copyFileSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  COMMITTED_GOLDEN_FIXTURES,
   cliOptions,
   DEFAULT_GOLDEN,
   formatReport,
@@ -211,25 +203,21 @@ test('thresholds selected on the calibration dev split score another fixture fro
   assert.deepEqual(frozen.barEvidence.met, {
     archive: false,
     recurringEpisodicCollapses: true,
-    overall: false,
+    overall: null,
   })
   assert.equal(calibration.barEvidence, undefined, 'no bar evidence from the calibration fixture')
   const report = formatReport(frozen)
   assert.match(report, /frozen thresholds/)
   assert.match(report, /^pass \(built-in thresholds\):/m)
-  assert.match(report, /bar evidence, all items whatever their split/)
+  assert.match(report, /bar diagnostics, all items whatever their split/)
   assert.match(report, /^ {2}archive 0\.750 \(3\/4\), needs >= 0\.95 over >= 40: not met$/m)
   assert.match(report, /^ {2}episodic collapses 0, needs 0: met$/m)
-  assert.equal(frozen.barEvidence.synthetic, true, 'the committed mirror is synthetic')
-  assert.match(
-    report,
-    /^ {2}bar overall \(report-only, enables nothing\): not met \(committed synthetic fixture: never counts\)$/m,
-  )
+  assert.equal(frozen.version, 2)
+  assert.equal(frozen.barEvidence.provenance, 'unasserted')
+  assert.match(report, /^ {2}bar overall: not evaluated \(personal evidence not asserted\)$/m)
   assert.doesNotMatch(report, /threshold sweep/)
 
-  // Identity is what the bar reads of the labels, not the path, the bytes or the splits: a
-  // copy, a symlink, a re-serialised or a re-split file is still the committed mirror. A file
-  // whose expected verdict differs for one item stands in for the private set.
+  // Neither copying, re-splitting nor editing a synthetic file asserts personal provenance.
   const frozenOn = (goldenPath, name) =>
     runForgettingEval({ goldenPath, outPath: join(dir, name), thresholdsPath: selectPath })
   const mirror = JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))
@@ -251,41 +239,48 @@ test('thresholds selected on the calibration dev split score another fixture fro
     [minified, 'minified-out.json'],
     [resplit, 'resplit-out.json'],
   ]) {
-    assert.equal((await frozenOn(path, name)).barEvidence.synthetic, true, name)
+    assert.equal((await frozenOn(path, name)).barEvidence.met.overall, null, name)
   }
   // A keep becomes an archive, or anything else becomes a keep; no relatedMemoryId is needed.
   const flipped = first.expected === 'keep' ? 'archive' : 'keep'
   const other = join(dir, 'other.json')
   writeFileSync(other, withLabel({ ...first, expected: flipped, relatedMemoryId: undefined }))
-  const personal = await frozenOn(other, 'other-out.json')
-  assert.equal(personal.barEvidence.synthetic, false)
+  const edited = await frozenOn(other, 'other-out.json')
+  assert.equal(edited.barEvidence.provenance, 'unasserted')
+  assert.equal(edited.barEvidence.met.overall, null)
+  assert.doesNotMatch(formatReport(edited), /bar overall .*: (not )?met/)
+  assert.equal(JSON.parse(readFileSync(join(dir, 'other-out.json'))).barEvidence.met.overall, null)
+  // Exercise caller assertion with fake data; this test is not personal evidence.
+  const asserted = await runForgettingEval({
+    goldenPath: other,
+    thresholdsPath: selectPath,
+    personalEvidence: true,
+    outPath: join(dir, 'asserted.json'),
+  })
+  assert.equal(asserted.barEvidence.provenance, 'personal-asserted')
+  assert.equal(asserted.barEvidence.met.overall, false)
   assert.match(
-    formatReport(personal),
+    formatReport(asserted),
     /^ {2}bar overall \(report-only, enables nothing\): not met$/m,
   )
 })
 
-test('every committed forgetting golden file is on the synthetic list', () => {
-  // File names only: other eval tests rewrite fixture contents while this suite runs.
-  const fixtures = dirname(DEFAULT_GOLDEN)
-  const golden = readdirSync(fixtures)
-    .filter((name) => /^forgetting-.*\.json$/.test(name) && !name.endsWith('-answers.json'))
-    .map((name) => join(fixtures, name))
-  assert.deepEqual(golden.sort(), [...COMMITTED_GOLDEN_FIXTURES].sort())
-})
-
 test('the bar verdict reads the unrounded ratio, not the rounded precision', () => {
-  const evidence = (proposed, correct, collapses) =>
-    barEvidence({
-      precision: {
-        archive: {
-          proposed,
-          correct,
-          precision: proposed === 0 ? null : +(correct / proposed).toFixed(4),
+  const evidence = (proposed, correct, collapses, asserted = true) =>
+    barEvidence(
+      {
+        precision: {
+          archive: {
+            proposed,
+            correct,
+            precision: proposed === 0 ? null : +(correct / proposed).toFixed(4),
+          },
         },
+        falseCollapses: { count: collapses },
       },
-      falseCollapses: { count: collapses },
-    }).met
+      asserted,
+    ).met
+  assert.equal(evidence(40, 40, 0, false).overall, null, 'metrics alone cannot assert provenance')
   assert.deepEqual(evidence(40, 38, 0), {
     archive: true,
     recurringEpisodicCollapses: true,
@@ -364,6 +359,17 @@ test('a threshold flag without a path throws instead of falling back', () => {
     [cliOptions([]).thresholdsPath, cliOptions([]).selectPath],
     [undefined, undefined],
   )
+})
+
+test('personal evidence is opt-in and requires frozen non-calibration scoring', async () => {
+  assert.equal(cliOptions([]).personalEvidence, false)
+  assert.equal(cliOptions(['--personal-evidence']).personalEvidence, true)
+  for (const options of [{}, { goldenPath: CALIBRATION_GOLDEN, thresholdsPath: 'unused.json' }]) {
+    await assert.rejects(
+      runForgettingEval({ ...options, personalEvidence: true }),
+      /--personal-evidence requires --thresholds on a non-calibration golden set/,
+    )
+  }
 })
 
 test('selection takes the lowest qualifying threshold, and none when none qualifies', () => {
