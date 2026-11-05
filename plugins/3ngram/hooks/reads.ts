@@ -15,6 +15,7 @@ import {
   stopReads,
 } from './runtime.ts'
 import { PROCESS_CEILING_MS, probe, runHook } from './spawn.ts'
+import { commitmentStatus } from './status.ts'
 
 // The panel's reads: the list (refresh, one at a time), a commitment's detail
 // (openDetail), and the context checks around both (verifyIfNeeded). Every
@@ -188,7 +189,7 @@ async function reportUnexpected($: EngineInterface, options: PluginOptions): Pro
     await verifyIfNeeded($, options)
     return true
   } catch {
-    $.ui.status('3ngram: unavailable')
+    commitmentStatus($, '3ngram: unavailable')
     return false
   }
 }

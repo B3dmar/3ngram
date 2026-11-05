@@ -5,6 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { PanelEvent, PanelState } from './lib/state.ts'
 import { initialState, reduce, unconfirmed } from './lib/state.ts'
 import { statusLine } from './lib/view.ts'
+import { commitmentStatus } from './status.ts'
 
 // What the panel holds between events, all in this file: the panel's state in
 // $.state (the panel atom, written only through dispatch), and the module
@@ -134,7 +135,8 @@ export async function confirmSelection($: EngineInterface, epoch: number): Promi
   $.ui.invalidate('ui.render')
   const held = await readPanel($)
   // A later session.start may have closed the gate during the read.
-  if (runtime.selectionConfirmed && epoch === runtime.startEpoch) $.ui.status(statusLine(held))
+  if (runtime.selectionConfirmed && epoch === runtime.startEpoch)
+    commitmentStatus($, statusLine(held))
 }
 
 // releaseDetailRead forgets the handle of a detail read that has ended, if it
@@ -185,7 +187,7 @@ export async function dispatchApplied(
   }
   // The status line is gated like the pane: no counts of an unconfirmed
   // selection.
-  $.ui.status(statusLine(runtime.selectionConfirmed ? next : unconfirmed(next)))
+  commitmentStatus($, statusLine(runtime.selectionConfirmed ? next : unconfirmed(next)))
   return { state: next, applied }
 }
 

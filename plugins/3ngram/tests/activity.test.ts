@@ -7,6 +7,7 @@
 // plugin must hand that object back unchanged whatever it records.
 
 import type { On } from 'claude-code'
+import type { Engine, Mounted } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 const TOPIC = 'Ship the session tab'
@@ -57,10 +58,14 @@ function world(on: On, answer: (tool: string) => Answer | Promise<Answer>) {
   const inputs: Record<string, unknown>[] = []
   const forbidden: string[] = []
   const logs: string[] = []
+  const statuses: string[] = []
   const written: { shape?: string; value?: Held }[] = []
   let failWrites = false
   let writeHold: { entered: () => void; wait: Promise<void> } | undefined
   on('session.end', async () => ({ sessionId: 'test' }) as never)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', async () => ({ value: undefined }) as never)
+  on('session.cwd', async () => ({ value: '/fixture' }))
   on('classic.SessionStart', async () => ({}) as never)
   on('tool.call', async (_$, e) => {
     ran.push(String(e.tool))
@@ -84,11 +89,14 @@ function world(on: On, answer: (tool: string) => Answer | Promise<Answer>) {
     logs.push(String((e as { text?: unknown }).text))
     return { value: undefined } as never
   })
+  on('ui.status', async (_$, e) => {
+    statuses.push((e as { text: string }).text)
+    return { value: undefined } as never
+  })
   for (const noun of [
     'mcp.call',
     'http.fetch',
     'session.append',
-    'ui.status',
     'ui.toast',
     'store.set',
   ] as const) {
@@ -103,6 +111,7 @@ function world(on: On, answer: (tool: string) => Answer | Promise<Answer>) {
     inputs,
     forbidden,
     logs,
+    statuses,
     written,
     // The activity as last written; undefined before any write.
     held: (): Held | undefined => written.at(-1)?.value,
@@ -274,10 +283,126 @@ describe('the session activity hook', () => {
     expect(held?.memories.map((m) => m.server)).toEqual(['3ngram', '3ngram-personal'])
   })
 
-  test('the hook shows the model nothing: no status, toast or appended row', async ($, on) => {
+  test('the status carries counts only, with no toast or appended model row', async ($, on) => {
     const w = world(on, () => answerOf(SEARCH))
     await $.tool.call({ tool: 'mcp__3ngram__search', query: 'a' } as never)
     await w.clock.advance(1)
     expect(w.forbidden).toEqual([])
+    expect(w.statuses.at(-1)).toContain('1 read · 0 wrote · 0 resolved')
+    expect(w.statuses.join(' ')).not.toContain(TOPIC)
+    expect(w.statuses.join(' ')).not.toContain(memoryId(1))
+  })
+})
+
+async function mountSession($: Engine, columns = 40, surface: 'terminal' | 'desktop' = 'terminal') {
+  return $.ui.mount({
+    plugin: '3ngram',
+    surface,
+    component: 'Pane',
+    requestId: '3ngram-commitments',
+    props: {
+      title: '3ngram',
+      isFocused: true,
+      bodyColumns: columns,
+      placement: 'dock',
+      scroll: { offset: 0, bodyRows: 40 },
+      view: {},
+    },
+  })
+}
+
+async function textOf(pane: Mounted<'terminal' | 'desktop', 'Pane'>): Promise<string> {
+  return (await pane.findAll({})).map((element) => element.text).join('\n')
+}
+
+describe('the Session tab', () => {
+  test('draws writes, resolutions and the observed briefing without memory content', async ($, on) => {
+    const w = world(on, (tool) =>
+      answerOf(
+        tool.endsWith('__remember')
+          ? { memory: { id: memoryId(1), topic: TOPIC, memoryType: 'commitment', scope: 'work' } }
+          : tool.endsWith('__resolve')
+            ? { commitmentId: memoryId(2), status: 'resolved' }
+            : {
+                selector: { kind: 'project', project: 'demo' },
+                commitments: {
+                  count: 9,
+                  hasMore: true,
+                  items: [
+                    {
+                      id: memoryId(2),
+                      memoryId: memoryId(1),
+                      topic: TOPIC,
+                      status: 'resolved',
+                      content: 'never show this',
+                    },
+                  ],
+                },
+              },
+      ),
+    )
+    const pane = await mountSession($)
+    await pane.press({ key: 'tab-session' })
+    for (const tool of ['remember', 'resolve', 'briefing']) {
+      await $.tool.call({ tool: `mcp__3ngram__${tool}`, memoryId: memoryId(1) } as never)
+      await w.clock.advance(1)
+    }
+    const text = await textOf(pane)
+    expect(text).toContain('Read 1 · Wrote 1 · Resolved 1')
+    expect(text).toContain('Recent writes')
+    expect(text).toContain('remembered')
+    expect(text).toContain('Latest observed MCP briefing')
+    expect(text).toContain('9 total · 1 returned · truncated')
+    expect(text).toContain('project demo')
+    expect(text).not.toContain('never show this')
+    expect(w.statuses.at(-1)).toContain('1 read · 1 wrote · 1 resolved')
+  })
+
+  test('defaults to Commitments and switches to an honest empty Session view', async ($, on) => {
+    world(on, () => answerOf(SEARCH))
+    const pane = await mountSession($)
+    expect(await textOf(pane)).toContain('[Commitments]')
+    await pane.press({ key: 'tab-session' })
+    expect(await textOf(pane)).toContain('No 3ngram MCP calls observed this session.')
+    expect(await textOf(pane)).toContain('automatic startup briefings are not included')
+    await pane.press({ key: 'tab-commitments' })
+    expect(await textOf(pane)).not.toContain('Session activity')
+  })
+
+  test('updates the mounted view, groups servers and shows no content on both surfaces', async ($, on) => {
+    const w = world(on, () => answerOf(SEARCH))
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const pane = await mountSession($, surface === 'terminal' ? 32 : 100, surface)
+      await pane.press({ key: 'tab-session' })
+      await $.tool.call({ tool: 'mcp__3ngram__search', query: 'a' } as never)
+      await $.tool.call({ tool: 'mcp__3ngram-personal__search', query: 'a' } as never)
+      await w.clock.advance(1)
+      const text = await textOf(pane)
+      expect(text).toContain('3ngram-personal')
+      expect(text).toContain('Read 1 · Wrote 0 · Resolved 0')
+      expect(text).toContain(TOPIC)
+      expect(text).not.toContain('excerpt')
+      expect(w.statuses.at(-1)).toContain('activity in 2 servers')
+      expect(w.statuses.at(-1)).not.toContain('personal')
+      await pane.unmount()
+    }
+    expect(w.forbidden).toEqual([])
+  })
+
+  test('reload retains the active tab and activity; a fork clears both', async ($, on) => {
+    const w = world(on, () => answerOf(SEARCH))
+    await $.tool.call({ tool: 'mcp__3ngram__search', query: 'a' } as never)
+    await w.clock.advance(1)
+    const pane = await mountSession($)
+    await pane.press({ key: 'tab-session' })
+    await $.session.start({ cwd: '/fixture', surface: null, isInteractive: false })
+    expect(await textOf(pane)).toContain('[Session]')
+    expect(await textOf(pane)).toContain(TOPIC)
+    expect(w.statuses.at(-1)).toContain('1 read')
+    await $.classic.SessionStart({ source: 'fork' } as never)
+    expect(await textOf(pane)).toContain('[Commitments]')
+    await pane.press({ key: 'tab-session' })
+    expect(await textOf(pane)).not.toContain(TOPIC)
+    expect(w.statuses.at(-1)).not.toContain('1 read')
   })
 })

@@ -18,7 +18,7 @@ Answer `y` to add the marketplace, then pick a scope. For one session from a che
 claude --plugin-dir plugins/3ngram
 ```
 
-Run `/commitments` to open the panel. Change the options with `/plugin configure 3ngram` or in `/config`:
+Run `/commitments` to open the panel. It starts on **Commitments**; select **Session** (`s`) to see observed memory activity, or **Commitments** (`t`) to return. The active tab survives a plugin reload; a new conversation starts on Commitments. Change the options with `/plugin configure 3ngram` or in `/config`:
 
 | Option | Default | What it does |
 |---|---|---|
@@ -49,6 +49,7 @@ The plugin also registers the four 3ngram session hooks (SessionStart briefing, 
 
 ## What it records about the session
 
+- **The Session tab.** Each MCP server has its own Read / Wrote / Resolved counts, five most recent retained write events, five most-read retained memories, and latest observed MCP briefing summary. Extra rows, evicted history and lower-bound counts are labelled. These are observed tool results, not proof that the agent used a memory in its reasoning. The tab spans observed MCP servers; it is not filtered to the commitment panel's selected account or project. No cross-panel activity markers are shown because server names do not establish that account mapping.
 - **Which calls.** The agent's calls to 3ngram's MCP tools, in the main conversation and in subagents. A tool counts when its name, `mcp__<server>__<tool>`, has a server whose name holds `3ngram` as a word of its own (`3ngram`, `3ngram-personal`, `claude_ai_3ngram`). The name is all the plugin is given about a call's server, so a server named that way that is not 3ngram is counted too.
 - **What it keeps.** For each call: the server, the tool, whether it read or wrote, how it ended (answered, an error, refused, or an answer it could not read) and the subagent it ran in. For each memory a result listed or a call changed: its id, type, topic (the first 200 characters), scope, project, status, when it was first and last seen, how often and by which tools it was read, and what the agent did to it (remembered, revised, written as a revision, moved, archived, reaffirmed, resolved, or a proposal on it applied or rejected). Never a memory's content, a fact's value or a proposal's rationale.
 - **Separate counts per server.** Two servers can be two accounts: the same memory under two servers is two entries, and no count adds them up. Read counts distinct returned memory IDs; wrote counts distinct IDs with successful write outcomes, excluding explicit no-ops and rejected proposals. Resolved counts IDs returned as resolved or archived by `resolve`; reopening does not count as resolving. Repeated reads affect ranking, not the distinct count.
@@ -61,7 +62,7 @@ The plugin also registers the four 3ngram session hooks (SessionStart briefing, 
 - The module runs only `3ngram-hook commitments context|list|show`, through an allowlist checked before every spawn. It never calls the network, an MCP server, the file system or the store, and it reads no environment variable: `claude plugin validate plugins/3ngram` lists every call it makes.
 - It watches the agent's calls to 3ngram's MCP tools (a `tool.call` hook) and their results, only to record what the agent used. It never makes a call of its own and never changes or refuses one: the call runs as the agent made it, its result goes back as the very object it came as, and the recording runs after that, from a timer. A failure while recording loses that one entry, never the call.
 - The binary sends only GET requests (enforced by a parse-level allowlist in its tests) and runs `gh` only as `gh api --method GET`.
-- The `/commitments` reply and the status line carry no record content: the model and the status bar see counts and a fixed line, never a topic. Commitment counts show only while the rows do, so while the context is checked before a refresh the status bar reads "3ngram: checking" instead. The session record is shown to the model nowhere.
+- The `/commitments` reply and the status line carry no record content: the model and the status bar see counts and a fixed line, never a topic. Commitment counts show only while the rows do; while their context is checked the status says "3ngram: checking". One observed MCP server adds distinct read/wrote/resolved counts; multiple servers add only a server count. Session topics appear only in the pane, never in a model reply or status line.
 
 ## Development
 
