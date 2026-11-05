@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Register } from 'claude-code'
+import { activityEpoch, resetActivity, stopActivity, watchCall } from './activity.ts'
 import { initialState, unconfirmed } from './lib/state.ts'
 import { hostZone } from './lib/time.ts'
 import { statusLine } from './lib/view.ts'
@@ -13,12 +14,14 @@ import { armRefresh, disarmRefresh, redrawAtMidnight } from './timers.ts'
 // commitments`. Everything it shows comes from that binary's JSON envelopes;
 // the module itself never reads the API key, never calls the network or an
 // MCP server, and never writes a file or the store. All of that is pinned by
-// tests/panel.test.ts and by `claude plugin validate` (it reads no env).
+// tests/panel.test.ts and by `claude plugin validate` (it reads no env). It
+// also observes the agent's own calls to 3ngram MCP tools, to record what the
+// agent read and changed this session (activity.ts), and never changes one.
 //
 // This file registers the hooks and says what each event starts or stops.
 // What the module holds between events is in runtime.ts, the reads in
-// reads.ts, the child process in spawn.ts, the timers in timers.ts, and the
-// drawing in pane.tsx.
+// reads.ts, the child process in spawn.ts, the timers in timers.ts, the
+// drawing in pane.tsx, and the session activity in activity.ts.
 
 const PANE = '3ngram-commitments'
 const TITLE = '3ngram commitments'
@@ -88,6 +91,7 @@ export const register: Register = (on, options) => {
     if (e.reason === 'clear' || e.reason === 'resume') {
       stopReads()
       runtime.resetPending = true
+      await stopActivity()
     }
     return next(e)
   })
@@ -98,6 +102,7 @@ export const register: Register = (on, options) => {
   // /branch reports fork and has no session.end of its own, so a fork always
   // reads again; a launch with --fork-session costs one extra read.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    await resetActivity($)
     if (runtime.resetPending || e.source === 'fork') {
       runtime.resetPending = false
       stopReads()
@@ -105,6 +110,20 @@ export const register: Register = (on, options) => {
       if (runtime.tick !== null) $.clock.after(0, () => fire($, refresh($, options)))
     }
     return next(e)
+  })
+
+  // The agent's calls to 3ngram MCP tools, main loop and subagents alike. The
+  // matcher, a literal so validate can show it, only spares the hook other
+  // tools' calls: threengramCall (lib/observe.ts) decides which are 3ngram's,
+  // and spec/activity.spec.ts pins that every name it takes matches. The call
+  // runs as asked, its result is returned as the very object next() resolved
+  // to, and nothing here refuses or rewrites it: watchCall records it
+  // afterwards and cannot throw.
+  on('tool.call', { tool: /^mcp__.*3ngram.*__./i }, async ($, e, next) => {
+    const generation = activityEpoch()
+    const ran = await next(e)
+    watchCall($, e, ran, generation)
+    return ran
   })
 
   on('command.run', { command: 'commitments' }, async ($) => {

@@ -1,6 +1,6 @@
 # 3ngram for Claude Code
 
-A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog.
+A read-only commitment panel inside Claude Code, plus the 3ngram session hooks. It lists the current project's open, waiting and overdue commitments from your 3ngram memory, says where each came from, and shows related evidence that one may be done. It never changes a record and never adds a backlog. It also keeps a record, for the session, of the memories the agent read and changed through 3ngram's MCP tools, so a later version can show you what the agent used; nothing shows that record yet.
 
 Needs Claude Code 2.1.287 or later in the terminal (2.1.286 or later in the Desktop app's Code tab), where mods are on by default; no feature flag is needed, and the early-access `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is ignored from 2.1.287. Tested with 2.1.291 and 2.1.292. The plugin API (mods) is early access and can change between releases.
 
@@ -47,11 +47,21 @@ The plugin also registers the four 3ngram session hooks (SessionStart briefing, 
 - **Evidence is for review.** A newer memory that updates or supersedes a commitment, a pending proposal touching it, or a merged pull request it mentions is shown as related evidence. "No evidence found in the inspected window" says how far the search looked, and when no source could be read at all the panel says that nothing was searched.
 - **Partial results are labelled.** A truncated list, an unavailable account, an unfinished check or a GitHub lookup that stopped is named in a note under the list.
 
+## What it records about the session
+
+- **Which calls.** The agent's calls to 3ngram's MCP tools, in the main conversation and in subagents. A tool counts when its name, `mcp__<server>__<tool>`, has a server whose name holds `3ngram` as a word of its own (`3ngram`, `3ngram-personal`, `claude_ai_3ngram`). The name is all the plugin is given about a call's server, so a server named that way that is not 3ngram is counted too.
+- **What it keeps.** For each call: the server, the tool, whether it read or wrote, how it ended (answered, an error, refused, or an answer it could not read) and the subagent it ran in. For each memory a result listed or a call changed: its id, type, topic (the first 200 characters), scope, project, status, when it was first and last seen, how often and by which tools it was read, and what the agent did to it (remembered, revised, written as a revision, moved, archived, reaffirmed, resolved, or a proposal on it applied or rejected). Never a memory's content, a fact's value or a proposal's rationale.
+- **Separate counts per server.** Two servers can be two accounts: the same memory under two servers is two entries, and no count adds them up. Read counts distinct returned memory IDs; wrote counts distinct IDs with successful write outcomes, excluding explicit no-ops and rejected proposals. Resolved counts IDs returned as resolved or archived by `resolve`; reopening does not count as resolving. Repeated reads affect ranking, not the distinct count.
+- **Write history and briefings.** Write events keep their own timestamps and metadata, so a later read cannot make an earlier write appear recent. Each server retains the latest observed MCP briefing's selector, section totals, returned counts and truncation flags. Automatic startup briefings use the Go hook and REST, so this observer does not see them.
+- **Bounded.** The last 200 calls, last 200 write events and at most 500 memories and 16 servers. Past that the memory read longest ago goes first, before any memory the agent changed. Drops are counted per server so consumers can label incomplete history and counts as lower bounds.
+- **For the session only.** It lives in the plugin's session state, never in the store: a plugin reload and a compaction keep it, and `/clear`, `/resume` and `/branch` start it over. Session boundaries cancel queued recordings, drain pending state writes and discard results from tools started in the previous conversation.
+
 ## Read-only, by construction
 
 - The module runs only `3ngram-hook commitments context|list|show`, through an allowlist checked before every spawn. It never calls the network, an MCP server, the file system or the store, and it reads no environment variable: `claude plugin validate plugins/3ngram` lists every call it makes.
+- It watches the agent's calls to 3ngram's MCP tools (a `tool.call` hook) and their results, only to record what the agent used. It never makes a call of its own and never changes or refuses one: the call runs as the agent made it, its result goes back as the very object it came as, and the recording runs after that, from a timer. A failure while recording loses that one entry, never the call.
 - The binary sends only GET requests (enforced by a parse-level allowlist in its tests) and runs `gh` only as `gh api --method GET`.
-- The `/commitments` reply and the status line carry no record content: the model and the status bar see counts and a fixed line, never a topic. The counts show only while the rows do, so while the context is checked before a refresh the status bar reads "3ngram: checking" instead.
+- The `/commitments` reply and the status line carry no record content: the model and the status bar see counts and a fixed line, never a topic. Commitment counts show only while the rows do, so while the context is checked before a refresh the status bar reads "3ngram: checking" instead. The session record is shown to the model nowhere.
 
 ## Development
 
@@ -62,6 +72,6 @@ claude plugin validate plugins/3ngram            # manifest, module, calls
 claude plugin test plugins/3ngram                # engine-kit tests (local only)
 ```
 
-The engine-kit tests need the Claude Code CLI, which is not in the lockfile, so CI runs the specs under `spec/` and the engine tests are run locally before each change. The specs parse the binary's golden envelopes in `cmd/3ngram-hook/testdata/commitments/`, so a contract change fails on both sides.
+The engine-kit tests need the Claude Code CLI, which is not in the lockfile, so CI runs the specs under `spec/` and the engine tests are run locally before each change. The specs parse the binary's golden envelopes in `cmd/3ngram-hook/testdata/commitments/`, so a contract change fails on both sides. The session record's specs check every 3ngram tool result they read against the output schemas in `@3ngram/schema`, and its tool list against the MCP surface snapshot in `eval/fixtures/transport-surfaces.json`, so a new tool or a moved field fails them too. `pnpm test` builds the schema first; running the plugin's specs alone needs `pnpm --filter @3ngram/schema build` once.
 
 An install Claude Code copies into its plugin cache, such as one from the GitHub marketplace above, is pinned to the `version` in `.claude-plugin/plugin.json`: `claude plugin update`, `/plugin marketplace update` and auto-update replace the cached copy only when that string changes ([Versions and updates](https://code.claude.com/docs/en/plugins/loading#versions-and-updates)). A plugin loaded in place from a marketplace added from a local path reads its current files at every session start, whatever the version says. So the first PR that changes the plugin after each promotion to `main` bumps the version, in `plugin.json` and `package.json` together; later PRs before the next promotion leave it. Keep `version` out of `.claude-plugin/marketplace.json`, where `plugin.json` would override it.
