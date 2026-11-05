@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { BriefingSummary } from './activity-briefing.ts'
 import type { MemoryEntry, Observation } from './observe.ts'
 
 // The session activity model: what the agent read and changed through 3ngram
@@ -41,6 +42,7 @@ export type WriteAction =
   | 'archived'
   | 'reaffirmed'
   | 'resolved'
+  | 'status_changed'
   | 'proposal_applied'
   | 'proposal_rejected'
 
@@ -98,7 +100,11 @@ export type ServerActivity = {
   unparsed: number
   evictedCalls: number
   evictedMemories: number
+  evictedWrites: number
+  briefing?: BriefingSummary & { at: number }
 }
+
+export type ActivityWrite = MemoryEntry & { server: string; seq: number; at: number }
 
 export type ActivityState = {
   // When the first call of the session was observed; null before one.
@@ -106,6 +112,7 @@ export type ActivityState = {
   seq: number
   // Oldest first.
   calls: ActivityCall[]
+  writes: ActivityWrite[]
   // Least recently seen first.
   memories: MemoryActivity[]
   servers: ServerActivity[]
@@ -116,6 +123,7 @@ export const initialActivity: ActivityState = {
   startedAt: null,
   seq: 0,
   calls: [],
+  writes: [],
   memories: [],
   servers: [],
   ignored: 0,
@@ -144,12 +152,20 @@ export function fold(
   }
   const calls = [...s.calls, call]
   const dropped = calls.splice(0, Math.max(0, calls.length - limits.calls))
+  const writes = [
+    ...s.writes,
+    ...seen.entries
+      .filter((entry) => entry.via !== 'read' && entry.via !== 'proposal_rejected')
+      .map((entry) => ({ ...entry, server: seen.server, seq, at: seen.at })),
+  ]
+  const droppedWrites = writes.splice(0, Math.max(0, writes.length - limits.calls))
   return {
     startedAt: s.startedAt ?? seen.at,
     seq,
     calls,
+    writes,
     memories: touched.memories,
-    servers: tally(s.servers, seen, dropped, touched.evicted),
+    servers: tally(s.servers, seen, dropped, touched.evicted, droppedWrites),
     ignored: s.ignored,
   }
 }
@@ -189,8 +205,12 @@ function touch(
 }
 
 function oldestReadOnly(byKey: ReadonlyMap<string, MemoryActivity>): string | undefined {
-  for (const [key, m] of byKey) if (m.actions.length === 0) return key
+  for (const [key, m] of byKey) if (!wasChanged(m)) return key
   return undefined
+}
+
+function wasChanged(memory: MemoryActivity): boolean {
+  return memory.actions.some((action) => action !== 'proposal_rejected')
 }
 
 function merge(
@@ -228,6 +248,7 @@ function tally(
   seen: Observation,
   dropped: readonly ActivityCall[],
   evicted: ReadonlyMap<string, number>,
+  droppedWrites: readonly ActivityWrite[],
 ): ServerActivity[] {
   const byServer = new Map(prev.map((x) => [x.server, x] as const))
   const row: ServerActivity = byServer.get(seen.server) ?? {
@@ -242,6 +263,7 @@ function tally(
     unparsed: 0,
     evictedCalls: 0,
     evictedMemories: 0,
+    evictedWrites: 0,
   }
   byServer.set(seen.server, {
     ...row,
@@ -252,12 +274,18 @@ function tally(
     errors: row.errors + (seen.outcome === 'error' ? 1 : 0),
     denied: row.denied + (seen.outcome === 'denied' ? 1 : 0),
     unparsed: row.unparsed + (seen.outcome === 'unparsed' ? 1 : 0),
+    ...(seen.briefing === undefined ? {} : { briefing: { ...seen.briefing, at: seen.at } }),
   })
-  const bump = (server: string, field: 'evictedCalls' | 'evictedMemories', n: number) => {
+  const bump = (
+    server: string,
+    field: 'evictedCalls' | 'evictedMemories' | 'evictedWrites',
+    n: number,
+  ) => {
     const at = byServer.get(server)
     if (at !== undefined) byServer.set(server, { ...at, [field]: at[field] + n })
   }
   for (const call of dropped) bump(call.server, 'evictedCalls', 1)
+  for (const write of droppedWrites) bump(write.server, 'evictedWrites', 1)
   for (const [server, n] of evicted) bump(server, 'evictedMemories', n)
   return [...byServer.values()]
 }
@@ -272,6 +300,7 @@ function isActivityState(v: unknown): v is ActivityState {
     typeof s.seq === 'number' &&
     typeof s.ignored === 'number' &&
     Array.isArray(s.calls) &&
+    Array.isArray(s.writes) &&
     Array.isArray(s.memories) &&
     Array.isArray(s.servers)
   )
@@ -285,6 +314,7 @@ export type ServerSummary = {
   calls: number
   read: number
   changed: number
+  resolved: number
   evictedMemories: number
 }
 
@@ -295,7 +325,8 @@ export function summarize(state: ActivityState): ServerSummary[] {
       server: s.server,
       calls: s.calls,
       read: mine.filter((m) => m.reads > 0).length,
-      changed: mine.filter((m) => m.actions.length > 0).length,
+      changed: mine.filter(wasChanged).length,
+      resolved: mine.filter((m) => m.actions.includes('resolved')).length,
       evictedMemories: s.evictedMemories,
     }
   })

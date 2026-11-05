@@ -151,10 +151,7 @@ test('a revise move refiles in place; a disposition records what it did per id',
   )
   const archived = observe(call('revise', f.archivedDisposition, { kind: 'archive' }))
   assert.equal(archived.returned, 3)
-  assert.deepEqual(archived.entries, [
-    { id: id(5), via: 'archived', status: 'archived' },
-    { id: id(6), via: 'archived', status: 'archived' },
-  ])
+  assert.deepEqual(archived.entries, [{ id: id(5), via: 'archived', status: 'archived' }])
   const reaffirmed = observe(call('revise', f.reaffirmedDisposition, { kind: 'reaffirm' }))
   assert.deepEqual(reaffirmed.entries, [{ id: id(8), via: 'reaffirmed' }])
 })
@@ -405,8 +402,8 @@ test('two servers are two accounts: one memory id is two entries, counted apart'
     ],
   )
   assert.deepEqual(summarize(s), [
-    { server: '3ngram', calls: 1, read: 2, changed: 0, evictedMemories: 0 },
-    { server: '3ngram-personal', calls: 2, read: 2, changed: 1, evictedMemories: 0 },
+    { server: '3ngram', calls: 1, read: 2, changed: 0, resolved: 0, evictedMemories: 0 },
+    { server: '3ngram-personal', calls: 2, read: 2, changed: 1, resolved: 0, evictedMemories: 0 },
   ])
 })
 

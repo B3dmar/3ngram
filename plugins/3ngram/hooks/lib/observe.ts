@@ -7,6 +7,7 @@ import type {
   MemoryStatus,
   WriteAction,
 } from './activity.ts'
+import { type BriefingSummary, readBriefingSummary } from './activity-briefing.ts'
 
 // Reads one observed tool call into what the activity model folds
 // (activity.ts): which 3ngram tool it was, and the memories its result listed
@@ -94,6 +95,7 @@ export type Observation = {
   agentId?: string
   returned: number
   entries: MemoryEntry[]
+  briefing?: BriefingSummary
 }
 
 export const TOPIC_LIMIT = 200
@@ -115,7 +117,7 @@ export function observe(call: ObservedCall): Observation {
   if (reader === undefined) return { ...base, outcome: 'ok' }
   const read = readResult(reader, call)
   if (read === null) return { ...base, outcome: 'unparsed' }
-  return { ...base, outcome: 'ok', returned: read.returned, entries: dedupe(read.entries) }
+  return { ...base, ...read, outcome: 'ok', entries: dedupe(read.entries) }
 }
 
 function kindOf(tool: string, args: Readonly<Record<string, unknown>>): CallKind {
@@ -138,7 +140,7 @@ function kindOf(tool: string, args: Readonly<Record<string, unknown>>): CallKind
 }
 
 type Json = Readonly<Record<string, unknown>>
-type Read = { returned: number; entries: MemoryEntry[] }
+type Read = { returned: number; entries: MemoryEntry[]; briefing?: BriefingSummary }
 type Reader = (body: Json, args: Json) => Read | null
 
 // readResult never throws: the readers check every field they take, and a
@@ -270,8 +272,7 @@ function readDisposition(outcomes: unknown[]): Read {
     const o = record(raw)
     const id = uuid(o?.memoryId)
     if (id === undefined) continue
-    if (o?.outcome === 'archived' || o?.outcome === 'already_archived')
-      entries.push({ id, via: 'archived', status: 'archived' })
+    if (o?.outcome === 'archived') entries.push({ id, via: 'archived', status: 'archived' })
     else if (o?.outcome === 'reaffirmed') entries.push({ id, via: 'reaffirmed' })
   }
   return { returned: outcomes.length, entries }
@@ -290,7 +291,9 @@ function readResolve(body: Json, args: Json): Read | null {
       : commitmentStatus === undefined
         ? {}
         : { commitmentStatus }
-  return { returned: 1, entries: [{ id, via: 'resolved', ...settled }] }
+  const via =
+    body.status === 'resolved' || body.status === 'archived' ? 'resolved' : 'status_changed'
+  return { returned: 1, entries: [{ id, via, ...settled }] }
 }
 
 function readList(field: string): Reader {
@@ -315,6 +318,7 @@ function readBriefing(body: Json): Read | null {
   const memories = BRIEFING_MEMORIES.flatMap(items)
   return {
     returned: commitments.length + memories.length,
+    briefing: readBriefingSummary(body),
     entries: [
       ...lines(commitments, commitmentLine),
       ...lines(memories, (r) => memoryLine(r, 'read')),

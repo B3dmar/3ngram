@@ -16,8 +16,30 @@ import { observe, threengramCall } from './lib/observe.ts'
 // is the session's: it survives a reload and starts over after /clear,
 // /resume and /branch, as the panel's does.
 export const activity = atom({ plugin: '3ngram', key: 'activity' } as const, initialActivity, {
-  shape: 'activity-1',
+  shape: 'activity-2',
 })
+
+let epoch = 0
+const pending = new Set<Promise<void>>()
+const timers = new Set<{ cancel: () => void }>()
+
+// Taken before next(e), so a result from the previous conversation cannot
+// be recorded in the new one even when the tool itself finishes late.
+export const activityEpoch = (): number => epoch
+
+export async function stopActivity(): Promise<void> {
+  epoch++
+  for (const timer of timers) timer.cancel()
+  timers.clear()
+  // Drain state writes before the host resets state. A fork has no end
+  // event, so resetActivity also drains before clearing our own atom.
+  await Promise.allSettled([...pending])
+}
+
+export async function resetActivity($: EngineInterface): Promise<void> {
+  await stopActivity()
+  await update($, activity, () => initialActivity)
+}
 
 type Call = Readonly<Record<string, unknown>>
 type Ran = { readonly text?: unknown; readonly isError?: unknown; readonly deny?: unknown }
@@ -28,17 +50,22 @@ type Ran = { readonly text?: unknown; readonly isError?: unknown; readonly deny?
 // and its result and changes neither. It cannot throw: every step runs inside
 // a promise logged() watches, so a failure costs that one entry, said in the
 // debug log.
-export function watchCall($: EngineInterface, e: Call, ran: Ran): void {
-  logged($, schedule($, e, ran))
+export function watchCall($: EngineInterface, e: Call, ran: Ran, generation: number): void {
+  if (generation === epoch) logged($, schedule($, e, ran, generation))
 }
 
 function logged($: EngineInterface, work: Promise<void>): void {
-  work.catch(() => {
+  const handled = work.catch(() => {
     $.ui.log('3ngram: a tool call was left out of the session activity', { to: 'debug' })
   })
+  pending.add(handled)
+  void handled.then(
+    () => pending.delete(handled),
+    () => pending.delete(handled),
+  )
 }
 
-async function schedule($: EngineInterface, e: Call, ran: Ran): Promise<void> {
+async function schedule($: EngineInterface, e: Call, ran: Ran, generation: number): Promise<void> {
   const name = threengramCall(String(e.tool))
   if (name === null) return
   const call: Omit<ObservedCall, 'at'> = {
@@ -49,12 +76,23 @@ async function schedule($: EngineInterface, e: Call, ran: Ran): Promise<void> {
     isDenied: ran.deny !== undefined,
     agentId: typeof e.agentId === 'string' ? e.agentId : undefined,
   }
-  $.clock.after(0, () => logged($, record($, call)))
+  const timer = $.clock.after(0, () => {
+    timers.delete(timer)
+    if (generation === epoch) logged($, record($, call, generation))
+  })
+  timers.add(timer)
 }
 
-async function record($: EngineInterface, call: Omit<ObservedCall, 'at'>): Promise<void> {
+async function record(
+  $: EngineInterface,
+  call: Omit<ObservedCall, 'at'>,
+  generation: number,
+): Promise<void> {
   const seen = observe({ ...call, at: await $.clock.now() })
   // This module is the atom's only writer and every write goes through
   // fold(), so the value read back is an ActivityState.
-  await update($, activity, (s) => fold(s as unknown as ActivityState, seen))
+  if (generation !== epoch) return
+  await update($, activity, (s) =>
+    generation === epoch ? fold(s as unknown as ActivityState, seen) : s,
+  )
 }

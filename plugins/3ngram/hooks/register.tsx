@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Register } from 'claude-code'
-import { watchCall } from './activity.ts'
+import { activityEpoch, resetActivity, stopActivity, watchCall } from './activity.ts'
 import { initialState, unconfirmed } from './lib/state.ts'
 import { statusLine } from './lib/view.ts'
 import { drawPane } from './pane.tsx'
@@ -88,6 +88,7 @@ export const register: Register = (on, options) => {
     if (e.reason === 'clear' || e.reason === 'resume') {
       stopReads()
       runtime.resetPending = true
+      await stopActivity()
     }
     return next(e)
   })
@@ -98,6 +99,7 @@ export const register: Register = (on, options) => {
   // /branch reports fork and has no session.end of its own, so a fork always
   // reads again; a launch with --fork-session costs one extra read.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    await resetActivity($)
     if (runtime.resetPending || e.source === 'fork') {
       runtime.resetPending = false
       stopReads()
@@ -115,8 +117,9 @@ export const register: Register = (on, options) => {
   // to, and nothing here refuses or rewrites it: watchCall records it
   // afterwards and cannot throw.
   on('tool.call', { tool: /^mcp__.*3ngram.*__./i }, async ($, e, next) => {
+    const generation = activityEpoch()
     const ran = await next(e)
-    watchCall($, e, ran)
+    watchCall($, e, ran, generation)
     return ran
   })
 

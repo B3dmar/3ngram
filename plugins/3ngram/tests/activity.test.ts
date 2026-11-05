@@ -51,7 +51,7 @@ type Held = {
 // log; the kit keeps the state), stands for core beneath every tool call,
 // and records the activity the plugin writes and anything it must never do.
 // A test's $ has no state noun, so the value is read where it is written.
-function world(on: On, answer: (tool: string) => Answer) {
+function world(on: On, answer: (tool: string) => Answer | Promise<Answer>) {
   const clock = mock.clock(on, { now: Date.UTC(2026, 10, 5, 12) })
   const ran: string[] = []
   const inputs: Record<string, unknown>[] = []
@@ -59,6 +59,9 @@ function world(on: On, answer: (tool: string) => Answer) {
   const logs: string[] = []
   const written: { shape?: string; value?: Held }[] = []
   let failWrites = false
+  let writeHold: { entered: () => void; wait: Promise<void> } | undefined
+  on('session.end', async () => ({ sessionId: 'test' }) as never)
+  on('classic.SessionStart', async () => ({}) as never)
   on('tool.call', async (_$, e) => {
     ran.push(String(e.tool))
     const { tool_use_id: _id, ...input } = e as Record<string, unknown>
@@ -67,6 +70,12 @@ function world(on: On, answer: (tool: string) => Answer) {
   })
   on('state.set', { plugin: '3ngram', key: 'activity' }, async (_$, e, next) => {
     if (failWrites) return { deny: 'the state is unavailable' } as never
+    const hold = writeHold
+    writeHold = undefined
+    if (hold) {
+      hold.entered()
+      await hold.wait
+    }
     // The contract types the value opaquely; fold() is its only writer.
     written.push({ shape: e.value.shape, value: e.value.value as unknown as Held })
     return next(e)
@@ -100,10 +109,81 @@ function world(on: On, answer: (tool: string) => Answer) {
     failWrites: (on: boolean) => {
       failWrites = on
     },
+    holdWrite: () => {
+      let entered = () => {}
+      let release = () => {}
+      const started = new Promise<void>((done) => {
+        entered = done
+      })
+      const wait = new Promise<void>((done) => {
+        release = done
+      })
+      writeHold = { entered, wait }
+      return { started, release }
+    },
   }
 }
 
 describe('the session activity hook', () => {
+  test('a session reset drains a state write already in flight before clearing activity', async ($, on) => {
+    const w = world(on, () => answerOf(SEARCH))
+    const hold = w.holdWrite()
+    await $.tool.call({ tool: 'mcp__3ngram__search', query: 'old' } as never)
+    const recording = w.clock.advance(1)
+    await hold.started
+    const ending = $.session.end({ reason: 'clear' } as never)
+    hold.release()
+    await recording
+    await ending
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    expect(w.held()?.seq).toBe(0)
+  })
+
+  test('concurrent call recordings keep every read without losing state updates', async ($, on) => {
+    const w = world(on, () => answerOf(SEARCH))
+    await Promise.all(
+      Array.from({ length: 20 }, () =>
+        $.tool.call({ tool: 'mcp__3ngram__search', query: 'same memory' } as never),
+      ),
+    )
+    await w.clock.advance(1)
+    expect(w.held()?.seq).toBe(20)
+    expect(w.held()?.memories[0]?.reads).toBe(20)
+  })
+
+  for (const source of ['clear', 'resume', 'fork'] as const) {
+    test(`a pending recording does not survive ${source}`, async ($, on) => {
+      const w = world(on, () => answerOf(SEARCH))
+      await $.tool.call({ tool: 'mcp__3ngram__search', query: 'old' } as never)
+      if (source !== 'fork') await $.session.end({ reason: source } as never)
+      await $.classic.SessionStart({ source } as never)
+      await w.clock.advance(1)
+      expect(w.held()?.seq ?? 0).toBe(0)
+      await $.tool.call({ tool: 'mcp__3ngram__search', query: 'new' } as never)
+      await w.clock.advance(1)
+      expect(w.held()?.seq).toBe(1)
+    })
+  }
+
+  test('a tool that returns after a clear is not recorded in the new session', async ($, on) => {
+    let release: (value: Answer) => void = () => undefined
+    const w = world(
+      on,
+      () =>
+        new Promise<Answer>((done) => {
+          release = done
+        }),
+    )
+    const pending = $.tool.call({ tool: 'mcp__3ngram__search', query: 'old' } as never)
+    await w.clock.advance(1)
+    await $.session.end({ reason: 'clear' } as never)
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    release(answerOf(SEARCH))
+    expect(await pending).toEqual(answerOf(SEARCH))
+    await w.clock.advance(1)
+    expect(w.held()?.seq ?? 0).toBe(0)
+  })
+
   test('a 3ngram search returns its own result object and records its hits', async ($, on) => {
     const w = world(on, () => answerOf(SEARCH))
     const got = await $.tool.call({ tool: 'mcp__3ngram__search', query: 'tab' } as never)
@@ -127,7 +207,7 @@ describe('the session activity hook', () => {
     const w = world(on, () => answerOf(SEARCH))
     await $.tool.call({ tool: 'mcp__3ngram__search', query: 'tab' } as never)
     await w.clock.advance(1)
-    expect(w.written.map((v) => v.shape)).toEqual(['activity-1'])
+    expect(w.written.map((v) => v.shape)).toEqual(['activity-2'])
   })
 
   test('other tools pass untouched and are not recorded', async ($, on) => {

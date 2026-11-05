@@ -10,7 +10,7 @@
 // observed 3ngram tool call came and how many have been recorded; its full
 // type is ActivityState in hooks/lib/activity.ts, whose fold() is its only
 // writer. It is kept under a shape tag ({ shape, value }), so a reader checks
-// the tag (`activity-1` for this shape) before it reads the value.
+// the tag (`activity-2` for this shape) before it reads the value.
 export type ThreengramPanelState = {
   gen: number
   status: 'idle' | 'loading' | 'checking' | 'refreshing' | 'verifying' | 'ready' | 'stale' | 'error'
