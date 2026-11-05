@@ -54,6 +54,7 @@ type Runtime = {
   kick: Cancellable | null
   midnight: { at: number; timer: Cancellable } | null
   stops: number
+  halts: number
   wantedDetail: number
   resetPending: boolean
   requeuedFor: string | null
@@ -84,9 +85,15 @@ export const runtime: Runtime = {
   // midnight is the redraw armed for the next midnight in the host's zone
   // after a draw (redrawAtMidnight), ended with the background reads.
   midnight: null,
-  // stops counts stopReads calls, so a read that had not started its child
-  // when it was stopped still sees that it was, and never starts one.
+  // stops counts stopReads calls and Backs (closeDetail), so a read that had
+  // not started its child when it was stopped still sees that it was, and
+  // never starts one.
   stops: 0,
+  // halts counts stopReads calls alone. A startup reads the list only if none
+  // came since it began (startup), and a detail read that finds its context
+  // changed asks for the list again only if none came since it was asked for
+  // (openDetail); a Back is no stop, and that list read still runs.
+  halts: 0,
   // wantedDetail is the sequence of the detail last asked for: a detail read
   // that is no longer it stops its child instead of registering it.
   wantedDetail: 0,
@@ -138,6 +145,7 @@ export function releaseDetailRead(seq: number): void {
 
 export function stopReads(): void {
   runtime.stops++
+  runtime.halts++
   // A stop is final: a refresh queued behind the stopped one is dropped too.
   runtime.queued = false
   runtime.listRead?.stop()
