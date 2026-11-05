@@ -11,6 +11,13 @@
 import type { On } from 'claude-code'
 import type { Engine, Mounted } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { hostZone, nextMidnight, stamp } from '../hooks/lib/time.ts'
+
+// shown is a time as the pane draws it at now: in the zone the module runtime
+// reports, which is the host's, by the rules spec/view.spec.ts pins.
+function shown(ms: number, now: number): string {
+  return stamp(ms, { now, zone: hostZone() })
+}
 
 const PLUGIN = '3ngram'
 const PANE = '3ngram-commitments'
@@ -160,6 +167,8 @@ function world(
   const holds: (() => void)[] = []
   const forbidden: string[] = []
   const statuses: (string | undefined)[] = []
+  // The pane ids the plugin opened, one per $.ui.open.
+  const opens: string[] = []
   const clock = mock.clock(on, { now: Date.UTC(2026, 9, 7, 12) })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('session.end', async () => ({ sessionId: 'test' }) as never)
@@ -179,7 +188,10 @@ function world(
     if (hold) await hold
     return { value: undefined } as never
   })
-  on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  on('ui.open', async (_$, e) => {
+    opens.push(String((e as { id?: string }).id))
+    return { value: { isPlaced: true } } as never
+  })
   on('ui.status', async (_$, e) => {
     statuses.push((e as { text?: string }).text)
     return { value: undefined } as never
@@ -221,14 +233,14 @@ function world(
       return { deny: `${noun} is not allowed for the read-only panel` } as never
     })
   }
-  return { spawned, returned, holds, forbidden, statuses, clock }
+  return { spawned, returned, holds, forbidden, statuses, opens, clock }
 }
 
-function paneProps() {
+function paneProps(bodyColumns = 100) {
   return {
     title: '3ngram commitments',
     isFocused: true,
-    bodyColumns: 100,
+    bodyColumns,
     placement: 'dock' as const,
     scroll: { offset: 0, bodyRows: 40 },
     view: {},
@@ -245,13 +257,17 @@ type Pane = Mounted<'terminal' | 'desktop', 'Pane'>
 
 // mountPane draws the pane once per surface; textOf re-reads the drawing as
 // it stands now.
-async function mountPane($: Engine, surface: 'terminal' | 'desktop' = 'terminal'): Promise<Pane> {
+async function mountPane(
+  $: Engine,
+  surface: 'terminal' | 'desktop' = 'terminal',
+  columns = 100,
+): Promise<Pane> {
   return $.ui.mount({
     plugin: PLUGIN,
     surface,
     component: 'Pane',
     requestId: PANE,
-    props: paneProps(),
+    props: paneProps(columns),
   })
 }
 
@@ -273,8 +289,10 @@ describe('the read-only data path', () => {
     for (const surface of ['terminal', 'desktop'] as const) {
       const text = await textOf(await mountPane($, surface))
       expect(text).toContain(TOPIC)
-      expect(text).toContain('project demo (from the git remote)')
-      expect(text).toContain('owner unclear (not recorded)')
+      expect(text).toContain('3ngram · project demo · any scope')
+      expect(text).toContain('project name from the git remote')
+      expect(text).toContain('owners not recorded')
+      expect(text).not.toContain('owner unclear')
     }
     expect(w.spawned.every(isCommitmentsCommand)).toBe(true)
     expect(w.forbidden).toEqual([])
@@ -1030,7 +1048,7 @@ describe('cancellation and lifecycle', () => {
       const after = await textOf(ui)
       if (kept) {
         expect(after).toContain('Full commitment text')
-        expect(after).toContain('STALE since 12:05 UTC')
+        expect(after).toContain(`STALE since ${shown(Date.UTC(2026, 9, 7, 12, 5), w.clock.now())}`)
       } else {
         expect(after).not.toContain('Full commitment text')
         expect(after).not.toContain(TOPIC)
@@ -1098,10 +1116,11 @@ describe('cancellation and lifecycle', () => {
     const ui = await mountPane($)
     roster.length = 0
     await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
-    // Past midnight UTC: no read, and the midnight redraw ended with them.
-    await w.clock.set(Date.UTC(2026, 9, 8))
+    // Past midnight: no read, and the midnight redraw ended with them.
+    const read = Date.UTC(2026, 9, 7, 12)
+    await w.clock.set(nextMidnight({ now: read, zone: hostZone() }))
     expect(lists()).toBe(1)
-    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
+    expect(await textOf(ui)).toContain(`Updated ${shown(read, read)}`)
     // A later client arms them again.
     roster.push('mobile')
     await $.session.attach({ surface: 'mobile', clientId: 'mobile:second' })
@@ -1266,9 +1285,10 @@ describe('the age of what is shown stays visible', () => {
     await w.clock.advance(1)
     await w.clock.advance(5 * 60_000)
     const text = await textOf(ui)
+    const now = w.clock.now()
     expect(text).toContain('Full commitment text')
-    expect(text).toContain('STALE since 12:05 UTC')
-    expect(text).toContain('Rows from 12:00 UTC')
+    expect(text).toContain(`STALE since ${shown(Date.UTC(2026, 9, 7, 12, 5), now)}`)
+    expect(text).toContain(`Rows from ${shown(Date.UTC(2026, 9, 7, 12), now)}`)
   })
 
   test(
@@ -1284,19 +1304,23 @@ describe('the age of what is shown stays visible', () => {
       })
       await start($, w.clock)
       const ui = await mountPane($)
+      const failed = Date.UTC(2026, 9, 7, 13)
       await w.clock.advance(60 * 60_000)
-      expect(await textOf(ui)).toContain('STALE since 13:00 UTC')
-      // Past midnight UTC, the next failed refresh redraws on the new day.
-      await w.clock.advance(12 * 60 * 60_000)
+      expect(await textOf(ui)).toContain(`STALE since ${shown(failed, failed)}`)
+      // A day on, in any zone past its midnight, the failed refreshes redraw
+      // on the new day.
+      await w.clock.advance(24 * 60 * 60_000)
+      const now = w.clock.now()
+      expect(shown(failed, now)).toContain('7 Oct')
       const text = await textOf(ui)
-      expect(text).toContain('STALE since 2026-10-07 13:00 UTC')
-      expect(text).toContain('Rows from 2026-10-07 12:00 UTC')
+      expect(text).toContain(`STALE since ${shown(failed, now)}`)
+      expect(text).toContain(`Rows from ${shown(Date.UTC(2026, 9, 7, 12), now)}`)
     },
   )
 
   // #400: nothing else redraws a pane between refreshes, so one drawn before
-  // midnight UTC kept showing its time as today's.
-  test('a pane left as it is past midnight UTC is drawn again with the date', async ($, on) => {
+  // midnight kept showing its time as today's.
+  test('a pane left as it is past midnight is drawn again with the date', async ($, on) => {
     const w = world(on, (argv) =>
       argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
     )
@@ -1306,19 +1330,27 @@ describe('the age of what is shown stays visible', () => {
     await $.command.run({ command: 'commitments', args: '' } as never)
     await w.clock.advance(1)
     const ui = await mountPane($)
-    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
-    await w.clock.set(Date.UTC(2026, 9, 7, 23, 59))
-    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
-    await w.clock.set(Date.UTC(2026, 9, 8))
-    expect(await textOf(ui)).toContain('Updated 2026-10-07 12:00 UTC')
+    // Midnight in the zone the module runtime reports: the host's.
+    const zone = hostZone()
+    const first = Date.UTC(2026, 9, 7, 12)
+    const midnight = nextMidnight({ now: first, zone })
+    expect(await textOf(ui)).toContain(`Updated ${shown(first, first)}`)
+    await w.clock.set(midnight - 60_000)
+    expect(await textOf(ui)).toContain(`Updated ${shown(first, first)}`)
+    await w.clock.set(midnight)
+    expect(shown(first, midnight)).toContain('Oct')
+    expect(await textOf(ui)).toContain(`Updated ${shown(first, midnight)}`)
     expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
     // The redraw re-arms: a read on the next day is redrawn at its midnight.
-    await w.clock.set(Date.UTC(2026, 9, 8, 12))
+    const second = midnight + 12 * 60 * 60_000
+    await w.clock.set(second)
     await $.command.run({ command: 'commitments', args: '' } as never)
     await w.clock.advance(1)
-    expect(await textOf(ui)).toContain('Updated 12:00 UTC')
-    await w.clock.set(Date.UTC(2026, 9, 9))
-    expect(await textOf(ui)).toContain('Updated 2026-10-08 12:00 UTC')
+    expect(await textOf(ui)).toContain(`Updated ${shown(second, second)}`)
+    const next = nextMidnight({ now: second, zone })
+    await w.clock.set(next)
+    expect(await textOf(ui)).toContain(`Updated ${shown(second, next)}`)
+    expect(shown(second, next)).not.toBe(shown(second, second))
   })
 
   test('a refresh in progress says how old the rows it keeps showing are', async ($, on) => {
@@ -1336,10 +1368,104 @@ describe('the age of what is shown stays visible', () => {
     const ui = await mountPane($)
     await w.clock.advance(5 * 60_000)
     const text = await textOf(ui)
+    const now = w.clock.now()
     expect(text).toContain(TOPIC)
-    expect(text).toContain('Refreshing… Rows from 12:00 UTC')
+    expect(text).toContain(`Refreshing… Rows from ${shown(Date.UTC(2026, 9, 7, 12), now)}`)
     release()
     await w.clock.advance(1)
-    expect(await textOf(ui)).toContain('Updated 12:05 UTC')
+    expect(await textOf(ui)).toContain(`Updated ${shown(Date.UTC(2026, 9, 7, 12, 5), now)}`)
+  })
+})
+
+describe('the compact list', () => {
+  test('a wide-character project puts the status on its own line in a narrow pane', async ($, on) => {
+    const envelope = JSON.parse(listEnvelope(FP_A))
+    envelope.context.project.name = '日本語日本語'
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: JSON.stringify(envelope) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    const ui = await mountPane($, 'terminal', 54)
+    const header = await ui.find({ key: 'header' })
+    expect(header?.props.flexDirection).toBe('column')
+    expect(header?.text).toContain('日本語日本語')
+    expect(header?.text).toContain('Updated')
+  })
+
+  test(
+    'auto_open opens the pane once a session, not again at each reload',
+    { options: { auto_open: true } },
+    async ($, on) => {
+      const w = world(on, (argv) =>
+        argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+      )
+      await start($, w.clock)
+      expect(w.opens).toEqual([PANE])
+      // A reload (an option changed in /config, say) runs session.start again
+      // with the state the host kept.
+      await start($, w.clock)
+      await start($, w.clock)
+      expect(w.opens).toEqual([PANE])
+      // Opening it by hand still opens it.
+      await $.command.run({ command: 'commitments', args: '' } as never)
+      expect(w.opens).toEqual([PANE, PANE])
+    },
+  )
+
+  test('the status bar says checking, never loading, while a refresh checks the context', async ($, on) => {
+    let release: () => void = () => undefined
+    let probes = 0
+    const w = world(on, (argv) => {
+      if (argv[2] === 'context') {
+        if (++probes !== 2) return { stdout: contextEnvelope(FP_A) }
+        const wait = new Promise<void>((r) => {
+          release = r
+        })
+        return { wait, stdout: contextEnvelope(FP_A) }
+      }
+      return { stdout: listEnvelope(FP_A) }
+    })
+    await start($, w.clock)
+    expect(w.statuses.at(-1)).toBe('3ngram: 1 open · 0 overdue')
+    const from = w.statuses.length
+    await w.clock.advance(5 * 60_000)
+    // The probe before the read is still running: no counts, and no "loading".
+    expect(w.statuses.at(-1)).toBe('3ngram: checking')
+    release()
+    await w.clock.advance(1)
+    expect(w.statuses.at(-1)).toBe('3ngram: 1 open · 0 overdue')
+    expect(w.statuses.slice(from)).not.toContain('3ngram: loading')
+  })
+
+  test("an error shows the binary's hint, dim, under it", async ($, on) => {
+    const failed = JSON.parse(errorEnvelope('bad_response', FP_A))
+    failed.error = { kind: 'bad_response', route: 'briefing', hint: 'response body too large' }
+    const w = world(on, () => ({ stdout: JSON.stringify(failed) }))
+    await start($, w.clock)
+    const ui = await mountPane($)
+    expect(await textOf(ui)).toContain('ERROR: The server sent a response the panel cannot read.')
+    const hint = await ui.find({ type: 'Text', text: '3ngram-hook: response body too large' })
+    expect(hint?.props.dimColor).toBe(true)
+  })
+
+  test('sections are headed by a mark and a word, and the status shares the header line where it fits', async ($, on) => {
+    const w = world(on, (argv) =>
+      argv[2] === 'list' ? { stdout: listEnvelope(FP_A) } : { stdout: contextEnvelope(FP_A) },
+    )
+    await start($, w.clock)
+    for (const [columns, direction] of [
+      [100, 'row'],
+      [30, 'column'],
+    ] as const) {
+      const ui = await mountPane($, 'terminal', columns)
+      const header = await ui.find({ key: 'header' })
+      expect(header?.text).toContain('3ngram · project demo · any scope')
+      expect(header?.props.flexDirection).toBe(direction)
+      const section = await ui.find({ type: 'Text', text: '◦ OPEN (1)' })
+      expect(section?.props.bold).toBe(true)
+      const row = await ui.find({ key: 'row-00000000-0000-4000-8000-a00000000001' })
+      expect(row?.props.paddingLeft).toBe(2)
+      await ui.unmount()
+    }
   })
 })

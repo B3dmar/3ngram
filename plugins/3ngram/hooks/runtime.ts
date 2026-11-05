@@ -13,11 +13,33 @@ import { statusLine } from './lib/view.ts'
 
 const panel = atom({ plugin: '3ngram', key: 'panel' } as const, initialState)
 
+// Whether the pane was opened unasked (auto_open) in this session. In $.state,
+// so it outlives a reload, which runs session.start again.
+const autoOpened = atom({ plugin: '3ngram', key: 'autoOpened' } as const, false)
+
 // The contract (types/index.d.ts) names the value opaquely; this module is its
 // only writer, and every write goes through reduce(), so reading it back as
 // PanelState is sound.
 export async function readPanel($: EngineInterface): Promise<PanelState> {
   return (await read($, panel)) as unknown as PanelState
+}
+
+// claimAutoOpen marks the pane as opened unasked and answers whether this is
+// the first time in the session: a reload after the first open, or after the
+// person closed the pane, does not open it again. A flag that cannot be
+// written opens nothing, so a failing state never reopens it at every reload.
+export async function claimAutoOpen($: EngineInterface): Promise<boolean> {
+  let first = false
+  try {
+    await update($, autoOpened, (was) => {
+      first = was !== true
+      return true
+    })
+  } catch {
+    $.ui.log('3ngram: the auto_open flag could not be written', { to: 'debug' })
+    return false
+  }
+  return first
 }
 
 type Cancellable = { cancel: () => void }
@@ -59,8 +81,8 @@ export const runtime: Runtime = {
   // and transitions fire at once and are not kept.
   tick: null,
   kick: null,
-  // midnight is the redraw armed for the next UTC midnight after a draw
-  // (redrawAtMidnight), ended with the background reads.
+  // midnight is the redraw armed for the next midnight in the host's zone
+  // after a draw (redrawAtMidnight), ended with the background reads.
   midnight: null,
   // stops counts stopReads calls, so a read that had not started its child
   // when it was stopped still sees that it was, and never starts one.
