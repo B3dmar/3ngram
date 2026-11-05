@@ -3,7 +3,11 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/cmd/3ngram-hook/testdata/commitments/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/cmd/3ngram-hook/testdata/commitments/**",
+        "$TURBO_ROOT$/eval/fixtures/transport-surfaces.json"
+      ]
     }
   }
 }

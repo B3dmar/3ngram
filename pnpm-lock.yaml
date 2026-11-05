@@ -297,6 +297,9 @@ importers:
 
   plugins/3ngram:
     devDependencies:
+      '@3ngram/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
       '@types/node':
         specifier: 25.9.1
         version: 25.9.1
