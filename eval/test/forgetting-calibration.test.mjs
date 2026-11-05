@@ -5,11 +5,19 @@
 // tell, and thresholds selected on it score another fixture frozen. Fake answers
 // only: no network, no database, nothing written outside a temp dir.
 import assert from 'node:assert/strict'
-import { copyFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import {
+  COMMITTED_GOLDEN_FIXTURES,
   cliOptions,
   DEFAULT_GOLDEN,
   formatReport,
@@ -255,6 +263,15 @@ test('thresholds selected on the calibration dev split score another fixture fro
     formatReport(personal),
     /^ {2}bar overall \(report-only, enables nothing\): not met$/m,
   )
+})
+
+test('every committed forgetting golden file is on the synthetic list', () => {
+  // File names only: other eval tests rewrite fixture contents while this suite runs.
+  const fixtures = dirname(DEFAULT_GOLDEN)
+  const golden = readdirSync(fixtures)
+    .filter((name) => /^forgetting-.*\.json$/.test(name) && !name.endsWith('-answers.json'))
+    .map((name) => join(fixtures, name))
+  assert.deepEqual(golden.sort(), [...COMMITTED_GOLDEN_FIXTURES].sort())
 })
 
 test('the bar verdict reads the unrounded ratio, not the rounded precision', () => {
