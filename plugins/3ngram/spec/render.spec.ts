@@ -93,9 +93,9 @@ test('the drawing check catches an async draw and an await inside it', () => {
 
 // #415 review: a drawing can hand back a promise with no async and no await.
 test('the drawing check catches a promise returned without async', () => {
-  const tail = 'return drawList(ui, panelView(s, now), act)'
+  const tail = 'return drawList(ui, panelView(s, clock), columns, act)'
   assert.ok(PANE_SOURCE.includes(tail))
-  const draw = 'drawList(ui, panelView(s, now), act)'
+  const draw = 'drawList(ui, panelView(s, clock), columns, act)'
   const chained = PANE_SOURCE.replace(tail, `return Promise.resolve().then(() => ${draw})`)
   assert.deepEqual(suspensions(chained), ['.then', 'Promise'])
   const made = PANE_SOURCE.replace(tail, `return Promise.resolve(${draw})`)

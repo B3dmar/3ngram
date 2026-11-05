@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EngineInterface, PluginOptions } from 'claude-code'
-import { nextUtcMidnight } from './lib/view.ts'
+import type { Clock } from './lib/time.ts'
+import { nextMidnight } from './lib/time.ts'
 import { refresh, startup } from './reads.ts'
 import { fire, runtime, stopReads } from './runtime.ts'
 
@@ -31,16 +32,17 @@ export function disarmRefresh(): void {
   stopReads()
 }
 
-// redrawAtMidnight keeps one redraw armed for the next UTC midnight after a
-// draw. A time is shown without its date only on the UTC day it is drawn,
-// and nothing else redraws a pane before its next refresh. A redraw already
-// armed for that midnight, or an earlier one, is kept: it redraws every
-// instance, and their next draws arm the following one.
-export function redrawAtMidnight($: EngineInterface, now: number): void {
-  const at = nextUtcMidnight(now)
+// redrawAtMidnight keeps one redraw armed for the next midnight, in the zone
+// the pane is drawn in, after a draw. A time is shown without its date only
+// on the day it is drawn, a deadline is counted in days from it, and nothing
+// else redraws a pane before its next refresh. A redraw already armed for
+// that midnight, or an earlier one, is kept: it redraws every instance, and
+// their next draws arm the following one.
+export function redrawAtMidnight($: EngineInterface, clock: Clock): void {
+  const at = nextMidnight(clock)
   if (runtime.midnight !== null && runtime.midnight.at <= at) return
   runtime.midnight?.timer.cancel()
-  const timer = $.clock.after(at - now, () => {
+  const timer = $.clock.after(at - clock.now, () => {
     runtime.midnight = null
     $.ui.invalidate('ui.render')
   })
