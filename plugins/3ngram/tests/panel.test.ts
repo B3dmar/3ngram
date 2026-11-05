@@ -1144,6 +1144,59 @@ describe('cancellation and lifecycle', () => {
     expect(w.spawned.filter((argv) => argv[2] === 'list').length).toBe(1)
   })
 
+  // #269: a stop landing while a read records that its context moved
+  // mid-read must not be undone by that read queueing its one re-run.
+  for (const stop of ['cancel', 'detach'] as const) {
+    test(`a ${stop} while a read records a context change runs no further read`, async ($, on) => {
+      const roster: string[] = []
+      let probes = 0
+      let releaseSet: () => void = () => undefined
+      let holding = false
+      const w = world(
+        on,
+        (argv) => {
+          // The old key for the probe after the startup read and the one
+          // before the periodic read; rotated while that read runs.
+          if (argv[2] === 'context') return { stdout: contextEnvelope(++probes <= 2 ? FP_A : FP_B) }
+          return { stdout: listEnvelope(FP_A) }
+        },
+        { surfaces: roster },
+      )
+      // Holds the write that records the context change, until the stop.
+      on('state.set', async (_$, e, next) => {
+        const value = (e as { value?: { status?: string; pending?: string | null } }).value
+        if (!holding && value?.status === 'verifying' && value.pending === 'context_changed') {
+          holding = true
+          await new Promise<void>((r) => {
+            releaseSet = r
+          })
+        }
+        return next(e)
+      })
+      await $.session.start({ cwd: '/repo', surface: null, isInteractive: false })
+      roster.push('mobile')
+      await $.session.attach({ surface: 'mobile', clientId: 'mobile:default' })
+      await w.clock.advance(1)
+      const lists = () => w.spawned.filter((argv) => argv[2] === 'list').length
+      expect(lists()).toBe(1)
+      const ui = await mountPane($)
+      await w.clock.advance(5 * 60_000)
+      expect(holding).toBe(true)
+      expect(lists()).toBe(2)
+      if (stop === 'cancel') {
+        await ui.press({ key: 'cancel' })
+      } else {
+        roster.length = 0
+        await $.session.detach({ surface: 'mobile', clientId: 'mobile:default', reason: 'detach' })
+      }
+      releaseSet()
+      await w.clock.advance(1)
+      await w.clock.advance(1)
+      expect(lists()).toBe(2)
+      expect(await textOf(ui)).not.toContain(TOPIC)
+    })
+  }
+
   test('a refresh that clears an open detail stops its read', async ($, on) => {
     let fingerprint = FP_A
     const w = world(on, (argv) => {

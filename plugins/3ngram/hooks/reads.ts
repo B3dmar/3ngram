@@ -147,7 +147,11 @@ async function refreshOnce(
           at,
         })
         await dispatch($, { type: 'context_verified', gen, fingerprint: now, at })
-        if (rerun) {
+        // A stop (Cancel, /clear, a reload, the last detach) during either
+        // dispatch dropped the queue and took the token; queueing the re-run
+        // now would undo that, so it is neither queued nor recorded. Checked
+        // after both dispatches, the last awaits before it.
+        if (rerun && runtime.active === token) {
           runtime.requeuedFor = now
           runtime.queued = true
         }
