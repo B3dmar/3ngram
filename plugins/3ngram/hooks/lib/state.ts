@@ -327,7 +327,8 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
     }
   }
   if (!envelope.ok) {
-    const error: PanelError = { kind: envelope.error?.kind ?? 'unknown' }
+    const kind = envelope.error?.kind ?? 'unknown'
+    const error: PanelError = envelope.error?.hint ? { kind, hint: envelope.error.hint } : { kind }
     return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
   }
   // Only a list read that landed after the open can be newer than the answer:

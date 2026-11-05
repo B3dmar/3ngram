@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CommitmentRow, Envelope, GitHubEvidence, PartialPart } from './contract.ts'
-import type { DetailState, PanelState } from './state.ts'
+import type { CommitmentRow, Envelope, PartialPart } from './contract.ts'
+import { githubLabel, githubRowLabel } from './github.ts'
+import type { DetailState, PanelError, PanelState } from './state.ts'
 import { visibleRows } from './state.ts'
+import type { Clock } from './time.ts'
+import { dayOf, dueLabels, stamp } from './time.ts'
 
 // The view model: everything the pane shows, as plain strings, so the wording
 // is tested here and pane.tsx only lays it out. State is told apart by
-// words and emphasis (`tone` picks bold or dim), never by color alone.
+// words, shapes and emphasis (`tone` picks bold or dim), never by color alone.
+// Times are on the wall clock of the zone the caller names (lib/time.ts).
 
 export type Tone = 'normal' | 'busy' | 'stale' | 'error'
 
@@ -15,10 +19,12 @@ export type RowView = { memoryId: string; title: string; labels: string[] }
 export type SectionView = { title: string; rows: RowView[] }
 
 export type PanelView = {
-  header: string[]
+  header: string
   status: { label: string; tone: Tone }
+  hint: string | null
   sections: SectionView[]
   notes: string[]
+  footer: string | null
   empty: string | null
   canCancel: boolean
 }
@@ -58,6 +64,17 @@ export function failureText(kind: string): string {
   return FAILURE_TEXT[kind] ?? `The read failed (${kind}).`
 }
 
+// hintText is the binary's own hint for a failure (its error.hint, a fixed
+// phrase of 3ngram-hook's, never record content), unless the failure's text
+// already says it.
+export function hintText(error: PanelError | null | undefined): string | null {
+  const hint = error?.hint?.trim()
+  if (!hint) return null
+  const plain = (text: string) => text.toLowerCase().replaceAll('`', '')
+  if (plain(failureText(error?.kind ?? '')).includes(plain(hint))) return null
+  return `3ngram-hook: ${hint}`
+}
+
 // Why the binary stopped looking up GitHub references (githubParts in
 // cmd/3ngram-hook); a reason not named here is shown as it came.
 const GITHUB_REASON: Record<string, string> = {
@@ -66,36 +83,6 @@ const GITHUB_REASON: Record<string, string> = {
   gh_unauthenticated: 'gh is not signed in: run `gh auth login`',
   rate_limited: 'GitHub is rate limiting gh',
   timeout: 'the lookups timed out',
-}
-
-// time is an instant as the panel shows it, in UTC: its date too unless it is
-// on the UTC day the view is drawn (now), so rows read yesterday never pass
-// for today's.
-function time(ms: number, now: number): string {
-  const iso = new Date(ms).toISOString()
-  const date = day(iso) === day(new Date(now).toISOString()) ? '' : `${day(iso)} `
-  return `${date}${iso.slice(11, 16)} UTC`
-}
-
-function day(iso: string): string {
-  return iso.slice(0, 10)
-}
-
-// nextUtcMidnight is when a view drawn at now goes out of date by the clock
-// alone: from then on, a time it showed without its date is yesterday's.
-export function nextUtcMidnight(now: number): number {
-  const d = new Date(now)
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
-}
-
-// dueLabel reads a deadline as the instant it is (packages/schema stores a
-// UTC instant): its time of day is shown, in UTC, unless it is midnight.
-function dueLabel(iso: string): string {
-  const ms = Date.parse(iso)
-  if (Number.isNaN(ms)) return `due ${iso}`
-  const utc = new Date(ms).toISOString()
-  const clock = utc.slice(11, 16)
-  return clock === '00:00' ? `due ${day(utc)}` : `due ${day(utc)} ${clock} UTC`
 }
 
 // byDue orders rows by deadline, earliest first. An undated row, or one whose
@@ -109,71 +96,81 @@ function byDue(a: CommitmentRow, b: CommitmentRow): number {
   return x === y ? 0 : x < y ? -1 : 1
 }
 
-export function headerLines(envelope: Envelope): string[] {
+// headerLine names what is listed: the project and the scope. The rest of the
+// context (backend, account, where the project name came from, the unscoped
+// opt-in) is the footer's.
+export function headerLine(envelope: Envelope): string {
   const c = envelope.context
-  const account = c.account ? c.account.email : 'account unavailable'
-  const source =
-    c.project.source === 'git-remote' ? 'from the git remote' : 'from the directory name'
   const sel = c.effective ?? c.requested
-  const scope = sel.scope ? `scope ${sel.scope}` : 'any scope'
-  const unscoped =
+  return `3ngram · project ${c.project.name} · ${sel.scope ? sel.scope : 'any scope'}`
+}
+
+// footerLine is the rest of the context the rows were read under, and that
+// owners are not recorded when a row shown has none.
+export function footerLine(envelope: Envelope, rows: CommitmentRow[]): string {
+  const c = envelope.context
+  const sel = c.effective ?? c.requested
+  const parts = [
+    c.apiHost,
+    c.account ? c.account.email : 'account unavailable',
+    c.project.source === 'git-remote'
+      ? 'project name from the git remote'
+      : 'project name from the directory name',
     sel.kind === 'scope_project' && sel.includeUnscoped
       ? 'unscoped records included'
-      : 'unscoped records excluded'
-  return [
-    `${c.apiHost} · ${account}`,
-    `project ${c.project.name} (${source}) · ${scope} · ${unscoped}`,
+      : 'unscoped records excluded',
   ]
+  if (rows.some((r) => r.ownership.value === 'unclear')) parts.push('owners not recorded')
+  return parts.join(' · ')
 }
 
-export function githubLabel(g: GitHubEvidence): string {
-  const kind = g.type === 'pull_request' ? 'PR' : g.type === 'issue' ? 'issue' : 'ref'
-  switch (g.state) {
-    case 'merged':
-      return `${kind} ${g.ref} merged${g.mergedAt ? ` ${day(g.mergedAt)}` : ''}`
-    case 'closed': {
-      const how =
-        g.type === 'pull_request'
-          ? ' without merging'
-          : g.stateReason === 'not_planned'
-            ? ' as not planned'
-            : ''
-      return `${kind} ${g.ref} closed${how}${g.closedAt ? ` ${day(g.closedAt)}` : ''}`
-    }
-    case 'not_found':
-      return `${g.ref} not found or not visible`
-    default:
-      return `${kind} ${g.ref} ${g.state}`
-  }
+// sharesLine reports whether the header and the status fit one line of a pane
+// this many columns wide, two apart; otherwise the status takes its own.
+export function sharesLine(header: string, status: string, columns: number): boolean {
+  // The host exposes no terminal-width primitive. Reserve two cells for
+  // every non-ASCII code point, including ambiguous-width punctuation;
+  // overestimating wraps the status safely instead of clipping it.
+  if (/\p{Cc}/u.test(header + status)) return false
+  const width = (text: string) =>
+    [...text].reduce((total, char) => total + (char.charCodeAt(0) < 128 ? 1 : 2), 0)
+  return width(header) + 2 + width(status) <= columns
 }
 
-export function rowView(row: CommitmentRow): RowView {
-  const labels: string[] = []
-  if (row.overdue) labels.push('OVERDUE')
-  labels.push(row.status)
-  labels.push(row.dueAt ? dueLabel(row.dueAt) : 'no due date recorded')
+// A row's labels, deadline first. Its status shows where its section does not
+// already say it (an overdue row that is waiting), its filing where it is not
+// the project, and its owner only where one is recorded: the footer says when
+// any is not.
+export function rowView(row: CommitmentRow, implied: string, clock: Clock): RowView {
+  const labels = dueLabels(row.dueAt, clock, true)
+  if (row.status !== implied) labels.push(row.status)
   if (row.filing === 'unscoped') labels.push('unscoped (no project)')
   if (row.filing === 'unknown') labels.push('filing unknown')
-  labels.push(
-    row.ownership.value === 'unclear'
-      ? 'owner unclear (not recorded)'
-      : `owner ${row.ownership.value}`,
-  )
-  for (const g of row.github ?? []) labels.push(githubLabel(g))
+  if (row.ownership.value !== 'unclear') labels.push(`owner ${row.ownership.value}`)
+  for (const g of row.github ?? []) labels.push(githubRowLabel(g))
   return { memoryId: row.memoryId, title: row.topic, labels }
 }
+
+// Each section is told apart by its mark and its word, never by color. The
+// marks are narrow in every terminal: `!` is ASCII, and ◦ and ◒ are of
+// neutral East Asian width, where ○ and ◐ are ambiguous and take two cells in
+// a terminal set to draw ambiguous characters wide.
+const MARK = { overdue: '! OVERDUE', open: '◦ OPEN', waiting: '◒ WAITING' }
 
 // Open and waiting rows keep the server's order (its surfacing order); the
 // overdue ones are re-sorted, since the binary appends the overdue split's
 // rows after the commitments slice.
-function sections(rows: CommitmentRow[]): SectionView[] {
+function sections(rows: CommitmentRow[], clock: Clock): SectionView[] {
   const overdue = rows.filter((r) => r.overdue).sort(byDue)
   const open = rows.filter((r) => !r.overdue && r.status !== 'waiting')
   const waiting = rows.filter((r) => !r.overdue && r.status === 'waiting')
+  const section = (mark: string, list: CommitmentRow[], implied: string) => ({
+    title: `${mark} (${list.length})`,
+    rows: list.map((r) => rowView(r, implied, clock)),
+  })
   return [
-    { title: `Overdue (${overdue.length})`, rows: overdue.map(rowView) },
-    { title: `Open (${open.length})`, rows: open.map(rowView) },
-    { title: `Waiting (${waiting.length})`, rows: waiting.map(rowView) },
+    section(MARK.overdue, overdue, 'open'),
+    section(MARK.open, open, 'open'),
+    section(MARK.waiting, waiting, 'waiting'),
   ].filter((s) => s.rows.length > 0)
 }
 
@@ -214,16 +211,19 @@ function listNotes(envelope: Envelope): string[] {
   return notes
 }
 
-// now is when the view is drawn ($.clock.now()), which decides whether a
-// time it shows needs its date.
-export function panelView(s: PanelState, now: number): PanelView {
+// clock is when and in which zone the view is drawn ($.clock.now(), the
+// host's zone): it decides whether a time needs its date, and how far a
+// deadline is.
+export function panelView(s: PanelState, clock: Clock): PanelView {
   const rows = visibleRows(s)
   const envelope = rows ? s.record?.envelope : undefined
   const view: PanelView = {
-    header: envelope ? headerLines(envelope) : ['3ngram commitments'],
-    status: statusOf(s, now),
-    sections: rows ? sections(rows) : [],
+    header: envelope ? headerLine(envelope) : '3ngram commitments',
+    status: statusOf(s, clock),
+    hint: s.status === 'error' ? hintText(s.error) : null,
+    sections: rows ? sections(rows, clock) : [],
     notes: envelope ? listNotes(envelope) : [],
+    footer: envelope && rows ? footerLine(envelope, rows) : null,
     empty: null,
     canCancel: s.status === 'loading' || s.status === 'refreshing',
   }
@@ -233,28 +233,28 @@ export function panelView(s: PanelState, now: number): PanelView {
 
 // rowsFrom says how old the rows still on show are, while a refresh runs or
 // after one failed.
-function rowsFrom(s: PanelState, now: number): string {
-  return s.record ? ` Rows from ${time(s.record.fetchedAt, now)}.` : ''
+function rowsFrom(s: PanelState, clock: Clock): string {
+  return s.record ? ` Rows from ${stamp(s.record.fetchedAt, clock)}.` : ''
 }
 
-function statusOf(s: PanelState, now: number): { label: string; tone: Tone } {
+function statusOf(s: PanelState, clock: Clock): { label: string; tone: Tone } {
   switch (s.status) {
     case 'idle':
       return { label: 'Not loaded yet.', tone: 'normal' }
     case 'loading':
       return { label: 'Loading…', tone: 'busy' }
     case 'refreshing':
-      return { label: `Refreshing…${rowsFrom(s, now)}`, tone: 'busy' }
+      return { label: `Refreshing…${rowsFrom(s, clock)}`, tone: 'busy' }
     case 'checking':
     case 'verifying':
       return { label: 'Checking the account and selection…', tone: 'busy' }
     case 'ready': {
-      const at = s.record ? time(s.record.fetchedAt, now) : ''
+      const at = s.record ? stamp(s.record.fetchedAt, clock) : ''
       return { label: `Updated ${at}`.trim(), tone: 'normal' }
     }
     case 'stale':
       return {
-        label: `STALE since ${s.stale ? time(s.stale.since, now) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s, now)}`,
+        label: `STALE since ${s.stale ? stamp(s.stale.since, clock) : '?'}: ${failureText(s.stale?.reason ?? 'unknown')}${rowsFrom(s, clock)}`,
         tone: 'stale',
       }
     case 'error': {
@@ -269,15 +269,23 @@ function statusOf(s: PanelState, now: number): { label: string; tone: Tone } {
 
 // listNotice is what an open detail says about the list behind it: that the
 // list went stale, which would otherwise show only after Back.
-export function listNotice(s: PanelState, now: number): string | null {
-  return s.status === 'stale' ? statusOf(s, now).label : null
+export function listNotice(s: PanelState, clock: Clock): string | null {
+  return s.status === 'stale' ? statusOf(s, clock).label : null
 }
 
-// statusLine is the status-bar entry: counts only, never a topic.
+// statusLine is the status-bar entry: counts only, never a topic. Counts show
+// only while the rows do, so none read under another key or backend is shown
+// while the context is checked; that check, before every refresh that holds
+// rows, says so in its own word rather than reading as a load.
 export function statusLine(s: PanelState): string | undefined {
   const counts = visibleRows(s) ? s.record?.envelope.counts : undefined
   if (s.status === 'error') return '3ngram: unavailable'
-  if (!counts) return s.status === 'idle' ? undefined : '3ngram: loading'
+  if (!counts) {
+    if (s.status === 'idle') return undefined
+    return s.status === 'checking' || s.status === 'verifying'
+      ? '3ngram: checking'
+      : '3ngram: loading'
+  }
   const base = `3ngram: ${counts.openOrWaiting} open · ${counts.overdue} overdue`
   return s.status === 'stale' ? `${base} (stale)` : base
 }
@@ -285,6 +293,7 @@ export function statusLine(s: PanelState): string | undefined {
 export type DetailView = {
   title: string
   status: { label: string; tone: Tone }
+  hint: string | null
   labels: string[]
   content: string | null
   source: string[]
@@ -305,10 +314,13 @@ function boundedContent(content: string): string {
   return `${chars.slice(0, MAX_CONTENT).join('')}…\n\n[Showing the first ${MAX_CONTENT.toLocaleString('en-US')} of ${chars.length.toLocaleString('en-US')} characters.]`
 }
 
-export function detailView(d: DetailState): DetailView {
+// row is the list's row for the detail, which holds what the detail's answer
+// does not: its deadline and its owner.
+export function detailView(d: DetailState, clock: Clock, row?: CommitmentRow): DetailView {
   const base: DetailView = {
     title: 'Commitment',
     status: { label: 'Loading…', tone: 'busy' },
+    hint: null,
     labels: [],
     content: null,
     source: [],
@@ -322,6 +334,7 @@ export function detailView(d: DetailState): DetailView {
     return {
       ...base,
       status: { label: `ERROR: ${failureText(d.error?.kind ?? 'unknown')}`, tone: 'error' },
+      hint: hintText(d.error),
     }
   }
   const e = d.envelope
@@ -333,21 +346,23 @@ export function detailView(d: DetailState): DetailView {
   if (c) {
     view.title = c.topic
     view.content = boundedContent(c.content)
-    view.labels = [
+    view.labels = row ? dueLabels(row.dueAt, clock, true) : []
+    view.labels.push(
       c.commitmentStatus ?? c.status,
       c.filing === 'unscoped' ? 'unscoped (no project)' : `project ${c.project ?? ''}`,
-    ]
+    )
+    if (row && row.ownership.value !== 'unclear') view.labels.push(`owner ${row.ownership.value}`)
     if (!c.current) view.labels.push('no longer current')
   }
-  view.source = sourceLines(e)
-  view.history = historyLines(e)
-  view.evidence = evidenceLines(e)
+  view.source = sourceLines(e, clock)
+  view.history = historyLines(e, clock)
+  view.evidence = evidenceLines(e, clock)
   view.window = windowLines(e)
   view.notes = (e.partial ?? []).map(detailPartialNote)
   return view
 }
 
-function sourceLines(e: Envelope): string[] {
+function sourceLines(e: Envelope, clock: Clock): string[] {
   const src = e.source
   if (!src) return []
   // The creation event is read from the audit events: an unavailable events
@@ -360,17 +375,19 @@ function sourceLines(e: Envelope): string[] {
       : null
   const created =
     src.createdBy && src.createdAt
-      ? `Created by ${src.createdBy} on ${day(src.createdAt)}.`
+      ? `Created by ${src.createdBy} on ${dayOf(src.createdAt, clock)}.`
       : unread === null
         ? 'Creation is outside the event window.'
         : `Creation is unknown: ${unread} could not be read.`
   return [created, 'Source session: not exposed by the 3ngram read API.']
 }
 
-function historyLines(e: Envelope): string[] {
+function historyLines(e: Envelope, clock: Clock): string[] {
   const h = e.history
   if (!h) return ['History unavailable.']
-  const lines = h.events.map((ev) => `${day(ev.createdAt)} · ${ev.eventKind} · ${ev.actorKind}`)
+  const lines = h.events.map(
+    (ev) => `${dayOf(ev.createdAt, clock)} · ${ev.eventKind} · ${ev.actorKind}`,
+  )
   for (const rel of h.relationships) {
     lines.push(`Linked ${rel.memory.memoryType} "${rel.memory.topic}" (${rel.edge.edgeType})`)
   }
@@ -385,7 +402,7 @@ function historyLines(e: Envelope): string[] {
   return lines
 }
 
-function evidenceLines(e: Envelope): string[] {
+function evidenceLines(e: Envelope, clock: Clock): string[] {
   const ev = e.evidence
   if (!ev) return []
   const lines: string[] = []
@@ -405,7 +422,7 @@ function evidenceLines(e: Envelope): string[] {
     }
   }
   for (const g of ev.github ?? [])
-    lines.push(`Related on GitHub: ${githubLabel(g)}${g.title ? `: ${g.title}` : ''}`)
+    lines.push(`Related on GitHub: ${githubLabel(g, clock)}${g.title ? `: ${g.title}` : ''}`)
   if (ev.hiddenOutsideSelector > 0)
     lines.push(
       `${ev.hiddenOutsideSelector} proposal(s) involve memories outside this selection and are hidden.`,

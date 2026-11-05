@@ -147,7 +147,11 @@ async function refreshOnce(
           at,
         })
         await dispatch($, { type: 'context_verified', gen, fingerprint: now, at })
-        if (rerun) {
+        // A stop (Cancel, /clear, a reload, the last detach) during either
+        // dispatch dropped the queue and took the token; queueing the re-run
+        // now would undo that, so it is neither queued nor recorded. Checked
+        // after both dispatches, the last awaits before it.
+        if (rerun && runtime.active === token) {
           runtime.requeuedFor = now
           runtime.queued = true
         }
@@ -204,6 +208,9 @@ export async function openDetail(
   options: PluginOptions,
   memoryId: string,
 ): Promise<void> {
+  // Taken before the first await: a stop from here on means the list read a
+  // changed context asks for below is not started (halts in runtime.ts).
+  const halts = runtime.halts
   const s = await dispatch($, { type: 'detail_requested', memoryId })
   const detail = s.detail
   if (!detail || detail.memoryId !== memoryId) return
@@ -257,13 +264,19 @@ export async function openDetail(
       }
       if (now !== parsed.envelope.context.fingerprint) {
         await dispatch($, { type: 'detail_failed', seq, failure: 'context_changed' })
-        await refresh($, options)
+        // A stop (Cancel, /clear, a reload, the last detach) during the
+        // dispatch would otherwise be followed by this read. Checked after
+        // it, the last await before refresh takes its token; by halts, not
+        // stops, so a Back still reads the list again.
+        if (runtime.halts === halts) await refresh($, options)
         return
       }
     }
     const after = await dispatch($, { type: 'detail_envelope', seq, envelope: parsed.envelope })
-    // The binary refused because the context moved on: read the list again.
-    if (after.detail?.error?.kind === 'context_changed') await refresh($, options)
+    // The binary refused because the context moved on: read the list again,
+    // unless a stop landed during the dispatch (as above).
+    if (after.detail?.error?.kind === 'context_changed' && runtime.halts === halts)
+      await refresh($, options)
   } catch {
     await dispatch($, { type: 'detail_failed', seq, failure: 'crash' })
   }
@@ -286,6 +299,7 @@ export async function closeDetail($: EngineInterface): Promise<void> {
 // and they are cleared before any read, not when the next read lands.
 export async function startup($: EngineInterface, options: PluginOptions): Promise<void> {
   const epoch = runtime.startEpoch
+  const halts = runtime.halts
   let settled = false
   try {
     settled = await settleHeld($, options)
@@ -295,6 +309,13 @@ export async function startup($: EngineInterface, options: PluginOptions): Promi
     settled = await reportUnexpected($, options)
   }
   if (settled) await confirmSelection($, epoch)
+  // Until refresh takes its token, startup holds none, so a stopReads cannot
+  // reach it. A stop during the awaits above (a Cancel, /clear, a reload, or
+  // the last client detaching, which disarms through stopReads) means the
+  // read is not started: by halts, taken on entry, so a Cancel that leaves
+  // the interval armed counts too. Checked here, after startup's last await,
+  // because refresh takes its token before its own first one.
+  if (runtime.halts !== halts) return
   // A record that is not settled yet is the refresh's to confirm: its probe
   // runs before the read, and refresh_started (or a reported failure) opens
   // the gate.

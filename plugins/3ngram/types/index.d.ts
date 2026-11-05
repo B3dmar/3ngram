@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// The 3ngram plugin's $.state contract: the panel's state, and the session's
-// 3ngram activity.
+// The 3ngram plugin's $.state contract: the panel, session activity and
+// whether the pane was opened unasked this session.
 //
 // A contract is self-contained (no imports), so it names each value's shape
 // only as far as other plugins may rely on it. The panel's: a generation
@@ -28,6 +28,8 @@ declare module 'claude-code' {
     '3ngram': {
       panel: ThreengramPanelState
       activity: { shape: string; value: ThreengramActivityState }
+      // Persists across reloads, so auto_open opens only once per session.
+      autoOpened: boolean
     }
   }
 }

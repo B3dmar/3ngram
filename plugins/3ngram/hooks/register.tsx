@@ -3,10 +3,11 @@
 import type { Register } from 'claude-code'
 import { activityEpoch, resetActivity, stopActivity, watchCall } from './activity.ts'
 import { initialState, unconfirmed } from './lib/state.ts'
+import { hostZone } from './lib/time.ts'
 import { statusLine } from './lib/view.ts'
 import { drawPane } from './pane.tsx'
 import { cancel, closeDetail, openDetail, refresh } from './reads.ts'
-import { dispatch, fire, readPanel, runtime, stopReads } from './runtime.ts'
+import { claimAutoOpen, dispatch, fire, readPanel, runtime, stopReads } from './runtime.ts'
 import { armRefresh, disarmRefresh, redrawAtMidnight } from './timers.ts'
 
 // The 3ngram commitment panel: a read-only pane over `3ngram-hook
@@ -59,7 +60,9 @@ export const register: Register = (on, options) => {
     // isInteractive, decides: a reload after a client attached to such a
     // session starts with that client's surface and keeps the reads.
     if (e.surface !== null) armRefresh($, options)
-    if (options.auto_open === true && e.isInteractive) {
+    // A reload (an option changed in /config, say) runs session.start again:
+    // the pane opens unasked once a session, not at every reload.
+    if (options.auto_open === true && e.isInteractive && (await claimAutoOpen($))) {
       fire($, $.ui.open({ id: PANE, title: TITLE }))
     }
     return next(e)
@@ -132,16 +135,18 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
-    // Decides only whether a time shown needs its date: every refresh redraws,
-    // and so does the next UTC midnight (redrawAtMidnight). Read first: the
-    // gate below must follow the render's last await, or a session.start
-    // landing in it would draw what it closed the gate on.
+    // Decides whether a time shown needs its date and how far a deadline is,
+    // in calendar days of the host's zone: every refresh redraws, and so does
+    // the next midnight there (redrawAtMidnight). Read first: the gate below
+    // must follow the render's last await, or a session.start landing in it
+    // would draw what it closed the gate on.
     const now = await $.clock.now()
     const held = await readPanel($)
     const s = runtime.selectionConfirmed ? held : unconfirmed(held)
-    redrawAtMidnight($, now)
+    const clock = { now, zone: hostZone() }
+    redrawAtMidnight($, clock)
     // The drawing is synchronous (pane.tsx): nothing suspends past the gate.
-    return drawPane(ui, s, now, {
+    return drawPane(ui, s, clock, e.props.bodyColumns, {
       back: () => fire($, closeDetail($)),
       refresh: () => fire($, refresh($, options)),
       cancel: () => fire($, cancel($, options)),
