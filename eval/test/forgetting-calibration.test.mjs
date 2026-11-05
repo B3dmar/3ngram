@@ -5,12 +5,19 @@
 // tell, and thresholds selected on it score another fixture frozen. Fake answers
 // only: no network, no database, nothing written outside a temp dir.
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { cliOptions, formatReport, loadGolden, runForgettingEval } from '../src/forgetting-eval.mjs'
 import {
+  cliOptions,
+  DEFAULT_GOLDEN,
+  formatReport,
+  loadGolden,
+  runForgettingEval,
+} from '../src/forgetting-eval.mjs'
+import {
+  barEvidence,
   CALIBRATION_FAKE_ANSWERS,
   CALIBRATION_GOLDEN,
   CALIBRATION_LABELS_SHA256,
@@ -192,12 +199,90 @@ test('thresholds selected on the calibration dev split score another fixture fro
   assert.deepEqual(frozen.barEvidence.archive, frozen.splits.all.precision.archive)
   assert.equal(frozen.barEvidence.recurringEpisodicCollapses, 0)
   assert.equal(frozen.barEvidence.bar.minArchiveProposals, 40)
+  // 3/4 archives is short on precision and proposals; zero collapses holds.
+  assert.deepEqual(frozen.barEvidence.met, {
+    archive: false,
+    recurringEpisodicCollapses: true,
+    overall: false,
+  })
   assert.equal(calibration.barEvidence, undefined, 'no bar evidence from the calibration fixture')
   const report = formatReport(frozen)
   assert.match(report, /frozen thresholds/)
   assert.match(report, /^pass \(built-in thresholds\):/m)
   assert.match(report, /bar evidence, all items whatever their split/)
+  assert.match(report, /^ {2}archive 0\.750 \(3\/4\), needs >= 0\.95 over >= 40: not met$/m)
+  assert.match(report, /^ {2}episodic collapses 0, needs 0: met$/m)
+  assert.equal(frozen.barEvidence.synthetic, true, 'the committed mirror is synthetic')
+  assert.match(
+    report,
+    /^ {2}bar overall \(report-only, enables nothing\): not met \(committed synthetic fixture: never counts\)$/m,
+  )
   assert.doesNotMatch(report, /threshold sweep/)
+
+  // Identity is what the bar reads of the labels, not the path, the bytes or the splits: a
+  // copy, a symlink, a re-serialised or a re-split file is still the committed mirror. A file
+  // whose expected verdict differs for one item stands in for the private set.
+  const frozenOn = (goldenPath, name) =>
+    runForgettingEval({ goldenPath, outPath: join(dir, name), thresholdsPath: selectPath })
+  const mirror = JSON.parse(readFileSync(DEFAULT_GOLDEN, 'utf8'))
+  const copy = join(dir, 'copy.json')
+  copyFileSync(DEFAULT_GOLDEN, copy)
+  const link = join(dir, 'link.json')
+  symlinkSync(DEFAULT_GOLDEN, link)
+  const minified = join(dir, 'minified.json')
+  writeFileSync(minified, JSON.stringify(mirror))
+  const [firstId] = Object.keys(mirror.labels)
+  const first = mirror.labels[firstId]
+  const withLabel = (label) =>
+    JSON.stringify({ ...mirror, labels: { ...mirror.labels, [firstId]: label } })
+  const resplit = join(dir, 'resplit.json')
+  writeFileSync(resplit, withLabel({ ...first, split: first.split === 'dev' ? 'heldout' : 'dev' }))
+  for (const [path, name] of [
+    [copy, 'copy-out.json'],
+    [link, 'link-out.json'],
+    [minified, 'minified-out.json'],
+    [resplit, 'resplit-out.json'],
+  ]) {
+    assert.equal((await frozenOn(path, name)).barEvidence.synthetic, true, name)
+  }
+  // A keep becomes an archive, or anything else becomes a keep; no relatedMemoryId is needed.
+  const flipped = first.expected === 'keep' ? 'archive' : 'keep'
+  const other = join(dir, 'other.json')
+  writeFileSync(other, withLabel({ ...first, expected: flipped, relatedMemoryId: undefined }))
+  const personal = await frozenOn(other, 'other-out.json')
+  assert.equal(personal.barEvidence.synthetic, false)
+  assert.match(
+    formatReport(personal),
+    /^ {2}bar overall \(report-only, enables nothing\): not met$/m,
+  )
+})
+
+test('the bar verdict reads the unrounded ratio, not the rounded precision', () => {
+  const evidence = (proposed, correct, collapses) =>
+    barEvidence({
+      precision: {
+        archive: {
+          proposed,
+          correct,
+          precision: proposed === 0 ? null : +(correct / proposed).toFixed(4),
+        },
+      },
+      falseCollapses: { count: collapses },
+    }).met
+  assert.deepEqual(evidence(40, 38, 0), {
+    archive: true,
+    recurringEpisodicCollapses: true,
+    overall: true,
+  })
+  // 1899/1999 = 0.94997 rounds to 0.95 but sits below the bar.
+  assert.equal(evidence(1999, 1899, 0).archive, false)
+  assert.equal(evidence(39, 39, 0).archive, false, 'too few proposals')
+  assert.equal(evidence(0, 0, 0).archive, false, 'no proposals')
+  assert.deepEqual(evidence(40, 40, 1), {
+    archive: true,
+    recurringEpisodicCollapses: false,
+    overall: false,
+  })
 })
 
 test('the protocol refuses a selection off the fixture and foreign thresholds', async () => {
