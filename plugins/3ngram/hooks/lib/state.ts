@@ -2,7 +2,7 @@
 
 import type { CommitmentRow, Envelope } from './contract.ts'
 
-// The panel's state machine. It is pure: register.tsx runs the processes and
+// The panel's state machine. It is pure: reads.ts runs the processes and
 // feeds their outcomes in as events. The invariants it holds:
 //
 // - Rows exist only inside a record, next to the envelope (and so the context
@@ -327,7 +327,8 @@ function onDetailEnvelope(s: PanelState, seq: number, envelope: Envelope): Panel
     }
   }
   if (!envelope.ok) {
-    const error: PanelError = { kind: envelope.error?.kind ?? 'unknown' }
+    const kind = envelope.error?.kind ?? 'unknown'
+    const error: PanelError = envelope.error?.hint ? { kind, hint: envelope.error.hint } : { kind }
     return { ...s, detail: { ...detail, status: 'error', envelope: null, error } }
   }
   // Only a list read that landed after the open can be newer than the answer:

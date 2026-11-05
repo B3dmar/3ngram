@@ -114,7 +114,7 @@ node eval/src/forgetting-eval.mjs --golden eval/fixtures/forgetting-calibration.
   --live --select-thresholds eval/private/thresholds.json
 # 2. Score the private set with those thresholds frozen (no sweep is reported).
 node eval/src/forgetting-eval.mjs --golden eval/private/<golden>.json \
-  --live --thresholds eval/private/thresholds.json
+  --live --thresholds eval/private/thresholds.json --personal-evidence
 ```
 
 The selection rule (`SELECTION_RULE`) takes, per action, the lowest swept threshold whose dev
@@ -136,13 +136,14 @@ error, never a silent fallback.
 
 A frozen run reports the bar's inputs over every item together, whatever its split label, beside
 the per-split breakdown. These are archive precision with its proposal count, and recurring-episodic
-collapses. Each condition, and the bar overall, prints `met` or `not met`, judged on the unrounded
-ratio of the counts rather than the rounded precision. The verdict is report-only and enables
-nothing. The inputs are personal evidence only when the file is the private set. A golden file whose
-labels match a committed forgetting golden file in this folder on what the bar reads (id, slice,
-expected verdict and related id, splits ignored) is marked as a committed synthetic fixture that
-never counts, however it is reached, reformatted or re-split. Those files are listed explicitly in
-`COMMITTED_GOLDEN_FIXTURES`, and a test fails when a new `forgetting-*.json` golden file is not on
-the list. The `pass` line still
+collapses. Each condition prints `met` or `not met`, judged on the unrounded ratio of the counts
+rather than the rounded precision. The overall verdict requires `--personal-evidence`: the caller
+asserts that this is personal corpus evidence, never synthetic data or an edited synthetic copy.
+This flag requires frozen scoring on a non-calibration set. It is an assertion, not origin
+verification, and does not modify the golden file or its pinned checksums. Without it, the CLI
+prints `not evaluated` and the version 2 JSON report records `barEvidence.met.overall: null` and
+`barEvidence.provenance: "unasserted"`. With it, provenance is `"personal-asserted"` and the overall
+verdict is a boolean. These fields replace version 1's inferred `synthetic` field. The verdict
+remains report-only and enables nothing. The `pass` line still
 uses the pass's built-in thresholds, and says so. `verdicts`, every split and the bar evidence use
 the frozen ones.

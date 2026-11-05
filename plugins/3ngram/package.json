@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/claude-code-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Claude Code plugin for 3ngram: the read-only commitment panel and the 3ngram hooks.",
   "license": "Apache-2.0",
@@ -10,6 +10,7 @@
     "test": "node --test \"spec/**/*.spec.ts\""
   },
   "devDependencies": {
+    "@3ngram/schema": "workspace:*",
     "@types/node": "25.9.1",
     "typescript": "6.0.3"
   }

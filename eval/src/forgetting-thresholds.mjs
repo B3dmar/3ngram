@@ -150,9 +150,10 @@ export function loadFrozenThresholds(path) {
 /**
  * The bar's inputs over every labelled item, whatever its split label, and whether each
  * condition holds. Precision is compared as the unrounded ratio of the counts, never the
- * 4-decimal figure, so 1899/1999 cannot pass as 0.95. Report-only: `met` enables nothing.
+ * 4-decimal figure, so 1899/1999 cannot pass as 0.95. Only an explicit caller assertion of
+ * personal evidence produces an overall verdict. Report-only: `met` enables nothing.
  */
-export function barEvidence(all) {
+export function barEvidence(all, personalEvidence = false) {
   const archive = all.precision.archive
   const collapses = all.falseCollapses.count
   const archiveMet =
@@ -160,13 +161,14 @@ export function barEvidence(all) {
     archive.correct / archive.proposed >= ENABLEMENT_BAR.archivePrecision
   const collapsesMet = collapses <= ENABLEMENT_BAR.recurringEpisodicCollapses
   return {
+    provenance: personalEvidence === true ? 'personal-asserted' : 'unasserted',
     archive,
     recurringEpisodicCollapses: collapses,
     bar: ENABLEMENT_BAR,
     met: {
       archive: archiveMet,
       recurringEpisodicCollapses: collapsesMet,
-      overall: archiveMet && collapsesMet,
+      overall: personalEvidence === true ? archiveMet && collapsesMet : null,
     },
   }
 }
