@@ -19,32 +19,42 @@
 # "Merge pull request #N from ...": PRs merge with merge commits only
 # (AGENTS.md, Workflow). Keywords follow GitHub's syntax: close, closes,
 # closed, fix, fixes, fixed, resolve, resolves or resolved, any case, an
-# optional colon, whitespace, then #N, OWNER/REPO#N or an issue URL. Each
+# optional colon, spaces or tabs, then #N, OWNER/REPO#N or an issue URL. Each
 # reference needs its own keyword, so "Closes #1, #2" names #1 only, as on
-# GitHub. A reference to another repository is reported on stderr and left
-# alone.
+# GitHub. HTML comments (the PR template's example), fenced code and code
+# spans are dropped first. A reference to another repository is reported on
+# stderr and left alone. The parser leans towards missing a reference: a
+# missed one stays open, as it would without this script, while a wrong one
+# closes an issue nobody meant to close.
 #
 # Exit 0: the lines were printed (or appended), possibly none. Exit 2: usage,
-# a failed API call, or a PR that is not staging -> main.
+# a failed API call, a PR that is not staging -> main, or (--apply) a body
+# that changed while the script ran.
 set -euo pipefail
 
 # The closing references in one text, as {repo, number} with repo lowercased
 # and null for a bare #N. Shared by the run and the self-test.
 read -r -d '' JQ_REFS <<'JQ' || true
+def prose:
+  gsub("<!--[\\s\\S]*?-->"; " ") | gsub("```[\\s\\S]*?```"; " ") | gsub("~~~[\\s\\S]*?~~~"; " ")
+  | gsub("`[^`\\n]*`"; " ");
 def closing_refs:
-  [ match("(?i)(?:^|[^\\w-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:https://github\\.com/(?<url>[\\w.-]+/[\\w.-]+)/issues/|(?<repo>[\\w.-]+/[\\w.-]+)#|#)(?<n>[0-9]+)(?![\\w#/-])"; "g")
+  [ prose | match("(?i)(?:^|[^\\w-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \\t]+(?:https://github\\.com/(?<url>[\\w.-]+/[\\w.-]+)/issues/|(?<repo>[\\w.-]+/[\\w.-]+)#|#)(?<n>[0-9]+)(?![\\w#/-])"; "g")
     | (.captures | map({key: .name, value: .string}) | from_entries) as $c
     | {repo: (($c.url // $c.repo) | if . == null then null else ascii_downcase end),
        number: ($c.n | tonumber)} ];
 JQ
 
-# Partition references against $repo (OWNER/NAME): same-repo numbers, and the
-# other repositories' references as "OWNER/NAME#N" strings.
+# Partition references against $repo (OWNER/NAME): same-repo numbers, the
+# other repositories' references as "OWNER/NAME#N" strings, and same-repo
+# numbers too large for GraphQL's Int (one would fail the whole states call).
 read -r -d '' JQ_SPLIT <<'JQ' || true
 def split_refs($repo):
   ($repo | ascii_downcase) as $r
-  | { local: [ .[] | select(.repo == null or .repo == $r) | .number ] | unique,
-      foreign: [ .[] | select(.repo != null and .repo != $r) | "\(.repo)#\(.number)" ] | unique };
+  | [ .[] | select(.repo == null or .repo == $r) | .number ] as $mine
+  | { local: [ $mine[] | select(. <= 2147483647) ] | unique,
+      foreign: [ .[] | select(.repo != null and .repo != $r) | "\(.repo)#\(.number)" ] | unique,
+      invalid: [ $mine[] | select(. > 2147483647) | "#\(.)" ] | unique };
 JQ
 
 # Carried PR numbers from commit headlines.
@@ -88,11 +98,14 @@ self_test() {
   check 'one keyword per reference' "$got" '[1]'
   got=$(jq -cn --arg t 'encloses #5, prefix-fixes #6, Closes#7, closes #8a, closes #9/x' "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'word boundaries and spacing' "$got" '[]'
-  got=$(jq -cn --arg t '(closes #10) and `fix #11`' "$JQ_REFS"' $t | closing_refs | map(.number)')
+  got=$(jq -cn --arg t '(closes #10), "fixes #11".' "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'punctuation around the reference' "$got" '[10,11]'
-  got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718' \
+  got=$(jq -cn --arg t "$(printf '<!-- e.g. Closes #123 -->\n`fix #20`\n```\nCloses #21\n```\n~~~\nfixes #22\n~~~\nFixed\n#23\nCloses #24')" \
+    "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'comments, code and line breaks' "$got" '[24]'
+  got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718, closes #99999999999' \
     "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs("B3dmar/3ngram")')
-  check 'same repository and others' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"]}'
+  check 'same repository, others, too large' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"],"invalid":["#99999999999"]}'
   got=$(jq -cn "$JQ_CARRIED"' ["Merge pull request #429 from B3dmar/fix/x", "fix(db): bind user_id", "Merge branch '"'"'main'"'"' into staging", "Merge pull request #433 from B3dmar/docs/y", "Merge pull request #429 from B3dmar/fix/x"] | carried')
   check 'carried PRs from merge headlines' "$got" '[429,433]'
   got=$(jq -cn "$JQ_MISSING"' [3,400,427,428,430] | missing({"3":{"type":"Issue","state":"CLOSED"},"400":{"type":"Issue","state":"OPEN"},"427":{"type":"Issue","state":"OPEN"},"428":{"type":"PullRequest","state":"MERGED"}}; [400])')
@@ -168,7 +181,7 @@ bodies=$(graphql -f owner="$owner" -f name="$name" -f query="
   { echo "could not read the carried PRs' bodies" >&2; exit 2; }
 refs=$(jq -c --arg repo "$owner/$name" "$JQ_REFS $JQ_SPLIT"'
   [.data.repository[] | .body // "" | closing_refs[]] | split_refs($repo)' <<<"$bodies")
-jq -r '.foreign[] | "skipped, another repository: \(.)"' <<<"$refs" >&2
+jq -r '(.foreign[] | "skipped, another repository: \(.)"), (.invalid[] | "skipped, not an issue number: \(.)")' <<<"$refs" >&2
 candidates=$(jq -r '.local[]' <<<"$refs")
 if [[ -z "$candidates" ]]; then
   echo "no carried PR names an issue in $owner/$name" >&2
@@ -180,11 +193,18 @@ for n in $candidates; do
   fields+=" i$n: issueOrPullRequest(number: $n) { __typename ... on Issue { state } ... on PullRequest { state } }"
 done
 # gh exits 1 when any alias is NOT_FOUND (a typo in an old body) but still
-# prints the response; the states filter decides whether it is usable.
+# prints the response; the states filter decides whether it is usable. An
+# empty response (network, auth) yields no states and fails the same way.
+errfile=$(mktemp)
+trap 'rm -f "$errfile"' EXIT
 response=$(graphql -f owner="$owner" -f name="$name" -f query="
-  query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $fields } }" 2>/dev/null) || true
-states=$(jq -c "$JQ_STATES"' states' <<<"$response" 2>/dev/null) ||
-  { echo "could not read the named issues" >&2; exit 2; }
+  query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $fields } }" 2>"$errfile") || true
+states=$(jq -c "$JQ_STATES"' states' <<<"$response" 2>/dev/null) || states=""
+if [[ -z "$states" ]]; then
+  cat "$errfile" >&2
+  echo "could not read the named issues" >&2
+  exit 2
+fi
 jq -r "$JQ_STATES"' not_found[] | "skipped, no such issue or PR: \(.)"' <<<"$response" >&2
 jq -r --argjson states "$states" '"named by carried PRs: " + ([.local[] | tostring as $n
   | "#\($n) (\(($states[$n].type // "missing") | ascii_downcase) \(($states[$n].state // "") | ascii_downcase))"] | join(" "))' \
@@ -199,6 +219,17 @@ if [[ -z "$lines" ]]; then
 fi
 echo "$lines"
 if [[ $apply -eq 1 ]]; then
+  # The body is written back whole, so an edit made since it was read would be
+  # lost: re-read it first and stop if it changed.
+  current=$(graphql -F n="$promo" -f owner="$owner" -f name="$name" -f query='
+    query($owner: String!, $name: String!, $n: Int!) {
+      repository(owner: $owner, name: $name) { pullRequest(number: $n) { body } } }' \
+    --jq '.data.repository.pullRequest.body // ""') ||
+    { echo "could not re-read the body of #$promo" >&2; exit 2; }
+  if [[ "$current" != "$promo_body" ]]; then
+    echo "the body of #$promo changed while this ran; nothing written, run it again" >&2
+    exit 2
+  fi
   printf '%s\n\n%s\n' "$promo_body" "$lines" | gh pr edit "$promo" --body-file - >/dev/null ||
     { echo "could not update the body of #$promo" >&2; exit 2; }
   echo "appended to #$promo" >&2
