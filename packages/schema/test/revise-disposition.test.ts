@@ -101,6 +101,20 @@ describe('archive event payload (#217)', () => {
     ).toEqual({ disposition: 'archive', sessionRunId: id(1) })
     expect(archiveEventPayloadSchema.safeParse({}).success).toBe(false)
     expect(
+      archiveEventPayloadSchema.safeParse({ disposition: 'archive', proposalKind: 'retention' })
+        .success,
+    ).toBe(false)
+    expect(
+      archiveEventPayloadSchema.safeParse({ disposition: 'archive', proposalId: id(1) }).success,
+    ).toBe(false)
+    expect(
+      archiveEventPayloadSchema.parse({
+        disposition: 'archive',
+        proposalKind: 'retention',
+        proposalId: id(1),
+      }),
+    ).toMatchObject({ proposalKind: 'retention', proposalId: id(1) })
+    expect(
       archiveEventPayloadSchema.safeParse({ disposition: 'archive', note: 'why' }).success,
     ).toBe(false)
     expect(archiveEventPayloadSchema.safeParse({ disposition: 'move' }).success).toBe(false)

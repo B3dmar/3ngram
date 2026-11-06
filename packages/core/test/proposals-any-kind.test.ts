@@ -219,7 +219,10 @@ describe('listAllProposals', () => {
     const decided = await acceptProposalAnyKind(USER, ID, 'user_mcp')
 
     expect(decideResolutionProposal).toHaveBeenCalledWith('tx', USER, ID, 'applied')
-    expect(resolveCommitmentByMemoryId).toHaveBeenCalledWith(USER, memoryId, 'user_mcp')
+    expect(resolveCommitmentByMemoryId).toHaveBeenCalledWith(USER, memoryId, 'user_mcp', {
+      proposalKind: 'resolution',
+      proposalId: ID,
+    })
     // Claimed BEFORE the transition, so a racing reject loses cleanly.
     expect(decideResolutionProposal.mock.invocationCallOrder[0]).toBeLessThan(
       resolveCommitmentByMemoryId.mock.invocationCallOrder[0] ?? 0,

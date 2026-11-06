@@ -12,6 +12,7 @@
 import { sql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { withTenant } from '../../src/client.js'
+import { readUserDataExport } from '../../src/data-export.js'
 import {
   type FactProposalWrite,
   insertFactProposals,
@@ -154,11 +155,14 @@ describe('applyFactProposal', () => {
     expect(proposal.decidedAt).not.toBeNull()
 
     const facts = await ownerPool.query(
-      'SELECT id, user_id, memory_id, subject, predicate, value, confidence, valid_to FROM facts WHERE user_id = $1',
+      'SELECT id, user_id, memory_id, subject, predicate, value, confidence, valid_to, source_fact_proposal_id FROM facts WHERE user_id = $1',
       [uid],
     )
     expect(facts.rowCount).toBe(1)
     expect(facts.rows[0].id).toBe(factId)
+    expect(facts.rows[0].source_fact_proposal_id).toBe(open?.id)
+    const exported = await withTenant(uid, (tx) => readUserDataExport(tx, uid))
+    expect(exported?.facts.find((fact) => fact.id === factId)?.sourceFactProposalId).toBe(open?.id)
     expect(facts.rows[0].memory_id).toBe(memoryId)
     expect(facts.rows[0].value).toBe('98')
     expect(facts.rows[0].confidence).toBeCloseTo(0.75)

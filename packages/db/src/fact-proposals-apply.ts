@@ -102,6 +102,7 @@ export async function applyFactProposal(
 
   const { id: factId } = await insertFact(tx, {
     userId,
+    sourceFactProposalId: proposalId,
     memoryId: proposal.memoryId,
     subject: proposal.subject,
     predicate: proposal.predicate,

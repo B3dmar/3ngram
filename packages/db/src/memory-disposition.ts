@@ -44,6 +44,7 @@
 import type {
   ActorKind,
   ArchiveEventPayload,
+  ProposalProvenancePayload,
   ReaffirmEventPayload,
   ReviseDispositionRejection,
 } from '@3ngram/schema'
@@ -70,6 +71,7 @@ export interface ArchiveWrite {
   userId: string
   memoryId: string
   actorKind: ActorKind
+  sourceProposal?: ProposalProvenancePayload | undefined
   sessionRunId?: string | null | undefined
   now?: Date | undefined
   policy: ArchivePolicy
@@ -165,6 +167,7 @@ export async function archiveMemoryIn(tx: TenantTx, input: ArchiveWrite): Promis
     payload: {
       ...(sessionPayload(runId) ?? {}),
       disposition: 'archive',
+      ...input.sourceProposal,
     } satisfies ArchiveEventPayload,
   })
   return { memoryId, outcome: 'archived' }

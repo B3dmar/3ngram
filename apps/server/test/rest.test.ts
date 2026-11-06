@@ -2383,6 +2383,7 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
       {
         id: COMMIT_ID,
         memoryId: NEW_ID,
+        sourceFactProposalId: NEW_ID,
         subject: 's',
         predicate: 'p',
         value: 'v',
@@ -2405,6 +2406,8 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     edges: [
       {
         id: NEW_ID,
+        sourceConsolidationProposalId: COMMIT_ID,
+        sourceRetentionProposalId: null,
         fromId: NEW_ID,
         toId: COMMIT_ID,
         edgeType: 'supersedes',
@@ -2598,6 +2601,11 @@ describe('GET /api/v1/export (GDPR portability, spec 015)', () => {
     })
     expect(body.memories[0]?.content).toBe('export content')
     expect(body.facts[0]?.value).toBe('v')
+    expect(body.facts[0]).toMatchObject({ sourceFactProposalId: NEW_ID })
+    expect(body.edges[0]).toMatchObject({
+      sourceConsolidationProposalId: COMMIT_ID,
+      sourceRetentionProposalId: null,
+    })
     // The OTHER tenant PII + the typed memory graph are present (completeness).
     expect(body.edges[0]?.edgeType).toBe('supersedes')
     expect(body.memoryEvents[0]?.payload).toEqual({ note: 'imported' })

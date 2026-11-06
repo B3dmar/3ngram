@@ -990,6 +990,7 @@ export function restRouter(options: RestRouterOptions): Router {
         })),
         facts: data.facts.map((fact) => ({
           id: fact.id,
+          sourceFactProposalId: fact.sourceFactProposalId,
           memoryId: fact.memoryId,
           subject: fact.subject,
           predicate: fact.predicate,
@@ -1021,6 +1022,8 @@ export function restRouter(options: RestRouterOptions): Router {
         })),
         edges: data.edges.map((edge) => ({
           id: edge.id,
+          sourceConsolidationProposalId: edge.sourceConsolidationProposalId,
+          sourceRetentionProposalId: edge.sourceRetentionProposalId,
           fromId: edge.fromId,
           toId: edge.toId,
           edgeType: edge.edgeType,
