@@ -1,0 +1,103 @@
+---
+title: "Provenance"
+description: "Design for tracing why a memory surfaced: a bounded, tenant-scoped chain of where each memory came from, returned as data with no server-side synthesis."
+icon: "route"
+---
+
+**Status: design, not built.** No provenance include, no new tool, no proposal links and no eval slice exist yet. Tracked as [issue #408](https://github.com/B3dmar/3ngram/issues/408). Sebastian agreed on 2026-11-03 that the idea is worth pursuing, as the issue records. Every option below stays open until the owner decides (see the last section).
+
+## Job
+
+An agent asked "why did you suggest that?" can trace the answer back to the memories that informed it, and from each memory to where it came from. The server returns that chain as data: ids, kinds, actors and times. It never writes the explanation or a summary of the chain. Synthesis stays with the client, per the July 2026 positioning decision the issue cites.
+
+The agent already holds the first link: the ids of the memories it used, from `search`, `briefing` or `handoff`. This page designs the second: given a memory id, what made it.
+
+## What exists today
+
+Most of the chain is already stored, and REST can read most of it. MCP clients can follow one link of it.
+
+| Link | Stored | Read today |
+|---|---|---|
+| Originating run | `{ sessionRunId }` on the payload of each audit event a native write emits, when the write was attributed to a run ([session continuity](/concepts/session-continuity), layer 2) | REST `GET /api/v1/memories/{id}/history`: `createdBySessionRunId`, and `sessionRunId` per audit event (layer 3) |
+| Actor | `actor_kind` on every `memory_events` row, `created_by` on every `memory_edges` row; the run's `agent` on its `agent_sessions` row | history returns `actorKind` and `createdBy`; `agent` only through `GET /api/v1/agent-sessions/{sessionRunId}`; the history read does not project harness labels |
+| Supersession | `supersedes` and `updates` edges, `successor → predecessor` ([memory model](/concepts/memory-model)) | history `lineage` (recursive walk, at most 25 nodes and 50 edges) and `directRelationships`; MCP `get_memories` `supersededBy`, one hop |
+| Audit events | `create`, `revise`, `supersede`, `resolve`, `unresolve`, `archive`, `import`, `embed_failed`, `reaffirm` (`eventKindSchema`) | history `auditEvents`: the newest 50, payload values redacted except `sessionRunId` |
+| Accepted proposals | `consolidation_proposals`, `fact_proposals`, `resolution_proposals`, `retention_proposals`, each keyed to memories by composite FKs ([data model](/concepts/data-model)) | `review_proposals` lists them by status, never by memory ([MCP design](/concepts/mcp-design), item 9) |
+
+The issue's list of what already exists needs three corrections:
+
+1. `review_proposals` has four kinds, not three. Retention proposals from the [forgetting pass](/concepts/forgetting-pass) also archive and supersede memories.
+2. No production code stages a fact proposal today. The table, the list and the accept path ship, but `insertFactProposals` (`packages/db/src/fact-proposals.ts`) has no caller outside tests. Resolution and retention proposals come only from default-off workers (`SESSION_CLOSER_ENABLED`, `FORGETTING_PASS_ENABLED`).
+3. An accepted proposal leaves no pointer to itself on what it produced. An edge accept, and a retention supersede, insert a `memory_edges` row whose `created_by` is the reviewer's actor (`user_mcp` over MCP), the same value a `revise` edge carries (`packages/db/src/proposals-apply.ts`). When that edge is `supersedes` or `updates`, the accept also writes a payload-less `supersede` event on the predecessor. A fact accept writes a `facts` row with no proposal column and no audit event (`packages/db/src/fact-proposals-apply.ts`). Resolution and retention archive accepts write `resolve` or `archive` events whose payload names no proposal. What survives is the proposal row: `applied`, with its memory ids and `decided_at`.
+
+## 1. Chain contents
+
+A traced memory gets five sections. Every field is an id, enum, boolean or timestamp, plus the identity fields the history read already returns (`memoryType`, `topic`, `scope`, `project`, `status`, validity). The chain carries no content, tags or raw payload, and no proposal `rationale`: that is model-written text, and returning it would put server-written prose into the chain.
+
+| Section | Fields |
+|---|---|
+| `origin` | `sessionRunId` of the memory's own native `create` event, that event's `actorKind` and `createdAt`, and `run`: the run's `agent` and `openedAt`, or `null` |
+| `supersession` | `predecessors` and `successors` as identity rows with `edgeType`, `createdBy`, `depth`, the edge's `sourceProposal` (kind and id, or `null`) and the row's own `createdBySessionRunId`; `truncated` |
+| `events` | `id`, `eventKind`, `actorKind`, `createdAt`, `sessionRunId`, and `proposalId` or `null`; `truncated` |
+| `proposals` | applied proposals that name the memory: `id`, `kind` (`edge`, `fact`, `resolution`, `retention`), the `edgeType` or `action`, the other memory id, `createdAt`, `decidedAt`, and `produced`: the edge, fact and event ids whose recorded link names this proposal, empty when the accept produced nothing; `truncated` |
+| `facts` | the memory's fact rows: `id`, `validFrom`, `validTo`, and `sourceProposalId` or `null`; `truncated` |
+
+The producer links (`sourceProposal`, `proposalId`, `produced`, `sourceProposalId`) exist only if decision 3 records them at accept time. Without them the chain can list applied proposals, but it cannot say what each one produced.
+
+Three rules hold across sections:
+
+- **Nothing is inferred.** A value is reported as recorded, or as `null`. The history read already works this way: in a revision chain each version reports its own creating run, and nothing is inherited from neighbouring events. Matching an applied proposal to an edge or fact by equal ids or times would break this rule and name the wrong producer in two shipped cases. An edge accept that finds the edge already present flips the proposal to `applied` without creating the edge. A crash between a resolution claim and its transition leaves an `applied` proposal with no `resolve` event.
+- **One level per call.** A predecessor appears as an identity row with its creating run, not with its own proposals and events. To go further, the client traces the predecessor's id. The client walks and the server bounds.
+- **Deterministic order.** Lineage by depth, then `createdAt`, then `id`; events and proposals by `createdAt DESC, id DESC`. These are the keys the shipped reads use, and the `id` tie-breaker keeps the subset under a cap stable.
+
+`sessionRunId` is `null` for an imported memory and for a write without provenance, as in the history read today. `run` is `null` when the id does not resolve to a session row for the caller; the id is still returned as recorded.
+
+## 2. Surface
+
+**A. A `get_memories` include option (recommended).** Add `include: ["provenance"]`, and each found item gains an optional `provenance` object with the sections above. `get_memories` is the "read what I found" tool, and the agent asking why already holds the ids from `search` or `briefing`. Output schemas advertise open, so a client on a stale catalog keeps working when items grow a field. AGENTS.md rule 8 applies to a changed tool too. The job, tracing where a memory came from, is one no tool covers today, and the description change means the generated reference, `eval/fixtures/transport-surfaces.json` and the tool-selection embeddings are regenerated and the gate floors re-run. No tool and no tool-selection scenarios are added. A report-only `capabilityScenarios` entry (`get_memories#provenance`, like `revise#disposition`) would show whether agents find the option. It revises one shipped sentence in item 11 of [MCP design](/concepts/mcp-design): "One hop only; lineage stays with REST history."
+
+**B. A new `trace_memory` tool.** It gets its own contract and size budget, and `get_memories` stays unchanged. It needs a JTBD no tool covers ("where did this memory come from"), exactly 5 scenarios in `eval/fixtures/tool-selection.json`, regenerated surfaces, and the `max_description_overlap` ceiling (0.6723 today) still holding. The risk is the one rule 8 names: both tools take memory ids and return per-memory detail, so `trace_memory` would read like `get_memories`.
+
+**C. REST history only.** Extend `GET /api/v1/memories/{id}/history` with `proposals`, `facts` and `run`, and leave MCP unchanged. This fails the job, because the agent that is asked works over MCP and cannot reach REST. A resource template such as `threengram://memory/{id}/provenance` reaches only hosts that surface resources. That limit is why `describe_environment` inlines the facet inventory.
+
+Recommendation: A, built on one `packages/core` read that both `get_memories` and the REST history route call, so agents and the dashboard see the same chain and each transport only maps fields (rule 5).
+
+## 3. Bounds
+
+**Depth.** Only the traced memory gets all five sections. Lineage keeps the shipped cycle-safe walk with its limits (`MEMORY_HISTORY_LINEAGE_NODE_LIMIT` 25, `MEMORY_HISTORY_LINEAGE_EDGE_LIMIT` 50) and its `truncated` flag. No section recurses: predecessors, proposals and runs are one hop from the traced memory.
+
+**Page size.** Each section has a cap and reports `truncated`: events at the shipped 50, proposals and facts at 25 each as starting values. With provenance included, the `ids` limit drops from 20 to 5, and a test pins the worst-case response under a named ceiling, as one pins the `get_memories` content budget today. The first cut has no cursor. A memory with more than 50 events is pathological, and the flag says so instead of hiding it.
+
+**Tenant isolation on every hop.**
+
+- One `withTenant(userId)` transaction in `packages/db` reads the whole chain. No code outside `packages/db` touches the pool (rule 3).
+- Every statement carries `user_id = $userId`, bound to the caller, with RLS as the second layer ([data model](/concepts/data-model), two-layer tenant isolation). That includes the recursive step of the lineage walk and each proposal-table read. In `packages/db/src/memory-history-queries.ts`, the direct-relationship read binds to the target row's tenant rather than the caller's, and all other shipped history queries rely on RLS alone ([#427](https://github.com/B3dmar/3ngram/issues/427)). The chain read must not copy that.
+- Memory-to-memory, memory-to-event, memory-to-fact and memory-to-proposal hops are composite `(user_id, …)` foreign keys, so a cross-tenant link cannot be stored.
+- The hops without a foreign key are `payload->>'sessionRunId'` to `agent_sessions` and, if decision 3 adds it, `payload->>'proposalId'` to a proposal table. The write path refuses another tenant's run id (layer 2), but the read does not rely on that: both hops join on `(user_id, id)`.
+- An unknown or foreign memory id lands in `notFound`, as in `get_memories` today, so a trace cannot probe whether an id exists.
+- Logs, traces and metrics carry ids, counts, section status and truncation flags only (rule 6). The chain returns `topic` to its owner, so a handler never logs a chain object.
+
+## 4. Eval
+
+How `eval/` is built today:
+
+- The blocking gate (`eval/src/run.mjs`) runs in-memory cosine over committed embeddings, with no network, no database and one corpus. `golden-set.json` rows carry `id`, `type`, `topic`, `content`, `replaces` and `created`. `queries.json` rows carry a `slice`, a query and `expected`/`forbidden` ids. `floors.json` holds floors and ceilings that only ratchet.
+- Tenant isolation is not an eval slice. It is `scripts/ci-smoke-app.sql` (real RLS, runtime role) and the integration suites ([testing](/concepts/testing)).
+- The forgetting pass shows the pattern for a harness the gate cannot host: a report-only runner, a small committed synthetic mirror, and a private golden set outside the repository.
+
+A chain needs a database, two tenants, session runs and accepted proposals, and the gate's fixture has none of them. The proposed slice:
+
+- **Fixture** `eval/fixtures/provenance-synthetic.json`: a scripted scenario for tenants A and B, written through the product write path. It covers `remember` with a `sessionRunId`, a `revise` chain longer than 25 versions, a move, an archive, a reaffirm, and one accepted proposal of each kind. B mirrors A's topics and shapes, so a leak returns plausible rows. Rows use labels such as `a.decision.v3`, mapped to created ids at seed time, and each probe lists its expected labels per section.
+- **Metrics**: `provenance_chain_recall` (expected labels returned, over expected), floor 1.0; `provenance_chain_precision` (returned ids that were expected, over returned), floor 1.0; `provenance_foreign_ids` (ids owned by B in any section of a trace run as A: memories, edges, events, proposals, facts and runs), ceiling 0. The long chain must report `truncated: true`.
+- **Synthetic only.** A cross-tenant check needs two tenants, and the anonymized production memories come from one account.
+
+These metrics measure wiring and have exact targets, so the natural runner is a DB-backed integration test that reads the fixture: [testing](/concepts/testing) gives wiring to tests and memory quality to evals. Where it runs is decision 5 below. The slice scores the chain only. There is no server-side explanation to score.
+
+## Decisions for the owner
+
+1. **Surface**: A (`get_memories` include), B (new tool) or C (REST only). Recommended: A.
+2. **`run.agent`**: include the run's harness label, which reverses the history read's choice not to project it. The label is client-supplied: `agentSessionOpenBodySchema` requires `agent` in the body of `POST /api/v1/agent-sessions/open`, normally sent by the hook, and any kebab-case name passes. It is bound to the tenant but never verified. Layer 2 only stops a write from naming its own agent. Recommended: include it, documented as reported by the session opener, never as verified attribution.
+3. **Proposal links**: record the producing proposal at accept time, or list applied proposals per memory without saying what they produced. Recording means typed references, each a composite `(user_id, …)` FK (rule 3): `source_fact_proposal_id` on `facts`, and on `memory_edges` both `source_consolidation_proposal_id` and `source_retention_proposal_id`, with a CHECK that at most one is set. Each referenced proposal table gains the `(user_id, id)` unique key that `memories` has. The `resolve` and `archive` events a resolution or retention accept writes get an allowlisted `proposalId` payload key, whose event kind names its table. A `supersede` event's producer is its edge's reference. Existing rows stay `null` and are never backfilled. Inference by join is not offered, for the reason in section 1. Recommended: record.
+4. **Bounds**: 5 ids with provenance, 25 proposals and 25 facts per memory, no cursor in the first cut. All are starting values.
+5. **Eval runner**: a blocking test in the integration suite (the `integration` job, gated by `test`), an advisory nightly lane like the real-retriever mode, or a new DB-backed step in `eval-gate`. Recommended: the integration suite, with the fixture in `eval/fixtures/`.
+6. **History read predicates**: add caller-bound `user_id` predicates to the shipped history queries as a separate fix first, or in the same build as the chain read. Tracked as [#427](https://github.com/B3dmar/3ngram/issues/427).
