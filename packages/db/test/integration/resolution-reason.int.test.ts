@@ -347,8 +347,8 @@ describe('reasonless writers clear a stale reason (#234)', () => {
     })
     // The history read follows the row: the successor reports it, the
     // superseded predecessor no longer has a commitment and reports null.
-    const succHistory = await withTenant(userA, (tx) => getMemoryHistory(tx, successor.id))
-    const predHistory = await withTenant(userA, (tx) => getMemoryHistory(tx, memoryId))
+    const succHistory = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, successor.id))
+    const predHistory = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, memoryId))
     expect(succHistory?.lastResolutionReason).toBe(REASON)
     expect(predHistory?.lastResolutionReason).toBeNull()
   })
@@ -365,11 +365,11 @@ describe('history read exposure (#234)', () => {
       resolutionReason: REASON,
     })
 
-    const resolved = await withTenant(userA, (tx) => getMemoryHistory(tx, memoryId))
+    const resolved = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, memoryId))
     expect(resolved?.lastResolutionReason).toBe(REASON)
 
     await transitionCommitment({ userId: userA, commitmentId, to: 'open', actorKind: ACTOR })
-    const reopened = await withTenant(userA, (tx) => getMemoryHistory(tx, memoryId))
+    const reopened = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, memoryId))
     expect(reopened?.lastResolutionReason).toBeNull()
   })
 
@@ -385,7 +385,7 @@ describe('history read exposure (#234)', () => {
       contentHash: `hash-note-${crypto.randomUUID()}`,
       actorKind: ACTOR,
     })
-    const history = await withTenant(userA, (tx) => getMemoryHistory(tx, note.id))
+    const history = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, note.id))
     expect(history?.lastResolutionReason).toBeNull()
   })
 
@@ -399,6 +399,6 @@ describe('history read exposure (#234)', () => {
       resolutionReason: REASON,
     })
 
-    expect(await withTenant(userB, (tx) => getMemoryHistory(tx, memoryId))).toBeUndefined()
+    expect(await withTenant(userB, (tx) => getMemoryHistory(tx, userB, memoryId))).toBeUndefined()
   })
 })
