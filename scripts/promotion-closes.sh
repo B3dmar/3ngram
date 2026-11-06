@@ -38,14 +38,14 @@ read -r -d '' JQ_REFS <<'JQ' || true
 # An unclosed comment or fence runs to the end of the body, as GitHub renders
 # it. Every line indented by four spaces or a tab is dropped, not only real
 # indented code blocks: that also drops indented list text, which only adds
-# misses. A code span is any run of backticks up to the next run of the same
+# misses. A fence ends only at a run at least as long as the one that opened
+# it, so a ```` fence may hold ``` lines. A code span is any run of backticks up to the next run of the same
 # length (``fixes #1`` included), and <code> and <pre> elements are code too.
 # Each strip leaves a word character, never a space, so it cannot join a
 # keyword to a reference that code separated (fixes `a` #5).
 def prose:
   gsub("<!--[\\s\\S]*?-->"; "x") | gsub("<!--[\\s\\S]*$"; "x")
-  | gsub("```[\\s\\S]*?```"; "x") | gsub("```[\\s\\S]*$"; "x")
-  | gsub("~~~[\\s\\S]*?~~~"; "x") | gsub("~~~[\\s\\S]*$"; "x")
+  | gsub("(?<fence>`{3,}|~{3,})[\\s\\S]*?\\k<fence>"; "x") | gsub("(?:`{3,}|~{3,})[\\s\\S]*$"; "x")
   | gsub("(?:^|\\n)(?: {4}|\\t)[^\\n]*"; "\n")
   | gsub("(?i)<(?<el>code|pre)\\b[^>]*>[\\s\\S]*?</\\k<el>\\s*>"; "x")
   | gsub("(?<tick>`+)[\\s\\S]*?\\k<tick>"; "x");
@@ -126,6 +126,9 @@ self_test() {
   got=$(jq -cn --arg t 'fixes `a` #60, closes`x`#61, <code>x</code>fixes #62, text <!-- n --> Closes #63' \
     "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'a strip never joins a keyword to a reference' "$got" '[63]'
+  got=$(jq -cn --arg t "$(printf '````\n```\nCloses #701\n```\n````\n~~~~\n~~~\nfixes #703\n~~~\n~~~~\nCloses #702')" \
+    "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'a longer fence holds shorter ones' "$got" '[702]'
   got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718, closes #99999999999, closes #0' \
     "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs("B3dmar/3ngram")')
   check 'same repository, others, impossible numbers' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"],"invalid":["#0","#99999999999"]}'
