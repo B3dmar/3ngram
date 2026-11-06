@@ -39,16 +39,20 @@ read -r -d '' JQ_REFS <<'JQ' || true
 # it. Every line indented by four spaces or a tab is dropped, not only real
 # indented code blocks: that also drops indented list text, which only adds
 # misses. A fence ends only at a run at least as long as the one that opened
-# it, so a ```` fence may hold ``` lines. A code span is any run of backticks up to the next run of the same
-# length (``fixes #1`` included), and <code> and <pre> elements are code too.
-# Each strip leaves a word character, never a space, so it cannot join a
-# keyword to a reference that code separated (fixes `a` #5).
+# it, so a ```` fence may hold ``` lines. A code span is any run of backticks
+# up to the next run of the same length (``fixes #1`` included). A raw <code>
+# or <pre> tag drops the rest of the body: pairing it with its closing tag
+# made Oniguruma scan to the end from every unclosed tag, which exceeded jq's
+# retry limit on a real body (#434's, which names both tags in code spans) and
+# took 30 s on a 60 KB one. Spans go first, so a tag written in backticks is
+# not one. Each strip leaves a word character, never a space, so it cannot
+# join a keyword to a reference that code separated (fixes `a` #5).
 def prose:
   gsub("<!--[\\s\\S]*?-->"; "x") | gsub("<!--[\\s\\S]*$"; "x")
   | gsub("(?<fence>`{3,}|~{3,})[\\s\\S]*?\\k<fence>"; "x") | gsub("(?:`{3,}|~{3,})[\\s\\S]*$"; "x")
   | gsub("(?:^|\\n)(?: {4}|\\t)[^\\n]*"; "\n")
-  | gsub("(?i)<(?<el>code|pre)\\b[^>]*>[\\s\\S]*?</\\k<el>\\s*>"; "x")
-  | gsub("(?<tick>`+)[\\s\\S]*?\\k<tick>"; "x");
+  | gsub("(?<tick>`+)[\\s\\S]*?\\k<tick>"; "x")
+  | gsub("(?i)<(?:code|pre)\\b[\\s\\S]*$"; "x");
 def closing_refs:
   [ prose | match("(?i)(?:^|[^\\w-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \\t]+(?:https://github\\.com/(?<url>[\\w.-]+/[\\w.-]+)/issues/|(?<repo>[\\w.-]+/[\\w.-]+)#|#)(?<n>[0-9]+)(?![\\w#/-])"; "g")
     | (.captures | map({key: .name, value: .string}) | from_entries) as $c
@@ -120,10 +124,17 @@ self_test() {
   check 'indented code and an unclosed fence' "$got" '[30,33]'
   got=$(jq -cn --arg t "$(printf 'Closes #40\n<!-- unclosed\nCloses #41')" "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'an unclosed comment' "$got" '[40]'
-  got=$(jq -cn --arg t "$(printf '``fixes #50``, ``a `fix #51` b``, <code>closes #52</code>, <CODE class=x>fix #53</CODE>\n<pre>\nfixes #54\n</pre>\nCloses #55')" \
+  got=$(jq -cn --arg t "$(printf 'Closes #55, ``fixes #50``, ``a `fix #51` b``, <code>closes #52</code> fixes #56, <CODE class=x>fix #53</CODE>\n<pre>\nfixes #54\n</pre>\nCloses #57')" \
     "$JQ_REFS"' $t | closing_refs | map(.number)')
-  check 'longer code spans and HTML code' "$got" '[55]'
-  got=$(jq -cn --arg t 'fixes `a` #60, closes`x`#61, <code>x</code>fixes #62, text <!-- n --> Closes #63' \
+  check 'longer code spans; a raw code tag ends the prose' "$got" '[55]'
+  local mention long
+  mention=$(printf '%.0s`<code>` and `<pre>` elements are code, `<CODE x>` too. ' $(seq 80))
+  got=$(jq -cn --arg t "${mention}Closes #58" "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'tags named in code spans are not tags' "$got" '[58]'
+  long=$(printf '%.0ssee <code> and <pre> here, ' $(seq 2000))
+  got=$(jq -cn --arg t "Closes #59 ${long}Closes #60" "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'a 50 KB body of unclosed tags parses' "$got" '[59]'
+  got=$(jq -cn --arg t 'text <!-- n --> Closes #63, fixes `a` #60, closes`x`#61, <code>x</code>fixes #62' \
     "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'a strip never joins a keyword to a reference' "$got" '[63]'
   got=$(jq -cn --arg t "$(printf '````\n```\nCloses #701\n```\n````\n~~~~\n~~~\nfixes #703\n~~~\n~~~~\nCloses #702')" \
@@ -206,7 +217,8 @@ bodies=$(graphql -f owner="$owner" -f name="$name" -f query="
   query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $fields } }") ||
   { echo "could not read the carried PRs' bodies" >&2; exit 2; }
 refs=$(jq -c --arg repo "$owner/$name" "$JQ_REFS $JQ_SPLIT"'
-  [.data.repository[] | .body // "" | closing_refs[]] | split_refs($repo)' <<<"$bodies")
+  [.data.repository[] | .body // "" | closing_refs[]] | split_refs($repo)' <<<"$bodies") ||
+  { echo "could not parse the carried PRs' bodies" >&2; exit 2; }
 jq -r '(.foreign[] | "skipped, another repository: \(.)"), (.invalid[] | "skipped, not an issue number: \(.)")' <<<"$refs" >&2
 candidates=$(jq -r '.local[]' <<<"$refs")
 if [[ -z "$candidates" ]]; then
