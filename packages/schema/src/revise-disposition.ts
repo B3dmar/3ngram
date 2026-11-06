@@ -67,13 +67,18 @@ export const nativeReviseDispositionBodySchema = nativeReviseDispositionInputSch
  * `disposition` tells it apart from the `archive` events blocker resolve and the
  * commitment sweep write, which carry no disposition.
  */
-export const archiveEventPayloadSchema = z
+const archivePayloadBase = z
   .object({
     sessionRunId: sessionRunIdSchema.optional(),
     disposition: z.literal('archive'),
-    ...proposalProvenancePayloadSchema.partial().shape,
+    proposalKind: z.never().optional(),
+    proposalId: z.never().optional(),
   })
   .strict()
+export const archiveEventPayloadSchema = z.union([
+  archivePayloadBase,
+  archivePayloadBase.extend(proposalProvenancePayloadSchema.shape),
+])
 export type ArchiveEventPayload = z.infer<typeof archiveEventPayloadSchema>
 
 /** Payload of the `reaffirm` memory event (issue #218): same strict shape as archive's. */
