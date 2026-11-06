@@ -5,11 +5,14 @@
 // owner's `lastResolutionReason` for the memory's commitment (issue #234). Full
 // memory content remains limited to the inspect endpoint/read.
 import {
+  type MemoryHistoryRead as DbMemoryHistoryRead,
   getMemoryHistory as getMemoryHistoryDb,
-  type MemoryHistoryRead,
+  withSavepoint,
   withTenant,
 } from '@3ngram/db'
+import type { MemoryProvenance } from '@3ngram/schema'
 import { MemoryNotFoundError } from './memory.js'
+import { getMemoriesProvenance } from './memory-provenance.js'
 
 export type {
   MemoryHistoryEdgeRow,
@@ -17,11 +20,16 @@ export type {
   MemoryHistoryIdentityRow,
   MemoryHistoryLifecycleState,
   MemoryHistoryPayloadMetadataRow,
-  MemoryHistoryRead,
   MemoryHistoryRelationshipRow,
   MemoryHistorySectionStatus,
   MemoryHistorySections,
 } from '@3ngram/db'
+
+export interface MemoryHistoryRead extends DbMemoryHistoryRead {
+  provenance?: MemoryProvenance | null
+  sections: DbMemoryHistoryRead['sections'] & { provenance?: 'ok' | 'unavailable' }
+  sectionErrors?: DbMemoryHistoryRead['sectionErrors'] & { provenance?: string }
+}
 
 /**
  * Fetch the history/audit read model for one memory id. Throws
@@ -36,7 +44,32 @@ export async function getMemoryHistory(
   userId: string,
   memoryId: string,
 ): Promise<MemoryHistoryRead> {
-  const row = await withTenant(userId, (tx) => getMemoryHistoryDb(tx, userId, memoryId))
-  if (row === undefined) throw new MemoryNotFoundError(memoryId)
-  return row
+  return withTenant(
+    userId,
+    async (tx) => {
+      const row = await getMemoryHistoryDb(tx, userId, memoryId)
+      if (row === undefined) throw new MemoryNotFoundError(memoryId)
+      try {
+        const chains = await withSavepoint(tx, 'history_provenance', () =>
+          getMemoriesProvenance(tx, userId, [memoryId]),
+        )
+        return {
+          ...row,
+          provenance: chains.get(memoryId) ?? null,
+          sections: { ...row.sections, provenance: 'ok' },
+        }
+      } catch (error) {
+        return {
+          ...row,
+          provenance: null,
+          sections: { ...row.sections, provenance: 'unavailable' },
+          sectionErrors: {
+            ...row.sectionErrors,
+            provenance: error instanceof Error ? error.name : 'Error',
+          },
+        }
+      }
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  )
 }

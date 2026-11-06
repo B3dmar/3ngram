@@ -365,6 +365,7 @@ export const memoryHistorySectionsSchema = z
   .object({
     lineage: memoryHistorySectionStatusSchema,
     events: memoryHistorySectionStatusSchema,
+    provenance: memoryHistorySectionStatusSchema.optional(),
   })
   .strict()
 export type MemoryHistorySections = z.infer<typeof memoryHistorySectionsSchema>
