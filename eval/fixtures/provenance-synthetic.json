@@ -1,0 +1,189 @@
+{
+  "_meta": {
+    "description": "Synthetic product-write scenario mirrored across two tenants. Labels map to created IDs independently of provenance reads. No provider calls or production data.",
+    "targets": {
+      "provenance_chain_recall": 1,
+      "provenance_chain_precision": 1,
+      "provenance_foreign_ids": 0
+    }
+  },
+  "tenants": ["a", "b"],
+  "project": "provenance-fixture",
+  "chain": {
+    "label": "decision",
+    "versions": 28
+  },
+  "memories": [
+    {
+      "label": "filing",
+      "memoryType": "decision"
+    },
+    {
+      "label": "edge.old",
+      "memoryType": "decision"
+    },
+    {
+      "label": "edge.new",
+      "memoryType": "decision"
+    },
+    {
+      "label": "fact",
+      "memoryType": "decision"
+    },
+    {
+      "label": "resolution",
+      "memoryType": "commitment"
+    },
+    {
+      "label": "retention",
+      "memoryType": "decision"
+    }
+  ],
+  "filing": {
+    "memory": "filing",
+    "steps": ["move", "reaffirm", "archive"],
+    "destinationProject": "provenance-filed"
+  },
+  "proposals": [
+    {
+      "kind": "edge",
+      "label": "edge.proposal",
+      "memory": "edge.old",
+      "relatedMemory": "edge.new"
+    },
+    {
+      "kind": "fact",
+      "label": "fact.proposal",
+      "memory": "fact"
+    },
+    {
+      "kind": "resolution",
+      "label": "resolution.proposal",
+      "memory": "resolution"
+    },
+    {
+      "kind": "retention",
+      "label": "retention.proposal",
+      "memory": "retention"
+    }
+  ],
+  "probes": [
+    {
+      "memory": "filing",
+      "expected": {
+        "origin": ["run"],
+        "supersession": [],
+        "events": ["filing.create", "filing.revise", "filing.reaffirm", "filing.archive", "run"],
+        "proposals": [],
+        "facts": []
+      },
+      "lineageTruncated": false
+    },
+    {
+      "memory": "edge.old",
+      "expected": {
+        "origin": ["run"],
+        "supersession": ["edge.old", "edge.new", "edge.new.edge", "edge.proposal", "run"],
+        "events": ["edge.old.create", "edge.old.supersede", "run"],
+        "proposals": ["edge.proposal", "edge.new", "edge.new.edge"],
+        "facts": []
+      },
+      "lineageTruncated": false
+    },
+    {
+      "memory": "fact",
+      "expected": {
+        "origin": ["run"],
+        "supersession": [],
+        "events": ["fact.create", "run"],
+        "proposals": ["fact.proposal", "fact.fact"],
+        "facts": ["fact.fact", "fact.proposal"]
+      },
+      "lineageTruncated": false
+    },
+    {
+      "memory": "resolution",
+      "expected": {
+        "origin": ["run"],
+        "supersession": [],
+        "events": ["resolution.create", "resolution.resolve", "resolution.proposal", "run"],
+        "proposals": ["resolution.proposal", "resolution.resolve"],
+        "facts": []
+      },
+      "lineageTruncated": false
+    },
+    {
+      "memory": "retention",
+      "expected": {
+        "origin": ["run"],
+        "supersession": [],
+        "events": ["retention.create", "retention.archive", "retention.proposal", "run"],
+        "proposals": ["retention.proposal", "retention.archive"],
+        "facts": []
+      },
+      "lineageTruncated": false
+    },
+    {
+      "memory": "decision.v27",
+      "expected": {
+        "origin": ["run"],
+        "supersession": [
+          "decision.v3",
+          "decision.v4",
+          "decision.v5",
+          "decision.v6",
+          "decision.v7",
+          "decision.v8",
+          "decision.v9",
+          "decision.v10",
+          "decision.v11",
+          "decision.v12",
+          "decision.v13",
+          "decision.v14",
+          "decision.v15",
+          "decision.v16",
+          "decision.v17",
+          "decision.v18",
+          "decision.v19",
+          "decision.v20",
+          "decision.v21",
+          "decision.v22",
+          "decision.v23",
+          "decision.v24",
+          "decision.v25",
+          "decision.v26",
+          "decision.v27",
+          "decision.v4.edge",
+          "decision.v5.edge",
+          "decision.v6.edge",
+          "decision.v7.edge",
+          "decision.v8.edge",
+          "decision.v9.edge",
+          "decision.v10.edge",
+          "decision.v11.edge",
+          "decision.v12.edge",
+          "decision.v13.edge",
+          "decision.v14.edge",
+          "decision.v15.edge",
+          "decision.v16.edge",
+          "decision.v17.edge",
+          "decision.v18.edge",
+          "decision.v19.edge",
+          "decision.v20.edge",
+          "decision.v21.edge",
+          "decision.v22.edge",
+          "decision.v23.edge",
+          "decision.v24.edge",
+          "decision.v25.edge",
+          "decision.v26.edge",
+          "decision.v27.edge",
+          "run"
+        ],
+        "events": ["decision.v27.create", "run"],
+        "proposals": [],
+        "facts": []
+      },
+      "lineageTruncated": true
+    }
+  ]
+}
