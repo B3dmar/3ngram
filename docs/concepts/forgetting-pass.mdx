@@ -164,7 +164,7 @@ CREATE INDEX retention_proposals_review_idx ON retention_proposals (user_id, sta
 -- runtime grants SELECT, INSERT, UPDATE only (no DELETE); covered by export and account deletion.
 ```
 
-- **Keep verdicts**, and verdicts below their threshold, are stored with status `dismissed` and are never listed. Only the pass sets `dismissed`; a reviewer's no is `rejected`, with `decided_at` set, so calibration can tell the two apart. They stop the pass from re-judging a memory until that memory's freshness moves past the verdict, through an edit, a reaffirm or a newer neighbour.
+- **Keep verdicts**, and verdicts below their threshold, are stored with status `dismissed` and are never listed. Only the pass sets `dismissed`; a reviewer's no is `rejected`, with `decided_at` set, so calibration can tell the two apart. They stop the pass from re-judging a memory until that memory's freshness moves past the verdict, through a filing change with `revise` (scope, project or tags) or a reaffirm. A newer memory does not move it: it can only form a separate pair candidate, whose anti-join compares against both sides' freshness.
 - **Table count:** this is the 32nd physical table. Its JTBD is "a memory the judge thinks is finished waits for a human yes instead of lingering in every briefing, or being dropped", and no existing proposal table can carry it, as argued above.
 - **Accepting:**
   - **archive:** `archiveMemoryIn` with the `disposition` policy, the same rejection rules and an audited `archive` event.
