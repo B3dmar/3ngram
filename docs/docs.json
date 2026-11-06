@@ -47,7 +47,8 @@
               "use-cases/claude-code",
               "use-cases/connecting-tools",
               "use-cases/team-brain",
-              "use-cases/recall-supersession"
+              "use-cases/recall-supersession",
+              "use-cases/approve-before-it-lands"
             ]
           },
           {

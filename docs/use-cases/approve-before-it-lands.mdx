@@ -1,0 +1,79 @@
+---
+title: "Approve before it lands"
+description: "Some of 3ngram's background work ends in a proposal, not a change. See which kinds exist, when each one appears, and what accepting or rejecting it does."
+icon: "list-check"
+---
+
+Some of 3ngram's work happens in the background, after the conversation. Where a background pass would change your memory, it can stage a **proposal** instead, and the change waits for you. A proposal changes nothing on its own: search ranks the same way, `get_facts` returns the same facts, and the commitment stays open until you accept.
+
+You review proposals with the `review_proposals` tool. It is an ordinary MCP tool, so you can review from any client you have connected, such as Claude, ChatGPT or Cursor.
+
+## Review a queue
+
+<Steps>
+  <Step title="Ask what is waiting">
+    ```text
+    Do I have any 3ngram proposals waiting for review?
+    ```
+
+    The agent calls `review_proposals` with `action: "list"` and `status: "proposed"`. Without a status filter, the list also returns proposals you already decided. A page holds up to 25 proposals by default (100 at most) across every kind, with per-kind `totals` and a `nextCursor` when there is more. Listing never changes a proposal or a memory.
+  </Step>
+  <Step title="Read what each one is about">
+    Proposals point at memories by id rather than repeating their content, so the agent reads the memories with `get_memories` to show you what a proposal would change.
+  </Step>
+  <Step title="Accept or reject">
+    ```text
+    Accept the first one, reject the second.
+    ```
+
+    The agent calls `review_proposals` with `action: "accept"` or `"reject"` and the `proposalId`. The id alone identifies the kind. Accept and reject need write access (`memory:write`). A decided proposal cannot be decided again.
+  </Step>
+</Steps>
+
+## The four kinds
+
+| Kind | Produced by | Appears by default |
+|---|---|---|
+| Consolidation | the hourly consolidation pass | Yes, wherever the worker runs |
+| Extracted fact | nothing yet | No: the extractor is not built ([#228](https://github.com/B3dmar/3ngram/issues/228)) |
+| Resolution | the session closer | No: off by default, plus a judgment opt-in |
+| Retention | the [forgetting pass](/concepts/forgetting-pass) | No: off by default, plus a judgment opt-in |
+
+The judgment opt-in is per account and off by default (`PUT /api/v1/settings/judgment`). Resolution and retention proposals also need a deployment with a judgment gateway, and each pass has its own deployment flag, `SESSION_CLOSER_ENABLED` and `FORGETTING_PASS_ENABLED`, both off by default.
+
+### Consolidation proposals
+
+- **When it appears:** every hour the worker compares the live memories of every account. A pair whose embeddings reach a cosine similarity of at least 0.92 gets a proposed edge from the newer memory to the older one. Memories without an embedding are skipped. The pass proposes the mildest edge both memory types allow, usually `extends`, and an `event` memory only ever gets `extends`.
+- **What you see:** both memory ids (`fromId` is the newer one), the `edgeType`, the `similarity` and a one-line rationale.
+- **Accept:** writes the edge. A `supersedes` or `updates` edge also closes the older memory's validity, as `revise` does, so search ranks it below its successor. Its content is untouched and it stays readable as history.
+- **Reject:** nothing else changes, and that pair is never proposed again. Only a new memory can raise the question again.
+
+### Extracted-fact proposals
+
+Nothing stages these today. The review side is built so that an extractor, once it ships ([#228](https://github.com/B3dmar/3ngram/issues/228)), cannot write a fact you have not seen. Facts you pass on `remember` are written directly.
+
+- **What you will see:** the source memory id, `subject`, `predicate`, `value`, a confidence, an optional validity window and a rationale.
+- **Accept:** writes the fact, so `get_facts` returns it. The source memory must still be live. If it was superseded or archived meanwhile, accept returns a conflict and the proposal stays open for you to reject.
+- **Reject:** no fact is written. The same claim can be proposed again later.
+
+### Resolution proposals
+
+- **When it appears:** only with the session closer on and the judgment opt-in set. After a session tracked by the `3ngram-hook` SessionStart briefing ends, the closer asks a judgment model whether each commitment that session was briefed on is done. At 0.9 or above it resolves the commitment itself. From 0.5 up to 0.9 it stages a resolution proposal. Below 0.5 it writes nothing.
+- **What you see:** the commitment's memory id, the session run id and the judged probability.
+- **Accept:** resolves the commitment through the same checks as `resolve`, recorded as you. If that is no longer allowed (the commitment expired meanwhile), the proposal is reopened and you get the error.
+- **Reject:** the commitment stays open. A retried pass over the same session does not stage it again.
+
+### Retention proposals
+
+- **When it appears:** only with the forgetting pass on and the judgment opt-in set. Once a day the pass looks at decisions, preferences, blockers and facts not updated or reaffirmed for 30 days, and at pairs of same-type memories that look like they conflict. A judgment model gives each a verdict, and only confident verdicts other than keep become proposals. Keep verdicts and unsure ones are never listed.
+- **What you see:** the memory id, the verdict (`archive`, `supersede` or `conflict`), the related memory for supersede and conflict, the probability and the judge model.
+- **Accept:** archive archives the memory, which stays readable with `status: "archived"`. Supersede adds a `supersedes` edge from the newer memory and closes the older one. Conflict records your review and changes no memory, so you settle it with `revise`. If the verdict can no longer be applied, accept returns a conflict error and the proposal stays open.
+- **Reject:** nothing changes. The pass does not propose that action for that memory again until the memory changes: an edit, a reaffirm or a newer neighbour.
+
+## What does not wait for review
+
+- **Your own writes.** `remember`, `revise` and `resolve` apply at once, because you or your agent asked for them.
+- **Commitment expiry.** The surfacing sweep expires a commitment that is past its due date by more than a grace window (`COMMITMENT_EXPIRY_GRACE_DAYS`, 14 days by default).
+- **Closer resolves.** With the closer on, a commitment it judges done is resolved without a proposal: at 0.9 or above with the judgment opt-in, and on the model's answer alone without it, in which case the closer stages no proposals at all. A resolve is reversible: `resolve` the commitment back to `open`.
+
+Over REST, `GET /api/v1/proposals` and `POST /api/v1/proposals/{id}/apply` or `/reject` cover consolidation proposals only. See the [memory model](/concepts/memory-model#consolidation-is-advisory) for how proposals fit append-and-supersede, and the [tool reference](/reference/tools) for the full `review_proposals` schema.
