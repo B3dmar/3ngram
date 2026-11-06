@@ -495,9 +495,12 @@ resolve/unresolve/archive inputs. `.strict()` stays.
    the lifecycle call share one captured backend and credential. The instruction
    permits attribution only when the intended connector's
    `describe_environment.account.id` matches. An unavailable identity or
-   credential exposes no run ID; without a valid run ID for the intended account, the instruction
-   defers writes and reports the account boundary. Account selection stays with
-   the launch environment, never the scope or project. Concurrent hooked
+   credential exposes no run ID. Agents verify the intended connector's account;
+   an unverified target defers the write. For a verified account without a
+   matching run ID, the instruction permits writes with `sessionRunId` omitted,
+   using (4) rather than claiming attribution to this conversation. The hook's
+   account selection stays with the launch environment; the connector selects
+   the write's account, never the scope or project. Concurrent hooked
    sessions and agents that omit the field fall through to (4). Do not claim the
    hooked path always sends the id. The Stop hook heartbeats **unconditionally**,
    nudge or no nudge, so the lease stays fresh during *completed* turns and

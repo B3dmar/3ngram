@@ -83,11 +83,15 @@ Nothing here writes a memory.
   The instruction permits `remember` / `revise` / `resolve` attribution only
   when the intended connector's `describe_environment.account.id` matches.
   If identity or the credential is unavailable, no run ID is exposed. A session
-  event with no credential emits the same defer-write instruction without a
+  event with no credential emits the same optional-attribution instruction without a
   network call; manual calls without a session ID and suppressed hooks stay
-  silent. Without a valid run ID for the intended account, the instruction
-  defers writes and reports the boundary;
-  it never tells the agent to switch accounts to fit the ID. Propagation remains
+  silent. Agents verify the intended account through `describe_environment`.
+  An unverified target defers the write; a verified account without a matching
+  run ID may receive writes with `sessionRunId` omitted. The server then uses
+  its single-open-session default for the memory's project or saves without
+  session attribution. Omission does not establish attribution to this
+  conversation. The instruction never tells the agent to switch accounts to fit
+  the ID. Propagation remains
   **model-mediated and best-effort**; the server still rejects foreign run IDs.
 - **Stop** (`stop`) keeps the lease live across completed turns. That half is
   unconditional and always silent. The [debrief nudge](#stop-nudge-default-off)
@@ -272,7 +276,7 @@ Each release carries per-target `.tar.gz` archives for Linux and macOS
 
 The briefing and precheck hooks need an API key to read from the REST API.
 Without one they make no requests and exit 0. A briefing session event emits
-the defer-write instruction above so resume or compact cannot retain an earlier
+the optional-attribution instruction above so resume or compact cannot retain an earlier
 run ID as usable; manual calls without a session ID and precheck stay silent.
 
 1. **Create an API key** at https://app.3ngram.ai/settings/api-keys. The full

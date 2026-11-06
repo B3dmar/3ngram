@@ -82,7 +82,8 @@ type sessionStartInput struct {
 // from GET /api/v1/briefing (replacing the old 4× dashboard reads), renders it
 // as a compact markdown summary on stdout, and drives the session-lifecycle row
 // (docs/concepts/session-continuity.mdx layer 1, the `source` table). Pure
-// context — it never blocks the session; unavailable identity defers writes.
+// context — unavailable hook identity leaves verified MCP writes unattributed
+// by the hook, subject to the server's single-open-session default.
 func runBriefing(args []string) int {
 	cwd, _ := os.Getwd()
 	project := deriveProject(cwd)
