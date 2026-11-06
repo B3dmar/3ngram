@@ -9,7 +9,11 @@
 // withTenant(): RLS scopes all rows to the caller, and every statement also
 // binds user_id to the caller's userId (two-layer isolation, issue #427). The
 // raw SQL reads + raw row shapes live in ./memory-history-queries.ts (500-line cap).
-import { sessionProvenancePayloadSchema } from '@3ngram/schema'
+import {
+  type ProposalProvenancePayload,
+  proposalProvenancePayloadSchema,
+  sessionProvenancePayloadSchema,
+} from '@3ngram/schema'
 import type { TenantTx } from './client.js'
 import {
   MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT,
@@ -82,6 +86,7 @@ export interface MemoryHistoryEventRow {
   payloadMetadata: MemoryHistoryPayloadMetadataRow
   /** Allowlisted payload key (issue #262): the recording run, or null. */
   sessionRunId: string | null
+  sourceProposal: ProposalProvenancePayload | null
 }
 
 export type MemoryHistorySectionStatus = 'ok' | 'unavailable'
@@ -257,6 +262,16 @@ function allowlistedSessionRunId(raw: string | null | undefined): string | null 
   return parsed.success ? parsed.data.sessionRunId : null
 }
 
+function allowlistedProposal(row: RawEventRow): ProposalProvenancePayload | null {
+  // Older imports could carry arbitrary payload keys before these were reserved.
+  if (row.actor_kind === 'importer') return null
+  const parsed = proposalProvenancePayloadSchema.safeParse({
+    proposalKind: row.proposal_kind,
+    proposalId: row.proposal_id,
+  })
+  return parsed.success ? parsed.data : null
+}
+
 /** Map bounded event rows to identity + payload-metadata + allowlisted-key audit events. */
 function mapAuditEvents(boundedAuditRows: RawEventRow[]): MemoryHistoryEventRow[] {
   return boundedAuditRows.map((row) => ({
@@ -270,6 +285,7 @@ function mapAuditEvents(boundedAuditRows: RawEventRow[]): MemoryHistoryEventRow[
       byteLength: Number(row.payload_byte_length ?? 0),
     },
     sessionRunId: allowlistedSessionRunId(row.session_run_id),
+    sourceProposal: allowlistedProposal(row),
   }))
 }
 

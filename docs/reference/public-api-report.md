@@ -276,10 +276,10 @@ its row here even when its name and kind are unchanged.
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `268fcee3c080` |
-| `ExportEdgeRow` | interface | `ab29ae277330` |
+| `ExportEdgeRow` | interface | `52c103710277` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
-| `ExportFactRow` | interface | `2cf2890a3d69` |
+| `ExportFactRow` | interface | `7c6656fb8d00` |
 | `ExportLlmUsageRow` | interface | `c20cc8fa5bcb` |
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
@@ -623,7 +623,7 @@ its row here even when its name and kind are unchanged.
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
 | `ArchiveOutcome` | type | `16b337b1bd53` |
 | `ArchivePolicy` | type | `05584b476e9a` |
-| `ArchiveWrite` | interface | `646777c0943c` |
+| `ArchiveWrite` | interface | `63d66567eaf5` |
 | `AsOf` | interface | `7ff84f49ed40` |
 | `AuditLogEntry` | interface | `7be038eca9e3` |
 | `AuthorizedClient` | interface | `a1b0bc5ae156` |
@@ -649,7 +649,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
-| `CommitmentTransition` | interface | `af9743fc35bf` |
+| `CommitmentTransition` | interface | `421a40afab9e` |
 | `CommitmentWrite` | interface | `dd9c21233475` |
 | `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
@@ -665,7 +665,7 @@ its row here even when its name and kind are unchanged.
 | `EMBEDDING_DIMENSIONS` | const | `4322ea3332b0` |
 | `ERASED_PII` | const | `4e4b14da4401` |
 | `EdgeConflictError` | class | `1edf03d6924b` |
-| `EdgeWrite` | interface | `7331344dff64` |
+| `EdgeWrite` | interface | `0a095db5f794` |
 | `EmbedFailedMemoryRow` | interface | `92f24ef4bda7` |
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
@@ -673,10 +673,10 @@ its row here even when its name and kind are unchanged.
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `268fcee3c080` |
-| `ExportEdgeRow` | interface | `ab29ae277330` |
+| `ExportEdgeRow` | interface | `52c103710277` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
-| `ExportFactRow` | interface | `2cf2890a3d69` |
+| `ExportFactRow` | interface | `7c6656fb8d00` |
 | `ExportJudgmentPolicyRow` | interface | `c9e8b8400c12` |
 | `ExportLlmUsageRow` | interface | `c20cc8fa5bcb` |
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
@@ -694,7 +694,7 @@ its row here even when its name and kind are unchanged.
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |
-| `FactWrite` | interface | `38b489370192` |
+| `FactWrite` | interface | `0ba30222f0dd` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `ForgettingMemory` | interface | `5193705c6910` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
@@ -722,7 +722,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryFacetsOptions` | interface | `0104b5dd61bd` |
 | `MemoryFactWrite` | type | `1ed668a7262e` |
 | `MemoryHistoryEdgeRow` | interface | `0b72fde39b8f` |
-| `MemoryHistoryEventRow` | interface | `6156bcf877b5` |
+| `MemoryHistoryEventRow` | interface | `c306e3b79646` |
 | `MemoryHistoryIdentityRow` | interface | `ced9be5713ea` |
 | `MemoryHistoryLifecycleState` | type | `f5cbe15b0f8d` |
 | `MemoryHistoryPayloadMetadataRow` | interface | `89c224a9fb77` |
@@ -849,7 +849,7 @@ its row here even when its name and kind are unchanged.
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
-| `facts` | const | `8609a897374c` |
+| `facts` | const | `31ef661a29f7` |
 | `fetchHitsByIds` | function | `567078eac51f` |
 | `findSimilarPairs` | function | `1cce9d83df14` |
 | `finishSessionTriage` | function | `59f7c08fbb7f` |
@@ -914,7 +914,7 @@ its row here even when its name and kind are unchanged.
 | `lockScopePolicies` | function | `ce3797a1bc52` |
 | `materializeClientMetadata` | function | `7f108ca801ea` |
 | `memories` | const | `55c30c083a59` |
-| `memoryEdges` | const | `52088e26ee30` |
+| `memoryEdges` | const | `faa034a782f1` |
 | `memoryEvents` | const | `8b52656b3790` |
 | `moveMemory` | function | `4a4ea0fdfcc4` |
 | `newerNeighbours` | function | `304c82c3bb72` |
@@ -1286,6 +1286,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalKindCounts` | type | `28e7864043af` |
 | `ProposalKindCountsV3` | type | `2410ed9cbacd` |
 | `ProposalKindCountsV4` | type | `506aa4398c67` |
+| `ProposalProvenancePayload` | type | `f15a1510d704` |
 | `ProposalRecordOutput` | type | `8a269415e658` |
 | `ProposalRejectBody` | type | `2fb4de60f87a` |
 | `ProposalStatus` | type | `184c3cc32f4f` |
@@ -1410,7 +1411,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
-| `archiveEventPayloadSchema` | const | `91db38f923d5` |
+| `archiveEventPayloadSchema` | const | `000730bcc6d5` |
 | `archiveMemoryBodySchema` | const | `26c78cb1dc3b` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
@@ -1546,6 +1547,7 @@ its row here even when its name and kind are unchanged.
 | `proposalKindCountsSchema` | const | `5d10c63012dd` |
 | `proposalKindCountsV3Schema` | const | `b41c4f35455f` |
 | `proposalKindCountsV4Schema` | const | `7086ee4f3f11` |
+| `proposalProvenancePayloadSchema` | const | `55322c73e96d` |
 | `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |

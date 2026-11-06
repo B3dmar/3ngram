@@ -23,6 +23,7 @@
 // break.
 import { z } from 'zod'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { proposalProvenancePayloadSchema } from './proposal-provenance.js'
 import { sessionRunIdSchema } from './session-run-id.js'
 import { sessionRunIdField } from './write.js'
 
@@ -67,7 +68,11 @@ export const nativeReviseDispositionBodySchema = nativeReviseDispositionInputSch
  * commitment sweep write, which carry no disposition.
  */
 export const archiveEventPayloadSchema = z
-  .object({ sessionRunId: sessionRunIdSchema.optional(), disposition: z.literal('archive') })
+  .object({
+    sessionRunId: sessionRunIdSchema.optional(),
+    disposition: z.literal('archive'),
+    ...proposalProvenancePayloadSchema.partial().shape,
+  })
   .strict()
 export type ArchiveEventPayload = z.infer<typeof archiveEventPayloadSchema>
 

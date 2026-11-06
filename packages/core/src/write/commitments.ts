@@ -27,7 +27,12 @@ import {
   type WrittenCommitment,
   withTenant,
 } from '@3ngram/db'
-import { type ActorKind, type CommitmentStatus, canTransition } from '@3ngram/schema'
+import {
+  type ActorKind,
+  type CommitmentStatus,
+  canTransition,
+  type ProposalProvenancePayload,
+} from '@3ngram/schema'
 
 export {
   BlockerNotFoundError,
@@ -233,10 +238,19 @@ export async function resolveCommitmentByMemoryId(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
+  sourceProposal?: ProposalProvenancePayload,
 ): Promise<{ id: string; status: CommitmentStatus }> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
   if (!current) throw new CommitmentNotFoundError(memoryId, 'memory')
-  return applyTransition(userId, current, 'resolved', actorKind)
+  return applyTransition(
+    userId,
+    current,
+    'resolved',
+    actorKind,
+    undefined,
+    undefined,
+    sourceProposal,
+  )
 }
 
 /**
@@ -406,6 +420,7 @@ async function applyTransition(
   actorKind: ActorKind,
   sessionRunId?: string | null,
   resolutionReason?: string,
+  sourceProposal?: ProposalProvenancePayload,
 ): Promise<{ id: string; status: CommitmentStatus }> {
   let observed = current
   let lastRace: CommitmentStateChangedError | undefined
@@ -437,6 +452,7 @@ async function applyTransition(
         expectedFrom: observed.status,
         sessionRunId,
         resolutionReason,
+        sourceProposal,
       })
     } catch (error) {
       if (!(error instanceof CommitmentStateChangedError)) throw error

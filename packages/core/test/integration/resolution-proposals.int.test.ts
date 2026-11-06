@@ -76,10 +76,14 @@ describe('resolution proposals through core (issue #229)', () => {
     expect(decided).toMatchObject({ kind: 'resolution_applied', commitmentStatus: 'resolved' })
     expect(await commitmentStatus(memoryId)).toBe('resolved')
     const events = await ownerPool.query(
-      `SELECT actor_kind FROM memory_events WHERE memory_id = $1 AND event_kind = 'resolve'`,
+      `SELECT actor_kind, payload FROM memory_events WHERE memory_id = $1 AND event_kind = 'resolve'`,
       [memoryId],
     )
-    expect(events.rows).toEqual([{ actor_kind: ACTOR }])
+    expect(events.rows).toHaveLength(1)
+    expect(events.rows[0]).toMatchObject({
+      actor_kind: ACTOR,
+      payload: { proposalKind: 'resolution', proposalId },
+    })
     // Decided once: a second accept is not-found, and the commitment is untouched.
     await expect(acceptProposalAnyKind(userA, proposalId, ACTOR)).rejects.toThrow()
     const status = await ownerPool.query('SELECT status FROM resolution_proposals WHERE id = $1', [

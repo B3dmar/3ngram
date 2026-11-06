@@ -402,6 +402,10 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+export {
+  type ProposalProvenancePayload,
+  proposalProvenancePayloadSchema,
+} from './proposal-provenance.js'
 // --- proposal review pagination (issue #320) ---
 export type { ProposalEdgeTotals, ProposalKindCounts } from './proposals-page.js'
 export {
