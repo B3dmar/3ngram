@@ -247,7 +247,8 @@ jq -r "$JQ_STATES"' not_found[] | "skipped, no such issue or PR: \(.)"' <<<"$res
 jq -r --argjson states "$states" '"named by carried PRs: " + ([.local[] | tostring as $n
   | "#\($n) (\(($states[$n].type // "missing") | ascii_downcase) \(($states[$n].state // "") | ascii_downcase))"] | join(" "))' \
   <<<"$refs" >&2
-already=$(jq -cn --arg t "$promo_body" --arg repo "$owner/$name" "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs($repo) | .local')
+already=$(jq -cn --arg t "$promo_body" --arg repo "$owner/$name" "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs($repo) | .local') ||
+  { echo "could not parse the body of #$promo" >&2; exit 2; }
 lines=$(jq -r --argjson states "$states" --argjson already "$already" "$JQ_MISSING"'
   .local | missing($states; $already)[]' <<<"$refs")
 
