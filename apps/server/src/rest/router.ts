@@ -473,7 +473,11 @@ export function restRouter(options: RestRouterOptions): Router {
       // Partial-failure degrades to 200 with `sections` flags. Emit a
       // content-free signal (id + status + error class name only)
       // when a section is unavailable so ops can see degradation without a 500.
-      if (history.sections.lineage === 'unavailable' || history.sections.events === 'unavailable') {
+      if (
+        history.sections.lineage === 'unavailable' ||
+        history.sections.events === 'unavailable' ||
+        history.sections.provenance === 'unavailable'
+      ) {
         log().warn(
           {
             route: 'memories.history',
@@ -505,6 +509,7 @@ export function restRouter(options: RestRouterOptions): Router {
           sessionRunId: event.sessionRunId,
         })),
         eventsTruncated: history.eventsTruncated,
+        ...(history.provenance !== undefined ? { provenance: history.provenance } : {}),
         createdBySessionRunId: history.createdBySessionRunId,
         lastResolutionReason: history.lastResolutionReason,
         sections: history.sections,

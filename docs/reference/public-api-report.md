@@ -1229,6 +1229,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_FACT_WRITE_FRACTION_DIGITS` | const | `8e5c8ff3d619` |
 | `MAX_GET_CONTENT_CHARS` | const | `7e835eebb6cb` |
 | `MAX_GET_MEMORIES_IDS` | const | `7ebfa403cf08` |
+| `MAX_GET_PROVENANCE_RESPONSE_BYTES` | const | `7b8ba47bb634` |
 | `MAX_GET_TOTAL_CHARS` | const | `42212eb3f3ac` |
 | `MAX_HANDOFF_SECTION_CEILING` | const | `1721c2e5474b` |
 | `MAX_IMPORT_CONTENT_LENGTH` | const | `25fd3d1a6cde` |
@@ -1491,9 +1492,9 @@ its row here even when its name and kind are unchanged.
 | `factsRangeSchema` | const | `68943816c6ea` |
 | `factsToolOutputSchema` | const | `fe477256bd85` |
 | `forgotPasswordInputSchema` | const | `bd34c5196ff8` |
-| `getMemoriesInputSchema` | const | `9bdf15008f83` |
-| `getMemoriesItemSchema` | const | `9564ab67c44c` |
-| `getMemoriesOutputSchema` | const | `7395c7455015` |
+| `getMemoriesInputSchema` | const | `2092bd9a73e7` |
+| `getMemoriesItemSchema` | const | `9987a54ca155` |
+| `getMemoriesOutputSchema` | const | `71f045d2ca02` |
 | `handoffCommitmentSchema` | const | `8d80b1deb054` |
 | `handoffCountsSchema` | const | `19a4f4765dbf` |
 | `handoffMemorySchema` | const | `8bece3348a56` |
@@ -1534,7 +1535,7 @@ its row here even when its name and kind are unchanged.
 | `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
 | `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
-| `memoryHistoryResponseSchema` | const | `db647f22dda1` |
+| `memoryHistoryResponseSchema` | const | `1d7c35bb14ef` |
 | `memoryListItemSchema` | const | `11edacb3917c` |
 | `memoryProvenanceSchema` | const | `40454525e5a0` |
 | `memoryStatusSchema` | const | `6144c674039b` |
