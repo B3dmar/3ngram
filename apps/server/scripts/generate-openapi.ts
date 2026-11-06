@@ -192,6 +192,7 @@ const exportFact = z
   .object({
     id: z.uuid(),
     memoryId: z.uuid(),
+    sourceFactProposalId: z.uuid().nullable(),
     subject: z.string(),
     predicate: z.string(),
     value: z.string(),
@@ -222,6 +223,8 @@ const exportEdge = z
     id: z.uuid(),
     fromId: z.uuid(),
     toId: z.uuid(),
+    sourceConsolidationProposalId: z.uuid().nullable(),
+    sourceRetentionProposalId: z.uuid().nullable(),
     edgeType: z.string(),
     createdBy: z.string(),
     createdAt: isoDateTime(),
