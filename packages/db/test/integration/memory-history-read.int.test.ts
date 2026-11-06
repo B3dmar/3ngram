@@ -4,7 +4,8 @@
 // (create/revise/supersede), not the "History unavailable" error state. Also
 // guards graceful degradation, the create-only single-node case, and the
 // allowlisted session-provenance fields (issue #262) — runtime role, so every
-// tenant assertion is an RLS assertion.
+// tenant assertion is an RLS assertion — and the caller-bound user_id
+// predicate on each statement, tested apart from RLS (issue #427).
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -14,11 +15,20 @@ import {
   getMemoryHistory,
   MEMORY_HISTORY_EVENT_LIMIT,
   reviseMemory,
+  type TenantTx,
   UnknownSessionRunError,
   withTenant,
   writeImportedMemory,
   writeMemory,
 } from '../../src/index.js'
+import {
+  readAuditEvents,
+  readCreatingSessionRunId,
+  readDirectRelationships,
+  readInspectedMemory,
+  readLineageEdges,
+  readLineageNodes,
+} from '../../src/memory-history-queries.js'
 import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js'
 
 let userId: string
@@ -33,9 +43,11 @@ afterAll(async () => {
   await closePools()
 })
 
-async function buildUpdateSupersedeLineage(): Promise<{ idA: string; idB: string; idC: string }> {
+async function buildUpdateSupersedeLineage(
+  owner = userId,
+): Promise<{ idA: string; idB: string; idC: string }> {
   const a = await writeMemory({
-    userId,
+    userId: owner,
     memoryType: 'note',
     topic: 'lineage topic',
     content: 'version A',
@@ -46,7 +58,7 @@ async function buildUpdateSupersedeLineage(): Promise<{ idA: string; idB: string
     actorKind: 'user_api',
   })
   const b = await reviseMemory({
-    userId,
+    userId: owner,
     memoryType: 'note',
     topic: 'lineage topic',
     content: 'version B',
@@ -59,7 +71,7 @@ async function buildUpdateSupersedeLineage(): Promise<{ idA: string; idB: string
     edgeType: 'updates',
   })
   const c = await reviseMemory({
-    userId,
+    userId: owner,
     memoryType: 'note',
     topic: 'lineage topic',
     content: 'version C',
@@ -78,7 +90,7 @@ describe('memory history after update + supersede (#366)', () => {
   it('returns full lineage + edges for the current memory (no error state)', async () => {
     const { idA, idB, idC } = await buildUpdateSupersedeLineage()
 
-    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, idC))
+    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, userId, idC))
     expect(history).toBeDefined()
     if (!history) throw new Error('history undefined')
 
@@ -94,7 +106,7 @@ describe('memory history after update + supersede (#366)', () => {
   it('returns the audit trail for a superseded version (create + supersede)', async () => {
     const { idA } = await buildUpdateSupersedeLineage()
 
-    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, idA))
+    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, userId, idA))
     expect(history).toBeDefined()
     if (!history) throw new Error('history undefined')
 
@@ -116,7 +128,7 @@ describe('memory history after update + supersede (#366)', () => {
       actorKind: 'user_api',
     })
 
-    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, a.id))
+    const history = await withTenant(userId, (tx) => getMemoryHistory(tx, userId, a.id))
     expect(history).toBeDefined()
     if (!history) throw new Error('history undefined')
 
@@ -181,7 +193,7 @@ describe('memory history graceful degradation (FR-003a)', () => {
     const { idA, idB, idC } = await buildUpdateSupersedeLineage()
 
     const history = await withTenant(userId, (tx) =>
-      getMemoryHistory(failReadsTouching(tx as never, 'memory_events'), idC),
+      getMemoryHistory(failReadsTouching(tx as never, 'memory_events'), userId, idC),
     )
     expect(history).toBeDefined()
     if (!history) throw new Error('history undefined')
@@ -204,7 +216,7 @@ describe('memory history graceful degradation (FR-003a)', () => {
     const { idA } = await buildUpdateSupersedeLineage()
 
     const history = await withTenant(userId, (tx) =>
-      getMemoryHistory(failReadsTouching(tx as never, 'memory_edges'), idA),
+      getMemoryHistory(failReadsTouching(tx as never, 'memory_edges'), userId, idA),
     )
     expect(history).toBeDefined()
     if (!history) throw new Error('history undefined')
@@ -261,7 +273,7 @@ function noteWrite(owner: string, project: string, sessionRunId?: string) {
 }
 
 async function historyOf(owner: string, memoryId: string) {
-  const history = await withTenant(owner, (tx) => getMemoryHistory(tx, memoryId))
+  const history = await withTenant(owner, (tx) => getMemoryHistory(tx, owner, memoryId))
   if (!history) throw new Error(`history of ${memoryId} undefined`)
   return history
 }
@@ -395,8 +407,10 @@ describe('memory history session provenance (#262)', () => {
     const theirs = await writeMemory(noteWrite(other, '3ngram', RUN_OTHER_TENANT))
 
     // RLS: neither tenant can read the other's history (absent -> undefined).
-    expect(await withTenant(other, (tx) => getMemoryHistory(tx, mine.id))).toBeUndefined()
-    expect(await withTenant(userId, (tx) => getMemoryHistory(tx, theirs.id))).toBeUndefined()
+    expect(await withTenant(other, (tx) => getMemoryHistory(tx, other, mine.id))).toBeUndefined()
+    expect(
+      await withTenant(userId, (tx) => getMemoryHistory(tx, userId, theirs.id)),
+    ).toBeUndefined()
     // Each tenant sees only its own run on its own memory.
     expect((await historyOf(other, theirs.id)).createdBySessionRunId).toBe(RUN_OTHER_TENANT)
     // The write path cannot stamp another tenant's run id on my memory.
@@ -440,5 +454,63 @@ describe('memory history session provenance (#262)', () => {
     const history = await historyOf(userId, m.id)
     expect(history.createdBySessionRunId).toBe(RUN_A)
     expect(history.auditEvents[0]?.sessionRunId).toBe(RUN_A)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #427: every history statement binds user_id to the caller, on top of
+// RLS. The cross-tenant test above passes on RLS alone, so these also run
+// inside the OTHER tenant's withTenant(): RLS admits its rows there, and only
+// the caller-bound predicate can keep them from the caller.
+// ---------------------------------------------------------------------------
+
+/** A statement found something: a row, a non-empty list, or a create with a null run. */
+const found = (value: unknown) =>
+  value !== undefined && !(Array.isArray(value) && value.length === 0)
+
+describe('history statements bind the caller, not RLS alone (#427)', () => {
+  it("returns not-found for another tenant's id and keeps the owner's history", async () => {
+    const other = await seedUser('history-427-other@test.local')
+    const mine = await buildUpdateSupersedeLineage()
+    const theirs = await buildUpdateSupersedeLineage(other)
+
+    // RLS intact, and RLS admitting the rows: not-found either way.
+    expect(
+      await withTenant(userId, (tx) => getMemoryHistory(tx, userId, theirs.idB)),
+    ).toBeUndefined()
+    expect(
+      await withTenant(other, (tx) => getMemoryHistory(tx, userId, theirs.idB)),
+    ).toBeUndefined()
+
+    const own = await historyOf(userId, mine.idB)
+    expect(own.lineage.nodes.map((n) => n.id).sort()).toEqual([mine.idA, mine.idB, mine.idC].sort())
+    expect(own.lineage.edges).toHaveLength(2)
+    expect(own.directRelationships.predecessors.map((r) => r.memory.id)).toEqual([mine.idA])
+    expect(own.directRelationships.successors.map((r) => r.memory.id)).toEqual([mine.idC])
+    expect(own.auditEvents.map((e) => e.eventKind).sort()).toEqual(['create', 'supersede'])
+  })
+
+  it('keeps the other tenant out of each of the six statements on its own', async () => {
+    const other = await seedUser('history-427-each@test.local')
+    const { idA, idB, idC } = await buildUpdateSupersedeLineage(other)
+    const statements: Record<string, (tx: TenantTx, caller: string) => Promise<unknown>> = {
+      inspected: (tx, caller) => readInspectedMemory(tx, caller, idB),
+      direct: (tx, caller) => readDirectRelationships(tx, caller, idB),
+      lineageNodes: (tx, caller) => readLineageNodes(tx, caller, idB),
+      lineageEdges: (tx, caller) => readLineageEdges(tx, caller, [idA, idB, idC]),
+      auditEvents: (tx, caller) => readAuditEvents(tx, caller, idB),
+      creatingRun: (tx, caller) => readCreatingSessionRunId(tx, caller, idB),
+    }
+    // Positive control first: as their owner, each statement finds the rows on
+    // this connection. As the caller, it must find none.
+    const seen = await withTenant(other, async (tx) => {
+      const out: Record<string, { owner: boolean; caller: boolean }> = {}
+      for (const [name, run] of Object.entries(statements)) {
+        out[name] = { owner: found(await run(tx, other)), caller: found(await run(tx, userId)) }
+      }
+      return out
+    })
+    const expected = { owner: true, caller: false }
+    expect(seen).toEqual(Object.fromEntries(Object.keys(statements).map((n) => [n, expected])))
   })
 })

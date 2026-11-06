@@ -6,8 +6,9 @@
 // its strict payload schema. The single deliberate exception is the inspected
 // memory's `lastResolutionReason` (issue #234): the owner's own evidence text
 // for its commitment's latest transition, never logged. It runs inside
-// withTenant(); RLS scopes all rows to the caller. The raw SQL reads + raw row
-// shapes live in ./memory-history-queries.ts (500-line cap).
+// withTenant(): RLS scopes all rows to the caller, and every statement also
+// binds user_id to the caller's userId (two-layer isolation, issue #427). The
+// raw SQL reads + raw row shapes live in ./memory-history-queries.ts (500-line cap).
 import { sessionProvenancePayloadSchema } from '@3ngram/schema'
 import type { TenantTx } from './client.js'
 import {
@@ -278,9 +279,13 @@ interface EventsGroupRead {
   creatingSessionRunId: string | null | undefined
 }
 
-async function readEventsGroup(tx: TenantTx, memoryId: string): Promise<EventsGroupRead> {
-  const rows = await readAuditEvents(tx, memoryId)
-  const creatingSessionRunId = await readCreatingSessionRunId(tx, memoryId)
+async function readEventsGroup(
+  tx: TenantTx,
+  userId: string,
+  memoryId: string,
+): Promise<EventsGroupRead> {
+  const rows = await readAuditEvents(tx, userId, memoryId)
+  const creatingSessionRunId = await readCreatingSessionRunId(tx, userId, memoryId)
   return { rows, creatingSessionRunId }
 }
 
@@ -295,17 +300,21 @@ interface LineageGroupRead {
 }
 
 /** Read the lineage + direct-relationship group (`sections.lineage`) as one unit. */
-async function readLineageGroup(tx: TenantTx, memoryId: string): Promise<LineageGroupRead> {
-  const directRows = await readDirectRelationships(tx, memoryId)
+async function readLineageGroup(
+  tx: TenantTx,
+  userId: string,
+  memoryId: string,
+): Promise<LineageGroupRead> {
+  const directRows = await readDirectRelationships(tx, userId, memoryId)
   const boundedDirectRows = directRows.slice(0, MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT)
   const directTruncated = directRows.length > MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT
 
-  const lineageNodeRows = await readLineageNodes(tx, memoryId)
+  const lineageNodeRows = await readLineageNodes(tx, userId, memoryId)
   const boundedLineageNodeRows = lineageNodeRows.slice(0, MEMORY_HISTORY_LINEAGE_NODE_LIMIT)
   const lineageNodeIds = boundedLineageNodeRows.map((row) => row.id)
   const lineageNodeTruncated = lineageNodeRows.length > MEMORY_HISTORY_LINEAGE_NODE_LIMIT
 
-  const lineageEdgeRows = await readLineageEdges(tx, lineageNodeIds)
+  const lineageEdgeRows = await readLineageEdges(tx, userId, lineageNodeIds)
   const boundedLineageEdgeRows = lineageEdgeRows.slice(0, MEMORY_HISTORY_LINEAGE_EDGE_LIMIT)
   const lineageEdgeTruncated = lineageEdgeRows.length > MEMORY_HISTORY_LINEAGE_EDGE_LIMIT
 
@@ -356,9 +365,31 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'UnknownError'
 }
 
+/** One section's read: its value, or the error class name that made it `unavailable`. */
+type SectionRead<T> = { status: 'ok'; value: T } | { status: 'unavailable'; error: string }
+
 /**
- * Read the history view for one memory id. Returns undefined for absent or
- * cross-tenant ids (RLS collapses those cases). Output is bounded and
+ * Read one section inside its own SAVEPOINT so a real DB error (e.g. a query
+ * timeout) aborts only that section and rolls back cleanly, leaving the shared
+ * withTenant() transaction usable for the other section. Without this,
+ * a lineage failure would poison the events read on the same aborted tx.
+ */
+async function readSection<T>(
+  tx: TenantTx,
+  savepoint: string,
+  read: () => Promise<T>,
+): Promise<SectionRead<T>> {
+  try {
+    return { status: 'ok', value: await withSavepoint(tx, savepoint, read) }
+  } catch (error) {
+    return { status: 'unavailable', error: errorName(error) }
+  }
+}
+
+/**
+ * Read the history view for one memory id, as the caller `userId` (the id
+ * passed into withTenant()). Returns undefined for absent or cross-tenant ids
+ * (RLS and the caller-bound predicate collapse those cases). Output is bounded and
  * identity-only except for audit payload metadata and the allowlisted
  * `sessionRunId` provenance key.
  *
@@ -370,33 +401,23 @@ function errorName(error: unknown): string {
  */
 export async function getMemoryHistory(
   tx: TenantTx,
+  userId: string,
   memoryId: string,
 ): Promise<MemoryHistoryRead | undefined> {
-  const inspected = await readInspectedMemory(tx, memoryId)
+  const inspected = await readInspectedMemory(tx, userId, memoryId)
   if (inspected === undefined) return undefined
 
-  const sectionErrors: { lineage?: string; events?: string } = {}
-
-  // Each section reads inside its own SAVEPOINT so a real DB error (e.g. a query
-  // timeout) aborts only that section and rolls back cleanly, leaving the shared
-  // withTenant() transaction usable for the other section. Without this,
-  // a lineage failure would poison the events read on the same aborted tx.
-  let lineageGroup: LineageGroupRead | undefined
-  let lineageStatus: MemoryHistorySectionStatus = 'ok'
-  try {
-    lineageGroup = await withSavepoint(tx, 'history_lineage', () => readLineageGroup(tx, memoryId))
-  } catch (error) {
-    lineageStatus = 'unavailable'
-    sectionErrors.lineage = errorName(error)
-  }
-
-  let eventsGroup: EventsGroupRead | undefined
-  let eventsStatus: MemoryHistorySectionStatus = 'ok'
-  try {
-    eventsGroup = await withSavepoint(tx, 'history_events', () => readEventsGroup(tx, memoryId))
-  } catch (error) {
-    eventsStatus = 'unavailable'
-    sectionErrors.events = errorName(error)
+  const lineage = await readSection(tx, 'history_lineage', () =>
+    readLineageGroup(tx, userId, memoryId),
+  )
+  const events = await readSection(tx, 'history_events', () =>
+    readEventsGroup(tx, userId, memoryId),
+  )
+  const lineageGroup = lineage.status === 'ok' ? lineage.value : undefined
+  const eventsGroup = events.status === 'ok' ? events.value : undefined
+  const sectionErrors = {
+    ...(lineage.status === 'ok' ? {} : { lineage: lineage.error }),
+    ...(events.status === 'ok' ? {} : { events: events.error }),
   }
 
   const supersededIds = lineageGroup?.supersededIds ?? new Set<string>()
@@ -416,9 +437,7 @@ export async function getMemoryHistory(
     eventsTruncated: auditRows !== undefined && auditRows.length > MEMORY_HISTORY_EVENT_LIMIT,
     createdBySessionRunId: allowlistedSessionRunId(eventsGroup?.creatingSessionRunId),
     lastResolutionReason: inspected.last_resolution_reason ?? null,
-    sections: { lineage: lineageStatus, events: eventsStatus },
-    ...(sectionErrors.lineage !== undefined || sectionErrors.events !== undefined
-      ? { sectionErrors }
-      : {}),
+    sections: { lineage: lineage.status, events: events.status },
+    ...(lineage.status === 'ok' && events.status === 'ok' ? {} : { sectionErrors }),
   }
 }
