@@ -47,16 +47,19 @@
               "use-cases/claude-code",
               "use-cases/connecting-tools",
               "use-cases/team-brain",
-              "use-cases/recall-supersession"
+              "use-cases/recall-supersession",
+              "use-cases/approve-before-it-lands"
             ]
           },
           {
             "group": "Concepts",
             "pages": [
               "concepts/memory-model",
+              "concepts/fact-basis",
               "concepts/scopes",
               "concepts/threads",
               "concepts/session-continuity",
+              "concepts/provenance",
               "concepts/data-model",
               "concepts/mcp-design",
               "concepts/mcp-resources",

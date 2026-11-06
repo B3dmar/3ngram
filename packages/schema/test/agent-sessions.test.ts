@@ -258,10 +258,12 @@ describe('sessionRunIdSchema canonicalization', () => {
     // surfaces are generated. `.toLowerCase()` is a type-preserving overwrite.
     for (const io of ['input', 'output'] as const) {
       const json = z.toJSONSchema(resolveToolInputSchema, { target: 'draft-2020-12', io }) as {
-        properties: { sessionRunId: { type: string; format: string } }
+        properties: { sessionRunId: { anyOf: unknown[] } }
       }
-      expect(json.properties.sessionRunId.type).toBe('string')
-      expect(json.properties.sessionRunId.format).toBe('uuid')
+      expect(json.properties.sessionRunId.anyOf).toEqual([
+        expect.objectContaining({ type: 'string', format: 'uuid' }),
+        { type: 'null' },
+      ])
     }
   })
 })

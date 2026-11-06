@@ -328,7 +328,7 @@ export async function assertSessionRunOwnedIn(
  * carrying the same stale id re-decide under the attach lock, so
  * activation_epoch advances one step per resurrection, never one per writer.
  * Omitted id uses the single-open default (exactly one leased-open row for the
- * memory's project).
+ * memory's project). Explicit null bypasses attachment and all session mutation.
  *
  * LOCK ORDER: this takes the tenant/project attach advisory lock, so callers
  * must call it BEFORE taking any memory row lock (see memory-revise.ts).
@@ -336,8 +336,13 @@ export async function assertSessionRunOwnedIn(
 export async function resolveSessionProvenance(
   tx: TenantTx,
   userId: string,
-  opts: { sessionRunId?: string | undefined; project?: string | null | undefined; now: Date },
+  opts: {
+    sessionRunId?: string | null | undefined
+    project?: string | null | undefined
+    now: Date
+  },
 ): Promise<string | undefined> {
+  if (opts.sessionRunId === null) return undefined
   if (opts.sessionRunId !== undefined) {
     return attachKnownRun(tx, userId, opts.sessionRunId, opts.now)
   }

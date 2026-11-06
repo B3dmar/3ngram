@@ -56,7 +56,7 @@ export async function reviseDisposition(
 ): Promise<ReviseDispositionOutput> {
   const parsed = nativeReviseDispositionInputSchema.parse(input)
   if (options.access) await options.access.assertWrite(userId)
-  if (parsed.sessionRunId !== undefined) await assertSessionRunOwned(userId, parsed.sessionRunId)
+  if (parsed.sessionRunId != null) await assertSessionRunOwned(userId, parsed.sessionRunId)
 
   const dispose = parsed.kind === 'archive' ? archiveMemoryDisposition : reaffirmMemoryDisposition
   const outcomes: ReviseDispositionOutput['outcomes'] = []

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestBriefingDefersWritesWithoutCredential(t *testing.T) {
+func TestBriefingAllowsVerifiedWritesWithoutHookCredential(t *testing.T) {
 	for _, state := range []string{"missing", "blank", "unreadable"} {
 		for _, source := range []string{"startup", "resume", "compact"} {
 			t.Run(state+"/"+source, func(t *testing.T) {
@@ -18,10 +18,7 @@ func TestBriefingDefersWritesWithoutCredential(t *testing.T) {
 				out := captureHook(t, fmt.Sprintf(`{"session_id":"fixture-session","source":%q}`, source), func() int {
 					return runBriefing(nil)
 				})
-				if !strings.Contains(out, "Defer `remember` / `revise` / `resolve`") ||
-					!strings.Contains(out, "Do not reuse a prior run ID") {
-					t.Fatal("unavailable credential did not defer writes and reject a stale run ID")
-				}
+				assertOptionalAttributionInstruction(t, out)
 				if strings.Contains(out, "**3ngram session run**") || strings.Contains(out, testRunID) {
 					t.Fatal("unavailable credential exposed a run ID")
 				}
