@@ -62,10 +62,10 @@ Two limits hold under every option. A write closes only values that started at o
 An unknown basis needs a precedence without a label. It covers every fact written before `basis` ships, and every later write that omits it. This choice sets how much of B's gate survives ([decisions 3 and 4](#decisions-for-the-owner)):
 
 - **U1. Unknown counts as grounded everywhere.** Protects existing values, but a new write that omits `basis` is grounded too, so omitting it bypasses the gate.
-- **U2. Unknown counts as grounded only for rows written before `basis` ships.** An existing row recorded before that instant is protected; a new write that omits `basis` counts as inferred, both when it would close a value and when a later write would close it. Omission no longer bypasses the gate, but the rule needs that instant as a fixed cutoff, and a writer can still declare `stated`.
+- **U2. Unknown counts as grounded only for rows written before `basis` ships.** The cutoff compares the fact's `created_at`, which every path sets on the server (`packages/db/src/schema/memory.ts:250`; `facts-write.ts:140-154` never writes it), not `recorded_at`, which import replays from the export (`packages/schema/src/import.ts:188`). A new write that omits `basis` counts as inferred, both when it would close a value and when a later write would close it. So does a row imported after the cutoff without a basis, even when its `recorded_at` is older: restoring an old export drops the protection its rows had. Omission no longer bypasses the gate, and a writer can still declare `stated`. The cost lands on today's clients. None sends `basis` yet, so every update they make to a key whose open value predates the cutoff is staged for review instead of written, including an owner's own dictated value sent through an older plugin. U2 changes behaviour for every current caller until it sends `basis`.
 - **U3. Unknown counts as inferred everywhere.** Keeps today's behaviour for existing values and protects none of them.
 
-**Recommendation: B with U2,** in its own PR after the basis field ships, and after the #369 production evaluation finishes, so that evaluation measures one rule, not two.
+**Recommendation: B with U2,** in its own PR after the basis field ships and the clients that write facts send it, and after the #369 production evaluation finishes, so that evaluation measures one rule, not two.
 
 ## 3. Reads: filter, rank or label
 
@@ -102,7 +102,7 @@ Two sources write `confidence`, and they differ:
 1. **Basis:** store a writer-declared `basis` per fact (recommended), derive it from the writer, or store both a basis and a write path?
 2. **Values:** are `stated`, `observed` and `inferred` the right set, and do `stated` and `observed` share the grounded tier?
 3. **Supersede:** does an inferred direct write that meets an open grounded value become a fact proposal (recommended), or does the rule stay basis-blind? Either way, the gate binds only writers that declare `inferred` or, under U2, omit basis.
-4. **Unknown basis:** grounded everywhere (U1), grounded only for rows written before `basis` ships (U2, recommended), or inferred everywhere (U3)?
+4. **Unknown basis:** grounded everywhere (U1), grounded only for rows whose `created_at` predates the `basis` release (U2, recommended), or inferred everywhere (U3)? U2 stages every current client's update to a pre-cutoff key for review until that client sends `basis`, so it also needs a decision on when the rule turns on.
 5. **Sequencing:** does the supersede change wait for the #369 production evaluation (recommended)?
 6. **Reads:** label only on `get_facts` (recommended)? Should `get_facts` also return `memoryId`?
 7. **Calibration:** define `confidence`, label writer-declared values as uncalibrated, and require an ECE report before the extractor or any rule relies on it (recommended)?
