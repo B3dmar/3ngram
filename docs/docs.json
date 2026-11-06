@@ -57,6 +57,7 @@
               "concepts/scopes",
               "concepts/threads",
               "concepts/session-continuity",
+              "concepts/provenance",
               "concepts/data-model",
               "concepts/mcp-design",
               "concepts/mcp-resources",
