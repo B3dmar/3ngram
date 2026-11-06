@@ -1422,7 +1422,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
-| `archiveEventPayloadSchema` | const | `000730bcc6d5` |
+| `archiveEventPayloadSchema` | const | `8fa73202ffed` |
 | `archiveMemoryBodySchema` | const | `26c78cb1dc3b` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
