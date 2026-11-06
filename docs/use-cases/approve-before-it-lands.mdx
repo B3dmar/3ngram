@@ -4,7 +4,7 @@ description: "Some of 3ngram's background work ends in a proposal, not a change.
 icon: "list-check"
 ---
 
-Some of 3ngram's work happens in the background, after the conversation. Where a background pass would change your memory, it can stage a **proposal** instead, and the change waits for you. A proposal changes nothing on its own: search ranks the same way, `get_facts` returns the same facts, and the commitment stays open until you accept.
+Some of 3ngram's work happens in the background, after the conversation. Where a background pass would change your memory, it can stage a **proposal** instead, and the change waits for you. A proposal changes nothing on its own: search ranks the same way, `get_facts` returns the same facts, and the commitment is not resolved until you accept.
 
 You review proposals with the `review_proposals` tool. It is an ordinary MCP tool, so you can review from any client you have connected, such as Claude, ChatGPT or Cursor.
 
@@ -43,7 +43,7 @@ The judgment opt-in is per account and off by default (`PUT /api/v1/settings/jud
 
 ### Consolidation proposals
 
-- **When it appears:** every hour the worker compares the live memories of every account. A pair whose embeddings reach a cosine similarity of at least 0.92 gets a proposed edge from the newer memory to the older one. Memories without an embedding are skipped. The pass proposes the mildest edge both memory types allow, usually `extends`, and an `event` memory only ever gets `extends`.
+- **When it appears:** every hour the worker compares the live memories of every account and keeps at most the 200 closest pairs per account. A pair whose embeddings reach a cosine similarity of at least 0.92 gets a proposed edge from the newer memory to the older one. Memories without an embedding are skipped. The pass proposes the mildest edge both memory types allow, usually `extends`, and an `event` memory only ever gets `extends`.
 - **What you see:** both memory ids (`fromId` is the newer one), the `edgeType`, the `similarity` and a one-line rationale.
 - **Accept:** writes the edge. A `supersedes` or `updates` edge also closes the older memory's validity, as `revise` does, so search ranks it below its successor. Its content is untouched and it stays readable as history.
 - **Reject:** nothing else changes, and that pair is never proposed again. Only a new memory can raise the question again.
@@ -74,6 +74,6 @@ Nothing stages these today. The review side is built so that an extractor, once 
 
 - **Your own writes.** `remember`, `revise` and `resolve` apply at once, because you or your agent asked for them.
 - **Commitment expiry.** The surfacing sweep expires a commitment that is past its due date by more than a grace window (`COMMITMENT_EXPIRY_GRACE_DAYS`, 14 days by default).
-- **Closer resolves.** With the closer on, a commitment it judges done is resolved without a proposal: at 0.9 or above with the judgment opt-in, and on the model's answer alone without it, in which case the closer stages no proposals at all. A resolve is reversible: `resolve` the commitment back to `open`.
+- **Closer resolves.** With the closer on, a commitment it judges done is resolved without a proposal: at 0.9 or above with the judgment opt-in and a judgment gateway, and on the model's answer alone without the opt-in or without a judgment gateway, in which case the closer stages no proposals at all. A resolve is reversible: `resolve` the commitment back to `open`.
 
 Over REST, `GET /api/v1/proposals` and `POST /api/v1/proposals/{id}/apply` or `/reject` cover consolidation proposals only. See the [memory model](/concepts/memory-model#consolidation-is-advisory) for how proposals fit append-and-supersede, and the [tool reference](/reference/tools) for the full `review_proposals` schema.
