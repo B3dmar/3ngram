@@ -35,8 +35,15 @@ set -euo pipefail
 # The closing references in one text, as {repo, number} with repo lowercased
 # and null for a bare #N. Shared by the run and the self-test.
 read -r -d '' JQ_REFS <<'JQ' || true
+# An unclosed comment or fence runs to the end of the body, as GitHub renders
+# it. Every line indented by four spaces or a tab is dropped, not only real
+# indented code blocks: that also drops indented list text, which only adds
+# misses.
 def prose:
-  gsub("<!--[\\s\\S]*?-->"; " ") | gsub("```[\\s\\S]*?```"; " ") | gsub("~~~[\\s\\S]*?~~~"; " ")
+  gsub("<!--[\\s\\S]*?-->"; " ") | gsub("<!--[\\s\\S]*$"; " ")
+  | gsub("```[\\s\\S]*?```"; " ") | gsub("```[\\s\\S]*$"; " ")
+  | gsub("~~~[\\s\\S]*?~~~"; " ") | gsub("~~~[\\s\\S]*$"; " ")
+  | gsub("(?:^|\\n)(?: {4}|\\t)[^\\n]*"; "\n")
   | gsub("`[^`\\n]*`"; " ");
 def closing_refs:
   [ prose | match("(?i)(?:^|[^\\w-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \\t]+(?:https://github\\.com/(?<url>[\\w.-]+/[\\w.-]+)/issues/|(?<repo>[\\w.-]+/[\\w.-]+)#|#)(?<n>[0-9]+)(?![\\w#/-])"; "g")
@@ -47,14 +54,15 @@ JQ
 
 # Partition references against $repo (OWNER/NAME): same-repo numbers, the
 # other repositories' references as "OWNER/NAME#N" strings, and same-repo
-# numbers too large for GraphQL's Int (one would fail the whole states call).
+# numbers no issue can have: 0, or too large for GraphQL's Int (either could
+# fail the whole states call).
 read -r -d '' JQ_SPLIT <<'JQ' || true
 def split_refs($repo):
   ($repo | ascii_downcase) as $r
   | [ .[] | select(.repo == null or .repo == $r) | .number ] as $mine
-  | { local: [ $mine[] | select(. <= 2147483647) ] | unique,
+  | { local: [ $mine[] | select(. >= 1 and . <= 2147483647) ] | unique,
       foreign: [ .[] | select(.repo != null and .repo != $r) | "\(.repo)#\(.number)" ] | unique,
-      invalid: [ $mine[] | select(. > 2147483647) | "#\(.)" ] | unique };
+      invalid: [ $mine[] | select(. < 1 or . > 2147483647) | "#\(.)" ] | unique };
 JQ
 
 # Carried PR numbers from commit headlines.
@@ -103,9 +111,14 @@ self_test() {
   got=$(jq -cn --arg t "$(printf '<!-- e.g. Closes #123 -->\n`fix #20`\n```\nCloses #21\n```\n~~~\nfixes #22\n~~~\nFixed\n#23\nCloses #24')" \
     "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'comments, code and line breaks' "$got" '[24]'
-  got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718, closes #99999999999' \
+  got=$(jq -cn --arg t "$(printf 'Closes #30\n\n    Closes #31\n\tfixes #32\nCloses #33\n```\nCloses #34')" \
+    "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'indented code and an unclosed fence' "$got" '[30,33]'
+  got=$(jq -cn --arg t "$(printf 'Closes #40\n<!-- unclosed\nCloses #41')" "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'an unclosed comment' "$got" '[40]'
+  got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718, closes #99999999999, closes #0' \
     "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs("B3dmar/3ngram")')
-  check 'same repository, others, too large' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"],"invalid":["#99999999999"]}'
+  check 'same repository, others, impossible numbers' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"],"invalid":["#0","#99999999999"]}'
   got=$(jq -cn "$JQ_CARRIED"' ["Merge pull request #429 from B3dmar/fix/x", "fix(db): bind user_id", "Merge branch '"'"'main'"'"' into staging", "Merge pull request #433 from B3dmar/docs/y", "Merge pull request #429 from B3dmar/fix/x"] | carried')
   check 'carried PRs from merge headlines' "$got" '[429,433]'
   got=$(jq -cn "$JQ_MISSING"' [3,400,427,428,430] | missing({"3":{"type":"Issue","state":"CLOSED"},"400":{"type":"Issue","state":"OPEN"},"427":{"type":"Issue","state":"OPEN"},"428":{"type":"PullRequest","state":"MERGED"}}; [400])')
