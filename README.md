@@ -25,6 +25,12 @@ Decisions, commitments, blockers, and facts that survive the session, across Cla
 - **Knows what it doesn't know.** Retrieval is calibrated to abstain rather than return a confident false match when the answer genuinely isn't stored.
 - **A deliberately small surface.** 11 MCP tools and 2 prompts over Streamable HTTP, mirrored on a REST API (`/api/v1`), designed around jobs to be done, not feature count.
 
+## Approve before it lands
+
+Some of 3ngram's background work ends in a proposal instead of a change. Every hour, the consolidation pass proposes an edge between two memories that look like near-duplicates. Where the opt-in judgment passes are turned on, the session closer proposes resolving a commitment it thinks is done but is not sure about, and the forgetting pass proposes archiving or superseding a memory it thinks is finished.
+
+A proposal changes nothing until you accept it: search ranks as before, `get_facts` returns the same facts, and the commitment is not resolved. You list, accept or reject proposals with the `review_proposals` tool. It is an ordinary MCP tool, so you can review from any connected client, such as Claude, ChatGPT or Cursor. Each kind, and what accept and reject do: [Approve before it lands](https://docs.3ngram.ai/use-cases/approve-before-it-lands).
+
 ## How to run it
 
 | Tier | How | Best for |
@@ -138,7 +144,7 @@ const results = await client.search('what did we decide about the search backend
 | Carry context to another agent | `handoff` |
 | What is currently true about X | `get_facts` |
 | Organize your memory space | `configure_scope` |
-| Review consolidation proposals | `review_proposals` |
+| Approve what background work proposed | `review_proposals` |
 | Inspect capabilities and config | `describe_environment` |
 
 Full schemas: [MCP tools](https://docs.3ngram.ai/reference/tools) · [REST API](https://docs.3ngram.ai/api-reference) · [CLI](https://docs.3ngram.ai/reference/cli) · [SDK](https://docs.3ngram.ai/reference/sdk).
