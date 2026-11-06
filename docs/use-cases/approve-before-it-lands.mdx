@@ -68,7 +68,7 @@ Nothing stages these today. The review side is built so that an extractor, once 
 - **When it appears:** only with the forgetting pass on and the judgment opt-in set. Once a day the pass looks at decisions, preferences, blockers and facts not updated or reaffirmed for 30 days, and at pairs of same-type memories that look like they conflict. A judgment model gives each a verdict, and only confident verdicts other than keep become proposals. Keep verdicts and unsure ones are never listed.
 - **What you see:** the memory id, the verdict (`archive`, `supersede` or `conflict`), the related memory for supersede and conflict, the probability and the judge model.
 - **Accept:** archive archives the memory, which stays readable with `status: "archived"`. Supersede adds a `supersedes` edge from the newer memory and closes the older one. Conflict records your review and changes no memory, so you settle it with `revise`. If the verdict can no longer be applied, accept returns a conflict error and the proposal stays open.
-- **Reject:** nothing changes. The pass does not propose that action for that memory again until the memory changes: an edit, a reaffirm or a newer neighbour.
+- **Reject:** nothing changes. The pass does not judge that memory on its own again until its freshness moves, through a filing change with `revise` (scope, project or tags) or a reaffirm. A newer memory does not reopen it, though the two can still come up later as a pair.
 
 ## What does not wait for review
 
