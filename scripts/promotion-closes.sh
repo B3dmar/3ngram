@@ -38,13 +38,15 @@ read -r -d '' JQ_REFS <<'JQ' || true
 # An unclosed comment or fence runs to the end of the body, as GitHub renders
 # it. Every line indented by four spaces or a tab is dropped, not only real
 # indented code blocks: that also drops indented list text, which only adds
-# misses.
+# misses. A code span is any run of backticks up to the next run of the same
+# length (``fixes #1`` included), and <code> and <pre> elements are code too.
 def prose:
   gsub("<!--[\\s\\S]*?-->"; " ") | gsub("<!--[\\s\\S]*$"; " ")
   | gsub("```[\\s\\S]*?```"; " ") | gsub("```[\\s\\S]*$"; " ")
   | gsub("~~~[\\s\\S]*?~~~"; " ") | gsub("~~~[\\s\\S]*$"; " ")
   | gsub("(?:^|\\n)(?: {4}|\\t)[^\\n]*"; "\n")
-  | gsub("`[^`\\n]*`"; " ");
+  | gsub("(?i)<(?<el>code|pre)\\b[^>]*>[\\s\\S]*?</\\k<el>\\s*>"; " ")
+  | gsub("(?<tick>`+)[\\s\\S]*?\\k<tick>"; " ");
 def closing_refs:
   [ prose | match("(?i)(?:^|[^\\w-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \\t]+(?:https://github\\.com/(?<url>[\\w.-]+/[\\w.-]+)/issues/|(?<repo>[\\w.-]+/[\\w.-]+)#|#)(?<n>[0-9]+)(?![\\w#/-])"; "g")
     | (.captures | map({key: .name, value: .string}) | from_entries) as $c
@@ -116,6 +118,9 @@ self_test() {
   check 'indented code and an unclosed fence' "$got" '[30,33]'
   got=$(jq -cn --arg t "$(printf 'Closes #40\n<!-- unclosed\nCloses #41')" "$JQ_REFS"' $t | closing_refs | map(.number)')
   check 'an unclosed comment' "$got" '[40]'
+  got=$(jq -cn --arg t "$(printf '``fixes #50``, ``a `fix #51` b``, <code>closes #52</code>, <CODE class=x>fix #53</CODE>\n<pre>\nfixes #54\n</pre>\nCloses #55')" \
+    "$JQ_REFS"' $t | closing_refs | map(.number)')
+  check 'longer code spans and HTML code' "$got" '[55]'
   got=$(jq -cn --arg t 'Resolves B3dmar/3ngram#14, closes https://github.com/b3dmar/3ngram/issues/15, closes B3dmar/3ngram-platform#718, closes #99999999999, closes #0' \
     "$JQ_REFS $JQ_SPLIT"' $t | closing_refs | split_refs("B3dmar/3ngram")')
   check 'same repository, others, impossible numbers' "$got" '{"local":[14,15],"foreign":["b3dmar/3ngram-platform#718"],"invalid":["#0","#99999999999"]}'
