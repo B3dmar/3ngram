@@ -23,7 +23,7 @@ export const MAX_PROVENANCE_NODES = 25
 export const MAX_PROVENANCE_EDGES = 50
 export const MAX_PROVENANCE_PRODUCTS = 50
 
-const sourceProposal = proposalProvenancePayloadSchema.nullable()
+const sourceProposal = proposalProvenancePayloadSchema.meta(OPEN_OUTPUT_META).nullable()
 const origin = z
   .object({
     actorKind: actorKindSchema,
@@ -37,9 +37,11 @@ const origin = z
         openedAt: isoDateTime(),
       })
       .strict()
+      .meta(OPEN_OUTPUT_META)
       .nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 
 const relative = z
   .object({
@@ -67,6 +69,7 @@ const relative = z
     createdBySessionRunId: z.uuid().nullable(),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 
 const event = z
   .object({
@@ -78,6 +81,7 @@ const event = z
     sourceProposal,
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 
 const proposal = z
   .object({
@@ -95,9 +99,11 @@ const proposal = z
         eventIds: z.array(z.uuid()).max(MAX_PROVENANCE_PRODUCTS),
         truncated: z.boolean(),
       })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
   })
   .strict()
+  .meta(OPEN_OUTPUT_META)
 
 export const memoryProvenanceSchema = z
   .object({
@@ -109,6 +115,7 @@ export const memoryProvenanceSchema = z
         truncated: z.boolean(),
       })
       .strict()
+      .meta(OPEN_OUTPUT_META)
       .refine(
         (section) =>
           section.predecessors.length + section.successors.length <= MAX_PROVENANCE_EDGES,
@@ -116,10 +123,12 @@ export const memoryProvenanceSchema = z
       ),
     events: z
       .object({ items: z.array(event).max(MAX_PROVENANCE_EVENTS), truncated: z.boolean() })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
     proposals: z
       .object({ items: z.array(proposal).max(MAX_PROVENANCE_PROPOSALS), truncated: z.boolean() })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
     facts: z
       .object({
         items: z
@@ -131,12 +140,14 @@ export const memoryProvenanceSchema = z
                 validTo: isoDateTime().nullable(),
                 sourceProposalId: z.uuid().nullable(),
               })
-              .strict(),
+              .strict()
+              .meta(OPEN_OUTPUT_META),
           )
           .max(MAX_PROVENANCE_FACTS),
         truncated: z.boolean(),
       })
-      .strict(),
+      .strict()
+      .meta(OPEN_OUTPUT_META),
   })
   .strict()
   .meta(OPEN_OUTPUT_META)

@@ -12,6 +12,7 @@ import { MAX_IMPORT_CONTENT_LENGTH } from './import.js'
 import { isoDateTime } from './iso-datetime.js'
 import { MAX_EXCERPT_LENGTH } from './mcp.js'
 import { memoryStatusSchema, memoryTypeSchema } from './memory.js'
+import { MAX_PROVENANCE_IDS, memoryProvenanceSchema } from './memory-provenance.js'
 import { OPEN_OUTPUT_META } from './output-openness.js'
 import { scopeSchema } from './scope.js'
 import { projectSchema, reviseEdgeIntentSchema } from './write.js'
@@ -57,6 +58,8 @@ export const DEFAULT_GET_CONTENT_CHARS = 10000
  * a caller wanting the 65,536 ceiling narrows the batch to ≤ 4 ids.
  */
 export const MAX_GET_TOTAL_CHARS = MAX_IMPORT_CONTENT_LENGTH
+/** Worst-case JSON MCP result, including structured content and its text mirror. */
+export const MAX_GET_PROVENANCE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 /**
  * `get_memories` input — fetch FULL (bounded) content for ids the caller
@@ -70,6 +73,7 @@ export const MAX_GET_TOTAL_CHARS = MAX_IMPORT_CONTENT_LENGTH
 export const getMemoriesInputSchema = z
   .object({
     ids: z.array(z.uuid()).min(1).max(MAX_GET_MEMORIES_IDS),
+    include: z.array(z.literal('provenance')).max(1).optional(),
     maxContentChars: z
       .number()
       .int()
@@ -78,6 +82,10 @@ export const getMemoriesInputSchema = z
       .default(DEFAULT_GET_CONTENT_CHARS),
   })
   .strict()
+  .refine(
+    (input) => !input.include?.includes('provenance') || input.ids.length <= MAX_PROVENANCE_IDS,
+    { message: `Provenance accepts at most ${MAX_PROVENANCE_IDS} ids`, path: ['ids'] },
+  )
   .refine((input) => input.ids.length * input.maxContentChars <= MAX_GET_TOTAL_CHARS, {
     message: `ids.length × maxContentChars must not exceed ${MAX_GET_TOTAL_CHARS} — request fewer ids or a smaller maxContentChars`,
     path: ['maxContentChars'],
@@ -102,8 +110,7 @@ export type GetMemoriesArgs = z.input<typeof getMemoriesInputSchema>
  * closed — REST history's `lifecycleState` precedence (archived first), which
  * for active rows matches `search`'s `superseded` flag — so a cited id that
  * is out of date resolves to its replacement in one read. `null` for a
- * current, archived or edge-less historical row. One hop, never lineage:
- * that is `GET /api/v1/memories/:id/history`.
+ * current, archived or edge-less historical row. Lineage is available through `include: ["provenance"]` and REST history.
  */
 export const supersededBySchema = z
   .object({
@@ -130,6 +137,7 @@ export const getMemoriesItemSchema = z
       .describe(
         'Direct successor when this row is superseded (closed validity plus a supersedes/updates edge); null otherwise, whether current, archived or historical without a revision edge.',
       ),
+    provenance: memoryProvenanceSchema.optional(),
     commitmentStatus: commitmentStatusSchema.optional(),
     tags: z.array(z.string()),
     validFrom: isoDateTime(),

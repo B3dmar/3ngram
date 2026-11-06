@@ -237,3 +237,41 @@ it('finds a recorded resolution product after its commitment moved to a successo
     chains.get(newer.id)?.events.items.find((e) => e.id === event.rows[0].id)?.sourceProposal,
   ).toEqual({ proposalKind: 'resolution', proposalId })
 })
+
+it('caps facts, applied proposals and recorded products independently', async () => {
+  const m = await writeMemory(input(a))
+  await withTenant(a, (tx) =>
+    insertFactProposals(
+      tx,
+      Array.from({ length: 26 }, (_, i) => ({
+        userId: a,
+        memoryId: m.id,
+        subject: `subject-${i}`,
+        predicate: 'fixture',
+        value: 'fixture',
+        memoryType: 'decision' as const,
+      })),
+    ),
+  )
+  const proposed = await ownerPool.query(
+    'SELECT id FROM fact_proposals WHERE user_id=$1 ORDER BY created_at,id',
+    [a],
+  )
+  for (const proposal of proposed.rows)
+    await withTenant(a, (tx) => applyFactProposal(tx, a, proposal.id))
+  const newest = proposed.rows[25]?.id as string
+  // Stress the stored read contract beyond the normal one-fact acceptance cardinality.
+  await ownerPool.query(
+    `INSERT INTO facts (user_id,memory_id,subject,predicate,value,source_fact_proposal_id)
+    SELECT $1,$2,'stress','fixture','fixture',$3 FROM generate_series(1,51)`,
+    [a, m.id, newest],
+  )
+  const chain = memoryProvenanceSchema.parse((await read(a, [m.id])).get(m.id))
+  expect(chain.facts.items).toHaveLength(25)
+  expect(chain.facts.truncated).toBe(true)
+  expect(chain.proposals.items).toHaveLength(25)
+  expect(chain.proposals.truncated).toBe(true)
+  const produced = chain.proposals.items.find((p) => p.id === newest)?.produced
+  expect(produced?.factIds).toHaveLength(50)
+  expect(produced?.truncated).toBe(true)
+})

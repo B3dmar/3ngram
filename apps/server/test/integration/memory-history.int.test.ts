@@ -183,6 +183,15 @@ describe('GET /api/v1/memories/:id/history session provenance (#262)', () => {
 
     const ha = await history(idA)
     expect(ha.createdBySessionRunId).toBe(runA)
+    expect(ha.sections?.provenance).toBe('ok')
+    expect(ha.provenance?.origin).toMatchObject({ sessionRunId: runA, run: { agent: 'codex' } })
+    expect(ha.provenance?.supersession.successors.map((r) => r.id)).toEqual([idB, idC])
+    expect(ha.provenance?.supersession.successors.map((r) => r.createdBySessionRunId)).toEqual([
+      runB,
+      null,
+    ])
+    expect(ha.provenance?.facts).toEqual({ items: [], truncated: false })
+    expect(ha.provenance?.proposals).toEqual({ items: [], truncated: false })
     expect(ha.auditEvents.map((e) => [e.eventKind, e.sessionRunId]).sort()).toEqual([
       ['create', runA],
       ['supersede', runB],

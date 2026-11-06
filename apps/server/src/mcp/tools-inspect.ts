@@ -32,6 +32,7 @@ import {
   MAX_GET_CONTENT_CHARS,
   MAX_GET_MEMORIES_IDS,
   MAX_GET_TOTAL_CHARS,
+  MAX_PROVENANCE_IDS,
 } from '@3ngram/schema'
 import type { CallToolResult } from '@modelcontextprotocol/server'
 import { parseOutput } from '../output-validation.js'
@@ -65,7 +66,7 @@ const getMemoriesTool: ToolDefinition = {
   requiredScope: MEMORY_READ_SCOPE,
   config: {
     title: 'Get Memories',
-    description: `Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to ${MAX_GET_MEMORIES_IDS} ids plus an optional maxContentChars per-item bound (default ${DEFAULT_GET_CONTENT_CHARS}, max ${MAX_GET_CONTENT_CHARS}; ids × maxContentChars may not exceed ${MAX_GET_TOTAL_CHARS} per call); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error.`,
+    description: `Fetch the full content of memories by id — use this after search or handoff returns an item with truncated: true to read the complete body. Accepts up to ${MAX_GET_MEMORIES_IDS} ids plus an optional maxContentChars per-item bound (default ${DEFAULT_GET_CONTENT_CHARS}, max ${MAX_GET_CONTENT_CHARS}; ids × maxContentChars may not exceed ${MAX_GET_TOTAL_CHARS} per call); an item still truncated at the cap reports truncated: true with its full contentLength. Ids that do not resolve for you are listed in notFound — never an error. To trace where cited memories came from, add include: ["provenance"] (at most ${MAX_PROVENANCE_IDS} ids): bounded origin, revision lineage, audit events, accepted proposals and fact identities, with truncation flags. The origin run.agent is reported by the session opener, not verified attribution.`,
     inputSchema: getMemoriesInputSchema,
     outputSchema: getMemoriesOutputSchema,
     annotations: READ_ONLY_ANNOTATIONS,
@@ -78,6 +79,7 @@ const getMemoriesTool: ToolDefinition = {
     if (ctx.access) await ctx.access.assertRead(ctx.userId)
     const result = await getMemoriesByIds(ctx.userId, input.ids, {
       maxContentChars: input.maxContentChars,
+      ...(input.include ? { include: input.include } : {}),
     })
     const output = parseOutput('get_memories', getMemoriesOutputSchema, {
       memories: result.memories.map((memory) => ({
@@ -92,6 +94,7 @@ const getMemoriesTool: ToolDefinition = {
         status: memory.status,
         // Direct successor of a superseded row, null when current (issue #223).
         supersededBy: memory.supersededBy,
+        ...(memory.provenance !== undefined ? { provenance: memory.provenance } : {}),
         // Optional in the output schema: present only for a commitment-type
         // memory (REST detail parity); a null LEFT-JOIN miss is omitted.
         ...(memory.commitmentStatus != null ? { commitmentStatus: memory.commitmentStatus } : {}),
