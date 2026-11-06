@@ -51,11 +51,11 @@ export async function getMemoryHistory(
       if (row === undefined) throw new MemoryNotFoundError(memoryId)
       try {
         const chains = await withSavepoint(tx, 'history_provenance', () =>
-          getMemoriesProvenance(tx, userId, [memoryId]),
+          getMemoriesProvenance(tx, userId, [row.memory.id]),
         )
         return {
           ...row,
-          provenance: chains.get(memoryId) ?? null,
+          provenance: chains.get(row.memory.id) ?? null,
           sections: { ...row.sections, provenance: 'ok' },
         }
       } catch (error) {
