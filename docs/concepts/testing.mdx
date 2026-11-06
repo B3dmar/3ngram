@@ -35,6 +35,15 @@ Pure functions only: schema validation, supersession resolution, commitment FSM 
   - **Migration round-trip**: fresh DB → all migrations → structure parity (tables, policies+NULLIF, FSM trigger, HNSW index, SECURITY DEFINER resolvers).
   - **HNSW parity**: pgvector vs the eval gate's exact cosine on the real golden-set embeddings — the bridge between the eval gate's upper bound and what production serves. Two-regime (see [Data model & RLS](/concepts/data-model)): natural plan asserted index-driven (selective tenants get btree+exact — correct), plus a forced-HNSW arm (`enable_sort=off`, `hnsw.iterative_scan`) with EXPLAIN-asserted index use; both ≥ 0.95 overlap.
 
+The provenance chain slice (`packages/core/test/integration/provenance-chain.int.test.ts`)
+uses `eval/fixtures/provenance-synthetic.json` to mirror product writes across two tenants.
+It requires exact chain recall and precision (1.0), zero foreign ids, and truncation for
+a 28-version chain. Expected labels map to stored identities without reading producer
+links or provenance output. An explicit caller-predicate probe works independently of
+RLS. Mutation checks remove that predicate or a producer link and must fail. This slice
+runs in `integration (core)`, including fixture-only changes, and blocks through `test`;
+it does not add a database dependency to `eval-gate`.
+
 ### 3. Contract — MCP and REST surfaces
 
 - Spin up the Express app in-process through the SDK v2 dual-era handler; drive both legacy and `2026-07-28` clients through the **official MCP client SDK** (not hand-rolled JSON-RPC) so version negotiation, transport, auth bridging, and structured-output semantics are actually exercised.

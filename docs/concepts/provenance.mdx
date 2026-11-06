@@ -4,7 +4,7 @@ description: "Trace where a memory came from through bounded, tenant-scoped orig
 icon: "route"
 ---
 
-**Status: mixed — the provenance read is implemented; the blocking synthetic eval slice remains design, not built.** The build follows the owner decisions recorded in [#408](https://github.com/B3dmar/3ngram/issues/408): [#430](https://github.com/B3dmar/3ngram/issues/430) records producers, [#431](https://github.com/B3dmar/3ngram/issues/431) exposes the read, and [#432](https://github.com/B3dmar/3ngram/issues/432) scores the chain.
+**Status: implemented.** The build follows the owner decisions recorded in [#408](https://github.com/B3dmar/3ngram/issues/408): [#430](https://github.com/B3dmar/3ngram/issues/430) records producers, [#431](https://github.com/B3dmar/3ngram/issues/431) exposes the read, and [#432](https://github.com/B3dmar/3ngram/issues/432) scores the chain.
 
 ## Job and surface
 
@@ -62,8 +62,10 @@ The complete read runs in one repeatable-read `withTenant(userId)` transaction, 
 
 The existing `get_memories` tool owns this job; no new tool or gated tool-selection scenario was added. Its generated reference, transport snapshot and description embeddings cover the changed surface. The five `get_memories#provenance` capability scenarios are report-only, alongside `revise#disposition`.
 
-## Synthetic evaluation design
+## Synthetic evaluation
 
-[#432](https://github.com/B3dmar/3ngram/issues/432) adds a scripted two-tenant fixture at `eval/fixtures/provenance-synthetic.json`. Both tenants use matching topics and shapes. Product writes cover attributed remember, more than 25 revision versions, move/archive/reaffirm, and each accepted proposal kind.
+The scripted two-tenant fixture at `eval/fixtures/provenance-synthetic.json` uses matching topics and shapes. Product writes cover attributed remember, 28 revision versions, move/archive/reaffirm, and each accepted proposal kind. `packages/core/test/integration/provenance-chain.int.test.ts` runs it through the real core write and read paths on a guarded ephemeral database, without a model or production data.
 
-The blocking integration test maps fixture labels to created ids and scores `provenance_chain_recall` and `provenance_chain_precision` at 1.0, with `provenance_foreign_ids` at 0. The long chain must report truncation. Mutation checks must catch a removed caller predicate and a dropped producer link. This is a database-backed integration slice, not part of the network-free, database-free `eval-gate`.
+The test maps fixture labels to created ids independently of producer references and provenance output. It requires `provenance_chain_recall` and `provenance_chain_precision` of 1.0, with `provenance_foreign_ids` at 0, across all five sections. The long chain must report truncation. A deliberately mismatched transaction tenant and query caller tests the explicit caller predicate independently of RLS. Removing that predicate or dropping the recorded edge producer link makes the suite fail.
+
+The slice blocks `integration (core)` through the required `test` check. Fixture-only changes select that integration shard too. It is separate from the network-free, database-free `eval-gate`.
