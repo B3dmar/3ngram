@@ -54,6 +54,7 @@
             "group": "Concepts",
             "pages": [
               "concepts/memory-model",
+              "concepts/fact-basis",
               "concepts/scopes",
               "concepts/threads",
               "concepts/session-continuity",
