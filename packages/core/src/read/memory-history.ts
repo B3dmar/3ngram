@@ -29,13 +29,14 @@ export type {
  * hard-fail — it maps to 404). A readable identity always resolves, even when a
  * section degraded to `unavailable`; the per-section status rides on
  * `MemoryHistoryRead.sections` for the surface to render partial results. Runs
- * inside withTenant(): RLS enforces tenant isolation.
+ * inside withTenant(userId), and the db read binds every statement to the same
+ * userId: RLS plus an explicit predicate (two-layer isolation).
  */
 export async function getMemoryHistory(
   userId: string,
   memoryId: string,
 ): Promise<MemoryHistoryRead> {
-  const row = await withTenant(userId, (tx) => getMemoryHistoryDb(tx, memoryId))
+  const row = await withTenant(userId, (tx) => getMemoryHistoryDb(tx, userId, memoryId))
   if (row === undefined) throw new MemoryNotFoundError(memoryId)
   return row
 }

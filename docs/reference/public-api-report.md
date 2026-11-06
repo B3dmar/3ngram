@@ -863,7 +863,7 @@ its row here even when its name and kind are unchanged.
 | `getLiveAccountId` | function | `ecf1e7b0880b` |
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
-| `getMemoryHistory` | function | `f98653cf2421` |
+| `getMemoryHistory` | function | `459dc80404ab` |
 | `getOpenResolutionProposal` | function | `71b0e818dc73` |
 | `getRetrievalPolicy` | function | `80728d8897ec` |
 | `getUserBudget` | function | `e6ac3952f049` |
