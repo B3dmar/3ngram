@@ -2232,10 +2232,17 @@
               }
             },
             "sessionRunId": {
-              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "dueAt": {
               "description": "Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most 3 fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.",
@@ -2356,10 +2363,17 @@
               "enum": ["open", "waiting", "resolved", "expired"]
             },
             "sessionRunId": {
-              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.",
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "reason": {
               "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",
@@ -3632,10 +3646,17 @@
                   "description": "The memories to act on, 1-50 unique ids. Each id gets its own outcome; one bad id never fails the others."
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["kind", "memoryIds"],
@@ -3678,10 +3699,17 @@
                   }
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["predecessorId", "kind"],
@@ -3747,10 +3775,17 @@
                   "enum": ["supersedes", "updates"]
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["memoryType", "topic", "content", "predecessorId"],
@@ -4500,10 +4535,17 @@
               }
             },
             "sessionRunId": {
-              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "dueAt": {
               "description": "Commitments only: the explicit deadline, as a UTC ISO-8601 instant ending in Z (e.g. 2026-11-30T17:00:00Z) with at most 3 fractional-second digits. Past this instant the commitment reads as overdue in briefing. Omit (or null) for an undated commitment; never inferred from content.",
@@ -4691,10 +4733,17 @@
                   "description": "The memories to act on, 1-50 unique ids. Each id gets its own outcome; one bad id never fails the others."
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["kind", "memoryIds"],
@@ -4737,10 +4786,17 @@
                   }
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["predecessorId", "kind"],
@@ -4806,10 +4862,17 @@
                   "enum": ["supersedes", "updates"]
                 },
                 "sessionRunId": {
-                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": ["memoryType", "topic", "content", "predecessorId"],
@@ -4837,10 +4900,17 @@
               "enum": ["open", "waiting", "resolved", "expired"]
             },
             "sessionRunId": {
-              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.",
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "description": "Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "reason": {
               "description": "Optional evidence for this transition, e.g. \"PR #123\" or \"superseded by <memory id>\" (trimmed, 1-500 chars). Stored on the commitment and replaced by the next transition. Commitments only: rejected for a blocker.",

@@ -342,9 +342,10 @@ func runeSafeCut(s string, n int) int {
 func sessionRunInstruction(sessionRunID, accountID string) string {
 	const fallback = "Choose the account for the task first and verify it with `describe_environment.account.id`; " +
 		"if the intended account cannot be verified, defer the write. " +
-		"For a verified account with no matching run ID, omit `sessionRunId` on `remember` / `revise` / `resolve`. " +
-		"The server then attaches to exactly one leased-open session for the memory's project, if present, " +
-		"or saves without session attribution. Do not claim attribution to this conversation without checking. " +
+		"For a verified account with no matching run ID, pass `sessionRunId: null` on `remember` / `revise` / `resolve` " +
+		"only if the target tool's input schema accepts null. This saves without session attribution or session lifecycle changes. " +
+		"If null is unsupported or support is unknown, defer the write. Do not omit the field as a fallback: " +
+		"omission can attach the write to another open session. " +
 		"Do not switch accounts to match a run ID or reuse a prior run ID."
 	if accountID == "" || sessionRunID == "" {
 		return "\n3ngram: Hook account or session identity unavailable; no valid session run ID can be supplied. " +

@@ -186,7 +186,7 @@ export async function resolveByMemoryId(
   memoryId: string,
   to: CommitmentStatus,
   actorKind: ActorKind,
-  sessionRunId?: string,
+  sessionRunId?: string | null,
   resolutionReason?: string,
 ): Promise<{ id: string; status: ResolveStatus }> {
   const current = await getCommitmentByMemoryId(userId, memoryId)
@@ -404,14 +404,14 @@ async function applyTransition(
   current: CommitmentState,
   to: CommitmentStatus,
   actorKind: ActorKind,
-  sessionRunId?: string,
+  sessionRunId?: string | null,
   resolutionReason?: string,
 ): Promise<{ id: string; status: CommitmentStatus }> {
   let observed = current
   let lastRace: CommitmentStateChangedError | undefined
   for (let attempt = 0; attempt < MAX_TRANSITION_ATTEMPTS; attempt++) {
     if (observed.status === to) {
-      if (sessionRunId !== undefined) await assertSessionRunOwned(userId, sessionRunId)
+      if (sessionRunId != null) await assertSessionRunOwned(userId, sessionRunId)
       return { id: observed.id, status: observed.status }
     }
     if (!canTransition(observed.status, to)) {

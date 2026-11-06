@@ -70,7 +70,7 @@ export interface ArchiveWrite {
   userId: string
   memoryId: string
   actorKind: ActorKind
-  sessionRunId?: string | undefined
+  sessionRunId?: string | null | undefined
   now?: Date | undefined
   policy: ArchivePolicy
 }
@@ -283,7 +283,7 @@ export async function archiveMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
-  sessionRunId?: string,
+  sessionRunId?: string | null,
   now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   const result = await withTenant(userId, (tx) =>

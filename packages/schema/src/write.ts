@@ -210,9 +210,10 @@ export type RememberWithFactsInput = z.infer<typeof rememberWithFactsInputSchema
  * sessionProvenancePayloadSchema.
  */
 export const sessionRunIdField = sessionRunIdSchema
+  .nullable()
   .optional()
   .describe(
-    'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.',
+    'Opaque id of the current agent session run. Pass through from SessionStart. Pass null to save without session attribution or session lifecycle changes. Omit to attach the single leased-open session for this project, if any. A run id not owned by this tenant fails the write.',
   )
 
 /**
@@ -376,7 +377,7 @@ const filingSchema = z
   .strict()
 export const reviseMoveEventPayloadSchema = z
   .object({
-    sessionRunId: sessionRunIdField,
+    sessionRunId: sessionRunIdSchema.optional(),
     disposition: z.literal('move'),
     from: filingSchema,
     to: filingSchema,

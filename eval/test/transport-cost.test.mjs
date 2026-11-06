@@ -256,9 +256,11 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // proposals from the forgetting pass"). Embeddings regenerated for the
       // changed text; CLI and REST unchanged. MEASURED on staging 9d3ff21 plus
       // this change, not summed.
-      mcp: [35170, 283176, 70398],
+      // Explicitly unattributed native writes: nullable sessionRunId plus its
+      // description adds 120 surface tokens to MCP and REST; CLI is unchanged.
+      mcp: [35290, 284136, 70632],
       cli: [333, 1236, 1236],
-      rest: [4703, 5720, 5720],
+      rest: [4823, 5840, 5840],
     },
   )
 })

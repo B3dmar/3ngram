@@ -155,6 +155,55 @@ afterAll(async () => {
 // --- SUCCESS-PAYLOAD parity for the 5 mirrored ops -------------------------
 
 describe('A4 remember parity (REST x-api-key ≡ MCP Bearer, same tenant)', () => {
+  it('explicit null works through both transports and accounts without borrowing an open run', async () => {
+    const project = 'explicit-unattributed-parity'
+    for (const [userId, key, token] of [
+      [userAId, keyA, tokenA],
+      [userBId, keyB, tokenB],
+    ] as const) {
+      const runId = crypto.randomUUID()
+      await ownerPool.query(
+        `INSERT INTO agent_sessions
+         (id, user_id, agent, session_id, source, project, selector, last_seen_at, triage_status, needs_look)
+         VALUES ($1, $2, 'codex', $4, 'startup', $3, '{"kind":"all"}', now() - interval '1 minute', 'completed', false)`,
+        [runId, userId, project, runId],
+      )
+      const before = await ownerPool.query('SELECT * FROM agent_sessions WHERE id = $1', [runId])
+      const input = {
+        memoryType: 'note',
+        topic: 'unattributed',
+        scope: 'work',
+        project,
+        sessionRunId: null,
+      }
+      const restRes = await rest('/api/v1/memories', {
+        method: 'POST',
+        key,
+        body: { ...input, content: `rest-${crypto.randomUUID()}` },
+      })
+      expect(restRes.status).toBe(201)
+      const client = await connect(token)
+      try {
+        const result = await client.callTool({
+          name: 'remember',
+          arguments: { ...input, content: `mcp-${crypto.randomUUID()}` },
+        })
+        expect(result.isError).not.toBe(true)
+      } finally {
+        await client.close()
+      }
+      const after = await ownerPool.query('SELECT * FROM agent_sessions WHERE id = $1', [runId])
+      expect(after.rows).toEqual(before.rows)
+      const events = await ownerPool.query(
+        `SELECT e.payload FROM memory_events e JOIN memories m ON m.id = e.memory_id AND m.user_id = e.user_id
+         WHERE e.user_id = $1 AND m.project = $2 AND e.event_kind = 'create'`,
+        [userId, project],
+      )
+      expect(events.rows).toHaveLength(2)
+      for (const event of events.rows) expect(event.payload?.sessionRunId).toBeUndefined()
+    }
+  })
+
   it('normalizes identically: scope default applied, project null when omitted', async () => {
     const restRes = await rest('/api/v1/memories', {
       method: 'POST',

@@ -80,10 +80,11 @@ func assertOptionalAttributionInstruction(t *testing.T, out string) {
 	for _, required := range []string{
 		"verify it with `describe_environment.account.id`",
 		"if the intended account cannot be verified, defer the write",
-		"For a verified account with no matching run ID, omit `sessionRunId` on `remember` / `revise` / `resolve`",
-		"exactly one leased-open session for the memory's project",
-		"or saves without session attribution",
-		"Do not claim attribution to this conversation without checking",
+		"For a verified account with no matching run ID, pass `sessionRunId: null` on `remember` / `revise` / `resolve`",
+		"only if the target tool's input schema accepts null",
+		"without session attribution or session lifecycle changes",
+		"If null is unsupported or support is unknown, defer the write",
+		"Do not omit the field as a fallback",
 		"Do not switch accounts to match a run ID or reuse a prior run ID",
 	} {
 		if !strings.Contains(out, required) {

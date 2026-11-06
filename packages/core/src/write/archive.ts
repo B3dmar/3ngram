@@ -43,7 +43,7 @@ export async function archiveMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
-  sessionRunId?: string,
+  sessionRunId?: string | null,
 ): Promise<{ id: string; status: 'archived' }> {
   try {
     return await dbArchiveMemory(userId, memoryId, actorKind, sessionRunId)

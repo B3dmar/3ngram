@@ -134,7 +134,7 @@ export interface MoveWrite {
   project?: string | undefined
   tags?: string[] | undefined
   actorKind: ActorKind
-  sessionRunId?: string | undefined
+  sessionRunId?: string | null | undefined
   now?: Date | undefined
 }
 
@@ -203,7 +203,7 @@ export async function moveMemory(input: MoveWrite): Promise<MovedMemory> {
       // the ownership-only check has none of provenance's attach side effects,
       // and runs on THIS tx (a nested withTenant would hold a second pool
       // connection per in-flight move).
-      if (input.sessionRunId !== undefined) {
+      if (input.sessionRunId != null) {
         await assertSessionRunOwnedIn(tx, input.userId, input.sessionRunId)
       }
       return { ...base, ...planned.next, changed: false }
@@ -550,7 +550,7 @@ export async function archiveBlockerMemory(
   userId: string,
   memoryId: string,
   actorKind: ActorKind,
-  sessionRunId?: string,
+  sessionRunId?: string | null,
   now?: Date,
 ): Promise<{ id: string; status: 'archived' }> {
   return withTenant(userId, async (tx) => {

@@ -460,18 +460,20 @@ that **strict** shape. Compose beside that canonical native input (ADR-0011):
 
 ```text
 nativeRememberInputSchema = rememberWithFactsInputSchema.safeExtend({
-  sessionRunId: uuid.optional()
+  sessionRunId: uuid.nullable().optional()
 })
 ```
 
-Core's single parse must accept the extended type — otherwise `sessionRunId`
-regresses structured fact writes. Same optional key on native revise and on the
-resolve/unresolve/archive inputs. `.strict()` stays.
+Core's single parse must preserve null distinctly from omission. The same
+nullable, optional key appears on native revise and resolve/unresolve/archive
+inputs. `.strict()` stays; stored provenance payloads still accept only UUIDs.
 
 **How the value gets there.**
 
-1. The caller may pass only an opaque `sessionRunId` as a **native-only** field.
-   The server resolves it to a tenant-owned `agent_sessions` row. Session
+1. The caller may pass an opaque `sessionRunId` or explicit null as a
+   **native-only** field. Null saves without attribution and bypasses all
+   session lookup, attachment, lease refresh, resurrection and triage re-arming.
+   A UUID resolves to a tenant-owned `agent_sessions` row. Session
    provenance (`agent` on the row) is derived server-side; a client-supplied
    provenance agent is rejected. **`project` on `remember` / `revise` is the
    memory facet** — the debrief prompt requires it — and is validated as today.
@@ -497,8 +499,10 @@ resolve/unresolve/archive inputs. `.strict()` stays.
    `describe_environment.account.id` matches. An unavailable identity or
    credential exposes no run ID. Agents verify the intended connector's account;
    an unverified target defers the write. For a verified account without a
-   matching run ID, the instruction permits writes with `sessionRunId` omitted,
-   using (4) rather than claiming attribution to this conversation. The hook's
+   matching run ID, the instruction permits `sessionRunId: null` only when the
+   target tool's input schema accepts null. Unsupported or unknown support
+   defers the write. Omission is not a fallback for this case: (4) may attach
+   another conversation's run and re-arm its closer. The hook's
    account selection stays with the launch environment; the connector selects
    the write's account, never the scope or project. Concurrent hooked
    sessions and agents that omit the field fall through to (4). Do not claim the

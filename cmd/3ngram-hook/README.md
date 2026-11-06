@@ -87,10 +87,11 @@ Nothing here writes a memory.
   network call; manual calls without a session ID and suppressed hooks stay
   silent. Agents verify the intended account through `describe_environment`.
   An unverified target defers the write; a verified account without a matching
-  run ID may receive writes with `sessionRunId` omitted. The server then uses
-  its single-open-session default for the memory's project or saves without
-  session attribution. Omission does not establish attribution to this
-  conversation. The instruction never tells the agent to switch accounts to fit
+  run ID may receive writes with `sessionRunId: null` only when the target
+  tool's input schema accepts null. This explicitly skips attribution and all
+  session lifecycle changes. Older servers, or unknown support, defer the write.
+  Omission is not a fallback here: it may attach to another conversation's sole
+  open session. The instruction never tells the agent to switch accounts to fit
   the ID. Propagation remains
   **model-mediated and best-effort**; the server still rejects foreign run IDs.
 - **Stop** (`stop`) keeps the lease live across completed turns. That half is
