@@ -84,7 +84,7 @@ export const SDK_METHODS: readonly SdkMethodReference[] = [
   {
     name: 'resolve',
     signature:
-      'resolve(memoryId: string, status: CommitmentStatus, opts?: { sessionRunId?: string }): Promise<ResolveToolOutput>',
+      'resolve(memoryId: string, status: CommitmentStatus, opts?: { sessionRunId?: string | null; reason?: string }): Promise<ResolveToolOutput>',
     route: 'POST /api/v1/memories/:id/resolve',
     summary: 'Transition the commitment riding a memory, or archive an active blocker.',
     requestSchema: 'resolve',

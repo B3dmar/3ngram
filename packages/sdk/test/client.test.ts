@@ -190,9 +190,11 @@ describe('ThreengramClient request shape', () => {
     expect(result).toEqual(payload)
   })
 
-  it('resolve forwards optional sessionRunId in the body', async () => {
+  it.each([
+    crypto.randomUUID(),
+    null,
+  ])('resolve preserves sessionRunId %s in the body', async (runId) => {
     const id = crypto.randomUUID()
-    const runId = crypto.randomUUID()
     const { fetch, calls } = stubFetch(200, { commitmentId: id, status: 'resolved' })
     const client = new ThreengramClient(CONFIG, fetch)
 

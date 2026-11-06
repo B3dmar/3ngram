@@ -54,7 +54,7 @@ export interface MemoryWrite {
   /** Actor class recorded on the `create` audit event (memory_events). */
   actorKind: ActorKind
   /** Native-only session provenance. Import never sets this. */
-  sessionRunId?: string | undefined
+  sessionRunId?: string | null | undefined
   /** Native-only commitment lifecycle (issue #165): written onto the
    * auto-created `commitments` row of a commitment-type memory. Ignored for
    * every other type (the schema boundary already rejects it there). */

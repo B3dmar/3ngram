@@ -345,7 +345,7 @@ export interface CommitmentTransition {
    * a same-state request in core, keep their exact behaviour.
    */
   expectedFrom?: CommitmentStatus | undefined
-  sessionRunId?: string | undefined
+  sessionRunId?: string | null | undefined
   /**
    * Optional evidence for THIS transition (issue #234), already validated by
    * `resolutionReasonSchema`. Written to `last_resolution_reason` in the same

@@ -129,7 +129,7 @@ export class ThreengramClient {
   resolve(
     memoryId: string,
     status: CommitmentStatus,
-    opts?: { sessionRunId?: string; reason?: string },
+    opts?: { sessionRunId?: string | null; reason?: string },
   ): Promise<ResolveToolOutput> {
     const path = `/api/v1/memories/${encodeURIComponent(memoryId)}/resolve`
     return this.#send<ResolveToolOutput>('POST', path, { status, ...opts })

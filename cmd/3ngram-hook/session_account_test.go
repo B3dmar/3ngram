@@ -25,13 +25,12 @@ func TestSessionInstructionRequiresMatchingAccount(t *testing.T) {
 				"**3ngram account**: `" + testAccountID + "`",
 				"`describe_environment.account.id` matches `" + testAccountID + "`",
 				"Never pass this ID to a different or unverified account",
-				"defer these writes and report the account boundary",
-				"Do not switch accounts to match this ID or reuse a prior run ID",
 			} {
 				if !strings.Contains(out, required) {
 					t.Errorf("instruction missing %q", required)
 				}
 			}
+			assertOptionalAttributionInstruction(t, out)
 			captureHook(t, `{"session_id":"fixture-session"}`, func() int { return runStop(nil) })
 			captureHook(t, `{"session_id":"fixture-session"}`, func() int { return runClose(nil) })
 			for _, req := range ls.requests {
@@ -43,7 +42,7 @@ func TestSessionInstructionRequiresMatchingAccount(t *testing.T) {
 	}
 }
 
-func TestSessionInstructionDefersWritesWithoutIdentity(t *testing.T) {
+func TestSessionInstructionAllowsVerifiedWritesWithoutHookIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		code int
@@ -62,18 +61,35 @@ func TestSessionInstructionDefersWritesWithoutIdentity(t *testing.T) {
 			if strings.Contains(out, testRunID) || strings.Contains(out, "**3ngram session run**") {
 				t.Fatal("unverified account exposed a reusable run ID")
 			}
-			if !strings.Contains(out, "Defer `remember` / `revise` / `resolve`") {
-				t.Fatal("identity failure did not defer writes")
-			}
+			assertOptionalAttributionInstruction(t, out)
 			ls.bodyFor(t, "/api/v1/agent-sessions/open") // Lifecycle still opens.
 		})
 	}
 }
 
-func TestSessionInstructionDefersWritesWithoutRun(t *testing.T) {
+func TestSessionInstructionAllowsVerifiedWritesWithoutRun(t *testing.T) {
 	out := sessionRunInstruction("", testAccountID)
-	if strings.Contains(out, "**3ngram session run**") || !strings.Contains(out, "Defer `remember`") {
-		t.Fatal("unavailable run must defer writes without publishing a run marker")
+	if strings.Contains(out, "**3ngram session run**") {
+		t.Fatal("unavailable run must not publish a run marker")
+	}
+	assertOptionalAttributionInstruction(t, out)
+}
+
+func assertOptionalAttributionInstruction(t *testing.T, out string) {
+	t.Helper()
+	for _, required := range []string{
+		"verify it with `describe_environment.account.id`",
+		"if the intended account cannot be verified, defer the write",
+		"For a verified account with no matching run ID, pass `sessionRunId: null` on `remember` / `revise` / `resolve`",
+		"only if the target tool's input schema accepts null",
+		"without session attribution or session lifecycle changes",
+		"If null is unsupported or support is unknown, defer the write",
+		"Do not omit the field as a fallback",
+		"Do not switch accounts to match a run ID or reuse a prior run ID",
+	} {
+		if !strings.Contains(out, required) {
+			t.Errorf("instruction missing %q", required)
+		}
 	}
 }
 

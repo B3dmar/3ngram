@@ -35,12 +35,12 @@ import {
   reviseDispositionOutputSchema,
 } from './revise-disposition.js'
 import { scopeSchema } from './scope.js'
-import { sessionRunIdSchema } from './session-run-id.js'
 import {
   nativeReviseInputSchema,
   nativeReviseMoveInputSchema,
   projectSchema,
   rememberInputSchema,
+  sessionRunIdField,
 } from './write.js'
 
 /** Upper bound on a search result window — the no-firehose ceiling (docs/concepts/mcp-design.mdx). */
@@ -255,11 +255,7 @@ export const resolveToolInputSchema = z
   .object({
     memoryId: z.uuid(),
     status: commitmentStatusSchema,
-    sessionRunId: sessionRunIdSchema
-      .optional()
-      .describe(
-        'Opaque id of the current agent session run. Pass through from SessionStart. Omit to attach the single leased-open session for this project, if any.',
-      ),
+    sessionRunId: sessionRunIdField,
     reason: resolutionReasonSchema
       .optional()
       .describe(

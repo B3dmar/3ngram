@@ -23,6 +23,7 @@
 // break.
 import { z } from 'zod'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { sessionRunIdSchema } from './session-run-id.js'
 import { sessionRunIdField } from './write.js'
 
 /** Most memories one disposition call may name (a briefing page, with room). */
@@ -66,13 +67,13 @@ export const nativeReviseDispositionBodySchema = nativeReviseDispositionInputSch
  * commitment sweep write, which carry no disposition.
  */
 export const archiveEventPayloadSchema = z
-  .object({ sessionRunId: sessionRunIdField, disposition: z.literal('archive') })
+  .object({ sessionRunId: sessionRunIdSchema.optional(), disposition: z.literal('archive') })
   .strict()
 export type ArchiveEventPayload = z.infer<typeof archiveEventPayloadSchema>
 
 /** Payload of the `reaffirm` memory event (issue #218): same strict shape as archive's. */
 export const reaffirmEventPayloadSchema = z
-  .object({ sessionRunId: sessionRunIdField, disposition: z.literal('reaffirm') })
+  .object({ sessionRunId: sessionRunIdSchema.optional(), disposition: z.literal('reaffirm') })
   .strict()
 export type ReaffirmEventPayload = z.infer<typeof reaffirmEventPayloadSchema>
 
