@@ -4,7 +4,7 @@ description: "Design for tracing why a memory surfaced: a bounded, tenant-scoped
 icon: "route"
 ---
 
-**Status: mixed — proposal producer links are stored; the provenance include and eval slice remain design, not built.** Tracked as [issue #408](https://github.com/B3dmar/3ngram/issues/408). Sebastian agreed on 2026-11-03 that the idea is worth pursuing, and on 2026-11-06 chose the recommended option on every decision in the last section, as the issue records. The build is split into [#430](https://github.com/B3dmar/3ngram/issues/430) (proposal links), [#431](https://github.com/B3dmar/3ngram/issues/431) (the `get_memories` include) and [#432](https://github.com/B3dmar/3ngram/issues/432) (the eval slice).
+**Status: mixed — proposal producer links and the shared database/core read are implemented; the MCP/REST surface and eval slice remain design, not built.** Tracked as [issue #408](https://github.com/B3dmar/3ngram/issues/408). Sebastian agreed on 2026-11-03 that the idea is worth pursuing, and on 2026-11-06 chose the recommended option on every decision in the last section, as the issue records. The build is split into [#430](https://github.com/B3dmar/3ngram/issues/430) (proposal links), [#431](https://github.com/B3dmar/3ngram/issues/431) (the `get_memories` include) and [#432](https://github.com/B3dmar/3ngram/issues/432) (the eval slice).
 
 ## Job
 
@@ -48,9 +48,10 @@ Three rules hold across sections:
 
 - **Nothing is inferred.** A value is reported as recorded, or as `null`. The history read already works this way: in a revision chain each version reports its own creating run, and nothing is inherited from neighbouring events. Matching an applied proposal to an edge or fact by equal ids or times would break this rule and name the wrong producer in two shipped cases. An edge accept that finds the edge already present flips the proposal to `applied` without creating the edge. A crash between a resolution claim and its transition leaves an `applied` proposal with no `resolve` event.
 - **One level per call.** A predecessor appears as an identity row with its creating run, not with its own proposals and events. To go further, the client traces the predecessor's id. The client walks and the server bounds.
-- **Deterministic order.** Lineage by depth, then `createdAt`, then `id`; events and proposals by `createdAt DESC, id DESC`. These are the keys the shipped reads use, and the `id` tie-breaker keeps the subset under a cap stable.
+- **Lineage relationships.** The cycle-safe walk covers the connected revision graph, including branches. Each selected edge appears once, oriented away from the inspected memory: a step to the edge’s `toId` is a predecessor relationship, and a step to its `fromId` is a successor relationship. The identity is the farther endpoint, with its own creating run. `fromId`, `toId` and `edgeId` preserve the full orientation, including equal-depth branches. The root counts toward the 25-node bound; the two arrays together contain at most 50 edges. One parent edge per selected node is retained before other edges, so the cap cannot disconnect the graph from the root.
+- **Deterministic order.** Lineage by depth, then `createdAt`, then `id`; events, proposals and facts by `createdAt DESC, id DESC`. Produced ids are ordered by `createdAt, id`, capped at 50 per product kind with their own `produced.truncated` flag. These are the keys the shipped reads use, and the `id` tie-breaker keeps the subset under a cap stable.
 
-`sessionRunId` is `null` for an imported memory and for a write without provenance, as in the history read today. `run` is `null` when the id does not resolve to a session row for the caller; the id is still returned as recorded. An imported memory has an `import` event, not a native `create` event, so `origin` as specified has no row for it. [#431](https://github.com/B3dmar/3ngram/issues/431) settles whether `origin` takes the `import` event or is `null` with a reason.
+`sessionRunId` is `null` for an imported memory and for a write without provenance, as in the history read today. `run` and `sessionRunId` are `null` when the reference does not resolve to a session row for the caller. This includes deleted runs and foreign or malformed references. An imported memory uses its own `import` event as `origin`, with `actorKind: importer` and no native session or proposal attribution. A memory with neither a native create nor an import event has `origin: null`.
 
 ## 2. Surface
 
@@ -70,7 +71,7 @@ Recommendation: A, built on one `packages/core` read that both `get_memories` an
 
 **Tenant isolation on every hop.**
 
-- One `withTenant(userId)` transaction in `packages/db` reads the whole chain. No code outside `packages/db` touches the pool (rule 3).
+- One repeatable-read `withTenant(userId)` transaction reads the whole chain from a single snapshot, including the requested memory rows. No code outside `packages/db` touches the pool (rule 3).
 - Every statement carries `user_id = $userId`, bound to the caller, with RLS as the second layer ([data model](/concepts/data-model), two-layer tenant isolation). That includes the recursive step of the lineage walk and each proposal-table read. The shipped history queries in `packages/db/src/memory-history-queries.ts` already bind every statement this way, the walk's seed and step included ([#427](https://github.com/B3dmar/3ngram/issues/427)).
 - Memory-to-memory, memory-to-event, memory-to-fact and memory-to-proposal hops are composite `(user_id, …)` foreign keys, so a cross-tenant link cannot be stored.
 - The hops without a foreign key are `payload->>'sessionRunId'` to `agent_sessions` and, if decision 3 adds it, `payload->>'proposalId'` to a proposal table. The write path refuses another tenant's run id (layer 2), but the read does not rely on that: both hops join on `(user_id, id)`.

@@ -15,8 +15,9 @@ import {
   type MemoryDetailRow,
   withTenant,
 } from '@3ngram/db'
-import { DEFAULT_GET_CONTENT_CHARS, type SupersededBy } from '@3ngram/schema'
+import { DEFAULT_GET_CONTENT_CHARS, type MemoryProvenance, type SupersededBy } from '@3ngram/schema'
 import { excerptContent } from './excerpt.js'
+import { getMemoriesProvenance } from './memory-provenance.js'
 
 export type { MemoryDetailRow } from '@3ngram/db'
 
@@ -54,6 +55,7 @@ export async function getMemoryById(userId: string, memoryId: string): Promise<M
 export interface GetMemoriesOptions {
   /** Per-item content cap (chars). Validated at the schema boundary; defaults to DEFAULT_GET_CONTENT_CHARS. */
   maxContentChars?: number
+  include?: readonly 'provenance'[]
 }
 
 /**
@@ -65,6 +67,7 @@ export interface GetMemoriesOptions {
 export interface MemoryBatchItem
   extends Omit<MemoryBatchRow, 'content' | 'successorId' | 'successorEdgeType'> {
   content: string
+  provenance?: MemoryProvenance | undefined
   contentLength: number
   truncated: boolean
   /**
@@ -123,12 +126,29 @@ export async function getMemoriesByIds(
 ): Promise<MemoriesBatchRead> {
   const maxContentChars = options.maxContentChars ?? DEFAULT_GET_CONTENT_CHARS
   const requestedIds = [...new Set(memoryIds.map((id) => id.toLowerCase()))]
-  const rows = await withTenant(userId, (tx) => getMemoriesByIdsDb(tx, userId, requestedIds))
+  const { rows, provenance } = await withTenant(
+    userId,
+    async (tx) => {
+      const rows = await getMemoriesByIdsDb(tx, userId, requestedIds)
+      const provenance = options.include?.includes('provenance')
+        ? await getMemoriesProvenance(
+            tx,
+            userId,
+            rows.map((row) => row.id),
+          )
+        : undefined
+      return { rows, provenance }
+    },
+    options.include?.includes('provenance')
+      ? { isolationLevel: 'repeatable read', accessMode: 'read only' }
+      : undefined,
+  )
   const found = new Set(rows.map((row) => row.id))
   const notFound = requestedIds.filter((id) => !found.has(id))
   return {
     memories: rows.map(({ successorId, successorEdgeType, ...row }) => ({
       ...row,
+      ...(provenance?.has(row.id) ? { provenance: provenance.get(row.id) } : {}),
       ...excerptContent(row.content, maxContentChars),
       supersededBy: supersededBy({ ...row, successorId, successorEdgeType }),
     })),

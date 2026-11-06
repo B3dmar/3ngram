@@ -1,0 +1,1 @@
+CREATE INDEX "memory_events_producer_idx" ON "memory_events" USING btree ("user_id",("payload"->>'proposalKind'),lower("payload"->>'proposalId'),"created_at","id") WHERE "memory_events"."actor_kind" <> 'importer' AND "memory_events"."payload"->>'proposalId' IS NOT NULL;

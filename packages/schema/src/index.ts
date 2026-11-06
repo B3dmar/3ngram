@@ -387,6 +387,17 @@ export {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+export {
+  MAX_PROVENANCE_EDGES,
+  MAX_PROVENANCE_EVENTS,
+  MAX_PROVENANCE_FACTS,
+  MAX_PROVENANCE_IDS,
+  MAX_PROVENANCE_NODES,
+  MAX_PROVENANCE_PRODUCTS,
+  MAX_PROVENANCE_PROPOSALS,
+  type MemoryProvenance,
+  memoryProvenanceSchema,
+} from './memory-provenance.js'
 // --- onboarding profiling ---
 export type {
   ProfileAiTool,

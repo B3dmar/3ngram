@@ -650,6 +650,7 @@ jobs:
               test/integration/retention-proposals.int.test.ts
               test/integration/retention-review.int.test.ts
               test/integration/proposal-provenance.int.test.ts
+              test/integration/memory-provenance.int.test.ts
               test/integration/scopes.int.test.ts
               test/integration/workers.int.test.ts
           - shard: core

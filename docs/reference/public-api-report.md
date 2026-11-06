@@ -305,7 +305,7 @@ its row here even when its name and kind are unchanged.
 | `GcClientsOptions` | interface | `3918b0c6398d` |
 | `GcClientsRepo` | interface | `6d64083be252` |
 | `GcClientsResult` | interface | `40da9c3e8756` |
-| `GetMemoriesOptions` | interface | `2c23190ec24c` |
+| `GetMemoriesOptions` | interface | `8a59510bca4a` |
 | `Handoff` | interface | `3e9461dd6bae` |
 | `HandoffCommitment` | interface | `8ac891c45f15` |
 | `HandoffMemory` | interface | `10bc457226a3` |
@@ -333,10 +333,10 @@ its row here even when its name and kind are unchanged.
 | `MemoriesBatchRead` | interface | `8da3c2c0eb2f` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
 | `MemoriesPage` | interface | `7ab4f1f2be69` |
-| `MemoryBatchItem` | interface | `0b8a8abf044f` |
+| `MemoryBatchItem` | interface | `5a5848f48d7e` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
-| `MemoryHistoryRead` | interface | `1d5c97e4feac` |
+| `MemoryHistoryRead` | interface | `67d0e83b8093` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryNotFoundError` | class | `91f7c6ef54ac` |
 | `MergedPage` | interface | `31f7539775c9` |
@@ -862,6 +862,7 @@ its row here even when its name and kind are unchanged.
 | `getJudgmentPolicy` | function | `48882328985c` |
 | `getLiveAccountId` | function | `ecf1e7b0880b` |
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
+| `getMemoriesProvenance` | function | `842b0e1d9af8` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `459dc80404ab` |
 | `getOpenResolutionProposal` | function | `71b0e818dc73` |
@@ -997,6 +998,7 @@ its row here even when its name and kind are unchanged.
 | `users` | const | `51d714665044` |
 | `validTimePredicate` | function | `147701abe7c5` |
 | `verifyEmailTokenAtomic` | function | `1f2fb3ded60a` |
+| `withSavepoint` | function | `657df486ef31` |
 | `withTenant` | function | `62362b3896cc` |
 | `writeImportedEdge` | function | `2ad1fe7ce6c4` |
 | `writeImportedMemory` | function | `aeebd4625b00` |
@@ -1235,6 +1237,13 @@ its row here even when its name and kind are unchanged.
 | `MAX_MEMORIES_LIMIT` | const | `fda0ccbd7f7b` |
 | `MAX_MEMORY_TYPES_FILTER` | const | `4c921eb7acd5` |
 | `MAX_PROPOSALS_LIMIT` | const | `d40baef12d46` |
+| `MAX_PROVENANCE_EDGES` | const | `85f5163f57bf` |
+| `MAX_PROVENANCE_EVENTS` | const | `10f958ec070b` |
+| `MAX_PROVENANCE_FACTS` | const | `fcb15053d1b9` |
+| `MAX_PROVENANCE_IDS` | const | `b5aa0a917e1f` |
+| `MAX_PROVENANCE_NODES` | const | `2c593a1f2951` |
+| `MAX_PROVENANCE_PRODUCTS` | const | `6e0baf8ea16a` |
+| `MAX_PROVENANCE_PROPOSALS` | const | `c0e059f23e8c` |
 | `MAX_RECORDED_BOUND_FRACTION_DIGITS` | const | `ed5f7f6cc966` |
 | `MAX_RESOLUTION_REASON_LENGTH` | const | `ccbdcfae6619` |
 | `MAX_REST_ERROR_DETAIL_LENGTH` | const | `c6a35723ead3` |
@@ -1266,6 +1275,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistoryRelationship` | type | `007db3517d81` |
 | `MemoryHistoryResponse` | type | `33efefb3372e` |
 | `MemoryListItem` | type | `ba2277109cba` |
+| `MemoryProvenance` | type | `3496ae04a4bb` |
 | `MemoryStatus` | type | `a1a65a8fa7db` |
 | `MemoryType` | type | `6d5684c2a472` |
 | `NativeRememberInput` | type | `88272fc24856` |
@@ -1524,8 +1534,9 @@ its row here even when its name and kind are unchanged.
 | `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
 | `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
-| `memoryHistoryResponseSchema` | const | `6e766eea4a18` |
+| `memoryHistoryResponseSchema` | const | `db647f22dda1` |
 | `memoryListItemSchema` | const | `11edacb3917c` |
+| `memoryProvenanceSchema` | const | `40454525e5a0` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `adca8ae5713e` |

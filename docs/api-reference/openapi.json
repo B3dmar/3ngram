@@ -5787,6 +5787,13 @@
                             "unavailable"
                           ],
                           "type": "string"
+                        },
+                        "provenance": {
+                          "enum": [
+                            "ok",
+                            "unavailable"
+                          ],
+                          "type": "string"
                         }
                       },
                       "required": [
