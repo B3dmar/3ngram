@@ -29,6 +29,7 @@ import {
   sha256,
   surfaceAttraction,
 } from '../src/tool-selection.mjs'
+import { aggregateCapabilitySlice, loadProxyOrReason } from '../src/tool-selection-model.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturesDir = join(here, '../fixtures')
@@ -508,4 +509,37 @@ test('the blocking gate scores the slice into results.slices and ratchets it', (
   assert.equal(floors.recorded.max_description_overlap, undefined)
   assert.equal(typeof floors.ceilings.max_description_overlap, 'number')
   assert.ok(slices.max_description_overlap <= floors.ceilings.max_description_overlap)
+})
+
+test('the nightly model lane reports the same proxy capability score as this slice', () => {
+  // tool-selection-model.mjs prints the proxy's capability accuracy beside the
+  // live model's; it must be the SAME number this slice's capability_slice
+  // prints, or the side-by-side read compares two different proxies. It lives in
+  // this file, not the model lane's, because it reads the committed embeddings
+  // fixture: withCorruptFixture above swaps that file, and node --test runs
+  // files in parallel but a file's tests in sequence.
+  const model = 'openai-large-1536'
+  const data = JSON.parse(readFileSync(join(fixturesDir, 'tool-selection.json'), 'utf8'))
+  const capabilityScenarios = data.capabilityScenarios ?? []
+  const { predictions, reason } = loadProxyOrReason(
+    fixturesDir,
+    model,
+    data.toolScenarios,
+    capabilityScenarios,
+  )
+  assert.equal(reason, null)
+  for (const s of capabilityScenarios) assert.ok(s.id in predictions, `no proxy pick for ${s.id}`)
+  const picks = capabilityScenarios.map((s) => ({
+    id: s.id,
+    expected_tool: s.expected_tool,
+    capability: s.capability,
+    predicted: s.expected_tool,
+    unparseable: false,
+  }))
+  const live = aggregateCapabilitySlice(picks, predictions)
+  const gate = runToolSelectionSlice({ fixturesDir, model }).results.capability_slice
+  assert.deepEqual(Object.keys(live).sort(), Object.keys(gate).sort())
+  for (const [key, entry] of Object.entries(gate)) {
+    assert.equal(live[key].proxy_accuracy_at_1, entry.accuracy_at_1, key)
+  }
 })

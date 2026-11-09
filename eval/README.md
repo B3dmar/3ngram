@@ -74,7 +74,7 @@ else is required:
 | `LLM_TOOL_SELECTION_MODEL` | variable | `gpt-4o-mini` for tool selection |
 
 The workflow does not pass `LLM_JUDGE_MODEL`, so the judge always uses its
-`gpt-4o-mini` default. Per night the lanes make one chat call per tool scenario, two per
+`gpt-4o-mini` default. Per night the lanes make one chat call per tool or capability scenario, two per
 LongMemEval subset question, and one embedding call per haystack session and question
 (`text-embedding-3-large`, 1536 dimensions).
 
@@ -161,10 +161,13 @@ pnpm --filter @3ngram/eval run tool-selection [-- --json]
 
 `src/tool-selection-model.mjs` is the model-in-the-loop counterpart to the
 deterministic embedding-cosine proxy above. It runs **only** in
-`eval-nightly.yml` (never inside the gate) and, for every `toolScenarios`
-entry in `fixtures/tool-selection.json`, presents a live model with the REAL
-tool catalog (names + descriptions from `fixtures/transport-surfaces.json`
-`mcp.tools`) and forces a bare tool-name answer.
+`eval-nightly.yml` (never inside the gate) and, for every `toolScenarios` and
+`capabilityScenarios` entry in `fixtures/tool-selection.json`, presents a live
+model with the REAL tool catalog (names + descriptions from
+`fixtures/transport-surfaces.json` `mcp.tools`) and forces a bare tool-name
+answer. Capability scenarios are reported only in `capability_slice`. Every
+other metric below covers the tool scenarios alone, except `served_model` /
+`served_model_varied`, which span every call.
 
 | Metric | Meaning |
 |---|---|
@@ -174,6 +177,7 @@ tool catalog (names + descriptions from `fixtures/transport-surfaces.json`
 | `proxy_model_agreement` | how often the model's pick matches the deterministic proxy's pick, computed by reusing `tool-selection.mjs`'s own `rankTools` — only when the tool-selection embeddings fixture is present and valid; absent or corrupt skips this section with a clear note, never a failure |
 | `served_model` / `served_model_varied` | the response body's actual `model` field (first observed value) and whether it varied across calls — provenance for the requested alias, since e.g. `gpt-4o-mini` floats to whatever the provider currently points it at |
 | `n` / `n_answered` / `gateway_error_count` | a per-scenario gateway failure (timeout, non-OK response) is caught, not propagated, and recorded as its own pick class — excluded from `model_selection_accuracy_at_1` / `unparseable_rate` (those are model-behavior metrics) rather than discarding the whole run; `n_answered` is the explicit denominator both rates use |
+| `capability_slice` | report-only, keyed `expected_tool#capability` (e.g. `get_memories#provenance`): the model's `accuracy_at_1`, `unparseable_rate`, `confusions` and counts on those utterances, plus `proxy_accuracy_at_1` (the same number the gate's capability slice prints) and `proxy_model_agreement` when the embeddings fixture is valid. No `per_tool`: each key has one expected tool. Absent when the fixture has no capability scenarios |
 
 Gateway contract mirrors `--judge` (`src/judge.mjs`): `LLM_GATEWAY_API_KEY` /
 `LLM_GATEWAY_URL`, 30s timeout. Model override is `LLM_TOOL_SELECTION_MODEL`
