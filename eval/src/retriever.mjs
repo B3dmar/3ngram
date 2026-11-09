@@ -8,13 +8,13 @@
 // ranker (lib.mjs) is the DEFAULT and the only path PR-lane unit tests touch —
 // it is network/DB/model-free. The REAL retriever is OPT-IN (--retriever=real
 // or EVAL_RETRIEVER=real) and runs ONLY in the nightly advisory lane, which has
-// the DB branch + embedding-gateway secret.
+// a throwaway Postgres service container + the embedding-gateway secret.
 //
 // REAL MODE (the product retrieval path, end to end):
-//   1. Per question, a DISPOSABLE tenant is created (a fresh user). On the
-//      shared Neon branch this keeps questions isolated and re-runs idempotent;
-//      the ephemeral nightly branch is torn down at job end (no row survives a
-//      run), so there is no destructive cleanup on a write path (hard rule 1).
+//   1. Per question, a DISPOSABLE tenant is created (a fresh user). This keeps
+//      questions isolated and re-runs idempotent; the nightly service container
+//      is discarded with the runner (no row survives a run), so there is no
+//      destructive cleanup on a write path (hard rule 1).
 //   2. Each haystack session is seeded as memory via the PRODUCT WRITE PATH
 //      (core.remember with the injected real gateway), so the embedding lands
 //      through embed-on-write exactly as production does. A session whose text
