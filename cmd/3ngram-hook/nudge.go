@@ -236,6 +236,24 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 		return 0
 	}
 
+	// A TURN THAT ENDED ON BACKGROUND WORK IS PAUSED, NOT DONE (issue #455). A
+	// running subagent or shell command, or a one-shot wakeup, starts a new
+	// turn when it lands, so a debrief asked for here interrupts work
+	// mid-flight and usually precedes the result it should record. Ask nothing: no `begin`, so no attempt is
+	// armed or spent, and the provenance stays untriaged for a later Stop or
+	// the closer. Declining a nudge is never declining a debrief.
+	//
+	// Two costs, accepted. A long-lived background process (a dev server)
+	// keeps every Stop quiet while it runs, so that session falls back to the
+	// closer. And an attempt still `pending` here, left behind for example by
+	// a lost `stop_hook_active`, a failed finalize or a user interrupt, is
+	// finalized by the next quiet Stop or retired by the closer instead.
+	// Recurring crons and teammates do not count, because either would
+	// silence the nudge for good (see pausedOnBackgroundWork).
+	if input.pausedOnBackgroundWork() {
+		return 0
+	}
+
 	// `false` is not a formality here: this is the delivery that can ARM and
 	// INJECT, so it is exactly the delivery whose siblings must stay age-guarded.
 	begun, ok := triageBegin(key, false)
