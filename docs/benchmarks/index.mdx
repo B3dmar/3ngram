@@ -49,10 +49,11 @@ This is the exact command CI runs in the `eval-gate` job. It needs no API key, n
 
 <Note>
   This is the blocking gate. A separate, non-blocking advisory tier runs nightly. It
-  scores LongMemEval- and MemoryAgentBench-shaped slices, including the full
-  500-question LongMemEval-S set, with a deterministic lexical stand-in retriever.
-  When a model gateway key is configured, it also runs the product retriever and a
-  model-judged answer check on a small synthetic LongMemEval subset, plus a check of
-  which tool a live model picks for each tool-selection scenario. None of these gate
-  a pull request or feed the floors above.
+  scores LongMemEval- and MemoryAgentBench-shaped slices with a deterministic lexical
+  stand-in retriever, including the full 500-question LongMemEval-S set when its
+  upstream download succeeds. When a model gateway key is configured, three more
+  checks run on top: the product retriever on a small synthetic LongMemEval subset, a
+  live model answering and judging those questions from the stand-in's top sessions,
+  and a check of which tool a live model picks for each tool-selection scenario. None
+  of these gate a pull request or feed the floors above.
 </Note>
