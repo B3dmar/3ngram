@@ -145,6 +145,11 @@ export interface TriageDebounceThresholds {
    * {@link evaluateTriageEntry}.
    */
   minAttemptAgeMs: number
+  /**
+   * How long after the run's last ARMED attempt `begin` declines `cooldown`
+   * instead of arming again. 0 switches it off. See {@link evaluateTriageEntry}.
+   */
+  rearmCooldownMs: number
 }
 
 /** The arm-or-decline verdict, plus the row state that justified it. */
@@ -329,6 +334,10 @@ export type TriageEntryDecision = { arm: true } | { arm: false; reason: TriageDe
  * | `expired`     | no              | `no-signal`                               |
  * | `expired`     | yes             | ARM                                       |
  *
+ * Every ARM above that follows an earlier armed attempt first passes the
+ * re-arm cooldown: within `rearmCooldownMs` of `triage_armed_at` it declines
+ * `cooldown` and leaves the signal untriaged for a later Stop.
+ *
  * `expired` BEHAVES LIKE `completed` FOR ENTRY, and that is the nag-loop rule,
  * not an oversight: "*a zero-write continuation must not re-inject on every later
  * Stop — the numeric cap bounds within-turn continuations, not cross-turn nags*".
@@ -395,7 +404,11 @@ export function evaluateTriageEntry(input: {
   untriagedEvent: boolean
   turnCount: number
   elapsedMs: number
-  /** Age of the outstanding attempt; `undefined` when the row carries no arm time. */
+  /**
+   * Age of the run's most recent armed attempt: the outstanding one on a
+   * `pending` row, the last finished one otherwise (`triage_armed_at` is never
+   * cleared). `undefined` when the run has never armed.
+   */
   attemptAgeMs?: number | undefined
   /** The caller's `stop_hook_active`. A finalize-only delivery is exempt from the age guard. */
   stopHookActive?: boolean | undefined
@@ -412,6 +425,22 @@ export function evaluateTriageEntry(input: {
   }
   if (input.triageStatus !== 'idle' && !input.untriagedEvent) {
     return { arm: false, reason: 'no-signal' }
+  }
+  // THE COOLDOWN BOUNDS THE NAG, NOT THE DEBRIEF. Re-entry above is "one nudge
+  // per turn that produced new provenance", so a run that keeps writing would
+  // re-arm on nearly every turn. Within the cooldown the signal is declined,
+  // not consumed: it stays outside the watermark, the first Stop past the
+  // cooldown arms on it, and the closer still sees it if the session ends
+  // first. A `completed` row that a write flipped back to `idle` is covered
+  // too, because the age is read from `triage_armed_at`, not from the status.
+  // A negative age (a reader clock behind the arming one) is inside the window
+  // and only defers the nudge, the same safe direction as the age guard.
+  if (
+    input.thresholds.rearmCooldownMs > 0 &&
+    input.attemptAgeMs !== undefined &&
+    input.attemptAgeMs < input.thresholds.rearmCooldownMs
+  ) {
+    return { arm: false, reason: 'cooldown' }
   }
   const substantial =
     input.untriagedEvent ||

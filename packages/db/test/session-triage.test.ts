@@ -45,7 +45,12 @@ const OTHER_ATTEMPT = '01890b6e-0000-7000-8000-0000000000cc'
 const NOW = new Date('2026-08-23T12:00:00.000Z')
 const KEY = { agent: 'claude-code', sessionId: 'conv-abc' }
 
-const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000, minAttemptAgeMs: 30_000 }
+const THRESHOLDS = {
+  minTurns: 3,
+  minElapsedMs: 10 * 60_000,
+  minAttemptAgeMs: 30_000,
+  rearmCooldownMs: 30 * 60_000,
+}
 
 // ---------------------------------------------------------------------------
 // 1. The entry rule + the debounce
@@ -170,13 +175,74 @@ describe('the entry rule (triage_status x signal)', () => {
 
     it('changes nothing for any other status', () => {
       // The guard is scoped to `pending`. A fresh arm time left over on a row
-      // that has since gone terminal must not re-decide the entry rule.
+      // that has since gone terminal must not re-decide the entry rule. The
+      // re-arm cooldown also reads that age, so it is switched off here to
+      // isolate the #188 guard; its own block below covers the overlap.
+      const thresholds = { ...THRESHOLDS, rearmCooldownMs: 0 }
       for (const triageStatus of STATUSES) {
         if (triageStatus === 'pending') continue
-        expect(entry({ triageStatus, untriagedEvent: true, attemptAgeMs: 0 })).toEqual(
-          entry({ triageStatus, untriagedEvent: true }),
+        expect(entry({ triageStatus, untriagedEvent: true, attemptAgeMs: 0, thresholds })).toEqual(
+          entry({ triageStatus, untriagedEvent: true, thresholds }),
         )
       }
+    })
+  })
+
+  // The re-arm cooldown. Re-entry is "one nudge per turn that produced new
+  // provenance", so a run that keeps writing was asked to debrief after nearly
+  // every turn. Within the cooldown the signal is declined, not consumed.
+  describe('the re-arm cooldown after an armed attempt', () => {
+    const cooldown = THRESHOLDS.rearmCooldownMs
+
+    it('declines a signalled re-entry inside the window and arms at its edge', () => {
+      for (const triageStatus of ['idle', 'completed', 'expired'] as const) {
+        const signalled = (attemptAgeMs: number) =>
+          entry({ triageStatus, untriagedEvent: true, attemptAgeMs })
+        expect(signalled(77_000)).toEqual({ arm: false, reason: 'cooldown' })
+        expect(signalled(cooldown - 1)).toEqual({ arm: false, reason: 'cooldown' })
+        expect(signalled(cooldown)).toEqual({ arm: true })
+      }
+    })
+
+    it('covers a completed row a write flipped back to idle', () => {
+      // The attaching write sets `completed` -> `idle`, so the status no longer
+      // says the run was nudged. The age from `triage_armed_at` still does.
+      expect(entry({ triageStatus: 'idle', turnCount: 99, attemptAgeMs: 60_000 })).toEqual({
+        arm: false,
+        reason: 'cooldown',
+      })
+    })
+
+    it('never applies to a run that has not armed yet', () => {
+      expect(entry({ triageStatus: 'idle', untriagedEvent: true })).toEqual({ arm: true })
+    })
+
+    it('reads a negative age as inside the window', () => {
+      // Clock skew: "armed in the future" defers the nudge, the safe direction.
+      expect(
+        entry({ triageStatus: 'completed', untriagedEvent: true, attemptAgeMs: -5_000 }),
+      ).toEqual({ arm: false, reason: 'cooldown' })
+    })
+
+    it('is switched off by a zero cooldown', () => {
+      const thresholds = { ...THRESHOLDS, rearmCooldownMs: 0 }
+      for (const attemptAgeMs of [-5_000, 0, 77_000]) {
+        expect(
+          entry({ triageStatus: 'completed', untriagedEvent: true, attemptAgeMs, thresholds }),
+        ).toEqual({ arm: true })
+      }
+    })
+
+    it('keeps the earlier declines ahead of it', () => {
+      // A pending row is still the finalize path, and a run with no new signal
+      // still says so, whatever the age.
+      expect(
+        entry({ triageStatus: 'pending', untriagedEvent: true, attemptAgeMs: 60_000 }),
+      ).toEqual({ arm: false, reason: 'pending' })
+      expect(entry({ triageStatus: 'completed', untriagedEvent: false, attemptAgeMs: 0 })).toEqual({
+        arm: false,
+        reason: 'no-signal',
+      })
     })
   })
 

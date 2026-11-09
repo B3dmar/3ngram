@@ -51,7 +51,18 @@ import { closePools, ownerPool, resetDomainTables, seedUser } from './helpers.js
 const NOW = new Date('2026-08-23T12:00:00.000Z')
 const KEY = { agent: 'claude-code', sessionId: 'conv-triage' }
 const PROJECT = '3ngram'
-const THRESHOLDS = { minTurns: 3, minElapsedMs: 10 * 60_000, minAttemptAgeMs: 30_000 }
+/**
+ * The re-arm cooldown is OFF for every suite but its own: the others pin the
+ * watermark, fence and re-arm mechanics the cooldown sits on top of, and their
+ * second Stop lands a turn after the first, well inside any real window.
+ */
+const THRESHOLDS = {
+  minTurns: 3,
+  minElapsedMs: 10 * 60_000,
+  minAttemptAgeMs: 30_000,
+  rearmCooldownMs: 0,
+}
+const COOLDOWN_MS = 30 * 60_000
 /** A Stop a whole model turn after the arm — past the attempt-age floor. */
 const LATER = new Date(NOW.getTime() + THRESHOLDS.minAttemptAgeMs)
 
@@ -107,6 +118,8 @@ const begin = (
     now?: Date
     /** Declares a finalize-only delivery, which is exempt from the age guard. */
     stopHookActive?: boolean
+    /** Overrides the suite thresholds; the cooldown block switches it on. */
+    thresholds?: typeof THRESHOLDS
   } = {},
 ) =>
   withTenant(userId, (tx) =>
@@ -114,7 +127,7 @@ const begin = (
       attemptId: over.attemptId ?? attempt(1),
       turnCount: over.turnCount ?? THRESHOLDS.minTurns,
       ...(over.stopHookActive === undefined ? {} : { stopHookActive: over.stopHookActive }),
-      thresholds: THRESHOLDS,
+      thresholds: over.thresholds ?? THRESHOLDS,
       now: over.now ?? NOW,
       ...(over.ceiling === undefined ? {} : { ceiling: over.ceiling }),
     }),
@@ -584,6 +597,38 @@ describe('re-arm on write', () => {
 
     expect(done).toMatchObject({ triageStatus: 'completed', sinceBeginCount: 1, eventCount: 3 })
     expect(await watermark(runId)).toEqual(expect.arrayContaining(afterFirst))
+  })
+})
+
+describe('the re-arm cooldown against a real row', () => {
+  const cooled = { ...THRESHOLDS, rearmCooldownMs: COOLDOWN_MS }
+  const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs)
+
+  it('declines the next write-bearing Stop inside the window, then arms on the same signal', async () => {
+    const first = await begin(uid, { thresholds: cooled })
+    await write(uid, runId)
+    await complete(uid, first.attemptId)
+
+    // A later turn writes, which flips the row back to idle.
+    await write(uid, runId)
+    expect((await rawRow(runId)).triage_status).toBe('idle')
+    const stamped = await watermark(runId)
+
+    // 77 s after the first nudge: the case observed in the field.
+    expect(
+      await begin(uid, { attemptId: attempt(2), now: at(77_000), thresholds: cooled }),
+    ).toMatchObject({ armed: false, reason: 'cooldown' })
+    // Declined, not consumed: nothing armed or logged, the watermark unmoved.
+    const row = await rawRow(runId)
+    expect(row.triage_status).toBe('idle')
+    expect(row.triage_attempt_id).toBe(first.attemptId)
+    expect(row.triage_attempt_log).toHaveLength(1)
+    expect(await watermark(runId)).toEqual(stamped)
+
+    // Past the window, the same untriaged write arms the next Stop.
+    expect(
+      await begin(uid, { attemptId: attempt(2), now: at(COOLDOWN_MS), thresholds: cooled }),
+    ).toMatchObject({ armed: true, attemptId: attempt(2) })
   })
 })
 
