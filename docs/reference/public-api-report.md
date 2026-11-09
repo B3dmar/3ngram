@@ -48,7 +48,7 @@ its row here even when its name and kind are unchanged.
 | `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `RequestContext` | interface | `7b9320e0e681` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
-| `SessionTriageConfig` | interface | `96052892588f` |
+| `SessionTriageConfig` | interface | `40fdf97efdb3` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `Surface` | type | `ec490e7783d6` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
@@ -61,7 +61,7 @@ its row here even when its name and kind are unchanged.
 | `contextBindings` | function | `f5181de7420a` |
 | `createLogger` | function | `c431a54bfdfe` |
 | `debugContentEnabled` | function | `d92eb3b188b3` |
-| `envSchema` | const | `f2cecb307a49` |
+| `envSchema` | const | `798c7ef3d10b` |
 | `generationCostObserved` | const | `23f3ea9a6400` |
 | `getContext` | function | `99140fa61322` |
 | `hashUserId` | function | `0a49beeaacde` |
@@ -122,10 +122,10 @@ its row here even when its name and kind are unchanged.
 | `OAuthJwk` | type | `6e67b6a3dcb5` |
 | `RateLimitStoreKind` | type | `3a817b8f7a7c` |
 | `SessionCloserConfig` | interface | `f1a1b0fd8f50` |
-| `SessionTriageConfig` | interface | `96052892588f` |
+| `SessionTriageConfig` | interface | `40fdf97efdb3` |
 | `SmtpConfig` | interface | `c1dc0a71e623` |
 | `SurfacingConfig` | interface | `c27fd84b0133` |
-| `envSchema` | const | `f2cecb307a49` |
+| `envSchema` | const | `798c7ef3d10b` |
 | `isAllowedMcpOrigin` | function | `a29e67d5d912` |
 | `loadBudgetConfig` | function | `05a6e2f04de3` |
 | `loadEnv` | function | `5a8a8b05c6de` |
@@ -391,7 +391,7 @@ its row here even when its name and kind are unchanged.
 | `SurfacingPolicy` | interface | `c9069f15c342` |
 | `SurfacingRepo` | interface | `4b2156e6726b` |
 | `SurfacingResult` | interface | `2d9be31931a7` |
-| `TriageDebounceThresholds` | interface | `80eeac1034f2` |
+| `TriageDebounceThresholds` | interface | `45febbf2d7f0` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
 | `UNPOLICIED_WRITE_SCOPE` | const | `14407d6fd486` |
 | `UnknownSessionRunError` | class | `23f6755540c4` |
@@ -431,7 +431,7 @@ its row here even when its name and kind are unchanged.
 | `deleteScope` | function | `8e460c0839b0` |
 | `deleteWindowCounter` | function | `13cc4dd10203` |
 | `describeEnvironment` | function | `4ba1439f061f` |
-| `evaluateTriageEntry` | function | `f7979c0a7124` |
+| `evaluateTriageEntry` | function | `2be888e4a0dd` |
 | `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
 | `forgetAllTenants` | function | `f40d741129a6` |
@@ -787,7 +787,7 @@ its row here even when its name and kind are unchanged.
 | `SuccessorNotLiveError` | class | `d9204867ae93` |
 | `SurfacingSweepResult` | interface | `7be2206cfb1b` |
 | `TenantTx` | type | `62a38afad7f6` |
-| `TriageDebounceThresholds` | interface | `80eeac1034f2` |
+| `TriageDebounceThresholds` | interface | `45febbf2d7f0` |
 | `TriageEntryDecision` | type | `509faa78cac5` |
 | `UnknownSessionRunError` | class | `23f6755540c4` |
 | `UserBudgetRow` | interface | `e0ce6cfee36e` |
@@ -846,7 +846,7 @@ its row here even when its name and kind are unchanged.
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
 | `evalRuns` | const | `1f1bdc3ebc7f` |
-| `evaluateTriageEntry` | function | `f7979c0a7124` |
+| `evaluateTriageEntry` | function | `2be888e4a0dd` |
 | `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
 | `facts` | const | `31ef661a29f7` |
@@ -1417,7 +1417,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionRunResponseSchema` | const | `c3a90b4214b1` |
 | `agentSessionSourceSchema` | const | `aae3e1f2b354` |
 | `agentSessionTriageBeginBodySchema` | const | `7747702f51cb` |
-| `agentSessionTriageBeginResponseSchema` | const | `f65b36887b5a` |
+| `agentSessionTriageBeginResponseSchema` | const | `64ef8c490446` |
 | `agentSessionTriageCompleteBodySchema` | const | `37bd94cfb2df` |
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
@@ -1653,7 +1653,7 @@ its row here even when its name and kind are unchanged.
 | `tokenEndpointAuthMethodSchema` | const | `fd29b1714dd3` |
 | `tokenRequestSchema` | const | `dfd9931ba029` |
 | `triageAttemptLogEntrySchema` | const | `6b2f1c1f81f2` |
-| `triageDeclineReasonSchema` | const | `0d7abf3381fe` |
+| `triageDeclineReasonSchema` | const | `ab6babc87696` |
 | `triageOutcomeStatusSchema` | const | `7044bf7dd8b4` |
 | `userCredentialsSchema` | const | `39a616eb6d60` |
 | `userProfileAttributesSchema` | const | `6d3b282d63ce` |

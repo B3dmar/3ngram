@@ -47,13 +47,14 @@ const (
 	debriefPromptTimeout  = 2 * time.Second
 
 	// triageReasonPending is the one decline reason the hook BRANCHES on. The
-	// other six (`not-live`, `terminal`, `pending-fresh`, `no-signal`,
-	// `debounce`, `overflowed`) are all "no nudge this turn" and need no local
-	// vocabulary — mirroring the full enum here would be a second boundary that
-	// can drift from triageDeclineReasonSchema for no gain. `pending-fresh` in
-	// particular needs none: it carries no `attemptId`, so the finalize it
-	// declines to authorize is unreachable whether the hook knows the word or
-	// not, and an older hook against a newer server behaves identically.
+	// other seven (`not-live`, `terminal`, `pending-fresh`, `no-signal`,
+	// `cooldown`, `debounce`, `overflowed`) are all "no nudge this turn" and
+	// need no local vocabulary — mirroring the full enum here would be a second
+	// boundary that can drift from triageDeclineReasonSchema for no gain.
+	// `pending-fresh` in particular needs none: it carries no `attemptId`, so
+	// the finalize it declines to authorize is unreachable whether the hook
+	// knows the word or not, and an older hook against a newer server behaves
+	// identically. The same holds for `cooldown`, added after this hook shipped.
 	triageReasonPending = "pending"
 
 	// claudeCodeAgent / codexAgent are the two harnesses with a REGISTERED
@@ -340,7 +341,7 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 // that attempt's debrief WAS shown by the Stop that armed it, so what the
 // continuation wrote is exactly what the outcome should absorb.
 //
-// Any other decline (`not-live`, `no-signal`, `debounce`, `terminal`) carries no
+// Any other decline (`not-live`, `no-signal`, `cooldown`, `debounce`, `terminal`) carries no
 // attempt id, which is the honest answer "nothing was armed, or the closer took
 // the row over" — the hook does nothing.
 //

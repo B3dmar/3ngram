@@ -487,6 +487,27 @@ describe('COMMITMENT_EXPIRY_GRACE_DAYS (issue #221)', () => {
   })
 })
 
+describe('SESSION_TRIAGE_REARM_COOLDOWN_MINUTES (the re-arm cooldown)', () => {
+  const read = (value?: string) =>
+    parseEnv(value === undefined ? {} : { SESSION_TRIAGE_REARM_COOLDOWN_MINUTES: value })
+      .SESSION_TRIAGE_REARM_COOLDOWN_MINUTES
+
+  it('defaults to thirty minutes', () => {
+    expect(read()).toBe(30)
+  })
+
+  it('treats a blank value as unset, never as switching the cooldown off', () => {
+    expect(read('')).toBe(30)
+    expect(read('   ')).toBe(30)
+  })
+
+  it('accepts an explicit 0 and rejects values outside 0..1440', () => {
+    expect(read('0')).toBe(0)
+    expect(() => read('1441')).toThrow()
+    expect(() => read('-1')).toThrow()
+  })
+})
+
 describe('role (issues #204, #315: the worker skips server-only prod rules)', () => {
   const originalEnv = { ...process.env }
   const { OAUTH_JWKS: _jwks, ...noJwks } = PROD_ENV
