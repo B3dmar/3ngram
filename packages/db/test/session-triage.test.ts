@@ -217,11 +217,21 @@ describe('the entry rule (triage_status x signal)', () => {
       expect(entry({ triageStatus: 'idle', untriagedEvent: true })).toEqual({ arm: true })
     })
 
-    it('reads a negative age as inside the window', () => {
+    it('reads a small negative age as inside the window', () => {
       // Clock skew: "armed in the future" defers the nudge, the safe direction.
       expect(
         entry({ triageStatus: 'completed', untriagedEvent: true, attemptAgeMs: -5_000 }),
       ).toEqual({ arm: false, reason: 'cooldown' })
+    })
+
+    it('ignores an age more negative than the whole window', () => {
+      // A badly skewed arming clock is not evidence of a recent nudge, and
+      // honouring it would silence the run for the skew plus the window.
+      const signalled = (attemptAgeMs: number) =>
+        entry({ triageStatus: 'completed', untriagedEvent: true, attemptAgeMs })
+      expect(signalled(-cooldown + 1)).toEqual({ arm: false, reason: 'cooldown' })
+      expect(signalled(-cooldown)).toEqual({ arm: true })
+      expect(signalled(-3 * 60 * 60_000)).toEqual({ arm: true })
     })
 
     it('is switched off by a zero cooldown', () => {
@@ -242,6 +252,14 @@ describe('the entry rule (triage_status x signal)', () => {
       expect(entry({ triageStatus: 'completed', untriagedEvent: false, attemptAgeMs: 0 })).toEqual({
         arm: false,
         reason: 'no-signal',
+      })
+      // A dead or terminal run says so, never `cooldown`.
+      expect(
+        entry({ live: false, triageStatus: 'completed', untriagedEvent: true, attemptAgeMs: 0 }),
+      ).toEqual({ arm: false, reason: 'not-live' })
+      expect(entry({ triageStatus: 'overflowed', untriagedEvent: true, attemptAgeMs: 0 })).toEqual({
+        arm: false,
+        reason: 'terminal',
       })
     })
   })

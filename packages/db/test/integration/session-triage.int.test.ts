@@ -630,6 +630,25 @@ describe('the re-arm cooldown against a real row', () => {
       await begin(uid, { attemptId: attempt(2), now: at(COOLDOWN_MS), thresholds: cooled }),
     ).toMatchObject({ armed: true, attemptId: attempt(2) })
   })
+
+  it('holds an expired run the same way, without flipping its status', async () => {
+    // A zero-write continuation lands the attempt on `expired`.
+    const first = await begin(uid, { thresholds: cooled })
+    await complete(uid, first.attemptId)
+    expect((await rawRow(runId)).triage_status).toBe('expired')
+
+    // A later write-bearing turn: `expired` keeps its status and re-enters
+    // only through `begin`, which the cooldown now holds back.
+    await write(uid, runId)
+    expect(
+      await begin(uid, { attemptId: attempt(2), now: at(77_000), thresholds: cooled }),
+    ).toMatchObject({ armed: false, reason: 'cooldown' })
+    expect((await rawRow(runId)).triage_status).toBe('expired')
+
+    expect(
+      await begin(uid, { attemptId: attempt(2), now: at(COOLDOWN_MS), thresholds: cooled }),
+    ).toMatchObject({ armed: true, attemptId: attempt(2) })
+  })
 })
 
 describe('defensive finalize: no debrief shown, nothing claimed as covered (issue #189)', () => {

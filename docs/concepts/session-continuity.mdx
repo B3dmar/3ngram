@@ -851,7 +851,9 @@ the signal stays outside `last_triaged_event_ids`, the first Stop past the windo
 arms on it, and the closer still selects the row if the session ends first. A run
 that never armed has no cooldown, so the first nudge of a session is unchanged.
 A reader clock behind the arming one computes a negative age, which counts as
-inside the window and only defers the nudge.
+inside the window and only defers the nudge. An age more negative than the whole
+window reads as no cooldown, so a badly skewed arming clock cannot silence a run
+for the skew plus the window.
 
 ### Who is registered
 

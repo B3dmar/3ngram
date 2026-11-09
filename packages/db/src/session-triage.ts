@@ -433,11 +433,15 @@ export function evaluateTriageEntry(input: {
   // cooldown arms on it, and the closer still sees it if the session ends
   // first. A `completed` row that a write flipped back to `idle` is covered
   // too, because the age is read from `triage_armed_at`, not from the status.
-  // A negative age (a reader clock behind the arming one) is inside the window
-  // and only defers the nudge, the same safe direction as the age guard.
+  // A small negative age (a reader clock behind the arming one) is inside the
+  // window and only defers the nudge, the same safe direction as the age guard.
+  // One more negative than the whole window is not evidence of a recent nudge
+  // but of a badly skewed arming clock, which would otherwise silence the run
+  // for the skew plus the window; it reads as no cooldown.
   if (
     input.thresholds.rearmCooldownMs > 0 &&
     input.attemptAgeMs !== undefined &&
+    input.attemptAgeMs > -input.thresholds.rearmCooldownMs &&
     input.attemptAgeMs < input.thresholds.rearmCooldownMs
   ) {
     return { arm: false, reason: 'cooldown' }
