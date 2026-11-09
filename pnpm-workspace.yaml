@@ -8,7 +8,12 @@ packages:
 # esbuild is split into two non-overlapping selectors: a bare `esbuild` key would shadow the
 # scoped one and leave the 0.28.0 resolution (drizzle-kit → @esbuild-kit) on a vulnerable version.
 overrides:
-  '@hono/node-server@<1.19.15': ^1.19.15
+  # GHSA-frvp-7c67-39w9 (<1.19.15) and GHSA-jpvv-r467-5p4w (<1.19.18): a raw backslash in the
+  # request path is parsed as `/`, so a path-based proxy rule sees a different path than the
+  # app (#407). Transitive under @modelcontextprotocol/node 2.1.1 (^1.19.9). Re-cut 2026-11-09
+  # from <1.19.15. GHSA-rmxm-3fg6-px4f (serveStatic) has no 1.x fix and 3ngram never calls
+  # serveStatic; it closes with the MCP SDK 2.4 path (#407 option 2).
+  '@hono/node-server@<1.19.18': ^1.19.18
   '@opentelemetry/core@<2.8.0': ^2.8.0
   # CVE-2026-111181 (<2.4.0, DoS via an unhandled decompression stream error). Transitive
   # under express 5.3.0 (^2.3.0); the v1.9.0 release image scan blocked on it.

@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@hono/node-server@<1.19.15': ^1.19.15
+  '@hono/node-server@<1.19.18': ^1.19.18
   '@opentelemetry/core@<2.8.0': ^2.8.0
   body-parser@<2.4.0: ^2.4.0
   esbuild@<0.25.0: '>=0.25.0'
@@ -758,8 +758,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@hono/node-server@1.19.17':
-    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
+  '@hono/node-server@1.19.18':
+    resolution: {integrity: sha512-609kppIP9GITS+EwPyB6Kiq8z2yXONaYD1VHpo7MMP9celRJYbkFr9KakJncHwK0EK/XYtlogqmrLchDv5HX5w==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4.13.7
@@ -2478,7 +2478,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@1.19.17(hono@4.13.13)':
+  '@hono/node-server@1.19.18(hono@4.13.13)':
     dependencies:
       hono: 4.13.13
 
@@ -2517,7 +2517,7 @@ snapshots:
 
   '@modelcontextprotocol/node@2.1.1(@modelcontextprotocol/server@2.3.1)':
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.13)
+      '@hono/node-server': 1.19.18(hono@4.13.13)
       '@modelcontextprotocol/server': 2.3.1
       hono: 4.13.13
 
