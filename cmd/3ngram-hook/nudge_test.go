@@ -826,6 +826,7 @@ func TestStopNudgeWaitsForBackgroundWork(t *testing.T) {
 	for name, tasks := range map[string]string{
 		"running subagent":      `[{"id":"a1","type":"subagent","status":"running","description":"verify docs"}]`,
 		"shell, unknown status": `[{"id":"b1","type":"shell","status":"whatever","description":"ci watch"}]`,
+		"non-object entry":      `["a1"]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ns := newNudgeServer(t)
@@ -860,6 +861,87 @@ func TestStopNudgeIgnoresAnEmptyTaskList(t *testing.T) {
 
 			if decodeEnvelope(t, out)["decision"] != "block" {
 				t.Fatalf("an idle Stop did not inject: %q", out)
+			}
+		})
+	}
+}
+
+// stopPayloadWithCrons is a Stop envelope carrying Claude Code's raw
+// `session_crons` list.
+func stopPayloadWithCrons(sessionID string, crons string) string {
+	base := strings.TrimSuffix(stopPayload(sessionID, false), "}")
+	return base + `,"session_crons":` + crons + `}`
+}
+
+// assertPausedStop checks that a Stop asked the server nothing beyond the
+// heartbeat and printed nothing.
+func assertPausedStop(t *testing.T, ns *nudgeServer, out string) {
+	t.Helper()
+	if out != "" {
+		t.Fatalf("a paused Stop injected: %q", out)
+	}
+	if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+		t.Fatalf("a paused Stop made %v, want exactly one heartbeat", calls)
+	}
+}
+
+// TestStopNudgeIgnoresTeammates: a teammate is a long-lived peer, and some
+// Claude Code versions list an idle one as running for the rest of the session
+// (anthropics/claude-code#85955). Counting it would silence the nudge for good,
+// so a list of teammates alone nudges as usual; any other entry still pauses.
+func TestStopNudgeIgnoresTeammates(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"teammate":            `[{"id":"t1","type":"teammate","status":"running"}]`,
+		"in-process teammate": `[{"id":"t2","type":"in_process_teammate","status":"running"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-team", false, tasks), func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("a teammate-only list suppressed the nudge: %q", out)
+			}
+		})
+	}
+	t.Run("teammate and subagent", func(t *testing.T) {
+		ns := newNudgeServer(t)
+		ns.beginBody = armedBody(testAttemptID)
+		tasks := `[{"id":"t1","type":"teammate","status":"running"},{"id":"a1","type":"subagent","status":"running"}]`
+
+		out := captureHook(t, stopPayloadWithTasks("sess-team", false, tasks), func() int { return runStop(nil) })
+
+		assertPausedStop(t, ns, out)
+	})
+}
+
+// TestStopNudgeWaitsForOneShotWakeups: a one-shot wakeup brings the session
+// back, so the turn is paused. A recurring cron never ends, and an entry that
+// does not say `recurring: false` is not trusted, so both nudge as usual.
+func TestStopNudgeWaitsForOneShotWakeups(t *testing.T) {
+	t.Run("one-shot", func(t *testing.T) {
+		ns := newNudgeServer(t)
+		ns.beginBody = armedBody(testAttemptID)
+		crons := `[{"id":"c1","schedule":"in 20m","recurring":false,"prompt":"check CI"}]`
+
+		out := captureHook(t, stopPayloadWithCrons("sess-cron", crons), func() int { return runStop(nil) })
+
+		assertPausedStop(t, ns, out)
+	})
+	for name, crons := range map[string]string{
+		"recurring":         `[{"id":"c1","schedule":"0 9 * * 1-5","recurring":true}]`,
+		"recurring unknown": `[{"id":"c1","schedule":"0 9 * * 1-5"}]`,
+		"not an array":      `"c1"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithCrons("sess-cron", crons), func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("crons %s suppressed the nudge: %q", crons, out)
 			}
 		})
 	}

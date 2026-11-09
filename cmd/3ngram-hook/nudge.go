@@ -236,9 +236,9 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 	}
 
 	// A TURN THAT ENDED ON BACKGROUND WORK IS PAUSED, NOT DONE (issue #455). A
-	// running subagent or shell command reports back and starts a new turn, so
-	// a debrief asked for here interrupts work mid-flight and usually precedes
-	// the result it should record. Ask nothing: no `begin`, so no attempt is
+	// running subagent or shell command, or a one-shot wakeup, starts a new
+	// turn when it lands, so a debrief asked for here interrupts work
+	// mid-flight and usually precedes the result it should record. Ask nothing: no `begin`, so no attempt is
 	// armed or spent, and the provenance stays untriaged for a later Stop or
 	// the closer. Declining a nudge is never declining a debrief.
 	//
@@ -247,9 +247,9 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 	// closer. And an attempt still `pending` here, left behind for example by
 	// a lost `stop_hook_active`, a failed finalize or a user interrupt, is
 	// finalized by the next quiet Stop or retired by the closer instead.
-	// Scheduled wakeups (`session_crons`) do not count: a recurring cron never
-	// ends and would silence the nudge for good.
-	if input.backgroundWorkInFlight() {
+	// Recurring crons and teammates do not count, because either would
+	// silence the nudge for good (see pausedOnBackgroundWork).
+	if input.pausedOnBackgroundWork() {
 		return 0
 	}
 
