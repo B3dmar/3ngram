@@ -14,6 +14,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { embeddingsFixtureName } from '../src/tool-selection.mjs'
 import {
+  aggregateCapabilitySlice,
   aggregateModelSelection,
   buildSelectionPrompt,
   computeAgreement,
@@ -407,6 +408,97 @@ test('runModelToolSelection tolerates a transient gateway failure: partial metri
   assert.equal(result.served_model, 'fake-model-v1')
 })
 
+test('loadProxyPredictions reads vectors from the named fixture section', () => {
+  const fixture = {
+    tools: { alpha: { vector: [1, 0] }, beta: { vector: [0, 1] } },
+    toolScenarios: { s1: { vector: [1, 0] } },
+    capabilityScenarios: { c1: { vector: [0, 1] } },
+  }
+  const scenarios = [{ id: 'c1', expected_tool: 'beta' }]
+  assert.deepEqual(loadProxyPredictions(scenarios, fixture, 'capabilityScenarios'), { c1: 'beta' })
+  // The default section is toolScenarios: c1 has no vector there, so it is skipped.
+  assert.deepEqual(loadProxyPredictions(scenarios, fixture), {})
+  // A fixture without the section at all yields no predictions, never a throw.
+  assert.deepEqual(
+    loadProxyPredictions(scenarios, { tools: fixture.tools }, 'capabilityScenarios'),
+    {},
+  )
+})
+
+const CAPABILITY_SCENARIOS = [
+  { id: 'c1', utterance: 'who recorded this', expected_tool: 'search', capability: 'provenance' },
+  { id: 'c2', utterance: 'which run wrote it', expected_tool: 'search', capability: 'provenance' },
+  { id: 'c3', utterance: 'archive these', expected_tool: 'remember', capability: 'disposition' },
+]
+
+test('runModelToolSelection scores capability scenarios in a separate slice, never in metrics', async () => {
+  const scenarios = [{ id: 's1', utterance: 'save this decision', expected_tool: 'remember' }]
+  const gateway = fakeGateway({
+    'save this decision': 'remember',
+    'who recorded this': 'search',
+    'which run wrote it': 'remember',
+    'archive these': 'remember',
+  })
+  const result = await runModelToolSelection({
+    scenarios,
+    capabilityScenarios: CAPABILITY_SCENARIOS,
+    tools: TOOLS,
+    gateway,
+    proxyPredictions: { s1: 'remember', c1: 'remember', c2: 'remember', c3: 'remember' },
+  })
+  // The gated-shape metrics see the tool scenario only.
+  assert.equal(result.metrics.n, 1)
+  assert.equal(result.metrics.model_selection_accuracy_at_1, 1)
+  assert.equal(result.metrics.agreement.compared, 1)
+  assert.deepEqual(Object.keys(result.capability_slice), [
+    'remember#disposition',
+    'search#provenance',
+  ])
+  const provenance = result.capability_slice['search#provenance']
+  assert.equal(provenance.n, 2)
+  assert.equal(provenance.accuracy_at_1, 0.5)
+  assert.deepEqual(provenance.confusions, [{ pair: 'search -> remember', count: 1 }])
+  assert.equal(provenance.proxy_accuracy_at_1, 0, 'the proxy picked remember for both')
+  assert.equal(provenance.proxy_model_agreement, 0.5)
+  assert.equal(result.capability_slice['remember#disposition'].proxy_accuracy_at_1, 1)
+})
+
+test('runModelToolSelection omits capability_slice when there are no capability scenarios', async () => {
+  const scenarios = [{ id: 's1', utterance: 'save this decision', expected_tool: 'remember' }]
+  const gateway = fakeGateway({ 'save this decision': 'remember' })
+  const result = await runModelToolSelection({ scenarios, tools: TOOLS, gateway })
+  assert.ok(!('capability_slice' in result))
+})
+
+test('aggregateCapabilitySlice keeps a gateway error inside its group and skips proxy fields without predictions', () => {
+  const picks = [
+    {
+      id: 'c1',
+      expected_tool: 'search',
+      capability: 'provenance',
+      predicted: 'search',
+      unparseable: false,
+    },
+    {
+      id: 'c2',
+      expected_tool: 'search',
+      capability: 'provenance',
+      predicted: null,
+      unparseable: false,
+      gatewayError: 'timeout',
+    },
+  ]
+  const slice = aggregateCapabilitySlice(picks, undefined)
+  assert.deepEqual(slice['search#provenance'], {
+    n: 2,
+    n_answered: 1,
+    gateway_error_count: 1,
+    accuracy_at_1: 1,
+    unparseable_rate: 0,
+    confusions: [],
+  })
+})
+
 test('the real committed catalog parses its own tool names as valid picks', () => {
   // Cheap sanity pin against the real fixtures (no network, just JSON reads):
   // every expected_tool in the committed scenarios is a name that would parse
@@ -417,7 +509,7 @@ test('the real committed catalog parses its own tool names as valid picks', () =
   )
   const scenarios = JSON.parse(readFileSync(join(here, '../fixtures/tool-selection.json'), 'utf8'))
   const toolNames = surfaces.mcp.tools.map((t) => t.name)
-  for (const s of scenarios.toolScenarios) {
+  for (const s of [...scenarios.toolScenarios, ...(scenarios.capabilityScenarios ?? [])]) {
     assert.deepEqual(parseToolAnswer(s.expected_tool, toolNames), {
       tool: s.expected_tool,
       unparseable: false,
