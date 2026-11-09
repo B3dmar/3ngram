@@ -48,7 +48,11 @@ pnpm --filter @3ngram/eval run gate
 This is the exact command CI runs in the `eval-gate` job. It needs no API key, no database, and no network — the embeddings are committed to the repository. A run that falls below any recorded floor exits non-zero, which is what blocks a regressing change from merging.
 
 <Note>
-  This is the blocking gate. A separate, non-blocking advisory tier runs broader
-  benchmarks (LongMemEval- and MemoryAgentBench-shaped slices) nightly; those never
-  gate a pull request and are not reflected in the floors above.
+  This is the blocking gate. A separate, non-blocking advisory tier runs nightly. It
+  scores LongMemEval- and MemoryAgentBench-shaped slices, including the full
+  500-question LongMemEval-S set, with a deterministic lexical stand-in retriever.
+  When a model gateway key is configured, it also runs the product retriever and a
+  model-judged answer check on a small synthetic LongMemEval subset, plus a check of
+  which tool a live model picks for each tool-selection scenario. None of these gate
+  a pull request or feed the floors above.
 </Note>
