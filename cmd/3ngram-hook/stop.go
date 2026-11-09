@@ -31,12 +31,25 @@ type stopInput struct {
 	StopHookActive       bool   `json:"stop_hook_active"`
 	LastAssistantMessage string `json:"last_assistant_message"`
 	// BackgroundTasks is Claude Code's list of in-flight background work: shell
-	// commands, subagents, monitors and the like, each one entry. Only its
-	// LENGTH is read. The entry shape and the `status` values are not a
-	// documented contract, and a non-empty list already says what matters: the
-	// turn ended while work it is waiting on is still running, so the session
-	// is paused rather than done. Absent on Codex and on older Claude Code.
-	BackgroundTasks []json.RawMessage `json:"background_tasks"`
+	// commands, subagents, monitors and the like, each one entry. Absent on
+	// Codex and on older Claude Code. Kept RAW on purpose: a typed slice would
+	// let an unexpected shape fail the whole decode, and runStop returns before
+	// the heartbeat on a decode error, so one odd field would cost every user
+	// their lease refresh. See backgroundWorkInFlight.
+	BackgroundTasks json.RawMessage `json:"background_tasks"`
+}
+
+// backgroundWorkInFlight reports whether the turn ended on a non-empty
+// `background_tasks` list. Only the LENGTH is read: the entry shape and the
+// `status` values are not a documented contract, and a non-empty list already
+// says what matters, that work the turn is waiting on is still running. Any
+// shape other than an array reads as "unknown", which keeps today's behaviour.
+func (in stopInput) backgroundWorkInFlight() bool {
+	var tasks []json.RawMessage
+	if err := json.Unmarshal(in.BackgroundTasks, &tasks); err != nil {
+		return false
+	}
+	return len(tasks) > 0
 }
 
 // runStop is the main-agent Stop hook. It does two jobs, and the split between

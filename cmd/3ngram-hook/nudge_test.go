@@ -865,6 +865,43 @@ func TestStopNudgeIgnoresAnEmptyTaskList(t *testing.T) {
 	}
 }
 
+// TestStopSurvivesAMalformedTaskList pins the decode boundary. `runStop` returns
+// before the heartbeat on any decode error, so a typed field would let one odd
+// `background_tasks` value cost every user the lease refresh, nudge on or off.
+// A non-array reads as "unknown" and keeps today's behaviour in full.
+func TestStopSurvivesAMalformedTaskList(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"object": `{"id":"a1"}`,
+		"string": `"running"`,
+		"number": `3`,
+		"bool":   `true`,
+	} {
+		t.Run(name+"/nudge off", func(t *testing.T) {
+			ns := newNudgeServer(t)
+			t.Setenv("THREENGRAM_STOP_NUDGE", "")
+
+			captureHook(t, stopPayloadWithTasks("sess-odd", false, tasks), func() int { return runStop(nil) })
+
+			if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a malformed task list made %v, want exactly one heartbeat", calls)
+			}
+		})
+		t.Run(name+"/nudge on", func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-odd", false, tasks), func() int { return runStop(nil) })
+
+			if calls := ns.paths(); len(calls) == 0 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a malformed task list skipped the heartbeat: %v", calls)
+			}
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("a malformed task list changed the nudge: %q", out)
+			}
+		})
+	}
+}
+
 // TestStopNudgeFinalizesDespiteBackgroundWork keeps the finalize path first. The
 // continuation of an injected debrief must still complete its attempt even if
 // it started background work, or the attempt would stay `pending` into the

@@ -244,11 +244,12 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 	//
 	// Two costs, accepted. A long-lived background process (a dev server)
 	// keeps every Stop quiet while it runs, so that session falls back to the
-	// closer. And an attempt still `pending` here, which only a lost
-	// `stop_hook_active` or a failed finalize leaves behind, is finalized by the next quiet Stop
-	// instead of this one. Scheduled wakeups (`session_crons`) do not count:
-	// a recurring cron never ends and would silence the nudge for good.
-	if len(input.BackgroundTasks) > 0 {
+	// closer. And an attempt still `pending` here, left behind for example by
+	// a lost `stop_hook_active`, a failed finalize or a user interrupt, is
+	// finalized by the next quiet Stop or retired by the closer instead.
+	// Scheduled wakeups (`session_crons`) do not count: a recurring cron never
+	// ends and would silence the nudge for good.
+	if input.backgroundWorkInFlight() {
 		return 0
 	}
 
