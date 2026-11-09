@@ -300,7 +300,7 @@ function withFixtureFile(path, content, fn) {
   }
 }
 
-test('loadProxyOrReason: fixture absent -> clear reason, no throw (the path every nightly run takes today)', () => {
+test('loadProxyOrReason: fixture absent -> clear reason, no throw', () => {
   const scenarios = [{ id: 'ts-remember-1', expected_tool: 'remember' }]
   const { predictions, reason } = loadProxyOrReason(fixturesDir, 'no-such-model', scenarios)
   assert.equal(predictions, null)
