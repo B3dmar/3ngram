@@ -258,7 +258,8 @@ test('the deterministic per-task totals match the committed fixtures (both cost 
       // this change, not summed.
       // Explicitly unattributed native writes: nullable sessionRunId plus its
       // description adds 120 surface tokens to MCP and REST; CLI is unchanged.
-      mcp: [35290, 284136, 70632],
+      // +6755/+54040/+13172: bounded provenance output schema and include (#431).
+      mcp: [42045, 338176, 83804],
       cli: [333, 1236, 1236],
       rest: [4823, 5840, 5840],
     },

@@ -28,7 +28,7 @@ Recorded from the first run as an empirical ratchet: floors only move up (`recor
 
 ## Advisory tier (non-blocking)
 
-`pnpm --filter @3ngram/eval run advisory` (`src/longmemeval.mjs`) runs the **advisory** LongMemEval slice. It is deterministic, zero-dep and offline like the gate, but it **never blocks a PR** — it runs only in `eval-nightly.yml` (scheduled), which opens/updates a tracking issue on regression and closes it on green.
+`pnpm --filter @3ngram/eval run advisory` (`src/longmemeval.mjs`) runs the **advisory** LongMemEval slice. It is deterministic, zero-dep and offline like the gate, but it **never blocks a PR** — it runs only in `eval-nightly.yml` (scheduled), which opens/updates a tracking issue on regression and closes it on green. That issue tracks only slice 1's advisory floor, set in the workflow: the live lanes write metrics but never open it.
 
 Slice 1 (shipped): a LongMemEval-S-shaped subset (`fixtures/longmemeval-s-subset.json`, synthetic + license-clean) scored by a deterministic lexical (token-overlap) retrieval-oracle — `session_recall@k` / `session_mrr` over `answer_session_ids` gold labels. The lexical ranker (`lib.rankSessions`) is the **default** and the only path PR-lane unit tests touch — it stays network/DB/model-free.
 
@@ -42,7 +42,7 @@ Opt-in slices (never in the default path):
 
 `pnpm --filter @3ngram/eval run advisory:real` (or `node src/longmemeval.mjs --retriever real`) swaps the lexical stand-in for the **product retrieval path** (`retriever.mjs`):
 
-1. Per question, a **disposable tenant** (fresh user) is created. The nightly Neon branch is ephemeral (created per run, deleted at job end), so questions stay isolated and re-runs are idempotent with no destructive cleanup on a write path (hard rule 1).
+1. Per question, a **disposable tenant** (fresh user) is created. Nightly, the database is the job's throwaway Postgres service container (pgvector, fixed non-secret credentials), discarded with the runner, so questions stay isolated and re-runs are idempotent with no destructive cleanup on a write path (hard rule 1).
 2. Each haystack session is seeded as memory via the product write path — `core.remember(..., { gateway })`, which lands the embedding through embed-on-write using the real `@3ngram/llm` `createOpenAIGateway`. A session whose text fits the `rememberInputSchema` content cap (`MAX_CONTENT_LENGTH` = 2000) becomes **one** memory; a longer session is **chunked at the cap** and the session ranks by its **best chunk**.
 3. The question is embedded via the same gateway and `core.search()` runs the product fusion (`{fts:0.2, recency:0, vector:1}`); sessions rank by their best-scoring memory hit.
 
@@ -54,11 +54,29 @@ Real mode requires the built workspace (`pnpm build`) plus a DB and an embedding
 |---|---|
 | `DATABASE_URL` unset | `--retriever real` logs the reason and exits 0 (no DB). |
 | `LLM_GATEWAY_API_KEY` unset | `--retriever real` logs the reason and exits 0 (no embedding gateway). |
-| Nightly: Neon (`NEON_PROJECT_ID`/`NEON_API_KEY`/`APP_USER_PASSWORD`) **or** `LLM_GATEWAY_API_KEY` unset | The whole real-retriever block in `eval-nightly.yml` skips (preflight gate); the run stays green. |
+| Nightly: `LLM_GATEWAY_API_KEY` secret unset | The whole real-retriever block in `eval-nightly.yml` skips (preflight gate); the run stays green. The database needs no secret. |
 | `LLM_GATEWAY_URL` unset | Falls back to `https://api.openai.com/v1` (empty string treated as unset). |
 | Default / `--retriever lexical` | Pure lexical oracle; no DB, network, or workspace build. |
 
 Remaining work: measure live-slice stability ≥4 weeks before any blocking consideration.
+
+### Live lanes in `eval-nightly.yml`
+
+Three nightly lanes call a live model gateway: the model-judged slice (`--judge`), the
+model-in-the-loop tool-selection slice and the real retriever. All three run only when
+the `LLM_GATEWAY_API_KEY` repository secret is set, and skip green without it. Nothing
+else is required:
+
+| Setting | Kind | Unset means |
+|---|---|---|
+| `LLM_GATEWAY_API_KEY` | secret | all three lanes skip |
+| `LLM_GATEWAY_URL` | secret | `https://api.openai.com/v1` |
+| `LLM_TOOL_SELECTION_MODEL` | variable | `gpt-4o-mini` for tool selection |
+
+The workflow does not pass `LLM_JUDGE_MODEL`, so the judge always uses its
+`gpt-4o-mini` default. Per night the lanes make one chat call per tool or capability scenario, two per
+LongMemEval subset question, and one embedding call per haystack session and question
+(`text-embedding-3-large`, 1536 dimensions).
 
 ### MemoryAgentBench subsets (`src/memoryagentbench.mjs`)
 
@@ -143,10 +161,13 @@ pnpm --filter @3ngram/eval run tool-selection [-- --json]
 
 `src/tool-selection-model.mjs` is the model-in-the-loop counterpart to the
 deterministic embedding-cosine proxy above. It runs **only** in
-`eval-nightly.yml` (never inside the gate) and, for every `toolScenarios`
-entry in `fixtures/tool-selection.json`, presents a live model with the REAL
-tool catalog (names + descriptions from `fixtures/transport-surfaces.json`
-`mcp.tools`) and forces a bare tool-name answer.
+`eval-nightly.yml` (never inside the gate) and, for every `toolScenarios` and
+`capabilityScenarios` entry in `fixtures/tool-selection.json`, presents a live
+model with the REAL tool catalog (names + descriptions from
+`fixtures/transport-surfaces.json` `mcp.tools`) and forces a bare tool-name
+answer. Capability scenarios are reported only in `capability_slice`. Every
+other metric below covers the tool scenarios alone, except `served_model` /
+`served_model_varied`, which span every call.
 
 | Metric | Meaning |
 |---|---|
@@ -156,6 +177,7 @@ tool catalog (names + descriptions from `fixtures/transport-surfaces.json`
 | `proxy_model_agreement` | how often the model's pick matches the deterministic proxy's pick, computed by reusing `tool-selection.mjs`'s own `rankTools` — only when the tool-selection embeddings fixture is present and valid; absent or corrupt skips this section with a clear note, never a failure |
 | `served_model` / `served_model_varied` | the response body's actual `model` field (first observed value) and whether it varied across calls — provenance for the requested alias, since e.g. `gpt-4o-mini` floats to whatever the provider currently points it at |
 | `n` / `n_answered` / `gateway_error_count` | a per-scenario gateway failure (timeout, non-OK response) is caught, not propagated, and recorded as its own pick class — excluded from `model_selection_accuracy_at_1` / `unparseable_rate` (those are model-behavior metrics) rather than discarding the whole run; `n_answered` is the explicit denominator both rates use |
+| `capability_slice` | report-only, keyed `expected_tool#capability` (e.g. `get_memories#provenance`): the model's `accuracy_at_1`, `unparseable_rate`, `confusions` and counts on those utterances, plus `proxy_accuracy_at_1` (the same number the gate's capability slice prints) and `proxy_model_agreement` when the embeddings fixture is valid. No `per_tool`: each key has one expected tool. Absent when the fixture has no capability scenarios |
 
 Gateway contract mirrors `--judge` (`src/judge.mjs`): `LLM_GATEWAY_API_KEY` /
 `LLM_GATEWAY_URL`, 30s timeout. Model override is `LLM_TOOL_SELECTION_MODEL`

@@ -215,7 +215,10 @@ async function acceptResolutionProposal(
   )
   let resolved: { id: string; status: CommitmentStatus }
   try {
-    resolved = await resolveCommitmentByMemoryId(userId, proposal.memoryId, actorKind)
+    resolved = await resolveCommitmentByMemoryId(userId, proposal.memoryId, actorKind, {
+      proposalKind: 'resolution',
+      proposalId,
+    })
   } catch (error) {
     await withTenant(userId, (tx) => reopenResolutionProposal(tx, userId, proposalId))
     throw error

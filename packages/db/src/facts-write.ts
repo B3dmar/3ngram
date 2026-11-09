@@ -46,6 +46,7 @@ export interface FactWrite {
   subject: string
   predicate: string
   value: string
+  sourceFactProposalId?: string | undefined
   confidence?: number | undefined
   /** Omitted -> column default now(). */
   validFrom?: Date | undefined
@@ -145,6 +146,7 @@ function factColumns(row: FactWrite) {
     predicate: row.predicate,
     value: row.value,
     confidence: row.confidence,
+    sourceFactProposalId: row.sourceFactProposalId,
     // Undefined values are omitted by drizzle, so an unspecified column
     // keeps its schema default (now() / NULL) instead of being written.
     validFrom: row.validFrom,

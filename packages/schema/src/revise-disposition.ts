@@ -23,6 +23,7 @@
 // break.
 import { z } from 'zod'
 import { OPEN_OUTPUT_META } from './output-openness.js'
+import { proposalProvenancePayloadSchema } from './proposal-provenance.js'
 import { sessionRunIdSchema } from './session-run-id.js'
 import { sessionRunIdField } from './write.js'
 
@@ -66,9 +67,18 @@ export const nativeReviseDispositionBodySchema = nativeReviseDispositionInputSch
  * `disposition` tells it apart from the `archive` events blocker resolve and the
  * commitment sweep write, which carry no disposition.
  */
-export const archiveEventPayloadSchema = z
-  .object({ sessionRunId: sessionRunIdSchema.optional(), disposition: z.literal('archive') })
+const archivePayloadBase = z
+  .object({
+    sessionRunId: sessionRunIdSchema.optional(),
+    disposition: z.literal('archive'),
+    proposalKind: z.never().optional(),
+    proposalId: z.never().optional(),
+  })
   .strict()
+export const archiveEventPayloadSchema = z.union([
+  archivePayloadBase,
+  archivePayloadBase.extend(proposalProvenancePayloadSchema.shape),
+])
 export type ArchiveEventPayload = z.infer<typeof archiveEventPayloadSchema>
 
 /** Payload of the `reaffirm` memory event (issue #218): same strict shape as archive's. */

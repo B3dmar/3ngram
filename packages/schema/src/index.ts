@@ -230,6 +230,7 @@ export {
   getMemoriesOutputSchema,
   MAX_GET_CONTENT_CHARS,
   MAX_GET_MEMORIES_IDS,
+  MAX_GET_PROVENANCE_RESPONSE_BYTES,
   MAX_GET_TOTAL_CHARS,
   MIN_GET_CONTENT_CHARS,
   type SupersededBy,
@@ -387,6 +388,17 @@ export {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+export {
+  MAX_PROVENANCE_EDGES,
+  MAX_PROVENANCE_EVENTS,
+  MAX_PROVENANCE_FACTS,
+  MAX_PROVENANCE_IDS,
+  MAX_PROVENANCE_NODES,
+  MAX_PROVENANCE_PRODUCTS,
+  MAX_PROVENANCE_PROPOSALS,
+  type MemoryProvenance,
+  memoryProvenanceSchema,
+} from './memory-provenance.js'
 // --- onboarding profiling ---
 export type {
   ProfileAiTool,
@@ -402,6 +414,10 @@ export {
   profileUseCaseSchema,
   userProfileAttributesSchema,
 } from './profile.js'
+export {
+  type ProposalProvenancePayload,
+  proposalProvenancePayloadSchema,
+} from './proposal-provenance.js'
 // --- proposal review pagination (issue #320) ---
 export type { ProposalEdgeTotals, ProposalKindCounts } from './proposals-page.js'
 export {

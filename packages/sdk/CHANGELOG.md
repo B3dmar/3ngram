@@ -1,5 +1,19 @@
 # @3ngram/sdk
 
+## 1.13.0
+
+### Minor Changes
+
+- e5d7d44: Accept explicit `sessionRunId: null` on native memory writes to skip session attribution without changing any session's lease, triage state, or closer eligibility. Omitted IDs retain automatic attribution; supplied IDs still require tenant ownership. This lets agents write to another authenticated account without borrowing an unrelated conversation's session.
+
+### Patch Changes
+
+- Updated dependencies [f618fca]
+- Updated dependencies [e38d139]
+- Updated dependencies [7c290e0]
+- Updated dependencies [e5d7d44]
+  - @3ngram/schema@0.15.0
+
 ## 1.12.0
 
 No changes in this release.

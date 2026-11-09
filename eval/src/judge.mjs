@@ -108,11 +108,13 @@ export function createFakeJudgeGateway(golds = new Map()) {
 export function createGatewayFromEnv(env = process.env) {
   const apiKey = env[GATEWAY_API_KEY_ENV]
   if (!apiKey) return null
-  // `||` (not `??`) for BOTH: CI exports LLM_GATEWAY_URL from an optional secret
-  // and LLM_JUDGE_MODEL from an optional Actions variable, so either arrives as ''
-  // when unset — treat empty string as unset. With `??` the model line shipped that
-  // empty string as the requested model, the same #122 class of bug
-  // tool-selection-model.mjs already documents at its own createGatewayFromEnv.
+  // `||` (not `??`) for BOTH: CI exports LLM_GATEWAY_URL from an optional secret,
+  // so it arrives as '' when unset, and LLM_JUDGE_MODEL gets the same treatment
+  // should a caller export it empty (eval-nightly.yml does not pass it today, so
+  // the nightly judge stays on the default). Treat empty string as unset. With
+  // `??` the model line shipped that empty string as the requested model, the
+  // same #122 class of bug tool-selection-model.mjs already documents at its own
+  // createGatewayFromEnv.
   const baseUrl = (env.LLM_GATEWAY_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
   const model = env.LLM_JUDGE_MODEL || 'gpt-4o-mini'
   return {

@@ -260,6 +260,7 @@ export async function acceptRetentionProposal(
       memoryId: open.memoryId,
       actorKind,
       policy: 'disposition',
+      sourceProposal: { proposalKind: 'retention', proposalId },
     })
     if (archived.outcome === 'rejected') {
       throw new RetentionProposalNotApplicableError(proposalId, archived.reason)
@@ -294,6 +295,7 @@ export async function acceptRetentionProposal(
       { fromId: proposal.relatedMemoryId, toId: proposal.memoryId, edgeType: 'supersedes' },
       actorKind,
       proposalId,
+      'retention',
     )
   }
   return proposal

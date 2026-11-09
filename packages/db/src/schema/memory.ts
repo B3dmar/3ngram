@@ -129,6 +129,8 @@ export const memoryEdges = pgTable(
     toId: uuid('to_id').notNull(),
     edgeType: text('edge_type').notNull(),
     createdBy: text('created_by').notNull(),
+    sourceConsolidationProposalId: uuid('source_consolidation_proposal_id'),
+    sourceRetentionProposalId: uuid('source_retention_proposal_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -143,6 +145,22 @@ export const memoryEdges = pgTable(
       columns: [t.userId, t.toId],
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
+    foreignKey({
+      name: 'memory_edges_consolidation_proposal_fk',
+      columns: [t.userId, t.sourceConsolidationProposalId],
+      foreignColumns: [consolidationProposals.userId, consolidationProposals.id],
+    }),
+    foreignKey({
+      name: 'memory_edges_retention_proposal_fk',
+      columns: [t.userId, t.sourceRetentionProposalId],
+      foreignColumns: [retentionProposals.userId, retentionProposals.id],
+    }),
+    index('memory_edges_consolidation_proposal_idx').on(t.userId, t.sourceConsolidationProposalId),
+    index('memory_edges_retention_proposal_idx').on(t.userId, t.sourceRetentionProposalId),
+    check(
+      'memory_edges_one_producer_check',
+      sql`${t.sourceConsolidationProposalId} IS NULL OR ${t.sourceRetentionProposalId} IS NULL`,
+    ),
     uniqueIndex('memory_edges_unique_idx').on(t.userId, t.fromId, t.toId, t.edgeType),
     // Target-side lookups (issue #240): "which edges point AT this memory" —
     // search's supersededExists, get_memories' supersededBy and REST history's
@@ -177,6 +195,16 @@ export const memoryEvents = pgTable(
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
     index('memory_events_memory_idx').on(t.userId, t.memoryId, t.createdAt),
+    // Producer lookup follows a moved commitment's event wherever it landed.
+    index('memory_events_producer_idx')
+      .on(
+        t.userId,
+        sql`(${t.payload}->>'proposalKind')`,
+        sql`lower(${t.payload}->>'proposalId')`,
+        t.createdAt,
+        t.id,
+      )
+      .where(sql`${t.actorKind} <> 'importer' AND ${t.payload}->>'proposalId' IS NOT NULL`),
     // Session provenance lookup (docs/concepts/session-continuity.mdx). JSON key
     // spelling matches sessionProvenancePayloadSchema.sessionRunId. Tails on id
     // because listSessionEvents keysets on uuidv7 id, not created_at.
@@ -240,6 +268,7 @@ export const facts = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     memoryId: uuid('memory_id').notNull(),
+    sourceFactProposalId: uuid('source_fact_proposal_id'),
     subject: text('subject').notNull(),
     predicate: text('predicate').notNull(),
     value: text('value').notNull(),
@@ -255,6 +284,12 @@ export const facts = pgTable(
       columns: [t.userId, t.memoryId],
       foreignColumns: [memories.userId, memories.id],
     }).onDelete('cascade'),
+    foreignKey({
+      name: 'facts_proposal_fk',
+      columns: [t.userId, t.sourceFactProposalId],
+      foreignColumns: [factProposals.userId, factProposals.id],
+    }),
+    index('facts_proposal_idx').on(t.userId, t.sourceFactProposalId),
     // No uniqueness on (subject, predicate): bi-temporal history keeps every
     // assertion; "currently true" is a validity query, not a constraint.
     index('facts_subject_idx').on(t.userId, t.subject, t.predicate),
@@ -282,6 +317,7 @@ export const consolidationProposals = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    unique('consolidation_proposals_tenant_id_uq').on(t.userId, t.id),
     foreignKey({
       name: 'proposals_from_fk',
       columns: [t.userId, t.fromId],
@@ -340,6 +376,7 @@ export const factProposals = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    unique('fact_proposals_tenant_id_uq').on(t.userId, t.id),
     foreignKey({
       name: 'fact_proposals_memory_fk',
       columns: [t.userId, t.memoryId],
@@ -408,6 +445,7 @@ export const resolutionProposals = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    unique('resolution_proposals_tenant_id_uq').on(t.userId, t.id),
     foreignKey({
       name: 'resolution_proposals_memory_fk',
       columns: [t.userId, t.memoryId],
@@ -473,6 +511,7 @@ export const retentionProposals = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    unique('retention_proposals_tenant_id_uq').on(t.userId, t.id),
     foreignKey({
       name: 'retention_proposals_memory_fk',
       columns: [t.userId, t.memoryId],

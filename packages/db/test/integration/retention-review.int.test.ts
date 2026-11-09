@@ -13,6 +13,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eraseAccountData } from '../../src/account-delete.js'
 import { lockSessionAttach, type TenantTx, withTenant } from '../../src/client.js'
 import { AccountDeletedError } from '../../src/credential-guard.js'
+import { readUserDataExport } from '../../src/data-export.js'
+import { getMemoryHistory } from '../../src/memory-history-read.js'
 import {
   applyProposal,
   EpisodicSupersessionError,
@@ -158,6 +160,11 @@ describe('accept', () => {
     expect((await accept(userA, id)).status).toBe('applied')
     expect(await memoryState(m)).toEqual({ status: 'archived', closed: false })
     expect(await events(m)).toContain('archive')
+    const history = await withTenant(userA, (tx) => getMemoryHistory(tx, userA, m))
+    expect(history?.auditEvents.find((e) => e.eventKind === 'archive')?.sourceProposal).toEqual({
+      proposalKind: 'retention',
+      proposalId: id,
+    })
   })
 
   it('archive: a refused disposition rolls the claim back', async () => {
@@ -180,11 +187,24 @@ describe('accept', () => {
     expect(await memoryState(older)).toEqual({ status: 'active', closed: true })
     expect(await memoryState(newer)).toEqual({ status: 'active', closed: false })
     const edge = await ownerPool.query(
-      'SELECT edge_type FROM memory_edges WHERE from_id = $1 AND to_id = $2',
+      'SELECT edge_type, source_retention_proposal_id, source_consolidation_proposal_id FROM memory_edges WHERE from_id = $1 AND to_id = $2',
       [newer, older],
     )
-    expect(edge.rows).toEqual([{ edge_type: 'supersedes' }])
+    expect(edge.rows).toEqual([
+      {
+        edge_type: 'supersedes',
+        source_retention_proposal_id: id,
+        source_consolidation_proposal_id: null,
+      },
+    ])
     expect(await events(older)).toContain('supersede')
+    const exported = await withTenant(userA, (tx) => readUserDataExport(tx, userA))
+    expect(exported?.edges).toEqual([
+      expect.objectContaining({
+        sourceRetentionProposalId: id,
+        sourceConsolidationProposalId: null,
+      }),
+    ])
   })
 
   it('supersede: a newer memory that is no longer live rolls the claim back', async () => {

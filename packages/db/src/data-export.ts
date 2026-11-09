@@ -105,6 +105,7 @@ export interface ExportMemoryRow {
 
 /** A full fact row for an export (every bi-temporal generation). */
 export interface ExportFactRow {
+  sourceFactProposalId: string | null
   id: string
   memoryId: string
   subject: string
@@ -153,6 +154,8 @@ export interface ExportMemoryEventRow {
 
 /** A typed memory-graph edge for an export (supersedes/updates/extends/derives). */
 export interface ExportEdgeRow {
+  sourceConsolidationProposalId: string | null
+  sourceRetentionProposalId: string | null
   id: string
   fromId: string
   toId: string
@@ -384,6 +387,7 @@ export async function readUserDataExport(
   const factRows = await tx
     .select({
       id: facts.id,
+      sourceFactProposalId: facts.sourceFactProposalId,
       memoryId: facts.memoryId,
       subject: facts.subject,
       predicate: facts.predicate,
@@ -430,6 +434,8 @@ export async function readUserDataExport(
   const edgeRows = await tx
     .select({
       id: memoryEdges.id,
+      sourceConsolidationProposalId: memoryEdges.sourceConsolidationProposalId,
+      sourceRetentionProposalId: memoryEdges.sourceRetentionProposalId,
       fromId: memoryEdges.fromId,
       toId: memoryEdges.toId,
       edgeType: memoryEdges.edgeType,

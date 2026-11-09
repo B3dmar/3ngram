@@ -18,7 +18,7 @@
 // memory it rides is never mutated.
 //
 // Observability (hard rule 6): ids/status only — never memory content.
-import type { ActorKind, CommitmentStatus } from '@3ngram/schema'
+import type { ActorKind, CommitmentStatus, ProposalProvenancePayload } from '@3ngram/schema'
 import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 import type { TenantTx } from './client.js'
 import { withTenant } from './client.js'
@@ -345,6 +345,7 @@ export interface CommitmentTransition {
    * a same-state request in core, keep their exact behaviour.
    */
   expectedFrom?: CommitmentStatus | undefined
+  sourceProposal?: ProposalProvenancePayload | undefined
   sessionRunId?: string | null | undefined
   /**
    * Optional evidence for THIS transition (issue #234), already validated by
@@ -589,7 +590,9 @@ export async function transitionCommitment(
         memoryId: existing.memoryId,
         eventKind: TRANSITION_EVENT_KIND[input.to],
         actorKind: input.actorKind,
-        payload: sessionPayload(runId),
+        payload: input.sourceProposal
+          ? { ...sessionPayload(runId), ...input.sourceProposal }
+          : sessionPayload(runId),
       })
 
       return { id: row.id, status: row.status as CommitmentStatus }

@@ -10,21 +10,52 @@
 //
 // Reuses packages/db integration infra (helpers.ts).
 import { randomUUID } from 'node:crypto'
-import { closeDb } from '@3ngram/db'
+import { closeDb, insertProposals, type TenantTx, withTenant } from '@3ngram/db'
 import {
   DEFAULT_GET_CONTENT_CHARS,
   EXCERPT_MARKER,
   MAX_IMPORT_CONTENT_LENGTH,
 } from '@3ngram/schema'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   closePools,
   ownerPool,
   resetDomainTables,
   seedUser,
 } from '../../../db/test/integration/helpers.js'
+import { acceptProposalAnyKind } from '../../src/admin/proposals.js'
 import { getMemoriesByIds } from '../../src/read/memory.js'
+import { getMemoryHistory } from '../../src/read/memory-history.js'
 import { revise } from '../../src/write/revise.js'
+
+const interleave = vi.hoisted(() => ({
+  afterSections: undefined as (() => Promise<void>) | undefined,
+}))
+vi.mock('@3ngram/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@3ngram/db')>()
+  return {
+    ...actual,
+    getMemoriesProvenance: async (tx: TenantTx, user: string, ids: string[]) => {
+      let statements = 0
+      const intercepted = new Proxy(tx, {
+        get(target, key) {
+          if (key === 'execute')
+            return async (...args: Parameters<TenantTx['execute']>) => {
+              const result = await target.execute(...args)
+              if (++statements === 1 && interleave.afterSections) {
+                const write = interleave.afterSections
+                interleave.afterSections = undefined
+                await write()
+              }
+              return result
+            }
+          return Reflect.get(target, key)
+        },
+      })
+      return actual.getMemoriesProvenance(intercepted, user, ids)
+    },
+  }
+})
 
 let userA: string
 let userB: string
@@ -199,5 +230,65 @@ describe('getMemoriesByIds (runtime role, real withTenant)', () => {
     expect(memories[0]?.content.length).toBe(DEFAULT_GET_CONTENT_CHARS)
     expect(memories[0]?.truncated).toBe(true)
     expect(memories[0]?.contentLength).toBe(DEFAULT_GET_CONTENT_CHARS + 100)
+  })
+})
+
+describe('shared provenance read (#431)', () => {
+  it('returns the same five sections through batch reads and history, with foreign ids notFound', async () => {
+    const own = await seedMemory(userA, 'shared origin', 'mine')
+    const foreign = await seedMemory(userB, 'shared origin', 'theirs')
+    const normal = await getMemoriesByIds(userA, [own])
+    expect(normal.memories[0]).not.toHaveProperty('provenance')
+    const included = await getMemoriesByIds(userA, [own, foreign], { include: ['provenance'] })
+    const history = await getMemoryHistory(userA, own)
+    expect(included.notFound).toEqual([foreign])
+    expect(included.memories[0]?.provenance).toEqual(history.provenance)
+    expect(history.sections.provenance).toBe('ok')
+    const uppercase = await getMemoryHistory(userA, own.toUpperCase())
+    expect(uppercase.provenance).toEqual(history.provenance)
+    expect(uppercase.provenance).not.toBeNull()
+    expect(history.provenance?.origin).toBeNull()
+  })
+})
+
+it.each([
+  'batch',
+  'history',
+])('keeps %s provenance on one snapshot during acceptance', async (surface) => {
+  const older = await seedMemory(userA, 'older', 'old')
+  const newer = await seedMemory(userA, 'newer', 'new')
+  await withTenant(userA, (tx) =>
+    insertProposals(tx, [
+      {
+        userId: userA,
+        fromId: newer,
+        toId: older,
+        edgeType: 'supersedes',
+        memoryType: 'note',
+        similarity: 0.9,
+      },
+    ]),
+  )
+  const staged = await ownerPool.query('SELECT id FROM consolidation_proposals WHERE user_id=$1', [
+    userA,
+  ])
+  const proposalId = staged.rows[0].id as string
+  interleave.afterSections = async () => {
+    await acceptProposalAnyKind(userA, proposalId, 'user_mcp')
+  }
+  const snapshot =
+    surface === 'batch'
+      ? (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
+          ?.provenance
+      : (await getMemoryHistory(userA, older)).provenance
+  expect(interleave.afterSections).toBeUndefined()
+  expect(snapshot?.proposals).toEqual({ items: [], truncated: false })
+  expect(snapshot?.supersession).toEqual({ predecessors: [], successors: [], truncated: false })
+  const next = (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
+    ?.provenance
+  expect(next?.proposals.items.map((p) => p.id)).toEqual([proposalId])
+  expect(next?.supersession.successors[0]?.sourceProposal).toEqual({
+    proposalKind: 'edge',
+    proposalId,
   })
 })

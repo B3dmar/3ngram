@@ -238,6 +238,7 @@ export {
   recordEmbedFailure,
   updateMemoryEmbedding,
 } from './memory-embedding.js'
+export { withSavepoint } from './memory-history-queries.js'
 export {
   getMemoryHistory,
   MEMORY_HISTORY_DIRECT_RELATIONSHIP_LIMIT,
@@ -266,6 +267,7 @@ export {
   writeImportedEdge,
   writeImportedMemory,
 } from './memory-import.js'
+export { getMemoriesProvenance } from './memory-provenance-read.js'
 // --- dashboard memory reads: bounded list + single-id inspect ---
 export {
   countMemories,

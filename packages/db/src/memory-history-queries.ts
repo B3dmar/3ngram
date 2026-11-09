@@ -3,9 +3,8 @@
 // (graceful degradation). Split from memory-history-read.ts to keep that
 // module under the 500-line cap. Read-only and identity-only:
 // never selects memory content, tags, content hashes, embeddings, raw event
-// payloads, or arbitrary payload keys. The ONLY payload key projected is
-// `sessionRunId` (issue #262), with `payload->>'sessionRunId'`; the mapper
-// re-parses it through sessionProvenancePayloadSchema. ONE content column is
+// payloads, or arbitrary payload keys. Only sessionRunId, proposalKind and proposalId are projected from payloads;
+// the mapper validates these allowlisted references through schema contracts. ONE content column is
 // read on purpose: `commitments.last_resolution_reason` (issue #234), joined
 // onto the inspected memory's own row — the owner's evidence text for the latest
 // transition, returned only through this authenticated, tenant-scoped read.
@@ -77,6 +76,8 @@ export interface RawEventRow {
   payload_byte_length: string | number | null
   /** Allowlisted `payload->>'sessionRunId'` (issue #262); unvalidated text. */
   session_run_id: string | null
+  proposal_kind: string | null
+  proposal_id: string | null
 }
 
 function rowsOf<T>(result: { rows: unknown[] }): T[] {
@@ -240,7 +241,9 @@ export async function readAuditEvents(
            (e.payload IS NOT NULL) AS payload_present,
            jsonb_typeof(e.payload) AS payload_json_type,
            CASE WHEN e.payload IS NULL THEN 0 ELSE octet_length(e.payload::text) END AS payload_byte_length,
-           e.payload->>'sessionRunId' AS session_run_id
+           e.payload->>'sessionRunId' AS session_run_id,
+           e.payload->>'proposalKind' AS proposal_kind,
+           e.payload->>'proposalId' AS proposal_id
     FROM memory_events e
     WHERE e.user_id = ${userId}::uuid
       AND e.memory_id = ${memoryId}::uuid

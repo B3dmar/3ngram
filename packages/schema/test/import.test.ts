@@ -210,3 +210,25 @@ describe('import content bound (frozen mapping: historical blobs land as-is)', (
     expect(importMemoryInputSchema.safeParse(longTopic).success).toBe(false)
   })
 })
+
+// Proposal producer references, like session attribution, belong to native writes.
+describe('import payload reserved proposal references', () => {
+  it.each([
+    'proposalKind',
+    'proposalId',
+  ])('rejects %s, including null, on both event input paths', (key) => {
+    for (const value of [null, UUID_B]) {
+      expect(
+        importEventInputSchema.safeParse({
+          memoryId: UUID_A,
+          eventKind: 'resolve',
+          payload: { [key]: value },
+        }).success,
+      ).toBe(false)
+      expect(
+        importMemoryInputSchema.safeParse({ ...validMemory, event: { payload: { [key]: value } } })
+          .success,
+      ).toBe(false)
+    }
+  })
+})

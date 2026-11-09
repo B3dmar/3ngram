@@ -49,6 +49,8 @@ export interface EdgeWrite {
   edgeType: EdgeType
   /** Actor class recorded on memory_edges.created_by. */
   createdBy: ActorKind
+  sourceConsolidationProposalId?: string | undefined
+  sourceRetentionProposalId?: string | undefined
 }
 
 /**
@@ -70,6 +72,8 @@ export async function insertEdge(tx: TenantTx, edge: EdgeWrite): Promise<void> {
       toId: edge.toId,
       edgeType: edge.edgeType,
       createdBy: edge.createdBy,
+      sourceConsolidationProposalId: edge.sourceConsolidationProposalId,
+      sourceRetentionProposalId: edge.sourceRetentionProposalId,
     })
   } catch (error) {
     if (isUniqueViolation(error)) {

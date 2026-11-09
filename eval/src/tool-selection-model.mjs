@@ -6,11 +6,19 @@
 // decision. This slice measures the thing the proxy stands in for — a REAL
 // model, given the REAL tool catalog (names + descriptions from the committed
 // fixtures/transport-surfaces.json capture), forced to pick exactly one tool
-// per scenario in fixtures/tool-selection.json (toolScenarios only; the
-// non-tool surfaceScenarios have no tool to route to and are out of scope
-// here). Drift between the two — the proxy_model_agreement metric — is the
-// point: it says how far the offline, zero-cost gate proxy has wandered from
-// what an actual model would do.
+// per scenario in fixtures/tool-selection.json (the non-tool surfaceScenarios
+// have no tool to route to and are out of scope here). Drift between the two —
+// the proxy_model_agreement metric — is the point: it says how far the
+// offline, zero-cost gate proxy has wandered from what an actual model would
+// do.
+//
+// CAPABILITY SLICE (report-only): capabilityScenarios — a second job a tool's
+// schema carries but its description may not name, e.g. get_memories#provenance
+// — go through the same forced choice and are reported separately in
+// `capability_slice`, keyed `expected_tool#capability`, beside the proxy's own
+// accuracy on the same utterances. They never enter `metrics`, so the
+// tool-scenario numbers stay comparable night over night whatever the fixture
+// adds; the same separation the gate's capability_slice keeps.
 //
 // ADVISORY ONLY: never gates a PR, never touches run.mjs or floors.json.
 // Wired into eval-nightly.yml only (continue-on-error), and skips CLEANLY
@@ -27,7 +35,7 @@
 // sequential call per scenario the same way. Every request also sets
 // `max_completion_tokens: 32` (a registered tool name is short; this caps a
 // prose-happy model well before the gateway default, on every one of the
-// ~55 sequential calls) and `temperature: 0` (single-sample determinism is
+// sequential calls) and `temperature: 0` (single-sample determinism is
 // load-bearing for the week-over-week comparison this slice exists for, not
 // a quality preference — see createGatewayFromEnv for the parameter-name
 // rationale).
@@ -38,7 +46,7 @@
 // harness error. A model ignoring the instruction is a measurement, not a
 // bug in this script.
 //
-// PARTIAL-RUN RESILIENCE: 55 sequential live calls means a single transient
+// PARTIAL-RUN RESILIENCE: dozens of sequential live calls means a single transient
 // gateway error must not discard every completed scenario. A per-scenario
 // gateway failure is caught and recorded as its OWN pick class,
 // `gateway_error` — deliberately kept OUT of unparseable_rate (that metric is
@@ -292,19 +300,21 @@ export function summarizeServedModel(models) {
 }
 
 /**
- * The deterministic proxy's top-1 pick per tool scenario id, via
+ * The deterministic proxy's top-1 pick per scenario id, via
  * tool-selection.mjs's own `rankTools` (cosine-ranking) — reused, not
- * re-derived. Callers must only pass a fixture already validated by a
- * successful `runToolSelectionSlice` status 'ok' run over the SAME scenarios:
- * that run has already checked every vector's hash, finiteness and norm.
+ * re-derived. `section` names the fixture block holding the scenarios'
+ * vectors ('toolScenarios' or 'capabilityScenarios'). Callers must only pass a
+ * fixture already validated by a successful `runToolSelectionSlice` status
+ * 'ok' run over the SAME scenarios: that run has already checked every
+ * vector's hash, finiteness and norm, capability vectors included.
  */
-export function loadProxyPredictions(scenarios, fixture) {
+export function loadProxyPredictions(scenarios, fixture, section = 'toolScenarios') {
   const toolVectors = Object.fromEntries(
     Object.entries(fixture.tools).map(([name, entry]) => [name, entry.vector]),
   )
   const predictions = {}
   for (const scenario of scenarios) {
-    const entry = fixture.toolScenarios[scenario.id]
+    const entry = fixture[section]?.[scenario.id]
     if (!entry) continue
     predictions[scenario.id] = rankTools(entry.vector, toolVectors)[0].name
   }
@@ -312,9 +322,52 @@ export function loadProxyPredictions(scenarios, fixture) {
 }
 
 /**
+ * The report-only capability slice: picks grouped by `expected_tool#capability`
+ * and scored with the same aggregate as the tool scenarios. With proxy
+ * predictions it adds the proxy's own accuracy on the same utterances (over the
+ * scenarios it has a pick for) and the model-proxy agreement, so the gate's
+ * offline capability score and the live model's read sit side by side.
+ */
+export function aggregateCapabilitySlice(picks, proxyPredictions) {
+  const groups = new Map()
+  for (const p of picks) {
+    const key = `${p.expected_tool}#${p.capability}`
+    groups.set(key, [...(groups.get(key) ?? []), p])
+  }
+  return Object.fromEntries(
+    [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, group]) => {
+        const m = aggregateModelSelection(group)
+        const entry = {
+          n: m.n,
+          n_answered: m.n_answered,
+          gateway_error_count: m.gateway_error_count,
+          accuracy_at_1: m.model_selection_accuracy_at_1,
+          unparseable_rate: m.unparseable_rate,
+          confusions: m.confusions,
+        }
+        if (proxyPredictions) {
+          const proxied = group.filter((p) => proxyPredictions[p.id] !== undefined)
+          const proxyHits = proxied.filter((p) => proxyPredictions[p.id] === p.expected_tool)
+          entry.proxy_accuracy_at_1 =
+            proxied.length > 0 ? round(proxyHits.length / proxied.length) : null
+          entry.proxy_model_agreement = computeAgreement(
+            group,
+            proxyPredictions,
+          ).proxy_model_agreement
+        }
+        return [key, entry]
+      }),
+  )
+}
+
+/**
  * Run the model-in-the-loop slice: one forced-choice call per tool scenario
  * against the real catalog, aggregated, plus the proxy-agreement section when
- * `proxyPredictions` is provided. Sequential (mirrors judge.mjs's runJudge —
+ * `proxyPredictions` is provided. `capabilityScenarios` (optional) get the same
+ * call and land in the separate, report-only `capability_slice`, never in
+ * `metrics`. Sequential (mirrors judge.mjs's runJudge —
  * no concurrency limit there either); a per-scenario gateway failure is
  * caught inside selectOne, so the loop always completes and reports partial
  * results rather than throwing away everything scored so far.
@@ -327,6 +380,7 @@ export function loadProxyPredictions(scenarios, fixture) {
  */
 export async function runModelToolSelection({
   scenarios,
+  capabilityScenarios = [],
   tools,
   gateway,
   proxyPredictions,
@@ -337,9 +391,15 @@ export async function runModelToolSelection({
   for (const scenario of scenarios) {
     picks.push(await selectOne(scenario, tools, toolNames, gateway))
   }
+  const capabilityPicks = []
+  for (const scenario of capabilityScenarios) {
+    const pick = await selectOne(scenario, tools, toolNames, gateway)
+    capabilityPicks.push({ ...pick, capability: scenario.capability })
+  }
   const metrics = aggregateModelSelection(picks)
   if (proxyPredictions) metrics.agreement = computeAgreement(picks, proxyPredictions)
-  const { served_model, served_model_varied } = summarizeServedModel(picks.map((p) => p.model))
+  const servedModels = [...picks, ...capabilityPicks].map((p) => p.model)
+  const { served_model, served_model_varied } = summarizeServedModel(servedModels)
   const result = {
     harness: 'tool-selection-model',
     tier: 'advisory',
@@ -347,6 +407,9 @@ export async function runModelToolSelection({
     served_model,
     served_model_varied,
     metrics,
+  }
+  if (capabilityPicks.length > 0) {
+    result.capability_slice = aggregateCapabilitySlice(capabilityPicks, proxyPredictions)
   }
   if (!proxyPredictions) {
     result.agreement_note =
@@ -367,21 +430,24 @@ function loadTools(dir) {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-function loadToolScenarios(dir) {
+/** Tool scenarios plus the optional report-only capability scenarios. */
+function loadScenarios(dir) {
   const data = JSON.parse(readFileSync(join(dir, 'tool-selection.json'), 'utf8'))
-  return data.toolScenarios
+  return {
+    toolScenarios: data.toolScenarios,
+    capabilityScenarios: data.capabilityScenarios ?? [],
+  }
 }
 
 /**
- * Load the proxy's per-scenario predictions, or a clear reason why not. The
- * fixture missing is the expected/normal case (a separate opt-in generator
- * produces it — and it is not committed today, so this is the path EVERY
- * nightly run takes until that fixture lands); an integrity error is loud in
- * the reason string but still just skips the agreement section — this slice
- * never throws on a stale or corrupt embeddings fixture. Exported for direct
+ * Load the proxy's per-scenario predictions (tool and capability scenarios,
+ * one id-keyed map), or a clear reason why not. A missing fixture (a separate
+ * opt-in generator produces it) or an integrity error is reported in the
+ * reason string and just skips the agreement section — this slice never
+ * throws on a stale or corrupt embeddings fixture. Exported for direct
  * unit-test coverage of both branches.
  */
-export function loadProxyOrReason(dir, embeddingsModel, scenarios) {
+export function loadProxyOrReason(dir, embeddingsModel, scenarios, capabilityScenarios = []) {
   const slice = runToolSelectionSlice({ fixturesDir: dir, model: embeddingsModel })
   if (slice.status !== 'ok') {
     const reason =
@@ -393,7 +459,11 @@ export function loadProxyOrReason(dir, embeddingsModel, scenarios) {
   const fixture = JSON.parse(
     readFileSync(join(dir, embeddingsFixtureName(embeddingsModel)), 'utf8'),
   )
-  return { predictions: loadProxyPredictions(scenarios, fixture), reason: null }
+  const predictions = {
+    ...loadProxyPredictions(scenarios, fixture),
+    ...loadProxyPredictions(capabilityScenarios, fixture, 'capabilityScenarios'),
+  }
+  return { predictions, reason: null }
 }
 
 /**
@@ -423,11 +493,17 @@ async function main() {
   }
 
   const tools = loadTools(fixturesDir)
-  const scenarios = loadToolScenarios(fixturesDir)
-  const { predictions, reason } = loadProxyOrReason(fixturesDir, embeddingsModel, scenarios)
+  const { toolScenarios, capabilityScenarios } = loadScenarios(fixturesDir)
+  const { predictions, reason } = loadProxyOrReason(
+    fixturesDir,
+    embeddingsModel,
+    toolScenarios,
+    capabilityScenarios,
+  )
 
   const result = await runModelToolSelection({
-    scenarios,
+    scenarios: toolScenarios,
+    capabilityScenarios,
     tools,
     gateway,
     proxyPredictions: predictions,

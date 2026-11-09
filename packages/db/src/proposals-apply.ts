@@ -305,7 +305,7 @@ export interface EdgeToMaterialize {
  * episodic and live-successor guards, then closes the predecessor, records its
  * `supersede` event and carries its commitment. Shared by edge-proposal apply
  * and retention-proposal accept, so both close a predecessor identically.
- * `proposalId` only labels the errors.
+ * The proposal reference labels errors and records the producer on new rows.
  *
  * @throws {@link EpisodicSupersessionError} an event-type endpoint.
  * @throws {@link PredecessorAlreadySupersededError} fresh edge over a dead predecessor.
@@ -317,6 +317,7 @@ export async function materializeEdgeIn(
   edge: EdgeToMaterialize,
   actorKind: ActorKind,
   proposalId: string,
+  proposalKind: 'edge' | 'retention' = 'edge',
 ): Promise<void> {
   // docs/concepts/memory-model.mdx "Consolidation is advisory" episodic exclusion: refuse to close an event-type memory's
   // validity. A supersedes/updates proposal targeting an event-type pair is a
@@ -400,7 +401,10 @@ export async function materializeEdgeIn(
     // The close above is the IDENTICAL close reviseMemory performs, so the
     // obligation riding the predecessor needs the carryCommitment equivalent
     // (Codex P1) — same tx, right after the live close succeeded.
-    await carryOrResolvePredecessorCommitment(tx, userId, edge.fromId, edge.toId, actorKind)
+    await carryOrResolvePredecessorCommitment(tx, userId, edge.fromId, edge.toId, actorKind, {
+      proposalKind,
+      proposalId,
+    })
   }
 
   // Materialize the proposed edge verbatim (from_id -> to_id). The pre-existing
@@ -413,6 +417,8 @@ export async function materializeEdgeIn(
     toId: edge.toId,
     edgeType: edge.edgeType as EdgeType,
     createdBy: actorKind,
+    sourceConsolidationProposalId: proposalKind === 'edge' ? proposalId : undefined,
+    sourceRetentionProposalId: proposalKind === 'retention' ? proposalId : undefined,
   })
 }
 
@@ -449,6 +455,7 @@ async function carryOrResolvePredecessorCommitment(
   fromId: string,
   toId: string,
   actorKind: ActorKind,
+  sourceProposal: { proposalKind: 'edge' | 'retention'; proposalId: string },
 ): Promise<void> {
   const [obligation] = await tx
     .select({ id: commitments.id })
@@ -528,6 +535,7 @@ async function carryOrResolvePredecessorCommitment(
     memoryId: toId,
     eventKind: 'resolve',
     actorKind,
+    payload: sourceProposal,
   })
 }
 

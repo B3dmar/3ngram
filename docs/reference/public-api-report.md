@@ -193,7 +193,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.17.0
+## `@3ngram/core` 0.18.0
 
 ### `.`
 
@@ -276,10 +276,10 @@ its row here even when its name and kind are unchanged.
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `268fcee3c080` |
-| `ExportEdgeRow` | interface | `ab29ae277330` |
+| `ExportEdgeRow` | interface | `52c103710277` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
-| `ExportFactRow` | interface | `2cf2890a3d69` |
+| `ExportFactRow` | interface | `7c6656fb8d00` |
 | `ExportLlmUsageRow` | interface | `c20cc8fa5bcb` |
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
 | `ExportMemoryRow` | interface | `368a6451ac6f` |
@@ -305,7 +305,7 @@ its row here even when its name and kind are unchanged.
 | `GcClientsOptions` | interface | `3918b0c6398d` |
 | `GcClientsRepo` | interface | `6d64083be252` |
 | `GcClientsResult` | interface | `40da9c3e8756` |
-| `GetMemoriesOptions` | interface | `2c23190ec24c` |
+| `GetMemoriesOptions` | interface | `8a59510bca4a` |
 | `Handoff` | interface | `3e9461dd6bae` |
 | `HandoffCommitment` | interface | `8ac891c45f15` |
 | `HandoffMemory` | interface | `10bc457226a3` |
@@ -333,10 +333,10 @@ its row here even when its name and kind are unchanged.
 | `MemoriesBatchRead` | interface | `8da3c2c0eb2f` |
 | `MemoriesListQuery` | interface | `cb9e54940120` |
 | `MemoriesPage` | interface | `7ab4f1f2be69` |
-| `MemoryBatchItem` | interface | `0b8a8abf044f` |
+| `MemoryBatchItem` | interface | `5a5848f48d7e` |
 | `MemoryDetailRow` | interface | `3e9ace148a3a` |
 | `MemoryFacets` | interface | `e6538468d5f2` |
-| `MemoryHistoryRead` | interface | `1d5c97e4feac` |
+| `MemoryHistoryRead` | interface | `67d0e83b8093` |
 | `MemoryListRow` | interface | `8a1b49614b7a` |
 | `MemoryNotFoundError` | class | `91f7c6ef54ac` |
 | `MergedPage` | interface | `31f7539775c9` |
@@ -604,7 +604,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.16.0
+## `@3ngram/db` 0.17.0
 
 ### `.`
 
@@ -623,7 +623,7 @@ its row here even when its name and kind are unchanged.
 | `AppliedProposalRow` | interface | `44b800b7fd08` |
 | `ArchiveOutcome` | type | `16b337b1bd53` |
 | `ArchivePolicy` | type | `05584b476e9a` |
-| `ArchiveWrite` | interface | `646777c0943c` |
+| `ArchiveWrite` | interface | `63d66567eaf5` |
 | `AsOf` | interface | `7ff84f49ed40` |
 | `AuditLogEntry` | interface | `7be038eca9e3` |
 | `AuthorizedClient` | interface | `a1b0bc5ae156` |
@@ -649,7 +649,7 @@ its row here even when its name and kind are unchanged.
 | `CommitmentNotFoundError` | class | `0e771a4cd8c8` |
 | `CommitmentState` | interface | `01bab54b1715` |
 | `CommitmentStateChangedError` | class | `c3012a9a11d0` |
-| `CommitmentTransition` | interface | `af9743fc35bf` |
+| `CommitmentTransition` | interface | `421a40afab9e` |
 | `CommitmentWrite` | interface | `dd9c21233475` |
 | `CompleteTriageOptions` | interface | `a5df78d6aa9b` |
 | `CompleteTriageResult` | interface | `12387e091beb` |
@@ -665,7 +665,7 @@ its row here even when its name and kind are unchanged.
 | `EMBEDDING_DIMENSIONS` | const | `4322ea3332b0` |
 | `ERASED_PII` | const | `4e4b14da4401` |
 | `EdgeConflictError` | class | `1edf03d6924b` |
-| `EdgeWrite` | interface | `7331344dff64` |
+| `EdgeWrite` | interface | `0a095db5f794` |
 | `EmbedFailedMemoryRow` | interface | `92f24ef4bda7` |
 | `EnvironmentStats` | interface | `5f754665243f` |
 | `EpisodicSupersessionError` | class | `e7ffa0327350` |
@@ -673,10 +673,10 @@ its row here even when its name and kind are unchanged.
 | `ExportAgentSessionRow` | interface | `e6f3dea31e77` |
 | `ExportBudgetRow` | interface | `d846eec0bb0b` |
 | `ExportCommitmentRow` | interface | `268fcee3c080` |
-| `ExportEdgeRow` | interface | `ab29ae277330` |
+| `ExportEdgeRow` | interface | `52c103710277` |
 | `ExportEnricher` | type | `de9dc866a08d` |
 | `ExportFactProposalRow` | interface | `05ef6c3d7a54` |
-| `ExportFactRow` | interface | `2cf2890a3d69` |
+| `ExportFactRow` | interface | `7c6656fb8d00` |
 | `ExportJudgmentPolicyRow` | interface | `c9e8b8400c12` |
 | `ExportLlmUsageRow` | interface | `c20cc8fa5bcb` |
 | `ExportMemoryEventRow` | interface | `20e3fc4150e5` |
@@ -694,7 +694,7 @@ its row here even when its name and kind are unchanged.
 | `FactProposalWrite` | interface | `7414c1765faf` |
 | `FactProposalsQuery` | interface | `e204e3ddc84b` |
 | `FactRow` | interface | `e6493ad6346b` |
-| `FactWrite` | interface | `38b489370192` |
+| `FactWrite` | interface | `0ba30222f0dd` |
 | `FactsQuery` | interface | `a1d9d1dcc253` |
 | `ForgettingMemory` | interface | `5193705c6910` |
 | `FusionWeights` | interface | `43b9b636ce4c` |
@@ -722,7 +722,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryFacetsOptions` | interface | `0104b5dd61bd` |
 | `MemoryFactWrite` | type | `1ed668a7262e` |
 | `MemoryHistoryEdgeRow` | interface | `0b72fde39b8f` |
-| `MemoryHistoryEventRow` | interface | `6156bcf877b5` |
+| `MemoryHistoryEventRow` | interface | `c306e3b79646` |
 | `MemoryHistoryIdentityRow` | interface | `ced9be5713ea` |
 | `MemoryHistoryLifecycleState` | type | `f5cbe15b0f8d` |
 | `MemoryHistoryPayloadMetadataRow` | interface | `89c224a9fb77` |
@@ -849,7 +849,7 @@ its row here even when its name and kind are unchanged.
 | `evaluateTriageEntry` | function | `f7979c0a7124` |
 | `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
-| `facts` | const | `8609a897374c` |
+| `facts` | const | `31ef661a29f7` |
 | `fetchHitsByIds` | function | `567078eac51f` |
 | `findSimilarPairs` | function | `1cce9d83df14` |
 | `finishSessionTriage` | function | `59f7c08fbb7f` |
@@ -862,6 +862,7 @@ its row here even when its name and kind are unchanged.
 | `getJudgmentPolicy` | function | `48882328985c` |
 | `getLiveAccountId` | function | `ecf1e7b0880b` |
 | `getMemoriesByIds` | function | `440d9e4e48ba` |
+| `getMemoriesProvenance` | function | `842b0e1d9af8` |
 | `getMemoryById` | function | `b7e7cc96a1c6` |
 | `getMemoryHistory` | function | `459dc80404ab` |
 | `getOpenResolutionProposal` | function | `71b0e818dc73` |
@@ -914,7 +915,7 @@ its row here even when its name and kind are unchanged.
 | `lockScopePolicies` | function | `ce3797a1bc52` |
 | `materializeClientMetadata` | function | `7f108ca801ea` |
 | `memories` | const | `55c30c083a59` |
-| `memoryEdges` | const | `52088e26ee30` |
+| `memoryEdges` | const | `faa034a782f1` |
 | `memoryEvents` | const | `8b52656b3790` |
 | `moveMemory` | function | `4a4ea0fdfcc4` |
 | `newerNeighbours` | function | `304c82c3bb72` |
@@ -997,6 +998,7 @@ its row here even when its name and kind are unchanged.
 | `users` | const | `51d714665044` |
 | `validTimePredicate` | function | `147701abe7c5` |
 | `verifyEmailTokenAtomic` | function | `1f2fb3ded60a` |
+| `withSavepoint` | function | `657df486ef31` |
 | `withTenant` | function | `62362b3896cc` |
 | `writeImportedEdge` | function | `2ad1fe7ce6c4` |
 | `writeImportedMemory` | function | `aeebd4625b00` |
@@ -1075,7 +1077,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `4bf3968c5c87` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.14.0
+## `@3ngram/schema` 0.15.0
 
 ### `.`
 
@@ -1227,6 +1229,7 @@ its row here even when its name and kind are unchanged.
 | `MAX_FACT_WRITE_FRACTION_DIGITS` | const | `8e5c8ff3d619` |
 | `MAX_GET_CONTENT_CHARS` | const | `7e835eebb6cb` |
 | `MAX_GET_MEMORIES_IDS` | const | `7ebfa403cf08` |
+| `MAX_GET_PROVENANCE_RESPONSE_BYTES` | const | `7b8ba47bb634` |
 | `MAX_GET_TOTAL_CHARS` | const | `42212eb3f3ac` |
 | `MAX_HANDOFF_SECTION_CEILING` | const | `1721c2e5474b` |
 | `MAX_IMPORT_CONTENT_LENGTH` | const | `25fd3d1a6cde` |
@@ -1235,6 +1238,13 @@ its row here even when its name and kind are unchanged.
 | `MAX_MEMORIES_LIMIT` | const | `fda0ccbd7f7b` |
 | `MAX_MEMORY_TYPES_FILTER` | const | `4c921eb7acd5` |
 | `MAX_PROPOSALS_LIMIT` | const | `d40baef12d46` |
+| `MAX_PROVENANCE_EDGES` | const | `85f5163f57bf` |
+| `MAX_PROVENANCE_EVENTS` | const | `10f958ec070b` |
+| `MAX_PROVENANCE_FACTS` | const | `fcb15053d1b9` |
+| `MAX_PROVENANCE_IDS` | const | `b5aa0a917e1f` |
+| `MAX_PROVENANCE_NODES` | const | `2c593a1f2951` |
+| `MAX_PROVENANCE_PRODUCTS` | const | `6e0baf8ea16a` |
+| `MAX_PROVENANCE_PROPOSALS` | const | `c0e059f23e8c` |
 | `MAX_RECORDED_BOUND_FRACTION_DIGITS` | const | `ed5f7f6cc966` |
 | `MAX_RESOLUTION_REASON_LENGTH` | const | `ccbdcfae6619` |
 | `MAX_REST_ERROR_DETAIL_LENGTH` | const | `c6a35723ead3` |
@@ -1266,6 +1276,7 @@ its row here even when its name and kind are unchanged.
 | `MemoryHistoryRelationship` | type | `007db3517d81` |
 | `MemoryHistoryResponse` | type | `33efefb3372e` |
 | `MemoryListItem` | type | `ba2277109cba` |
+| `MemoryProvenance` | type | `3496ae04a4bb` |
 | `MemoryStatus` | type | `a1a65a8fa7db` |
 | `MemoryType` | type | `6d5684c2a472` |
 | `NativeRememberInput` | type | `88272fc24856` |
@@ -1286,6 +1297,7 @@ its row here even when its name and kind are unchanged.
 | `ProposalKindCounts` | type | `28e7864043af` |
 | `ProposalKindCountsV3` | type | `2410ed9cbacd` |
 | `ProposalKindCountsV4` | type | `506aa4398c67` |
+| `ProposalProvenancePayload` | type | `f15a1510d704` |
 | `ProposalRecordOutput` | type | `8a269415e658` |
 | `ProposalRejectBody` | type | `2fb4de60f87a` |
 | `ProposalStatus` | type | `184c3cc32f4f` |
@@ -1410,7 +1422,7 @@ its row here even when its name and kind are unchanged.
 | `agentSessionTriageCompleteResponseSchema` | const | `e96dbd4dfea6` |
 | `agentSessionTriageStatusSchema` | const | `2c0800025444` |
 | `apiKeyIdSchema` | const | `a0a5b51f478d` |
-| `archiveEventPayloadSchema` | const | `91db38f923d5` |
+| `archiveEventPayloadSchema` | const | `8fa73202ffed` |
 | `archiveMemoryBodySchema` | const | `26c78cb1dc3b` |
 | `asOfSchema` | const | `a706183fcabc` |
 | `authorizeRequestSchema` | const | `570ce03110a9` |
@@ -1480,9 +1492,9 @@ its row here even when its name and kind are unchanged.
 | `factsRangeSchema` | const | `68943816c6ea` |
 | `factsToolOutputSchema` | const | `fe477256bd85` |
 | `forgotPasswordInputSchema` | const | `bd34c5196ff8` |
-| `getMemoriesInputSchema` | const | `9bdf15008f83` |
-| `getMemoriesItemSchema` | const | `9564ab67c44c` |
-| `getMemoriesOutputSchema` | const | `7395c7455015` |
+| `getMemoriesInputSchema` | const | `2092bd9a73e7` |
+| `getMemoriesItemSchema` | const | `9987a54ca155` |
+| `getMemoriesOutputSchema` | const | `71f045d2ca02` |
 | `handoffCommitmentSchema` | const | `8d80b1deb054` |
 | `handoffCountsSchema` | const | `19a4f4765dbf` |
 | `handoffMemorySchema` | const | `8bece3348a56` |
@@ -1523,8 +1535,9 @@ its row here even when its name and kind are unchanged.
 | `memoryHistoryIdentitySchema` | const | `60c93c28d0af` |
 | `memoryHistoryLifecycleStateSchema` | const | `fe114d6d8d01` |
 | `memoryHistoryRelationshipSchema` | const | `d298213f24c5` |
-| `memoryHistoryResponseSchema` | const | `6e766eea4a18` |
+| `memoryHistoryResponseSchema` | const | `1d7c35bb14ef` |
 | `memoryListItemSchema` | const | `11edacb3917c` |
+| `memoryProvenanceSchema` | const | `40454525e5a0` |
 | `memoryStatusSchema` | const | `6144c674039b` |
 | `memoryTypeSchema` | const | `1e54c74d92f2` |
 | `nativeRememberInputSchema` | const | `adca8ae5713e` |
@@ -1546,6 +1559,7 @@ its row here even when its name and kind are unchanged.
 | `proposalKindCountsSchema` | const | `5d10c63012dd` |
 | `proposalKindCountsV3Schema` | const | `b41c4f35455f` |
 | `proposalKindCountsV4Schema` | const | `7086ee4f3f11` |
+| `proposalProvenancePayloadSchema` | const | `55322c73e96d` |
 | `proposalRecordSchema` | const | `2f822a55bcd7` |
 | `proposalRejectBodySchema` | const | `d16c42aa6024` |
 | `proposalStatusSchema` | const | `683a39d57396` |
@@ -1650,7 +1664,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.12.0
+## `@3ngram/server` 1.13.0
 
 ### `./app`
 

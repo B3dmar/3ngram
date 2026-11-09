@@ -26,6 +26,7 @@ import {
   memoryStatusSchema,
   memoryTypeSchema,
 } from './memory.js'
+import { memoryProvenanceSchema } from './memory-provenance.js'
 import { proposalEdgeTotalsSchema, proposalsCursorSchema } from './proposals-page.js'
 import { recordedBoundDescription, recordedRangeIssues } from './recorded-range.js'
 import { scopeSchema } from './scope.js'
@@ -365,6 +366,7 @@ export const memoryHistorySectionsSchema = z
   .object({
     lineage: memoryHistorySectionStatusSchema,
     events: memoryHistorySectionStatusSchema,
+    provenance: memoryHistorySectionStatusSchema.optional(),
   })
   .strict()
 export type MemoryHistorySections = z.infer<typeof memoryHistorySectionsSchema>
@@ -389,6 +391,7 @@ export const memoryHistoryResponseSchema = z
       .strict(),
     auditEvents: z.array(memoryHistoryEventSchema),
     eventsTruncated: z.boolean(),
+    provenance: memoryProvenanceSchema.nullable().optional(),
     /**
      * The `sessionRunId` recorded on this memory's own native `create` event
      * (issue #262) — read by its own query, so a truncated `auditEvents` window

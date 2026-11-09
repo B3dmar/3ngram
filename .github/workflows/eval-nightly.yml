@@ -189,9 +189,10 @@ jobs:
           LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
           LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
           # A model NAME, not a secret: repo/org Actions variable so this lane
-          # can be pointed at a different model than --judge's LLM_JUDGE_MODEL
-          # independently (falls back to the script's gpt-4o-mini default when
-          # unset — see MODEL_ENV in src/tool-selection-model.mjs).
+          # can be pointed at a different model than --judge (falls back to the
+          # script's gpt-4o-mini default when unset — see MODEL_ENV in
+          # src/tool-selection-model.mjs). The judge step above passes no
+          # LLM_JUDGE_MODEL, so --judge always runs its gpt-4o-mini default.
           LLM_TOOL_SELECTION_MODEL: ${{ vars.LLM_TOOL_SELECTION_MODEL }}
         run: |
           if [ -z "${LLM_GATEWAY_API_KEY:-}" ]; then
