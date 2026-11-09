@@ -811,6 +811,79 @@ func TestStopNudgeStillHeartbeats(t *testing.T) {
 	}
 }
 
+// stopPayloadWithTasks is a Stop envelope that also carries Claude Code's
+// `background_tasks` list, raw, so a test can send any shape including null.
+func stopPayloadWithTasks(sessionID string, stopHookActive bool, tasks string) string {
+	base := strings.TrimSuffix(stopPayload(sessionID, stopHookActive), "}")
+	return base + `,"background_tasks":` + tasks + `}`
+}
+
+// TestStopNudgeWaitsForBackgroundWork pins issue #455: a turn that ended while
+// background work runs is paused, so the hook asks the server nothing. No
+// `begin` means no attempt is armed or spent, whatever the server would have
+// answered, and the entry's status is not read.
+func TestStopNudgeWaitsForBackgroundWork(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"running subagent":      `[{"id":"a1","type":"subagent","status":"running","description":"verify docs"}]`,
+		"shell, unknown status": `[{"id":"b1","type":"shell","status":"whatever","description":"ci watch"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-bg", false, tasks), func() int { return runStop(nil) })
+
+			if out != "" {
+				t.Fatalf("a Stop with background work in flight injected: %q", out)
+			}
+			if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a paused Stop made %v, want exactly one heartbeat", calls)
+			}
+		})
+	}
+}
+
+// TestStopNudgeIgnoresAnEmptyTaskList keeps today's behaviour where nothing is
+// in flight: an empty list, an explicit null and an absent key (Codex, older
+// Claude Code) all arm and inject as before.
+func TestStopNudgeIgnoresAnEmptyTaskList(t *testing.T) {
+	for name, payload := range map[string]string{
+		"empty":  stopPayloadWithTasks("sess-idle", false, `[]`),
+		"null":   stopPayloadWithTasks("sess-idle", false, `null`),
+		"absent": stopPayload("sess-idle", false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, payload, func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("an idle Stop did not inject: %q", out)
+			}
+		})
+	}
+}
+
+// TestStopNudgeFinalizesDespiteBackgroundWork keeps the finalize path first. The
+// continuation of an injected debrief must still complete its attempt even if
+// it started background work, or the attempt would stay `pending` into the
+// user's next turn.
+func TestStopNudgeFinalizesDespiteBackgroundWork(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = pendingBody(testAttemptID)
+	tasks := `[{"id":"a1","type":"subagent","status":"running"}]`
+
+	out := captureHook(t, stopPayloadWithTasks("sess-bg-final", true, tasks), func() int { return runStop(nil) })
+
+	if out != "" {
+		t.Fatalf("the finalize Stop injected: %q", out)
+	}
+	if ns.bodyFor(t, "/api/v1/agent-sessions/triage/complete")["attemptId"] != testAttemptID {
+		t.Fatalf("the finalize Stop did not complete the pending attempt")
+	}
+}
+
 // TestDebriefPromptQueryIsTheNaturalKeyOnly pins the facet fix.
 //
 // The hook must NOT rebuild `scope` / `project` from its own environment. The

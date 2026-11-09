@@ -141,8 +141,15 @@ Two consequences:
    correctness: a killed terminal, crash, or failed POST leaves the row open. Layer 1
    uses a lease, not SessionEnd, as the liveness signal.
 2. **`Stop` is a per-turn checkpoint, not a reliable closer.** It does not fire on user
-   interrupt. Claude documents background tasks and scheduled wakeups the current hook
-   ignores. Treat it as an incremental nudge. The closer is a worker (layer 5).
+   interrupt, and it fires at the end of a turn that is only paused on background
+   work. Claude Code lists that work in the Stop input as `background_tasks`, and
+   the hook asks for no nudge while the list is non-empty
+   ([issue #455](https://github.com/B3dmar/3ngram/issues/455)): no `triage/begin`,
+   so nothing is armed or spent, and the provenance waits for a later Stop or the
+   closer. A long-lived background process therefore keeps the nudge quiet for as
+   long as it runs. Scheduled wakeups (`session_crons`) do not count, since a
+   recurring one never ends. Treat Stop as an incremental nudge. The closer is a
+   worker (layer 5).
 
 ### Both harnesses support a blocking Stop, with mostly the same envelope
 

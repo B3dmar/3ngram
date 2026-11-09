@@ -15,7 +15,7 @@ import (
 const stopHeartbeatTimeout = 2 * time.Second
 
 // stopInput is the main-agent Stop envelope. Claude Code and Codex send the same
-// fields; the hook reads only the three it needs.
+// core fields; the hook reads only the four it needs.
 //
 // There is no turn-count field on either harness, which is why
 // `triage/begin` is called without the `turnCount` hint — see
@@ -30,6 +30,13 @@ type stopInput struct {
 	// maxInjectionsPerAttempt, which does not depend on this field.
 	StopHookActive       bool   `json:"stop_hook_active"`
 	LastAssistantMessage string `json:"last_assistant_message"`
+	// BackgroundTasks is Claude Code's list of in-flight background work: shell
+	// commands, subagents, monitors and the like, each one entry. Only its
+	// LENGTH is read. The entry shape and the `status` values are not a
+	// documented contract, and a non-empty list already says what matters: the
+	// turn ended while work it is waiting on is still running, so the session
+	// is paused rather than done. Absent on Codex and on older Claude Code.
+	BackgroundTasks []json.RawMessage `json:"background_tasks"`
 }
 
 // runStop is the main-agent Stop hook. It does two jobs, and the split between
