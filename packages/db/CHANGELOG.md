@@ -1,5 +1,24 @@
 # @3ngram/db
 
+## 0.17.0
+
+### Minor Changes
+
+- 1e7e396: Add caller-bound `user_id` predicates to all six memory history reads behind `GET /api/v1/memories/{id}/history` (inspected memory and its commitment, direct relationships, the lineage walk's seed, step and node join, lineage edges, audit events, and the creating session run) as a second tenant-isolation layer alongside RLS (defense in depth, issue #427). Direct relationships now bind to the caller instead of the inspected row's owner. Result sets are unchanged while RLS functions.
+
+  Breaking for direct `@3ngram/db` consumers: `getMemoryHistory` now takes the caller's `userId` as its second argument, `getMemoryHistory(tx, userId, memoryId)`, and binds every statement to it. Pass the same id given to `withTenant()`; a call that still uses `getMemoryHistory(tx, memoryId)` fails to compile in TypeScript, and fails at runtime in JavaScript. The `@3ngram/core` `getMemoryHistory(userId, memoryId)` signature and the REST route are unchanged.
+- f618fca: Record tenant-bound producer links when proposals create facts, edges, or lifecycle events. Existing rows retain unknown provenance.
+- e38d139: Add a bounded, tenant-scoped provenance read with recorded origin, lineage, audit events, proposals and fact identities. Core batch reads can request it and memory history includes it with graceful degradation.
+- e5d7d44: Accept explicit `sessionRunId: null` on native memory writes to skip session attribution without changing any session's lease, triage state, or closer eligibility. Omitted IDs retain automatic attribution; supplied IDs still require tenant ownership. This lets agents write to another authenticated account without borrowing an unrelated conversation's session.
+
+### Patch Changes
+
+- Updated dependencies [f618fca]
+- Updated dependencies [e38d139]
+- Updated dependencies [7c290e0]
+- Updated dependencies [e5d7d44]
+  - @3ngram/schema@0.15.0
+
 ## 0.16.0
 
 ### Minor Changes
