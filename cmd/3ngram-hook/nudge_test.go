@@ -264,7 +264,7 @@ const testAttemptID = "0197f5b2-1c9a-7b3d-8f21-4a6c9e2d5b71"
 // declines and the hook must be invisible — no prompt fetch, no complete, no
 // stdout.
 func TestStopNudgeDeclineIsSilent(t *testing.T) {
-	for _, reason := range []string{"debounce", "no-signal", "not-live", "terminal", "overflowed"} {
+	for _, reason := range []string{"debounce", "cooldown", "no-signal", "not-live", "terminal", "overflowed"} {
 		t.Run(reason, func(t *testing.T) {
 			ns := newNudgeServer(t)
 			ns.beginBody = declineBody(reason)

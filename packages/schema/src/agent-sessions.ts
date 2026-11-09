@@ -360,6 +360,7 @@ export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBegi
  * | `pending`       | an attempt is already outstanding; `attemptId` names it               |
  * | `pending-fresh` | an attempt is outstanding but too YOUNG to finalize; no `attemptId`   |
  * | `no-signal`     | `completed`/`expired` with no untriaged provenance event to re-arm on |
+ * | `cooldown`      | eligible, but the run's last nudge armed less than the cooldown ago   |
  * | `debounce`      | eligible, but the session has no substance yet                        |
  * | `overflowed`    | this call FOUND the run past the ceiling and stamped it terminal      |
  *
@@ -380,6 +381,13 @@ export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBegi
  * below the age floor. Withholding is the whole mechanism: `attemptId` on a
  * decline is the CAPABILITY to finalize, and the hook holds no threshold of its
  * own.
+ *
+ * `cooldown` BOUNDS THE NAG, NOT THE DEBRIEF. Without it a run that keeps
+ * writing re-arms on every turn that produced provenance, so a long agentic
+ * session is asked to debrief after nearly every turn. The cooldown is measured
+ * from the run's last ARMED attempt, and the declined signal stays untriaged: the
+ * first Stop after the cooldown arms on it, and the closer still sees it if the
+ * session ends first.
  */
 export const triageDeclineReasonSchema = z.enum([
   'not-live',
@@ -387,6 +395,7 @@ export const triageDeclineReasonSchema = z.enum([
   'pending',
   'pending-fresh',
   'no-signal',
+  'cooldown',
   'debounce',
   'overflowed',
 ])

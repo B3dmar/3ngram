@@ -695,6 +695,7 @@
                         "pending",
                         "pending-fresh",
                         "no-signal",
+                        "cooldown",
                         "debounce",
                         "overflowed"
                       ],
