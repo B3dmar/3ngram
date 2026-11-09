@@ -1,5 +1,14 @@
 # @3ngram/schema
 
+## 0.15.0
+
+### Minor Changes
+
+- f618fca: Record tenant-bound producer links when proposals create facts, edges, or lifecycle events. Existing rows retain unknown provenance.
+- e38d139: Add a bounded, tenant-scoped provenance read with recorded origin, lineage, audit events, proposals and fact identities. Core batch reads can request it and memory history includes it with graceful degradation.
+- 7c290e0: Expose include: ["provenance"] on get_memories for at most five ids, and the same bounded trace on REST memory history. Reported agent labels remain explicitly unverified.
+- e5d7d44: Accept explicit `sessionRunId: null` on native memory writes to skip session attribution without changing any session's lease, triage state, or closer eligibility. Omitted IDs retain automatic attribution; supplied IDs still require tenant ownership. This lets agents write to another authenticated account without borrowing an unrelated conversation's session.
+
 ## 0.14.0
 
 ### Minor Changes

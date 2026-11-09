@@ -1,5 +1,19 @@
 # @3ngram/worker
 
+## 1.13.0
+
+### Patch Changes
+
+- bdb3c35: Clear the release image scan that blocked the 2026-11-05 promotion: apt and libapt-pkg6.0 2.6.1 in the pinned base carry CVE-2026-109518 (high). Both images move to the current `node:24-bookworm-slim` digest, which ships apt 2.6.2 and perl-base 5.36.0-7+deb12u4 on Node 24.22.2, so the pinned perl-base upgrade step is dropped.
+- 73a8aa7: Raise the `@hono/node-server` override to `^1.19.18` so the server and worker images resolve the fix for GHSA-jpvv-r467-5p4w, where a raw backslash in the request path was parsed as `/` and a path-based rule at a reverse proxy could see a different path than the app (#407). Consumers that install `@3ngram/server` from npm need the same override in their own workspace, because pnpm overrides do not travel with published packages.
+- Updated dependencies [1e7e396]
+- Updated dependencies [f618fca]
+- Updated dependencies [e38d139]
+- Updated dependencies [7c290e0]
+- Updated dependencies [e5d7d44]
+  - @3ngram/core@0.18.0
+  - @3ngram/schema@0.15.0
+
 ## 1.12.0
 
 ### Patch Changes
