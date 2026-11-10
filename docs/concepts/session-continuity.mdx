@@ -152,7 +152,9 @@ Two consequences:
    listed for the rest of the session (an idle teammate can stay listed as
    running, [anthropics/claude-code#85955](https://github.com/anthropics/claude-code/issues/85955)).
    A list that is not an array changes nothing. A long-lived background process
-   still keeps the nudge quiet for as long as it runs. Treat Stop as an
+   still keeps the nudge quiet for as long as it runs. A self-paced `/loop` is
+   a pending one-shot wakeup, and it may keep the nudge quiet the same way a
+   long-running dev server does. The closer covers both. Treat Stop as an
    incremental nudge. The closer is a worker (layer 5).
 
 ### Both harnesses support a blocking Stop, with mostly the same envelope
