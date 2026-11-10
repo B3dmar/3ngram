@@ -47,13 +47,14 @@ const (
 	debriefPromptTimeout  = 2 * time.Second
 
 	// triageReasonPending is the one decline reason the hook BRANCHES on. The
-	// other six (`not-live`, `terminal`, `pending-fresh`, `no-signal`,
-	// `debounce`, `overflowed`) are all "no nudge this turn" and need no local
-	// vocabulary — mirroring the full enum here would be a second boundary that
-	// can drift from triageDeclineReasonSchema for no gain. `pending-fresh` in
-	// particular needs none: it carries no `attemptId`, so the finalize it
-	// declines to authorize is unreachable whether the hook knows the word or
-	// not, and an older hook against a newer server behaves identically.
+	// other seven (`not-live`, `terminal`, `pending-fresh`, `no-signal`,
+	// `cooldown`, `debounce`, `overflowed`) are all "no nudge this turn" and
+	// need no local vocabulary — mirroring the full enum here would be a second
+	// boundary that can drift from triageDeclineReasonSchema for no gain.
+	// `pending-fresh` in particular needs none: it carries no `attemptId`, so
+	// the finalize it declines to authorize is unreachable whether the hook
+	// knows the word or not, and an older hook against a newer server behaves
+	// identically. The same holds for `cooldown`, added after this hook shipped.
 	triageReasonPending = "pending"
 
 	// claudeCodeAgent / codexAgent are the two harnesses with a REGISTERED
@@ -235,6 +236,24 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 		return 0
 	}
 
+	// A TURN THAT ENDED ON BACKGROUND WORK IS PAUSED, NOT DONE (issue #455). A
+	// running subagent or shell command, or a one-shot wakeup, starts a new
+	// turn when it lands, so a debrief asked for here interrupts work
+	// mid-flight and usually precedes the result it should record. Ask nothing: no `begin`, so no attempt is
+	// armed or spent, and the provenance stays untriaged for a later Stop or
+	// the closer. Declining a nudge is never declining a debrief.
+	//
+	// Two costs, accepted. A long-lived background process (a dev server)
+	// keeps every Stop quiet while it runs, so that session falls back to the
+	// closer. And an attempt still `pending` here, left behind for example by
+	// a lost `stop_hook_active`, a failed finalize or a user interrupt, is
+	// finalized by the next quiet Stop or retired by the closer instead.
+	// Recurring crons and teammates do not count, because either would
+	// silence the nudge for good (see pausedOnBackgroundWork).
+	if input.pausedOnBackgroundWork() {
+		return 0
+	}
+
 	// `false` is not a formality here: this is the delivery that can ARM and
 	// INJECT, so it is exactly the delivery whose siblings must stay age-guarded.
 	begun, ok := triageBegin(key, false)
@@ -322,7 +341,7 @@ func runStopNudge(key agentSessionKey, input stopInput) int {
 // that attempt's debrief WAS shown by the Stop that armed it, so what the
 // continuation wrote is exactly what the outcome should absorb.
 //
-// Any other decline (`not-live`, `no-signal`, `debounce`, `terminal`) carries no
+// Any other decline (`not-live`, `no-signal`, `cooldown`, `debounce`, `terminal`) carries no
 // attempt id, which is the honest answer "nothing was armed, or the closer took
 // the row over" — the hook does nothing.
 //

@@ -264,7 +264,7 @@ const testAttemptID = "0197f5b2-1c9a-7b3d-8f21-4a6c9e2d5b71"
 // declines and the hook must be invisible — no prompt fetch, no complete, no
 // stdout.
 func TestStopNudgeDeclineIsSilent(t *testing.T) {
-	for _, reason := range []string{"debounce", "no-signal", "not-live", "terminal", "overflowed"} {
+	for _, reason := range []string{"debounce", "cooldown", "no-signal", "not-live", "terminal", "overflowed"} {
 		t.Run(reason, func(t *testing.T) {
 			ns := newNudgeServer(t)
 			ns.beginBody = declineBody(reason)
@@ -808,6 +808,198 @@ func TestStopNudgeStillHeartbeats(t *testing.T) {
 	beat := ns.bodyFor(t, "/api/v1/agent-sessions/heartbeat")
 	if beat["lastMessageExcerpt"] != "did the thing" {
 		t.Fatalf("excerpt = %v", beat["lastMessageExcerpt"])
+	}
+}
+
+// stopPayloadWithTasks is a Stop envelope that also carries Claude Code's
+// `background_tasks` list, raw, so a test can send any shape including null.
+func stopPayloadWithTasks(sessionID string, stopHookActive bool, tasks string) string {
+	base := strings.TrimSuffix(stopPayload(sessionID, stopHookActive), "}")
+	return base + `,"background_tasks":` + tasks + `}`
+}
+
+// TestStopNudgeWaitsForBackgroundWork pins issue #455: a turn that ended while
+// background work runs is paused, so the hook asks the server nothing. No
+// `begin` means no attempt is armed or spent, whatever the server would have
+// answered, and the entry's status is not read.
+func TestStopNudgeWaitsForBackgroundWork(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"running subagent":      `[{"id":"a1","type":"subagent","status":"running","description":"verify docs"}]`,
+		"shell, unknown status": `[{"id":"b1","type":"shell","status":"whatever","description":"ci watch"}]`,
+		"non-object entry":      `["a1"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-bg", false, tasks), func() int { return runStop(nil) })
+
+			if out != "" {
+				t.Fatalf("a Stop with background work in flight injected: %q", out)
+			}
+			if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a paused Stop made %v, want exactly one heartbeat", calls)
+			}
+		})
+	}
+}
+
+// TestStopNudgeIgnoresAnEmptyTaskList keeps today's behaviour where nothing is
+// in flight: an empty list, an explicit null and an absent key (Codex, older
+// Claude Code) all arm and inject as before.
+func TestStopNudgeIgnoresAnEmptyTaskList(t *testing.T) {
+	for name, payload := range map[string]string{
+		"empty":  stopPayloadWithTasks("sess-idle", false, `[]`),
+		"null":   stopPayloadWithTasks("sess-idle", false, `null`),
+		"absent": stopPayload("sess-idle", false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, payload, func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("an idle Stop did not inject: %q", out)
+			}
+		})
+	}
+}
+
+// stopPayloadWithCrons is a Stop envelope carrying Claude Code's raw
+// `session_crons` list.
+func stopPayloadWithCrons(sessionID string, crons string) string {
+	base := strings.TrimSuffix(stopPayload(sessionID, false), "}")
+	return base + `,"session_crons":` + crons + `}`
+}
+
+// assertPausedStop checks that a Stop asked the server nothing beyond the
+// heartbeat and printed nothing.
+func assertPausedStop(t *testing.T, ns *nudgeServer, out string) {
+	t.Helper()
+	if out != "" {
+		t.Fatalf("a paused Stop injected: %q", out)
+	}
+	if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+		t.Fatalf("a paused Stop made %v, want exactly one heartbeat", calls)
+	}
+}
+
+// TestStopNudgeIgnoresTeammates: a teammate is a long-lived peer, and some
+// Claude Code versions list an idle one as running for the rest of the session
+// (anthropics/claude-code#85955). Counting it would silence the nudge for good,
+// so a list of teammates alone nudges as usual; any other entry still pauses.
+func TestStopNudgeIgnoresTeammates(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"teammate":            `[{"id":"t1","type":"teammate","status":"running"}]`,
+		"in-process teammate": `[{"id":"t2","type":"in_process_teammate","status":"running"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-team", false, tasks), func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("a teammate-only list suppressed the nudge: %q", out)
+			}
+		})
+	}
+	t.Run("teammate and subagent", func(t *testing.T) {
+		ns := newNudgeServer(t)
+		ns.beginBody = armedBody(testAttemptID)
+		tasks := `[{"id":"t1","type":"teammate","status":"running"},{"id":"a1","type":"subagent","status":"running"}]`
+
+		out := captureHook(t, stopPayloadWithTasks("sess-team", false, tasks), func() int { return runStop(nil) })
+
+		assertPausedStop(t, ns, out)
+	})
+}
+
+// TestStopNudgeWaitsForOneShotWakeups: a one-shot wakeup brings the session
+// back, so the turn is paused. A recurring cron never ends, and an entry that
+// does not say `recurring: false` is not trusted, so both nudge as usual.
+func TestStopNudgeWaitsForOneShotWakeups(t *testing.T) {
+	t.Run("one-shot", func(t *testing.T) {
+		ns := newNudgeServer(t)
+		ns.beginBody = armedBody(testAttemptID)
+		crons := `[{"id":"c1","schedule":"in 20m","recurring":false,"prompt":"check CI"}]`
+
+		out := captureHook(t, stopPayloadWithCrons("sess-cron", crons), func() int { return runStop(nil) })
+
+		assertPausedStop(t, ns, out)
+	})
+	for name, crons := range map[string]string{
+		"recurring":         `[{"id":"c1","schedule":"0 9 * * 1-5","recurring":true}]`,
+		"recurring unknown": `[{"id":"c1","schedule":"0 9 * * 1-5"}]`,
+		"not an array":      `"c1"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithCrons("sess-cron", crons), func() int { return runStop(nil) })
+
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("crons %s suppressed the nudge: %q", crons, out)
+			}
+		})
+	}
+}
+
+// TestStopSurvivesAMalformedTaskList pins the decode boundary. `runStop` returns
+// before the heartbeat on any decode error, so a typed field would let one odd
+// `background_tasks` value cost every user the lease refresh, nudge on or off.
+// A non-array reads as "unknown" and keeps today's behaviour in full.
+func TestStopSurvivesAMalformedTaskList(t *testing.T) {
+	for name, tasks := range map[string]string{
+		"object": `{"id":"a1"}`,
+		"string": `"running"`,
+		"number": `3`,
+		"bool":   `true`,
+	} {
+		t.Run(name+"/nudge off", func(t *testing.T) {
+			ns := newNudgeServer(t)
+			t.Setenv("THREENGRAM_STOP_NUDGE", "")
+
+			captureHook(t, stopPayloadWithTasks("sess-odd", false, tasks), func() int { return runStop(nil) })
+
+			if calls := ns.paths(); len(calls) != 1 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a malformed task list made %v, want exactly one heartbeat", calls)
+			}
+		})
+		t.Run(name+"/nudge on", func(t *testing.T) {
+			ns := newNudgeServer(t)
+			ns.beginBody = armedBody(testAttemptID)
+
+			out := captureHook(t, stopPayloadWithTasks("sess-odd", false, tasks), func() int { return runStop(nil) })
+
+			if calls := ns.paths(); len(calls) == 0 || calls[0] != "/api/v1/agent-sessions/heartbeat" {
+				t.Fatalf("a malformed task list skipped the heartbeat: %v", calls)
+			}
+			if decodeEnvelope(t, out)["decision"] != "block" {
+				t.Fatalf("a malformed task list changed the nudge: %q", out)
+			}
+		})
+	}
+}
+
+// TestStopNudgeFinalizesDespiteBackgroundWork keeps the finalize path first. The
+// continuation of an injected debrief must still complete its attempt even if
+// it started background work, or the attempt would stay `pending` into the
+// user's next turn.
+func TestStopNudgeFinalizesDespiteBackgroundWork(t *testing.T) {
+	ns := newNudgeServer(t)
+	ns.beginBody = pendingBody(testAttemptID)
+	tasks := `[{"id":"a1","type":"subagent","status":"running"}]`
+
+	out := captureHook(t, stopPayloadWithTasks("sess-bg-final", true, tasks), func() int { return runStop(nil) })
+
+	if out != "" {
+		t.Fatalf("the finalize Stop injected: %q", out)
+	}
+	if ns.bodyFor(t, "/api/v1/agent-sessions/triage/complete")["attemptId"] != testAttemptID {
+		t.Fatalf("the finalize Stop did not complete the pending attempt")
 	}
 }
 

@@ -18,7 +18,7 @@ unconditionally and, behind the flag, calls the handshake and emits the
 continuation envelope. The server half (step 7a) was already there: `POST
 /api/v1/agent-sessions/triage/begin|complete` implement the entry rule, the
 debounce, the pending/complete/expire/overflow outcomes, the cumulative
-event-id watermark and the write-time re-arm; they only ever answer `armed`, and
+event-id watermark, the write-time re-arm and its cooldown; they only ever answer `armed`, and
 the injection decision stays with the hook. `agent_sessions` and the
 `memory_events` session expression index shipped in migration 0032. Native
 remember / revise / resolve accept optional `sessionRunId` and stamp
@@ -141,8 +141,19 @@ Two consequences:
    correctness: a killed terminal, crash, or failed POST leaves the row open. Layer 1
    uses a lease, not SessionEnd, as the liveness signal.
 2. **`Stop` is a per-turn checkpoint, not a reliable closer.** It does not fire on user
-   interrupt. Claude documents background tasks and scheduled wakeups the current hook
-   ignores. Treat it as an incremental nudge. The closer is a worker (layer 5).
+   interrupt, and it fires at the end of a turn that is only paused on background
+   work. Claude Code's hook reference documents that work in the Stop input as
+   `background_tasks` and `session_crons`. The hook asks for no nudge while
+   `background_tasks` holds any entry other than a teammate, or `session_crons`
+   holds a one-shot wakeup (`recurring: false`)
+   ([issue #455](https://github.com/B3dmar/3ngram/issues/455)): no `triage/begin`,
+   so nothing is armed or spent, and the provenance waits for a later Stop or the
+   closer. Teammates and recurring crons do not count, because either can stay
+   listed for the rest of the session (an idle teammate can stay listed as
+   running, [anthropics/claude-code#85955](https://github.com/anthropics/claude-code/issues/85955)).
+   A list that is not an array changes nothing. A long-lived background process
+   still keeps the nudge quiet for as long as it runs. Treat Stop as an
+   incremental nudge. The closer is a worker (layer 5).
 
 ### Both harnesses support a blocking Stop, with mostly the same envelope
 
@@ -617,7 +628,9 @@ Three implementation decisions this section left open:
   absorbed them). **Two residuals, stated rather than hidden — plus a third that
   is closed only under a stated assumption.** (1) The bound
   is *one nudge per turn that produced new provenance*, not "never twice in a
-  session" — a user who keeps working keeps qualifying. (2) A write that
+  session" — a user who keeps working keeps qualifying. The re-arm cooldown
+  (see [Debounce](#debounce)) caps how often: one nudge per
+  `SESSION_TRIAGE_REARM_COOLDOWN_MINUTES`, default 30. (2) A write that
   COMMITS after `complete` took its listing holds an id outside the watermark
   and re-arms the next Stop; MCP writes are synchronous, so this needs a
   genuinely concurrent async writer. A third — concurrent Stop deliveries, in
@@ -746,7 +759,7 @@ difference is not observable to a hook:
 Leaving `expired` in place is deliberate: flipping it to `idle` would let the
 *debounce* re-admit it on elapsed time alone, which is precisely the cross-turn
 nag on an unresponsive session this paragraph rules out. Either way, `begin`
-arms only when new provenance exists, and both statuses stay closer-eligible
+arms only when new provenance exists and the re-arm cooldown has passed, and both statuses stay closer-eligible
 throughout — declining a *nudge* is never declining a *debrief*.
 
 `stop_hook_active=true` never injects a new prompt; it only finalizes or expires,
@@ -837,6 +850,21 @@ The closer still selects
 every `expired` row (zero-write: run even with no new signal) and `completed`
 rows whose event ids are not in `last_triaged_event_ids`, so a session that ends
 before the next Stop is not skipped.
+
+**Re-arm cooldown.** The signal alone made the bound *one nudge per turn that
+produced new provenance*, so a long agentic session that kept writing was asked to
+debrief after nearly every turn, including the turn right after a debrief. `begin`
+therefore declines `cooldown` while the run's last armed attempt is younger than
+`SESSION_TRIAGE_REARM_COOLDOWN_MINUTES` (default **30**; `0` switches it off). The
+age is read from `triage_armed_at`, which outlives the attempt, so a `completed`
+row a write flipped back to `idle` is covered too. The decline consumes nothing:
+the signal stays outside `last_triaged_event_ids`, the first Stop past the window
+arms on it, and the closer still selects the row if the session ends first. A run
+that never armed has no cooldown, so the first nudge of a session is unchanged.
+A reader clock behind the arming one computes a negative age, which counts as
+inside the window and only defers the nudge. An age more negative than the whole
+window reads as no cooldown, so a badly skewed arming clock cannot silence a run
+for the skew plus the window.
 
 ### Who is registered
 
@@ -1281,7 +1309,9 @@ These are not the P1s.
   untriaged provenance event — has no knob because it is a fact about the run
   rather than a threshold. `SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS` (**30**) was
   added later, for the age guard on the `pending` decline, not for the debounce.
-  Both matrices are pinned in `packages/db/test/session-triage.test.ts`.
+  `SESSION_TRIAGE_REARM_COOLDOWN_MINUTES` (**30**) came after that, to cap how
+  often a write-heavy run re-arms. All three matrices are pinned in
+  `packages/db/test/session-triage.test.ts`.
   The lease is settled at 24h, with a **1h sweep grace** on top: the lease
   already covers the overnight gap, so the grace only debounces the instant of
   expiry — and being non-zero is what keeps a swept `closed_at` outside the

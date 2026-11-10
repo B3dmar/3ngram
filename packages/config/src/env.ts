@@ -433,6 +433,23 @@ export const envSchema = z
     // 1 keeps the guard from being switched off entirely; the ceiling of 600
     // keeps a misconfiguration from deferring every finalize to the closer.
     SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS: z.coerce.number().int().min(1).max(600).default(30),
+    // The re-arm cooldown (issue #166 follow-up). A run that keeps writing
+    // re-arms on every turn that produced provenance, so without a floor a long
+    // agentic session gets a debrief prompt after nearly every turn. `begin`
+    // declines `cooldown` until this long after the run's last ARMED attempt;
+    // the signal it declines stays untriaged, so the first Stop after the
+    // window arms on it and the closer still sees it.
+    //
+    // DEFAULT. Thirty minutes allows a handful of nudges in a long session
+    // instead of one per writing turn. 0 switches the cooldown off and restores
+    // the per-turn bound; the ceiling of a day keeps a typo from silencing the
+    // nudge for good. A blank value is UNSET, not 0, as for
+    // COMMITMENT_EXPIRY_GRACE_DAYS: an injector that always sets the key must
+    // not switch the cooldown off by accident.
+    SESSION_TRIAGE_REARM_COOLDOWN_MINUTES: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.coerce.number().int().min(0).max(1440).default(30),
+    ),
     // SMTP delivery for password-reset emails (self-host hardening). ALL OPTIONAL and env-GATED: when SMTP_HOST +
     // SMTP_FROM are both set the app constructs a real nodemailer transport and
     // emails the reset link; when either is absent the forgot-password route
@@ -992,6 +1009,8 @@ export interface SessionTriageConfig {
   minElapsedMs: number
   /** Age an outstanding attempt must reach before `begin` publishes its token. */
   minAttemptAgeMs: number
+  /** Time after a run's last armed attempt before `begin` may arm again; 0 = off. */
+  rearmCooldownMs: number
 }
 
 /**
@@ -1007,6 +1026,7 @@ export function loadSessionTriageConfig(): SessionTriageConfig {
     minTurns: env.SESSION_TRIAGE_MIN_TURNS,
     minElapsedMs: env.SESSION_TRIAGE_MIN_ELAPSED_MINUTES * 60_000,
     minAttemptAgeMs: env.SESSION_TRIAGE_MIN_ATTEMPT_AGE_SECONDS * 1_000,
+    rearmCooldownMs: env.SESSION_TRIAGE_REARM_COOLDOWN_MINUTES * 60_000,
   }
 }
 
