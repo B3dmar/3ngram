@@ -181,6 +181,7 @@ its row here even when its name and kind are unchanged.
 | `resolveSentryEnvironment` | function | `fd88a78c181e` |
 | `scrubEvent` | function | `e24aa095d332` |
 | `scrubSentryEvent` | function | `e087a51244ab` |
+| `sentryClientOptions` | function | `5cdb772ee3fd` |
 
 ### `./redaction`
 

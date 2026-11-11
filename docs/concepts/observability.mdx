@@ -23,6 +23,7 @@ Tool picks: [pino](https://getpino.io) for logging, [Sentry](https://sentry.io) 
 - **DSN-gated everywhere.** Error tracking is active only when `SENTRY_DSN` is set. Each deployment sets `SENTRY_ENVIRONMENT` to keep events distinguishable; the tag resolves `SENTRY_ENVIRONMENT` → `RAILWAY_ENVIRONMENT_NAME` → `NODE_ENV`.
 - **Self-host: disabled unless the operator sets a DSN.** No phone-home by default — an OSS trust requirement.
 - Sentry events pass through the same content-scrubbing contract as logs: memory content fields are stripped before anything leaves the process.
+- The engine pins Sentry's 10.x opt-out (`sendDefaultPii: false`): no user info, HTTP bodies, database query data, or genAI inputs and outputs. Cookies and headers are filtered by a deny list, not dropped.
 - Unhandled rejection / uncaught exception handlers are registered explicitly; a worker crash is an event, not a silent restart.
 
 ## 3. Tracing

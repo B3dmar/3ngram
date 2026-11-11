@@ -98,6 +98,31 @@ let initialized = false
 let sentryEnabled = false
 
 /**
+ * Options for {@link Sentry.init}. Pure so a test can pin them without
+ * booting the SDK or registering process-global crash handlers.
+ */
+export function sentryClientOptions(input: {
+  dsn: string
+  environment: string
+  release: string
+}): NonNullable<Parameters<typeof Sentry.init>[0]> {
+  return {
+    dsn: input.dsn,
+    environment: input.environment,
+    ...(input.release === '' ? {} : { release: input.release }),
+    // Solo-scale: sample everything; revisit before real traffic.
+    tracesSampleRate: 1.0,
+    // Pin the 10.x opt-out. False keeps user info, HTTP bodies, database query
+    // data, and genAI inputs and outputs off. Cookies and headers are
+    // deny-listed, not dropped. Sentry 11 removes this flag, so an upgrade
+    // fails here instead of dropping the opt-out quietly.
+    sendDefaultPii: false,
+    beforeSend: (event) => scrubSentryEvent(event),
+    beforeSendTransaction: (event) => scrubEvent(event),
+  }
+}
+
+/**
  * Error tracking + tracing, DSN-gated: an empty SENTRY_DSN means fully
  * disabled — no phone-home, the self-host default (§2). With a DSN, Sentry's
  * Node SDK boots its bundled OpenTelemetry SDK (auto-instrumentation for
@@ -129,15 +154,7 @@ export function initObservability(options: { release?: string; role?: EnvRole } 
 
   const release = options.release ?? (env.GIT_SHA || env.RAILWAY_GIT_COMMIT_SHA)
   const environment = resolveSentryEnvironment(env)
-  Sentry.init({
-    dsn: env.SENTRY_DSN,
-    environment,
-    ...(release === '' ? {} : { release }),
-    // Solo-scale: sample everything; revisit before real traffic.
-    tracesSampleRate: 1.0,
-    beforeSend: (event) => scrubSentryEvent(event),
-    beforeSendTransaction: (event) => scrubEvent(event),
-  })
+  Sentry.init(sentryClientOptions({ dsn: env.SENTRY_DSN, environment, release }))
   sentryEnabled = true
   registerCrashHandlers(true)
   logger.info({ release, environment }, 'observability: Sentry + OTel enabled')
