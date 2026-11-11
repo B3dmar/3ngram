@@ -584,7 +584,7 @@ jobs:
     # hosted-branch secrets) so any fork can run the integration suite.
     services:
       postgres:
-        image: pgvector/pgvector:pg18
+        image: pgvector/pgvector:pg18@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
