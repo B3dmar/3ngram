@@ -23,6 +23,17 @@
       "enabled": false
     },
     {
+      "description": "engines ranges are a consumer contract: published engines.node stays open while each Node line is supported, and raising it is a major. rangeStrategy pin would rewrite every range to one exact version, so they stay hand-owned",
+      "matchDepTypes": ["engines"],
+      "enabled": false
+    },
+    {
+      "description": "The go.mod go directive is the hook's minimum source-compatible Go version, raised by hand with the code that needs it; rangeStrategy pin would raise and pin it",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
       "description": "Cooldown applies hardest to npm — active worm era (research/05)",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "7 days"
