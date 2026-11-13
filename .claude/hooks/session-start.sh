@@ -3,7 +3,7 @@
 # SessionStart hook for Claude Code cloud sessions.
 #
 # Brings a fresh cloud container to CI parity so `pnpm run check` / `pnpm run test`
-# work from the first turn: Node 24 (the version .github/workflows pin) and a
+# work from the first turn: Node 26 (the version .github/workflows pin) and a
 # frozen-lockfile install under the repo's supply-chain posture (pnpm-workspace.yaml).
 # Local sessions exit immediately — the developer's own toolchain is authoritative.
 #
@@ -25,9 +25,9 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 
-NODE_MAJOR=24
+NODE_MAJOR=26
 
-# --- Node 24 via nvm (the cloud image ships Node 22 + nvm at /opt/nvm) -------------
+# --- Node 26 via nvm (the cloud image ships Node 22 + nvm at /opt/nvm) -------------
 export NVM_DIR="${NVM_DIR:-/opt/nvm}"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
@@ -50,10 +50,15 @@ else
 fi
 
 # --- pnpm: the version pinned by package.json#packageManager -----------------------
-# pnpm >= 10 self-switches to the pinned version on first run; corepack is the
-# fallback when no pnpm is on PATH at all.
+# pnpm >= 10 self-switches to the pinned version on first run. With no pnpm on PATH
+# at all, use corepack where Node still ships it; Node >= 25 dropped it, so npm
+# installs the packageManager version instead.
 if ! command -v pnpm >/dev/null 2>&1; then
-  corepack enable pnpm >&2
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable pnpm >&2
+  else
+    npm install -g "$(node -p 'require("./package.json").packageManager')" >&2
+  fi
 fi
 
 echo "session-start: node $(node --version), pnpm $(pnpm --version)"
