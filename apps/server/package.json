@@ -15,7 +15,7 @@
     "postgresql"
   ],
   "engines": {
-    "node": ">=22"
+    "node": "v26.13.1"
   },
   "repository": {
     "type": "git",
