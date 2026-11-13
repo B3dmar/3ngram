@@ -16,7 +16,7 @@ ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 # Install the exact pnpm the repo pins (packageManager: pnpm@11.9.0). Node >= 25
 # no longer ships corepack, so npm installs it, as in the platform cloud image.
-RUN npm install -g pnpm@11.9.0
+RUN npm install -g --ignore-scripts pnpm@11.9.0
 WORKDIR /repo
 
 # ---- builder: full install, build the server + its workspace deps --------------

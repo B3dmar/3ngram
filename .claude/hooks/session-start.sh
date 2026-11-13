@@ -57,7 +57,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   if command -v corepack >/dev/null 2>&1; then
     corepack enable pnpm >&2
   else
-    npm install -g "$(node -p 'require("./package.json").packageManager')" >&2
+    npm install -g --ignore-scripts "$(node -p 'require("./package.json").packageManager')" >&2
   fi
 fi
 
