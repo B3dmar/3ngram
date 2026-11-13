@@ -18,12 +18,13 @@
 # ---- base: pin Node + pnpm once, reuse in every stage --------------------------
 # Pin the multi-platform OCI index (linux/amd64 + linux/arm64) so builds cannot
 # silently pick up a newly-published base image. Renovate updates this digest.
-ARG NODE_IMAGE=node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+ARG NODE_IMAGE=node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
 FROM ${NODE_IMAGE} AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-# Activate the exact pnpm the repo pins (packageManager: pnpm@11.9.0).
-RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+# Install the exact pnpm the repo pins (packageManager: pnpm@11.9.0). Node >= 25
+# no longer ships corepack, so npm installs it, as in the platform cloud image.
+RUN npm install -g --ignore-scripts pnpm@11.9.0
 WORKDIR /repo
 
 # ---- builder: full install, build the worker + its workspace deps ---------------
