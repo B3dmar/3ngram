@@ -41,7 +41,7 @@ jobs:
       # be 'every' here — under the default 'some', a .md file still matches '**'
       # and the exclusions never take effect, so docs-only PRs would wrongly run
       # Postgres integration.
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: integration
         with:
           predicate-quantifier: 'every'
@@ -67,7 +67,7 @@ jobs:
       # Positive suite filters choose which Postgres service shards do
       # real work. Unknown integration-relevant paths fall back to all shards in
       # the `integration` job.
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: suites
         with:
           filters: |
@@ -120,7 +120,7 @@ jobs:
       # `go` is an OR of positive patterns, so it keeps the default 'some'
       # quantifier (a separate step — 'every' would require a file to match both
       # patterns, which is impossible).
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: go
         with:
           filters: |
@@ -131,7 +131,7 @@ jobs:
       # closure or the container/release contract changes. This is an OR of
       # positive patterns; the two images share every workspace package below,
       # so one filter drives both builds.
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: container
         with:
           filters: |
