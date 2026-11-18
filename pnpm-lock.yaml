@@ -92,8 +92,8 @@ importers:
         specifier: 11.2.1
         version: 11.2.1
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.3.1
@@ -176,8 +176,8 @@ importers:
         specifier: 10.4.0
         version: 10.4.0
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 25.9.9
@@ -266,8 +266,8 @@ importers:
   packages/schema:
     dependencies:
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: 6.0.3
@@ -282,8 +282,8 @@ importers:
         specifier: workspace:*
         version: link:../schema
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 25.9.9
@@ -2160,9 +2160,6 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  zod@4.6.6:
-    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
-
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -3699,7 +3696,5 @@ snapshots:
   xtend@4.0.2: {}
 
   yaml@2.9.1: {}
-
-  zod@4.6.6: {}
 
   zod@4.6.7: {}
