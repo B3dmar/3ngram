@@ -1,5 +1,11 @@
 # @3ngram/config
 
+## 0.8.1
+
+### Patch Changes
+
+- d745345: Pin Sentry `sendDefaultPii` off on the engine observability init. That is the 10.x opt-out: no user info, HTTP bodies, database query data, or genAI inputs and outputs.
+
 ## 0.8.0
 
 ### Minor Changes
