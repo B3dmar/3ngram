@@ -28,7 +28,11 @@ overrides:
   # GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-3gg2-335m-rxc6, GHSA-46wx-v44x-9hh2,
   # GHSA-4h7h-rv7c-7m2v (<4.13.16): re-cut 2026-11-16 from <4.13.7 once 4.13.16 cleared the
   # cooldown (published 2026-11-01T03:04Z).
-  hono@<4.13.16: ^4.13.16
+  # GHSA-92p4-j3wq-jmqx, GHSA-39q9-qp46-w8xg, GHSA-h25j-2p75-qj33, GHSA-74fm-fwc7-3fwp
+  # (<=4.13.17; hono repository advisories, not yet in the GitHub global database): re-cut
+  # 2026-11-20 from <4.13.16 (4.13.18 published 2026-11-11T08:54Z). 3ngram calls none of the
+  # affected APIs (validator, bodyLimit, mount, serveStatic); this keeps scanners honest.
+  hono@<4.13.18: ^4.13.18
   nanoid@<3.3.18: ^3.3.18
   postcss@<=8.5.22: 8.5.23
   proxy-addr@<2.0.8: ^2.0.8
