@@ -1,5 +1,16 @@
 # @3ngram/server
 
+## 1.14.1
+
+### Patch Changes
+
+- 6576d28: Bump `hono` 4.13.13 -> 4.13.16 in `@3ngram/server` and re-cut the `hono` override to `<4.13.16` (GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-3gg2-335m-rxc6, GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v).
+- fedbdc0: Bump `hono` 4.13.16 -> 4.13.18 in `@3ngram/server` and re-cut the `hono` override to `<4.13.18` (GHSA-92p4-j3wq-jmqx, GHSA-39q9-qp46-w8xg, GHSA-h25j-2p75-qj33, GHSA-74fm-fwc7-3fwp). 3ngram calls none of the affected `hono` APIs.
+- 79ada0c: Build and run the server and worker images on Node 26 Active LTS (`node:26.13.1-bookworm-slim`, digest-pinned), up from Node 24. Node 26 no longer ships corepack, so the images install the pinned pnpm with npm. `engines.node` is unchanged: the published packages still support Node 22, 24 and 26.
+- f992a6e: Pin the server and worker base image to `node:24.22.3-bookworm-slim` by digest (Renovate digest pin), replacing the floating `node:24-bookworm-slim` tag.
+- Updated dependencies [d745345]
+  - @3ngram/config@0.8.1
+
 ## 1.14.0
 
 ### Minor Changes
