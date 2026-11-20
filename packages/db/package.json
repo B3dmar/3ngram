@@ -53,9 +53,9 @@
     "rate-limiter-flexible": "11.2.1"
   },
   "devDependencies": {
-    "@types/node": "25.9.1",
+    "@types/node": "25.9.9",
     "@types/pg": "8.20.0",
-    "drizzle-kit": "0.31.10",
+    "drizzle-kit": "0.31.11",
     "typescript": "6.0.3",
     "vitest": "4.1.12"
   }

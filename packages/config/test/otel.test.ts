@@ -10,6 +10,7 @@ import {
   resolveSentryEnvironment,
   scrubEvent,
   scrubSentryEvent,
+  sentryClientOptions,
 } from '../src/otel.js'
 import { REDACTED } from '../src/redaction.js'
 
@@ -58,6 +59,22 @@ describe('resolveSentryEnvironment (FR-009 — staging vs production must be dis
     const staging = resolveSentryEnvironment({ ...base, SENTRY_ENVIRONMENT: 'staging' })
     const production = resolveSentryEnvironment({ ...base, SENTRY_ENVIRONMENT: 'production' })
     expect(staging).not.toBe(production)
+  })
+})
+
+describe('sentryClientOptions', () => {
+  const dsn = 'https://public@example.ingest.sentry.io/1'
+
+  it('pins sendDefaultPii off without booting the SDK', () => {
+    const options = sentryClientOptions({ dsn, environment: 'test', release: 'abc' })
+    expect(options.sendDefaultPii).toBe(false)
+    expect(options.release).toBe('abc')
+  })
+
+  it('omits an empty release', () => {
+    const options = sentryClientOptions({ dsn, environment: 'test', release: '' })
+    expect(options).not.toHaveProperty('release')
+    expect(options.sendDefaultPii).toBe(false)
   })
 })
 

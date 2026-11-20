@@ -1,6 +1,6 @@
 {
   "name": "3ngram",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "description": "Command-line client for the 3ngram typed memory API.",
   "license": "Apache-2.0",
   "homepage": "https://3ngram.ai",
@@ -46,9 +46,9 @@
     "@3ngram/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "25.9.1",
+    "@types/node": "25.9.9",
     "typescript": "6.0.3",
     "vitest": "4.1.12",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   }
 }
