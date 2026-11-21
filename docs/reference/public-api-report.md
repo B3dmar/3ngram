@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.8.0
+## `@3ngram/config` 0.8.1
 
 ### `.`
 
@@ -181,6 +181,7 @@ its row here even when its name and kind are unchanged.
 | `resolveSentryEnvironment` | function | `fd88a78c181e` |
 | `scrubEvent` | function | `e24aa095d332` |
 | `scrubSentryEvent` | function | `e087a51244ab` |
+| `sentryClientOptions` | function | `5cdb772ee3fd` |
 
 ### `./redaction`
 
@@ -1664,7 +1665,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.14.0
+## `@3ngram/server` 1.14.1
 
 ### `./app`
 
