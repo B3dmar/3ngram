@@ -26,7 +26,7 @@ The `Signature` column is a sha256 hash (first 12 hex chars) over the
 export's declaration text in the built `.d.ts`, so a retyped symbol changes
 its row here even when its name and kind are unchanged.
 
-## `@3ngram/config` 0.8.1
+## `@3ngram/config` 0.8.2
 
 ### `.`
 
@@ -194,7 +194,7 @@ its row here even when its name and kind are unchanged.
 | `hashUserId` | function | `0a49beeaacde` |
 | `redactDeep` | function | `f8cde51e7351` |
 
-## `@3ngram/core` 0.19.0
+## `@3ngram/core` 0.19.1
 
 ### `.`
 
@@ -605,7 +605,7 @@ its row here even when its name and kind are unchanged.
 | `verifyEmail` | function | `ac0dc0ba703f` |
 | `verifyPassword` | function | `ff7837e2e5df` |
 
-## `@3ngram/db` 0.18.0
+## `@3ngram/db` 0.18.1
 
 ### `.`
 
@@ -1078,7 +1078,7 @@ its row here even when its name and kind are unchanged.
 | `createFakeGateway` | function | `4bf3968c5c87` |
 | `fakeEmbedding` | function | `6e5a3f63aa6d` |
 
-## `@3ngram/schema` 0.16.0
+## `@3ngram/schema` 0.16.1
 
 ### `.`
 
@@ -1665,7 +1665,7 @@ its row here even when its name and kind are unchanged.
 | `writeScopePolicyScopeRequirements` | const | `c084219b9c65` |
 | `writtenMemorySchema` | const | `3da9a2062563` |
 
-## `@3ngram/server` 1.14.1
+## `@3ngram/server` 1.14.2
 
 ### `./app`
 

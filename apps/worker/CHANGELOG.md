@@ -1,5 +1,16 @@
 # @3ngram/worker
 
+## 1.14.2
+
+### Patch Changes
+
+- 4e8f022: Raise the `@hono/node-server` override to `^1.19.19` so the server and worker images resolve the fix for GHSA-rmxm-3fg6-px4f, where `serveStatic` decoded the request path a second time (#407). 3ngram never calls `serveStatic`; the bump closes the advisory on the 1.x line without the MCP SDK 2.4 upgrade. Consumers that install `@3ngram/server` from npm need the same override in their own workspace, because pnpm overrides do not travel with published packages.
+- Updated dependencies [57061c8]
+- Updated dependencies [638f4dd]
+  - @3ngram/core@0.19.1
+  - @3ngram/config@0.8.2
+  - @3ngram/schema@0.16.1
+
 ## 1.14.1
 
 ### Patch Changes

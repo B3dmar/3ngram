@@ -1,5 +1,11 @@
 # @3ngram/config
 
+## 0.8.2
+
+### Patch Changes
+
+- 638f4dd: Bump the exact `zod` pin 4.6.6 -> 4.6.7 in `@3ngram/server`, `@3ngram/config`, `@3ngram/schema` and `@3ngram/sdk`. Upstream, 4.6.7 is a version-only release (one commit; no source change beyond the version constant), so schemas and the advertised MCP surface are unchanged.
+
 ## 0.8.1
 
 ### Patch Changes
