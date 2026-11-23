@@ -212,32 +212,32 @@ describe('applyFactProposal', () => {
     expect(await countFacts(uid)).toBe(1)
   })
 
-  it.each([
-    'superseded',
-    'archived',
-  ])('refuses a %s source without closing existing facts', async (state) => {
-    const live = await seedMemory(uid, crypto.randomUUID())
-    await ownerPool.query(
-      `INSERT INTO facts (user_id, memory_id, subject, predicate, value)
+  it.each(['superseded', 'archived'])(
+    'refuses a %s source without closing existing facts',
+    async (state) => {
+      const live = await seedMemory(uid, crypto.randomUUID())
+      await ownerPool.query(
+        `INSERT INTO facts (user_id, memory_id, subject, predicate, value)
       VALUES ($1, $2, 'lift.back_squat', 'top_set.weight_kg', '100')`,
-      [uid, live],
-    )
-    await insert([candidate()])
-    const [open] = await list()
-    await ownerPool.query(`UPDATE memories SET status = $2, valid_to = $3 WHERE id = $1`, [
-      memoryId,
-      state === 'archived' ? 'archived' : 'active',
-      state === 'superseded' ? new Date() : null,
-    ])
-    await expect(
-      withTenant(uid, (tx) => applyFactProposal(tx, uid, open?.id as string)),
-    ).rejects.toBeInstanceOf(FactProposalSourceNotLiveError)
-    expect((await list())[0]?.status).toBe('proposed')
-    const facts = await ownerPool.query('SELECT value, valid_to FROM facts WHERE user_id = $1', [
-      uid,
-    ])
-    expect(facts.rows).toEqual([{ value: '100', valid_to: null }])
-  })
+        [uid, live],
+      )
+      await insert([candidate()])
+      const [open] = await list()
+      await ownerPool.query(`UPDATE memories SET status = $2, valid_to = $3 WHERE id = $1`, [
+        memoryId,
+        state === 'archived' ? 'archived' : 'active',
+        state === 'superseded' ? new Date() : null,
+      ])
+      await expect(
+        withTenant(uid, (tx) => applyFactProposal(tx, uid, open?.id as string)),
+      ).rejects.toBeInstanceOf(FactProposalSourceNotLiveError)
+      expect((await list())[0]?.status).toBe('proposed')
+      const facts = await ownerPool.query('SELECT value, valid_to FROM facts WHERE user_id = $1', [
+        uid,
+      ])
+      expect(facts.rows).toEqual([{ value: '100', valid_to: null }])
+    },
+  )
 
   it('rechecks source liveness after waiting for a concurrent retirement', async () => {
     await insert([candidate()])

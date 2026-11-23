@@ -287,27 +287,30 @@ describe('kickEmbed (empty-input guard, #232)', () => {
   it.each([
     ['zero-length', ''],
     ['whitespace-only', ' \t\n  '],
-  ])('records a deterministic empty_input embed_failed WITHOUT a gateway call (%s)', async (_label, text) => {
-    recordEmbedFailure.mockResolvedValue(undefined)
-    const gateway = createFakeGateway()
+  ])(
+    'records a deterministic empty_input embed_failed WITHOUT a gateway call (%s)',
+    async (_label, text) => {
+      recordEmbedFailure.mockResolvedValue(undefined)
+      const gateway = createFakeGateway()
 
-    const { settled } = kickEmbed(USER, 'm-empty', text, ACTOR, {
-      gateway,
-      logger: silentLogger,
-    })
-    expect(await settled).toBe(false)
+      const { settled } = kickEmbed(USER, 'm-empty', text, ACTOR, {
+        gateway,
+        logger: silentLogger,
+      })
+      expect(await settled).toBe(false)
 
-    // The provider 400s empty input deterministically — never call it.
-    expect(gateway.calls.embed).toHaveLength(0)
-    expect(updateMemoryEmbedding).not.toHaveBeenCalled()
-    expect(recordEmbedFailure).toHaveBeenCalledTimes(1)
-    expect(recordEmbedFailure).toHaveBeenCalledWith(
-      USER,
-      'm-empty',
-      ACTOR,
-      EMPTY_EMBED_INPUT_REASON,
-    )
-  })
+      // The provider 400s empty input deterministically — never call it.
+      expect(gateway.calls.embed).toHaveLength(0)
+      expect(updateMemoryEmbedding).not.toHaveBeenCalled()
+      expect(recordEmbedFailure).toHaveBeenCalledTimes(1)
+      expect(recordEmbedFailure).toHaveBeenCalledWith(
+        USER,
+        'm-empty',
+        ACTOR,
+        EMPTY_EMBED_INPUT_REASON,
+      )
+    },
+  )
 
   it('still settles false (never throws) when recording the empty_input event fails', async () => {
     recordEmbedFailure.mockRejectedValue(new Error('db unavailable'))

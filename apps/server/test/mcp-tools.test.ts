@@ -2823,12 +2823,15 @@ describe('review_proposals tool', () => {
           }),
         ).toString('base64url'),
       ],
-    ])('a malformed cursor (%s) is invalid input and never reaches core', async (_label, cursor) => {
-      const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
-      expect(result.isError).toBe(true)
-      expect(errorText(result)).toContain('invalid input')
-      expect(listProposalsPage).not.toHaveBeenCalled()
-    })
+    ])(
+      'a malformed cursor (%s) is invalid input and never reaches core',
+      async (_label, cursor) => {
+        const result = await call('review_proposals', { action: 'list', cursor }, readCtx())
+        expect(result.isError).toBe(true)
+        expect(errorText(result)).toContain('invalid input')
+        expect(listProposalsPage).not.toHaveBeenCalled()
+      },
+    )
 
     it.each([
       ['a different status filter', mcpFp('rejected')],
@@ -3111,15 +3114,16 @@ describe('access gate enforcement: orientation + admin tools (#429)', () => {
     ['review_proposals', { action: 'reject', proposalId: MEMO_ID }, 'write', rejectProposal],
   ]
 
-  it.each(
-    GATED,
-  )('denies %s (%o) as a %s and never reaches core', async (tool, args, _access, coreSpy) => {
-    const result = await call(tool, args, denyingCtx())
-    expect(result.isError).toBe(true)
-    expect((result.content[0] as { text: string }).text).toContain('access_denied')
-    // The gate blocked BEFORE the db op — core was never invoked.
-    expect(coreSpy).not.toHaveBeenCalled()
-  })
+  it.each(GATED)(
+    'denies %s (%o) as a %s and never reaches core',
+    async (tool, args, _access, coreSpy) => {
+      const result = await call(tool, args, denyingCtx())
+      expect(result.isError).toBe(true)
+      expect((result.content[0] as { text: string }).text).toContain('access_denied')
+      // The gate blocked BEFORE the db op — core was never invoked.
+      expect(coreSpy).not.toHaveBeenCalled()
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------

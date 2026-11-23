@@ -329,14 +329,14 @@ describe('briefing — sectionLimit (bounds V2, issue #45)', () => {
     { sectionLimit: Number.NaN, forwarded: MAX_BRIEFING_SECTION }, // non-finite → mode default
     { sectionLimit: Number.POSITIVE_INFINITY, forwarded: MAX_BRIEFING_SECTION },
     { sectionLimit: -5, forwarded: 1 }, // truncated, then clamped up
-  ])('normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded (full mode)', async ({
-    sectionLimit,
-    forwarded,
-  }) => {
-    resetAll()
-    await briefing('u1', { selector: { kind: 'all' }, mode: 'full', sectionLimit, now: NOW })
-    expect(openCommitments.mock.calls[0]?.[3]).toBe(forwarded)
-  })
+  ])(
+    'normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded (full mode)',
+    async ({ sectionLimit, forwarded }) => {
+      resetAll()
+      await briefing('u1', { selector: { kind: 'all' }, mode: 'full', sectionLimit, now: NOW })
+      expect(openCommitments.mock.calls[0]?.[3]).toBe(forwarded)
+    },
+  )
 })
 
 describe('briefing — sections subset (bounds V2, issue #45)', () => {
@@ -421,23 +421,22 @@ describe('briefing — hasMore truth table (bounds V2, issue #45)', () => {
     { count: 3, rows: 3, hasMore: false },
     { count: 4, rows: 3, hasMore: true },
     { count: 40, rows: 3, hasMore: true },
-  ])('count=$count with $rows returned rows → hasMore=$hasMore', async ({
-    count,
-    rows,
-    hasMore,
-  }) => {
-    resetAll()
-    recentDecisions.mockResolvedValue(
-      page(
-        Array.from({ length: rows }, () => memoryRow()),
-        count,
-      ),
-    )
-    const result = await briefing('u1', { selector: { kind: 'all' }, now: NOW })
-    expect(result.recentDecisions?.count).toBe(count)
-    expect(result.recentDecisions?.items.length).toBe(rows)
-    expect(result.recentDecisions?.hasMore).toBe(hasMore)
-  })
+  ])(
+    'count=$count with $rows returned rows → hasMore=$hasMore',
+    async ({ count, rows, hasMore }) => {
+      resetAll()
+      recentDecisions.mockResolvedValue(
+        page(
+          Array.from({ length: rows }, () => memoryRow()),
+          count,
+        ),
+      )
+      const result = await briefing('u1', { selector: { kind: 'all' }, now: NOW })
+      expect(result.recentDecisions?.count).toBe(count)
+      expect(result.recentDecisions?.items.length).toBe(rows)
+      expect(result.recentDecisions?.hasMore).toBe(hasMore)
+    },
+  )
 })
 
 describe('briefing — legacy-input stability (bounds V2 must not move V1 callers)', () => {

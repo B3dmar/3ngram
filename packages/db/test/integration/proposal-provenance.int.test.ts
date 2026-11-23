@@ -132,39 +132,39 @@ describe('recorded proposal producers', () => {
     ).rejects.toMatchObject({ cause: { code: '23503' } })
   })
 
-  it.each([
-    'consolidation',
-    'retention',
-  ])('rejects an edge linked to another tenant’s %s proposal', async (kind) => {
-    const a = await memory(userA)
-    const b = await memory(userA)
-    const foreign = await memory(userB)
-    const foreignNewer = await memory(userB)
-    const id =
-      kind === 'consolidation'
-        ? await edgeProposal(userB, foreignNewer.id, foreign.id)
-        : (
-            await ownerPool.query(
-              `INSERT INTO retention_proposals (user_id, memory_id, action, probability, probabilities, model)
+  it.each(['consolidation', 'retention'])(
+    'rejects an edge linked to another tenant’s %s proposal',
+    async (kind) => {
+      const a = await memory(userA)
+      const b = await memory(userA)
+      const foreign = await memory(userB)
+      const foreignNewer = await memory(userB)
+      const id =
+        kind === 'consolidation'
+          ? await edgeProposal(userB, foreignNewer.id, foreign.id)
+          : (
+              await ownerPool.query(
+                `INSERT INTO retention_proposals (user_id, memory_id, action, probability, probabilities, model)
           VALUES ($1, $2, 'archive', 0.9, '{}', 'test') RETURNING id`,
-              [userB, foreign.id],
-            )
-          ).rows[0].id
-    await expect(
-      withTenant(userA, (tx) =>
-        insertEdge(tx, {
-          userId: userA,
-          fromId: a.id,
-          toId: b.id,
-          edgeType: 'extends',
-          createdBy: 'user_mcp',
-          ...(kind === 'consolidation'
-            ? { sourceConsolidationProposalId: id }
-            : { sourceRetentionProposalId: id }),
-        }),
-      ),
-    ).rejects.toMatchObject({ cause: { code: '23503' } })
-  })
+                [userB, foreign.id],
+              )
+            ).rows[0].id
+      await expect(
+        withTenant(userA, (tx) =>
+          insertEdge(tx, {
+            userId: userA,
+            fromId: a.id,
+            toId: b.id,
+            edgeType: 'extends',
+            createdBy: 'user_mcp',
+            ...(kind === 'consolidation'
+              ? { sourceConsolidationProposalId: id }
+              : { sourceRetentionProposalId: id }),
+          }),
+        ),
+      ).rejects.toMatchObject({ cause: { code: '23503' } })
+    },
+  )
 
   it('rejects two producers on the same edge', async () => {
     const a = await memory(userA)

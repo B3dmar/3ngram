@@ -67,15 +67,14 @@ describe('assertEphemeralTarget', () => {
     )
   })
 
-  it.each([
-    [LOCAL],
-    [LOCAL_IP],
-    [LOCAL_IPV6],
-  ])('PASSES when both connections are on the local allowlist (%s)', (url) => {
-    expect(() =>
-      assertEphemeralTarget({ DATABASE_URL: url, DATABASE_URL_UNPOOLED: url }),
-    ).not.toThrow()
-  })
+  it.each([[LOCAL], [LOCAL_IP], [LOCAL_IPV6]])(
+    'PASSES when both connections are on the local allowlist (%s)',
+    (url) => {
+      expect(() =>
+        assertEphemeralTarget({ DATABASE_URL: url, DATABASE_URL_UNPOOLED: url }),
+      ).not.toThrow()
+    },
+  )
 
   it('PASSES with the explicit I_AM_AN_EPHEMERAL_DB=1 flag even on a prod host', () => {
     expect(() =>
