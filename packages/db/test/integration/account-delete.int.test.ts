@@ -522,9 +522,9 @@ describe('eraseAccountData — explicit tenant predicates (#494)', () => {
     const one = async (q: string): Promise<Record<string, unknown>> =>
       (await ownerPool.query(q, [userB])).rows[0] as Record<string, unknown>
     expect(
-      (await ownerPool.query('SELECT content FROM memories WHERE user_id = $1', [userB])).rows.every(
-        (r) => r.content !== ERASED_PII,
-      ),
+      (
+        await ownerPool.query('SELECT content FROM memories WHERE user_id = $1', [userB])
+      ).rows.every((r) => r.content !== ERASED_PII),
     ).toBe(true)
     expect(await one('SELECT value FROM facts WHERE user_id = $1')).toEqual({ value: 'b-value' })
     expect(await one('SELECT value, rationale FROM fact_proposals WHERE user_id = $1')).toEqual({
