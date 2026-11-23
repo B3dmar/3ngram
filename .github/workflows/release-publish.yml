@@ -362,7 +362,7 @@ jobs:
       # No registry-url here: setup-node's registry-url writes an .npmrc line
       # expanding ${NODE_AUTH_TOKEN}, which breaks config parsing when the
       # env var is absent — and OIDC needs no token config at all.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
           cache: pnpm
