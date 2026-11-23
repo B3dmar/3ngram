@@ -177,14 +177,14 @@ describe('handoff — sectionLimit (bounds V2, issue #45)', () => {
     { sectionLimit: Number.NaN, forwarded: MAX_HANDOFF_SECTION }, // non-finite → default
     { sectionLimit: Number.POSITIVE_INFINITY, forwarded: MAX_HANDOFF_SECTION },
     { sectionLimit: -5, forwarded: 1 }, // truncated, then clamped up
-  ])('normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded', async ({
-    sectionLimit,
-    forwarded,
-  }) => {
-    resetAll()
-    await handoff('u1', { selector: { kind: 'all' }, sectionLimit, now: NOW })
-    expect(recentDecisions.mock.calls[0]?.[3]).toBe(forwarded)
-  })
+  ])(
+    'normalizes a direct-caller sectionLimit of $sectionLimit to $forwarded',
+    async ({ sectionLimit, forwarded }) => {
+      resetAll()
+      await handoff('u1', { selector: { kind: 'all' }, sectionLimit, now: NOW })
+      expect(recentDecisions.mock.calls[0]?.[3]).toBe(forwarded)
+    },
+  )
 })
 
 describe('handoff — counts + truncated (totals no longer discarded, issue #45)', () => {
@@ -193,23 +193,22 @@ describe('handoff — counts + truncated (totals no longer discarded, issue #45)
     { total: 2, rows: 2, truncated: false },
     { total: 3, rows: 2, truncated: true },
     { total: 58, rows: 25, truncated: true },
-  ])('total=$total with $rows exported rows → truncated=$truncated', async ({
-    total,
-    rows,
-    truncated,
-  }) => {
-    resetAll()
-    recentDecisions.mockResolvedValue(
-      page(
-        Array.from({ length: rows }, () => memoryRow()),
-        total,
-      ),
-    )
-    const result = await handoff('u1', { selector: { kind: 'all' }, now: NOW })
-    expect(result.counts.decisions).toBe(total)
-    expect(result.decisions.length).toBe(rows)
-    expect(result.truncated.decisions).toBe(truncated)
-  })
+  ])(
+    'total=$total with $rows exported rows → truncated=$truncated',
+    async ({ total, rows, truncated }) => {
+      resetAll()
+      recentDecisions.mockResolvedValue(
+        page(
+          Array.from({ length: rows }, () => memoryRow()),
+          total,
+        ),
+      )
+      const result = await handoff('u1', { selector: { kind: 'all' }, now: NOW })
+      expect(result.counts.decisions).toBe(total)
+      expect(result.decisions.length).toBe(rows)
+      expect(result.truncated.decisions).toBe(truncated)
+    },
+  )
 
   it('wires the exact window totals per section (the P1 discard repro)', async () => {
     resetAll()

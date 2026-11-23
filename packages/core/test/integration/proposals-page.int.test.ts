@@ -184,37 +184,41 @@ describe('listProposalsPage — complete enumeration', () => {
     expect(r.rows[0]).toEqual({ n: EDGE_TOTAL + FACT_TOTAL, stamps: 4 })
   })
 
-  it.each([
-    25, 100, 7,
-  ])('limit %i: every id exactly once, in strict merged order', async (limit) => {
-    const expected = new Set([
-      ...(await allIds('consolidation_proposals', userId)),
-      ...(await allIds('fact_proposals', userId)),
-    ])
-    const pages = await walk(userId, limit)
-    expectExactlyOnce(pages, expected)
-    expect(pages).toHaveLength(Math.ceil(expected.size / limit))
-    for (const page of pages) {
-      expect(pageIds(page).length).toBeLessThanOrEqual(limit)
-      expect(page.totals).toEqual({
-        edge: EDGE_TOTAL,
-        fact: FACT_TOTAL,
-        resolution: 0,
-        retention: 0,
-      })
-    }
-    // Strictly descending (createdAt, id) across the whole walk.
-    const ordered = pages.flatMap((page) =>
-      [
-        ...page.proposals.map((p) => ({ t: p.createdAt.getTime(), id: p.id })),
-        ...page.factProposals.map((p) => ({ t: p.createdAt.getTime(), id: p.id })),
-      ].sort((a, b) => b.t - a.t || (a.id < b.id ? 1 : -1)),
-    )
-    for (let i = 1; i < ordered.length; i++) {
-      const [prev, cur] = [ordered[i - 1], ordered[i]] as [(typeof ordered)[0], (typeof ordered)[0]]
-      expect(prev.t > cur.t || (prev.t === cur.t && prev.id > cur.id)).toBe(true)
-    }
-  })
+  it.each([25, 100, 7])(
+    'limit %i: every id exactly once, in strict merged order',
+    async (limit) => {
+      const expected = new Set([
+        ...(await allIds('consolidation_proposals', userId)),
+        ...(await allIds('fact_proposals', userId)),
+      ])
+      const pages = await walk(userId, limit)
+      expectExactlyOnce(pages, expected)
+      expect(pages).toHaveLength(Math.ceil(expected.size / limit))
+      for (const page of pages) {
+        expect(pageIds(page).length).toBeLessThanOrEqual(limit)
+        expect(page.totals).toEqual({
+          edge: EDGE_TOTAL,
+          fact: FACT_TOTAL,
+          resolution: 0,
+          retention: 0,
+        })
+      }
+      // Strictly descending (createdAt, id) across the whole walk.
+      const ordered = pages.flatMap((page) =>
+        [
+          ...page.proposals.map((p) => ({ t: p.createdAt.getTime(), id: p.id })),
+          ...page.factProposals.map((p) => ({ t: p.createdAt.getTime(), id: p.id })),
+        ].sort((a, b) => b.t - a.t || (a.id < b.id ? 1 : -1)),
+      )
+      for (let i = 1; i < ordered.length; i++) {
+        const [prev, cur] = [ordered[i - 1], ordered[i]] as [
+          (typeof ordered)[0],
+          (typeof ordered)[0],
+        ]
+        expect(prev.t > cur.t || (prev.t === cur.t && prev.id > cur.id)).toBe(true)
+      }
+    },
+  )
 
   it('exact boundary: total divisible by limit ends on a full page with hasMore=false', async () => {
     const pages = await walk(userId, 20) // 260 / 20 = 13

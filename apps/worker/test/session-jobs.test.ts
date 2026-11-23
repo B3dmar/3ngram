@@ -171,7 +171,9 @@ describe('queue wiring — the closer is default-off', () => {
     expect(sweep).toBeDefined()
     // Without attempts, a transient DB blip silently skips the pass until the
     // next tick — the same reason the other three carry it.
-    expect((sweep?.[2] as { opts: { attempts: number } }).opts.attempts).toBeGreaterThan(1)
+    expect(
+      (sweep?.[2] as { opts: { attempts: number } } | undefined)?.opts.attempts,
+    ).toBeGreaterThan(1)
     unmountQueues()
   })
 })
@@ -344,7 +346,9 @@ describe('the forgetting pass is default-off and a kill switch', () => {
     const { upsert, removeScheduler } = await bootQueues(false, true)
     const forgetting = upsert.mock.calls.find(([name]) => name === 'forgetting-pass')
     expect(forgetting?.[1]).toEqual({ pattern: '0 30 4 * * *' })
-    expect((forgetting?.[2] as { opts: { attempts: number } }).opts.attempts).toBeGreaterThan(1)
+    expect(
+      (forgetting?.[2] as { opts: { attempts: number } } | undefined)?.opts.attempts,
+    ).toBeGreaterThan(1)
     expect(removeScheduler).not.toHaveBeenCalledWith('forgetting-pass')
     unmountQueues()
   })

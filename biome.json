@@ -13,7 +13,11 @@
       "!**/.turbo",
       "!pnpm-lock.yaml",
       "!docs/api-reference/openapi.json",
-      "!cmd/3ngram-hook"
+      "!cmd/3ngram-hook",
+      "!**/*.md",
+      "!**/*.yaml",
+      "!**/*.yml",
+      "!**/*.svg"
     ]
   },
   "formatter": {
@@ -25,7 +29,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "suspicious": {
         "noConsole": "error",
         "noExplicitAny": "error"

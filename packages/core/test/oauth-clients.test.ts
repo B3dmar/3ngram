@@ -82,25 +82,25 @@ describe('registerOAuthClient — public clients', () => {
 })
 
 describe('registerOAuthClient — confidential clients', () => {
-  it.each([
-    'client_secret_post',
-    'client_secret_basic',
-  ] as const)('%s: mints a one-time secret whose SHA-256 hash is at rest (NOT NULL invariant)', async (method) => {
-    const info = await registerOAuthClient({
-      redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
-      token_endpoint_auth_method: method,
-      client_name: 'Claude',
-    })
-    const secret = info.client_secret
-    expect(typeof secret).toBe('string')
-    // RFC 7591 §3.2.1: REQUIRED when a secret is issued; 0 = never expires.
-    expect(info.client_secret_expires_at).toBe(0)
-    const stored = storedRows.get(info.client_id)
-    // The hash — and ONLY the hash — reached the db layer (hard rule 6).
-    expect(stored?.clientSecretHash).toBe(sha256(secret as string))
-    expect(stored?.clientSecretHash).not.toBeNull()
-    expect(stored?.clientSecretHash).not.toBe(secret)
-  })
+  it.each(['client_secret_post', 'client_secret_basic'] as const)(
+    '%s: mints a one-time secret whose SHA-256 hash is at rest (NOT NULL invariant)',
+    async (method) => {
+      const info = await registerOAuthClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: method,
+        client_name: 'Claude',
+      })
+      const secret = info.client_secret
+      expect(typeof secret).toBe('string')
+      // RFC 7591 §3.2.1: REQUIRED when a secret is issued; 0 = never expires.
+      expect(info.client_secret_expires_at).toBe(0)
+      const stored = storedRows.get(info.client_id)
+      // The hash — and ONLY the hash — reached the db layer (hard rule 6).
+      expect(stored?.clientSecretHash).toBe(sha256(secret as string))
+      expect(stored?.clientSecretHash).not.toBeNull()
+      expect(stored?.clientSecretHash).not.toBe(secret)
+    },
+  )
 
   it('mints distinct ids and secrets per registration (CSPRNG, never reused)', async () => {
     const input = {

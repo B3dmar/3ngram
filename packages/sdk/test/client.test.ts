@@ -190,18 +190,18 @@ describe('ThreengramClient request shape', () => {
     expect(result).toEqual(payload)
   })
 
-  it.each([
-    crypto.randomUUID(),
-    null,
-  ])('resolve preserves sessionRunId %s in the body', async (runId) => {
-    const id = crypto.randomUUID()
-    const { fetch, calls } = stubFetch(200, { commitmentId: id, status: 'resolved' })
-    const client = new ThreengramClient(CONFIG, fetch)
+  it.each([crypto.randomUUID(), null])(
+    'resolve preserves sessionRunId %s in the body',
+    async (runId) => {
+      const id = crypto.randomUUID()
+      const { fetch, calls } = stubFetch(200, { commitmentId: id, status: 'resolved' })
+      const client = new ThreengramClient(CONFIG, fetch)
 
-    await client.resolve(id, 'resolved', { sessionRunId: runId })
+      await client.resolve(id, 'resolved', { sessionRunId: runId })
 
-    expect(only(calls).body).toEqual({ status: 'resolved', sessionRunId: runId })
-  })
+      expect(only(calls).body).toEqual({ status: 'resolved', sessionRunId: runId })
+    },
+  )
 
   it('resolve forwards an optional reason in the body (issue #234)', async () => {
     const id = crypto.randomUUID()

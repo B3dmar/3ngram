@@ -168,15 +168,18 @@ describe('archive disposition order of operations (#217)', () => {
       { outcome: 'rejected', reason: 'superseded' },
     ],
     ['a blocker', live('blocker'), { outcome: 'rejected', reason: 'blocker' }],
-  ] as const)('%s: decided from the peek, before provenance, writing nothing', async (_name, peek, verdict) => {
-    const { inserts, updates } = makeTx(peek === undefined ? {} : { peek: { ...peek } })
+  ] as const)(
+    '%s: decided from the peek, before provenance, writing nothing',
+    async (_name, peek, verdict) => {
+      const { inserts, updates } = makeTx(peek === undefined ? {} : { peek: { ...peek } })
 
-    await expect(dispose()).resolves.toEqual({ memoryId: MEMORY_ID, ...verdict })
+      await expect(dispose()).resolves.toEqual({ memoryId: MEMORY_ID, ...verdict })
 
-    expect(ops).not.toContain('provenance')
-    expect(updates).toHaveLength(0)
-    expect(inserts).toHaveLength(0)
-  })
+      expect(ops).not.toContain('provenance')
+      expect(updates).toHaveLength(0)
+      expect(inserts).toHaveLength(0)
+    },
+  )
 
   it.each(['open', 'waiting'])('rejects a memory riding a %s commitment', async (status) => {
     const { inserts } = makeTx({ peek: live('commitment'), commitment: status })
@@ -280,14 +283,21 @@ describe('reaffirm disposition order of operations (#218)', () => {
     ['not_found', undefined, 'not_found'],
     ['archived', { ...live(), status: 'archived' }, 'archived'],
     ['superseded', { ...live(), validTo: new Date() }, 'superseded'],
-  ] as const)('%s: rejected from the peek, before provenance, writing nothing', async (_name, peek, reason) => {
-    const { inserts, updates } = makeTx(peek === undefined ? {} : { peek: { ...peek } })
+  ] as const)(
+    '%s: rejected from the peek, before provenance, writing nothing',
+    async (_name, peek, reason) => {
+      const { inserts, updates } = makeTx(peek === undefined ? {} : { peek: { ...peek } })
 
-    await expect(reaffirm()).resolves.toEqual({ memoryId: MEMORY_ID, outcome: 'rejected', reason })
-    expect(ops).not.toContain('provenance')
-    expect(updates).toHaveLength(0)
-    expect(inserts).toHaveLength(0)
-  })
+      await expect(reaffirm()).resolves.toEqual({
+        memoryId: MEMORY_ID,
+        outcome: 'rejected',
+        reason,
+      })
+      expect(ops).not.toContain('provenance')
+      expect(updates).toHaveLength(0)
+      expect(inserts).toHaveLength(0)
+    },
+  )
 
   it('re-decides under the row lock: a concurrent archive that won is reported', async () => {
     const { inserts, updates } = makeTx({ peek: live(), locked: { ...live(), status: 'archived' } })

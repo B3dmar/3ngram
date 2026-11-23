@@ -234,41 +234,41 @@ describe('accept', () => {
 })
 
 describe('accept: refusals and races', () => {
-  it.each([
-    'retention',
-    'consolidation',
-  ])('%s holds the successor live until commit', async (path) => {
-    const { older, newer, apply } = await supersessionCase(path)
-    const applied = holdOpen(userA, apply)
-    await applied.ready
-    const retire = track(
-      withTenant(userA, (tx) =>
-        tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
-      ),
-    )
-    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: applied.pid })
-    await applied.commit()
-    await retire
-    expect(await events(older)).toEqual(['supersede'])
-  })
+  it.each(['retention', 'consolidation'])(
+    '%s holds the successor live until commit',
+    async (path) => {
+      const { older, newer, apply } = await supersessionCase(path)
+      const applied = holdOpen(userA, apply)
+      await applied.ready
+      const retire = track(
+        withTenant(userA, (tx) =>
+          tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
+        ),
+      )
+      await waitForLockWait({ locktype: ROW_LOCK, blockedBy: applied.pid })
+      await applied.commit()
+      await retire
+      expect(await events(older)).toEqual(['supersede'])
+    },
+  )
 
-  it.each([
-    'retention',
-    'consolidation',
-  ])('%s rechecks successor liveness after waiting for retirement', async (path) => {
-    const { older, newer, apply, status } = await supersessionCase(path)
-    const retire = holdOpen(userA, (tx) =>
-      tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
-    )
-    await retire.ready
-    const applied = track(withTenant(userA, apply))
-    await waitForLockWait({ locktype: ROW_LOCK, blockedBy: retire.pid })
-    await retire.commit()
-    await expect(applied).rejects.toBeInstanceOf(SuccessorNotLiveError)
-    expect(await memoryState(older)).toEqual({ status: 'active', closed: false })
-    expect(await status()).toBe('proposed')
-    expect(await events(older)).toEqual([])
-  })
+  it.each(['retention', 'consolidation'])(
+    '%s rechecks successor liveness after waiting for retirement',
+    async (path) => {
+      const { older, newer, apply, status } = await supersessionCase(path)
+      const retire = holdOpen(userA, (tx) =>
+        tx.execute(sql`UPDATE memories SET valid_to = now() WHERE id = ${newer}`),
+      )
+      await retire.ready
+      const applied = track(withTenant(userA, apply))
+      await waitForLockWait({ locktype: ROW_LOCK, blockedBy: retire.pid })
+      await retire.commit()
+      await expect(applied).rejects.toBeInstanceOf(SuccessorNotLiveError)
+      expect(await memoryState(older)).toEqual({ status: 'active', closed: false })
+      expect(await status()).toBe('proposed')
+      expect(await events(older)).toEqual([])
+    },
+  )
 
   it('supersede: refuses an older memory that is no longer live, and rolls back', async () => {
     const older = await seedMemory(userA, 'decision', 60)
@@ -325,18 +325,18 @@ describe('accept: refusals and races', () => {
     expect((await accept(userA, second)).status).toBe('applied')
   })
 
-  it.each([
-    'active',
-    'archived',
-  ])('two accepts on a %s memory: exactly one wins', async (status) => {
-    const m = await seedMemory(userA)
-    await ownerPool.query('UPDATE memories SET status = $2 WHERE id = $1', [m, status])
-    const id = await seedProposal(userA, m, 'archive')
-    const results = await Promise.allSettled([accept(userA, id), accept(userA, id)])
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
-    const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
-    expect(lost.reason).toBeInstanceOf(ProposalNotFoundError)
-  })
+  it.each(['active', 'archived'])(
+    'two accepts on a %s memory: exactly one wins',
+    async (status) => {
+      const m = await seedMemory(userA)
+      await ownerPool.query('UPDATE memories SET status = $2 WHERE id = $1', [m, status])
+      const id = await seedProposal(userA, m, 'archive')
+      const results = await Promise.allSettled([accept(userA, id), accept(userA, id)])
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+      const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
+      expect(lost.reason).toBeInstanceOf(ProposalNotFoundError)
+    },
+  )
 })
 
 describe('accept: account erasure', () => {
@@ -352,24 +352,24 @@ describe('accept: account erasure', () => {
     expect(await events(older)).toEqual([])
   })
 
-  it.each([
-    'archive',
-    'supersede',
-  ])('%s refuses a tombstoned account without deciding', async (action) => {
-    const older = await seedMemory(userA)
-    const newer = await seedMemory(userA, 'decision', 1)
-    const id = await seedProposal(userA, older, action, {
-      related: action === 'supersede' ? newer : undefined,
-    })
-    const erase = holdOpen(userA, (tx) => eraseAccountData(tx, userA, new Date()))
-    await erase.ready
-    const apply = track(accept(userA, id))
-    await waitForLockWait({ locktype: 'advisory', blockedBy: erase.pid })
-    await erase.commit()
-    await expect(apply).rejects.toBeInstanceOf(AccountDeletedError)
-    expect(await proposalStatus(id)).toBe('proposed')
-    expect(await events(older)).toEqual([])
-  })
+  it.each(['archive', 'supersede'])(
+    '%s refuses a tombstoned account without deciding',
+    async (action) => {
+      const older = await seedMemory(userA)
+      const newer = await seedMemory(userA, 'decision', 1)
+      const id = await seedProposal(userA, older, action, {
+        related: action === 'supersede' ? newer : undefined,
+      })
+      const erase = holdOpen(userA, (tx) => eraseAccountData(tx, userA, new Date()))
+      await erase.ready
+      const apply = track(accept(userA, id))
+      await waitForLockWait({ locktype: 'advisory', blockedBy: erase.pid })
+      await erase.commit()
+      await expect(apply).rejects.toBeInstanceOf(AccountDeletedError)
+      expect(await proposalStatus(id)).toBe('proposed')
+      expect(await events(older)).toEqual([])
+    },
+  )
 
   it('takes the lifecycle lock before the memory lock, so erasure waits without a cycle', async () => {
     const m = await seedMemory(userA)
