@@ -1,5 +1,19 @@
 # @3ngram/server
 
+## 1.14.2
+
+### Patch Changes
+
+- 5427856: Bump the exact `hono` pin 4.13.18 -> 4.13.19 in `@3ngram/server` (Renovate update). The workspace override `hono@<4.13.18: ^4.13.18` is unchanged.
+- 4e8f022: Raise the `@hono/node-server` override to `^1.19.19` so the server and worker images resolve the fix for GHSA-rmxm-3fg6-px4f, where `serveStatic` decoded the request path a second time (#407). 3ngram never calls `serveStatic`; the bump closes the advisory on the 1.x line without the MCP SDK 2.4 upgrade. Consumers that install `@3ngram/server` from npm need the same override in their own workspace, because pnpm overrides do not travel with published packages.
+- e20ed60: Upgrade the MCP TypeScript SDK: `@modelcontextprotocol/server` and `@modelcontextprotocol/client` 2.3.1 -> 2.4.0, and `@modelcontextprotocol/node` 2.1.1 -> 2.1.2 (the adapter 2.1.2 requires server ^2.4.0). The advertised MCP surface is unchanged: no tool uses `x-mcp-header` on a `number` parameter or a `.meta({ id })` output schema, which are the 2.4.0 upgrade notes. The adapter now also accepts `@hono/node-server` 2.x; the lockfile stays on 1.19.19.
+- 638f4dd: Bump the exact `zod` pin 4.6.6 -> 4.6.7 in `@3ngram/server`, `@3ngram/config`, `@3ngram/schema` and `@3ngram/sdk`. Upstream, 4.6.7 is a version-only release (one commit; no source change beyond the version constant), so schemas and the advertised MCP surface are unchanged.
+- Updated dependencies [57061c8]
+- Updated dependencies [638f4dd]
+  - @3ngram/core@0.19.1
+  - @3ngram/config@0.8.2
+  - @3ngram/schema@0.16.1
+
 ## 1.14.1
 
 ### Patch Changes
