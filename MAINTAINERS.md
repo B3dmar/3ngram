@@ -17,8 +17,10 @@ any change to governance will be recorded here.
 |---|---|---|
 | Sebastian Gade | [@sebastianebg](https://github.com/sebastianebg) | All — architecture, releases, security, licensing, CI |
 
-Code-ownership routing for security-, license-, release-, and CI-sensitive paths
-is enforced via [`.github/CODEOWNERS`](.github/CODEOWNERS).
+Code-ownership routing for the license-, security-, CI- and install-trust-sensitive
+paths is listed in [`.github/CODEOWNERS`](.github/CODEOWNERS). The list is deliberately
+narrow: there is no default owner, and everything else merges on required checks plus
+an independent review.
 
 ## Decision-making
 
