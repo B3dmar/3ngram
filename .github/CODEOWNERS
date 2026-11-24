@@ -24,3 +24,14 @@
 /.github/workflows/         @sebastianebg
 /scripts/                   @sebastianebg
 /renovate.json              @sebastianebg
+/.github/actions/           @sebastianebg
+/.changeset/config.json     @sebastianebg
+/.gitleaks.toml             @sebastianebg
+
+# Install trust settings (lifecycle scripts, overrides, registry).
+/.npmrc                     @sebastianebg
+/pnpm-workspace.yaml        @sebastianebg
+
+# Commands that run in agent sessions.
+/.claude/settings.json      @sebastianebg
+/.claude/hooks/             @sebastianebg
