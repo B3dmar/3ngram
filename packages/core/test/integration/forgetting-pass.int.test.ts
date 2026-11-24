@@ -57,25 +57,27 @@ afterAll(async () => {
 })
 
 describe('runForgettingPass (real database, fake judgment gateway)', () => {
-  it.each([
-    'event',
-    'note',
-  ])('excludes recurring %s rows from both candidate streams', async (type) => {
-    const older = await seed('decision', 1, 90)
-    const newer = await seed('decision', 1, 60)
-    const episodes = [await seed(type, 1, 90), await seed(type, 1, 60)]
-    await ownerPool.query(
-      `UPDATE memories SET topic = 'Dated weekly debrief',
+  it.each(['event', 'note'])(
+    'excludes recurring %s rows from both candidate streams',
+    async (type) => {
+      const older = await seed('decision', 1, 90)
+      const newer = await seed('decision', 1, 60)
+      const episodes = [await seed(type, 1, 90), await seed(type, 1, 60)]
+      await ownerPool.query(
+        `UPDATE memories SET topic = 'Dated weekly debrief',
                            content = 'This week: reviewed the release and recorded its outcome.'
        WHERE user_id = $1 AND id = ANY($2::uuid[])`,
-      [userId, episodes],
-    )
+        [userId, episodes],
+      )
 
-    const candidates = await dbForgettingRepo.readCandidates(userId, NOW)
+      const candidates = await dbForgettingRepo.readCandidates(userId, NOW)
 
-    expect(candidates.singles.map((memory) => memory.id)).toEqual([older, newer])
-    expect(candidates.pairs.map((pair) => [pair.older.id, pair.newer.id])).toEqual([[older, newer]])
-  })
+      expect(candidates.singles.map((memory) => memory.id)).toEqual([older, newer])
+      expect(candidates.pairs.map((pair) => [pair.older.id, pair.newer.id])).toEqual([
+        [older, newer],
+      ])
+    },
+  )
 
   it('stages verdicts for an opted-in tenant, records usage, and does not re-judge', async () => {
     const older = await seed('decision', 1, 90)

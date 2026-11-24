@@ -47,13 +47,12 @@ async function expectReason(promise: Promise<unknown>, reason: string): Promise<
 }
 
 describe('isPublicClientMetadataAddress', () => {
-  it.each([
-    '8.8.8.8',
-    '1.1.1.1',
-    '2606:4700:4700::1111',
-  ])('accepts public unicast %s', (address) => {
-    expect(isPublicClientMetadataAddress(address)).toBe(true)
-  })
+  it.each(['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111'])(
+    'accepts public unicast %s',
+    (address) => {
+      expect(isPublicClientMetadataAddress(address)).toBe(true)
+    },
+  )
 
   it.each([
     '127.0.0.1',
@@ -241,20 +240,19 @@ describe('ClientMetadataResolver', () => {
     expect(fetchDocument).toHaveBeenCalledTimes(2)
   })
 
-  it.each([
-    'no-store',
-    'no-cache',
-    'private, max-age=600',
-  ])('does not cache a %s response', async (cacheControl) => {
-    const fetchDocument = vi.fn<ClientMetadataDocumentFetcher>(async () => ({
-      document: document(),
-      headers: new Headers({ 'cache-control': cacheControl }),
-    }))
-    const resolver = new ClientMetadataResolver({ fetchDocument })
-    await resolver.resolve(clientId)
-    await resolver.resolve(clientId)
-    expect(fetchDocument).toHaveBeenCalledTimes(2)
-  })
+  it.each(['no-store', 'no-cache', 'private, max-age=600'])(
+    'does not cache a %s response',
+    async (cacheControl) => {
+      const fetchDocument = vi.fn<ClientMetadataDocumentFetcher>(async () => ({
+        document: document(),
+        headers: new Headers({ 'cache-control': cacheControl }),
+      }))
+      const resolver = new ClientMetadataResolver({ fetchDocument })
+      await resolver.resolve(clientId)
+      await resolver.resolve(clientId)
+      expect(fetchDocument).toHaveBeenCalledTimes(2)
+    },
+  )
 
   it('does not cache invalid metadata or failed fetches', async () => {
     const invalid = vi.fn<ClientMetadataDocumentFetcher>(async () => ({

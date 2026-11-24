@@ -251,44 +251,45 @@ describe('shared provenance read (#431)', () => {
   })
 })
 
-it.each([
-  'batch',
-  'history',
-])('keeps %s provenance on one snapshot during acceptance', async (surface) => {
-  const older = await seedMemory(userA, 'older', 'old')
-  const newer = await seedMemory(userA, 'newer', 'new')
-  await withTenant(userA, (tx) =>
-    insertProposals(tx, [
-      {
-        userId: userA,
-        fromId: newer,
-        toId: older,
-        edgeType: 'supersedes',
-        memoryType: 'note',
-        similarity: 0.9,
-      },
-    ]),
-  )
-  const staged = await ownerPool.query('SELECT id FROM consolidation_proposals WHERE user_id=$1', [
-    userA,
-  ])
-  const proposalId = staged.rows[0].id as string
-  interleave.afterSections = async () => {
-    await acceptProposalAnyKind(userA, proposalId, 'user_mcp')
-  }
-  const snapshot =
-    surface === 'batch'
-      ? (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
-          ?.provenance
-      : (await getMemoryHistory(userA, older)).provenance
-  expect(interleave.afterSections).toBeUndefined()
-  expect(snapshot?.proposals).toEqual({ items: [], truncated: false })
-  expect(snapshot?.supersession).toEqual({ predecessors: [], successors: [], truncated: false })
-  const next = (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
-    ?.provenance
-  expect(next?.proposals.items.map((p) => p.id)).toEqual([proposalId])
-  expect(next?.supersession.successors[0]?.sourceProposal).toEqual({
-    proposalKind: 'edge',
-    proposalId,
-  })
-})
+it.each(['batch', 'history'])(
+  'keeps %s provenance on one snapshot during acceptance',
+  async (surface) => {
+    const older = await seedMemory(userA, 'older', 'old')
+    const newer = await seedMemory(userA, 'newer', 'new')
+    await withTenant(userA, (tx) =>
+      insertProposals(tx, [
+        {
+          userId: userA,
+          fromId: newer,
+          toId: older,
+          edgeType: 'supersedes',
+          memoryType: 'note',
+          similarity: 0.9,
+        },
+      ]),
+    )
+    const staged = await ownerPool.query(
+      'SELECT id FROM consolidation_proposals WHERE user_id=$1',
+      [userA],
+    )
+    const proposalId = staged.rows[0].id as string
+    interleave.afterSections = async () => {
+      await acceptProposalAnyKind(userA, proposalId, 'user_mcp')
+    }
+    const snapshot =
+      surface === 'batch'
+        ? (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
+            ?.provenance
+        : (await getMemoryHistory(userA, older)).provenance
+    expect(interleave.afterSections).toBeUndefined()
+    expect(snapshot?.proposals).toEqual({ items: [], truncated: false })
+    expect(snapshot?.supersession).toEqual({ predecessors: [], successors: [], truncated: false })
+    const next = (await getMemoriesByIds(userA, [older], { include: ['provenance'] })).memories[0]
+      ?.provenance
+    expect(next?.proposals.items.map((p) => p.id)).toEqual([proposalId])
+    expect(next?.supersession.successors[0]?.sourceProposal).toEqual({
+      proposalKind: 'edge',
+      proposalId,
+    })
+  },
+)

@@ -1,6 +1,6 @@
 {
   "name": "@3ngram/schema",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "The single validation boundary: every enum, constraint, and policy lives here.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/B3dmar/3ngram#readme",
@@ -38,7 +38,7 @@
     "test": "vitest run --exclude '**/integration/**'"
   },
   "dependencies": {
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "typescript": "6.0.3",

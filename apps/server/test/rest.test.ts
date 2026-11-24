@@ -4004,16 +4004,17 @@ describe('access gate enforcement (#429)', () => {
     ['reject (write)', 'POST', `/api/v1/proposals/${NEW_ID}/reject`, {}, rejectProposal],
   ]
 
-  it.each(
-    GATED,
-  )('denies %s with 403 access_denied and never reaches core', async (_label, method, path, body, coreSpy) => {
-    const res = await callGated(path, { method, key: VALID_KEY, body })
-    expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'access_denied' })
-    // The gate blocked BEFORE the db op — the core fn was never invoked.
-    expect(coreSpy).not.toHaveBeenCalled()
-    expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
-  })
+  it.each(GATED)(
+    'denies %s with 403 access_denied and never reaches core',
+    async (_label, method, path, body, coreSpy) => {
+      const res = await callGated(path, { method, key: VALID_KEY, body })
+      expect(res.status).toBe(403)
+      expect(await res.json()).toEqual({ error: 'access_denied' })
+      // The gate blocked BEFORE the db op — the core fn was never invoked.
+      expect(coreSpy).not.toHaveBeenCalled()
+      expect(resolveRetrievalPolicy).not.toHaveBeenCalled()
+    },
+  )
 
   it('still serves GET /api/v1/budget under a denying gate — deliberately ungated', async () => {
     // A denied user MUST keep reading their own cost status: it is the very read

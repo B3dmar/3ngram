@@ -51,15 +51,12 @@ describe('loadJevGatewayConfig', () => {
 })
 
 describe('JEV_* env schema', () => {
-  it.each([
-    'jev-latest',
-    'JEV-LATEST',
-    'latest',
-    'jev_latest',
-    'jev.latest',
-  ])('refuses the floating alias %j as the model pin', (model) => {
-    expect(() => parseEnv({ JEV_MODEL: model })).toThrow()
-  })
+  it.each(['jev-latest', 'JEV-LATEST', 'latest', 'jev_latest', 'jev.latest'])(
+    'refuses the floating alias %j as the model pin',
+    (model) => {
+      expect(() => parseEnv({ JEV_MODEL: model })).toThrow()
+    },
+  )
 
   it('treats a whitespace-only model or key as unset and trims the key', () => {
     expect(parseEnv({ JEV_MODEL: '   ' }).JEV_MODEL).toBeUndefined()

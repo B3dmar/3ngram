@@ -107,13 +107,12 @@ describe('clientIdMetadataDocumentSchema', () => {
     expect(parsed.grant_types).toEqual([])
   })
 
-  it.each([
-    { grant_types: [] },
-    { grant_types: 'authorization_code' },
-    { response_types: [] },
-  ])('still rejects a structurally malformed advertisement: %o', (override) => {
-    expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
-  })
+  it.each([{ grant_types: [] }, { grant_types: 'authorization_code' }, { response_types: [] }])(
+    'still rejects a structurally malformed advertisement: %o',
+    (override) => {
+      expect(clientIdMetadataDocumentSchema.safeParse(document(override)).success).toBe(false)
+    },
+  )
 
   // Asymmetric with grant_types ON PURPOSE: /authorize rejects a client lacking
   // authorization_code, but nothing downstream consults response_types, so a

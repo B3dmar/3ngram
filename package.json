@@ -23,9 +23,9 @@
     "seed": "pnpm --filter @3ngram/db run seed"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.16",
+    "@biomejs/biome": "2.6.8",
     "@changesets/cli": "3.0.3",
     "jose": "6.2.17",
-    "turbo": "2.9.16"
+    "turbo": "2.11.11"
   }
 }

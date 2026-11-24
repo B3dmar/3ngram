@@ -10,6 +10,7 @@
 //   - sessions are deleted; api keys + oauth tokens are revoked (revoked_at)
 //   - a second run is idempotent (already-erased marker short-circuits)
 //   - RLS scopes erasure to the tenant (user B is untouched)
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   AccountDeletedError,
@@ -22,6 +23,7 @@ import {
   insertPasswordResetToken,
   type NewOauthToken,
   resetPasswordAtomic,
+  type TenantTx,
   transitionCommitment,
   withTenant,
   writeMemory,
@@ -401,6 +403,168 @@ describe('eraseAccountData — PII erasure (runtime role, real RLS + grants)', (
     )
     expect(bSession.rows[0].last_message_excerpt).toBe('b last message')
     expect(bSession.rows[0].project).toBe('3ngram')
+  })
+})
+
+// Issue #494: every statement in eraseAccountData carries an explicit user_id
+// predicate, so erasure stays scoped to one tenant even on a connection that
+// BYPASSES row-level security (a table owner, a migration, an operator script).
+// RLS remains the primary boundary; this proves the predicate is a real second
+// one. Before #494, 13 statements relied on RLS alone and this test erased B.
+describe('eraseAccountData — explicit tenant predicates (#494)', () => {
+  // One row per RLS-dependent table the erasure writes, all tagged with `tag`.
+  async function seedEveryTable(userId: string, tag: string, clientId: string): Promise<void> {
+    const uniq = `${tag}-${crypto.randomUUID()}`
+    const m1 = await seedMemory(userId, `${tag}-topic`, `${tag}-body`)
+    const m2 = await seedMemory(userId, `${tag}-topic-2`, `${tag}-body-2`)
+    await seedFact(userId, m1, `${tag}-value`)
+    await seedFactProposal(userId, m1, `${tag}-proposed`)
+    await seedAgentSession(userId, `sess-${tag}`, `${tag} last message`, `${tag} briefing`)
+    await ownerPool.query(
+      `INSERT INTO consolidation_proposals (user_id, from_id, to_id, edge_type, memory_type, similarity, rationale)
+       VALUES ($1, $2, $3, 'extends', 'note', 0.93, $4)`,
+      [userId, m2, m1, `${tag} rationale`],
+    )
+    const written = await writeMemory({
+      userId,
+      memoryType: 'commitment',
+      topic: `${tag} obligation`,
+      content: `${tag} obligation body`,
+      scope: 'work',
+      tags: [],
+      contentHash: `hash-${uniq}`,
+      actorKind: 'user_api',
+    })
+    if (written.commitmentId === undefined) throw new Error('expected a commitment')
+    await ownerPool.query('UPDATE commitments SET owner = $2 WHERE id = $1', [
+      written.commitmentId,
+      `${tag}-owner`,
+    ])
+    await ownerPool.query(
+      `INSERT INTO user_profile_attributes (user_id, role, use_case, ai_tools, referral_source)
+       VALUES ($1, 'engineer', 'dev', ARRAY['codex'], 'search')`,
+      [userId],
+    )
+    await ownerPool.query(
+      `INSERT INTO user_sessions (user_id, token_hash, expires_at)
+       VALUES ($1, $2, now() + interval '1 day')`,
+      [userId, `sess-${uniq}`],
+    )
+    await ownerPool.query(
+      `INSERT INTO api_keys (user_id, name, key_hash, prefix) VALUES ($1, 'k', $2, 'pfx')`,
+      [userId, `key-${uniq}`],
+    )
+    await ownerPool.query(
+      `INSERT INTO oauth_tokens (user_id, token_hash, kind, client_id, scope, expires_at)
+       VALUES ($1, $2, 'access', $3, 'memory:read', now() + interval '1 hour')`,
+      [userId, `tok-${uniq}`, clientId],
+    )
+    await ownerPool.query(
+      `INSERT INTO oauth_codes (user_id, code_hash, client_id, redirect_uri, code_challenge, scope, expires_at)
+       VALUES ($1, $2, $3, 'https://app.test/cb', 'chal', 'memory:read', now() + interval '10 minutes')`,
+      [userId, `code-${uniq}`, clientId],
+    )
+    await ownerPool.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, now() + interval '1 hour')`,
+      [userId, `reset-${uniq}`],
+    )
+    await ownerPool.query(
+      `INSERT INTO email_verification_tokens (user_id, token_hash, client_proof_hash, expires_at)
+       VALUES ($1, $2, encode(sha256($3::bytea), 'hex'), now() + interval '1 hour')`,
+      [userId, `verify-${uniq}`, `proof-${uniq}`],
+    )
+  }
+
+  it('erases only the target tenant on a connection that bypasses RLS', async () => {
+    // Precondition: the owner connection really bypasses RLS here, or this test
+    // proves nothing (helpers.ts: owner = DATABASE_URL_UNPOOLED).
+    const role = await ownerPool.query(
+      'SELECT rolsuper OR rolbypassrls AS bypass FROM pg_roles WHERE rolname = current_user',
+    )
+    expect(role.rows[0].bypass).toBe(true)
+
+    const clientId = `c-494-${crypto.randomUUID()}`
+    await ownerPool.query(
+      `INSERT INTO oauth_clients (client_id, client_name, redirect_uris) VALUES ($1, 'c', '[]'::jsonb)`,
+      [clientId],
+    )
+    await ownerPool.query('DELETE FROM user_profile_attributes WHERE user_id = ANY($1)', [
+      [userA, userB],
+    ])
+    await seedEveryTable(userA, 'a', clientId)
+    await seedEveryTable(userB, 'b', clientId)
+
+    // The erasure itself runs on the OWNER connection, not through withTenant.
+    const ownerDb = drizzle(ownerPool)
+    const result = await ownerDb.transaction((tx) =>
+      eraseAccountData(tx as unknown as TenantTx, userA, NOW),
+    )
+
+    // A's counts are A's rows only (each table was seeded once per user, memories twice).
+    expect(result).toMatchObject({
+      alreadyErased: false,
+      memories: 3, // two notes + the commitment's memory
+      facts: 1,
+      commitments: 1,
+      proposals: 1,
+      factProposals: 1,
+      agentSessions: 1,
+      sessionsDeleted: 1,
+      apiKeysRevoked: 1,
+      oauthTokensRevoked: 1,
+      oauthCodesDeleted: 1,
+      passwordResetTokensDeleted: 1,
+      emailVerificationTokensDeleted: 1,
+    })
+
+    // B is untouched in every table the erasure writes.
+    const one = async (q: string): Promise<Record<string, unknown>> =>
+      (await ownerPool.query(q, [userB])).rows[0] as Record<string, unknown>
+    expect(
+      (
+        await ownerPool.query('SELECT content FROM memories WHERE user_id = $1', [userB])
+      ).rows.every((r) => r.content !== ERASED_PII),
+    ).toBe(true)
+    expect(await one('SELECT value FROM facts WHERE user_id = $1')).toEqual({ value: 'b-value' })
+    expect(await one('SELECT value, rationale FROM fact_proposals WHERE user_id = $1')).toEqual({
+      value: 'b-proposed',
+      rationale: 'extracted by the model',
+    })
+    expect(await one('SELECT owner FROM commitments WHERE user_id = $1')).toEqual({
+      owner: 'b-owner',
+    })
+    expect(await one('SELECT rationale FROM consolidation_proposals WHERE user_id = $1')).toEqual({
+      rationale: 'b rationale',
+    })
+    expect(
+      await one(
+        'SELECT last_message_excerpt, project, activation_epoch FROM agent_sessions WHERE user_id = $1',
+      ),
+    ).toEqual({ last_message_excerpt: 'b last message', project: '3ngram', activation_epoch: 1 })
+    expect(await one('SELECT role FROM user_profile_attributes WHERE user_id = $1')).toEqual({
+      role: 'engineer',
+    })
+    expect(await countRows('user_sessions', userB)).toBe(1)
+    expect(await one('SELECT revoked_at FROM api_keys WHERE user_id = $1')).toEqual({
+      revoked_at: null,
+    })
+    expect(await one('SELECT revoked_at FROM oauth_tokens WHERE user_id = $1')).toEqual({
+      revoked_at: null,
+    })
+    expect(await countRows('oauth_codes', userB)).toBe(1)
+    expect(await countRows('password_reset_tokens', userB)).toBe(1)
+    expect(await countRows('email_verification_tokens', userB)).toBe(1)
+    expect(await one('SELECT email FROM users WHERE id = $1')).toEqual({
+      email: 'acct-del-b@test.local',
+    })
+
+    await ownerPool.query('DELETE FROM user_profile_attributes WHERE user_id = ANY($1)', [
+      [userA, userB],
+    ])
+    await ownerPool.query('DELETE FROM oauth_codes WHERE client_id = $1', [clientId])
+    await ownerPool.query('DELETE FROM oauth_tokens WHERE client_id = $1', [clientId])
+    await ownerPool.query('DELETE FROM oauth_clients WHERE client_id = $1', [clientId])
   })
 })
 

@@ -231,16 +231,12 @@ describe('createJevGateway decide()', () => {
 })
 
 describe('createJevGateway config', () => {
-  it.each([
-    'jev-latest',
-    'latest',
-    'jev_latest',
-    'jev.LATEST',
-    'jev:latest',
-    '  ',
-  ])('refuses the floating model %j', (model) => {
-    expect(() => createJevGateway({ ...CONFIG, model })).toThrow(/pin a version/)
-  })
+  it.each(['jev-latest', 'latest', 'jev_latest', 'jev.LATEST', 'jev:latest', '  '])(
+    'refuses the floating model %j',
+    (model) => {
+      expect(() => createJevGateway({ ...CONFIG, model })).toThrow(/pin a version/)
+    },
+  )
 
   it('accepts a pinned model and rejects a non-positive timeout', () => {
     expect(isFloatingModelAlias('jev-1.13.0')).toBe(false)

@@ -1,5 +1,15 @@
 # @3ngram/core
 
+## 0.19.1
+
+### Patch Changes
+
+- 57061c8: Bump `jose` 6.2.12 -> 6.2.17 in `@3ngram/core`.
+- Updated dependencies [9335af7]
+- Updated dependencies [638f4dd]
+  - @3ngram/db@0.18.1
+  - @3ngram/schema@0.16.1
+
 ## 0.19.0
 
 ### Minor Changes

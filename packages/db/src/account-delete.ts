@@ -19,7 +19,7 @@
 // this runtime-role function and is recorded as a known gap.
 //
 // Observability (hard rule 6): logs NOTHING; callers log the id hash + counts only.
-import { eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { lockAccountLifecycle, lockPasswordReset, type TenantTx } from './client.js'
 import { agentSessions } from './schema/agent-sessions.js'
 import {
@@ -144,26 +144,34 @@ export async function eraseAccountData(
     }
   }
 
-  // Redact PII in place (RLS scopes each UPDATE to the tenant). content_hash is
+  // Redact PII in place. Every statement below carries an explicit user_id
+  // predicate (issue #494) on top of RLS, which stays the primary boundary
+  // (hard rule 3): a caller connected as a role that bypasses RLS (a table
+  // owner, a migration, an operator script) still erases only this tenant.
+  // content_hash is
   // left intact — it is a structural fingerprint, not PII, and the partial-unique
   // live index keys on it, so leaving it avoids any constraint churn.
   const erasedMemories = await tx
     .update(memories)
     .set({ content: ERASED_PII, topic: ERASED_PII, tags: [], updatedAt: now })
+    .where(eq(memories.userId, userId))
     .returning({ id: memories.id })
   const erasedFacts = await tx
     .update(facts)
     .set({ subject: ERASED_PII, predicate: ERASED_PII, value: ERASED_PII })
+    .where(eq(facts.userId, userId))
     .returning({ id: facts.id })
   const erasedCommitments = await tx
     .update(commitments)
     // last_resolution_reason (issue #234) is user-written evidence text: redact
     // it with the owner, the same in-place treatment as memories.content.
     .set({ owner: null, lastResolutionReason: null, updatedAt: now })
+    .where(eq(commitments.userId, userId))
     .returning({ id: commitments.id })
   const erasedProposals = await tx
     .update(consolidationProposals)
     .set({ rationale: null })
+    .where(eq(consolidationProposals.userId, userId))
     .returning({ id: consolidationProposals.id })
   // Staged fact proposals carry the SAME user content as `facts` (subject,
   // predicate, value) plus a generated rationale, and they outlive the account:
@@ -175,6 +183,7 @@ export async function eraseAccountData(
   const erasedFactProposals = await tx
     .update(factProposals)
     .set({ subject: ERASED_PII, predicate: ERASED_PII, value: ERASED_PII, rationale: null })
+    .where(eq(factProposals.userId, userId))
     .returning({ id: factProposals.id })
   // agent_sessions is user-owned content (excerpt, briefing topics, selector)
   // and the users row is tombstoned rather than deleted, so the FK cascade
@@ -276,6 +285,7 @@ export async function eraseAccountData(
       // pre-erasure epoch, or vice versa.
       activationEpoch: sql`${agentSessions.activationEpoch} + 1`,
     })
+    .where(eq(agentSessions.userId, userId))
     .returning({ id: agentSessions.id })
   // resolution_proposals (issue #229) are deliberately NOT touched: the table
   // has no text columns (ids, a probability, status, timestamps), so there is
@@ -302,12 +312,13 @@ export async function eraseAccountData(
   // Onboarding profiling is user-owned data; erase it IN PLACE (the runtime role
   // is UPDATE-only on this table — no DELETE grant, matching the memory domain).
   // Account deletion tombstones the users row, so the FK ON DELETE CASCADE never
-  // fires; this UPDATE is the only thing that clears the survey answers. RLS
-  // scopes the write to the caller's row (no explicit WHERE, like the memory
-  // erasures above); a never-answered user has no row, so it is a no-op.
+  // fires; this UPDATE is the only thing that clears the survey answers. Scoped
+  // by an explicit user_id predicate and RLS, like the memory erasures above; a
+  // never-answered user has no row, so it is a no-op.
   await tx
     .update(userProfileAttributes)
     .set({ role: null, useCase: null, aiTools: null, referralSource: null, updatedAt: now })
+    .where(eq(userProfileAttributes.userId, userId))
   // The users row is tombstoned rather than deleted, so its FK cascade never
   // clears the stored retrieval policy. Remove the user-supplied scope and
   // restore the inert default in this same transaction.
@@ -327,23 +338,31 @@ export async function eraseAccountData(
     .update(userJudgmentPolicy)
     .set({ mode: 'off', updatedAt: now })
     .where(eq(userJudgmentPolicy.userId, userId))
-  const deletedSessions = await tx.delete(userSessions).returning({ id: userSessions.id })
+  const deletedSessions = await tx
+    .delete(userSessions)
+    .where(eq(userSessions.userId, userId))
+    .returning({ id: userSessions.id })
   const revokedKeys = await tx
     .update(apiKeys)
     .set({ revokedAt: now })
-    .where(isNull(apiKeys.revokedAt))
+    .where(and(eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)))
     .returning({ id: apiKeys.id })
   const revokedTokens = await tx
     .update(oauthTokens)
     .set({ revokedAt: now })
-    .where(isNull(oauthTokens.revokedAt))
+    .where(and(eq(oauthTokens.userId, userId), isNull(oauthTokens.revokedAt)))
     .returning({ id: oauthTokens.id })
-  const deletedCodes = await tx.delete(oauthCodes).returning({ id: oauthCodes.id })
+  const deletedCodes = await tx
+    .delete(oauthCodes)
+    .where(eq(oauthCodes.userId, userId))
+    .returning({ id: oauthCodes.id })
   const deletedResetTokens = await tx
     .delete(passwordResetTokens)
+    .where(eq(passwordResetTokens.userId, userId))
     .returning({ id: passwordResetTokens.id })
   const deletedVerificationTokens = await tx
     .delete(emailVerificationTokens)
+    .where(eq(emailVerificationTokens.userId, userId))
     .returning({ id: emailVerificationTokens.id })
 
   // Erase account identity last, flipping the email to the deletion marker so the
