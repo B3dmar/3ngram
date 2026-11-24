@@ -12,7 +12,8 @@ dashboard and cloud operations are proprietary and live in `3ngram-platform`.
 
 - `docs/concepts/` — **shipped** system design (architecture, data model, MCP, memory model, scopes, testing). An unbuilt design must open with `Status: design, not built.` A mixed page (shipped contract + open proposals) must say so on the status line — see `docs/concepts/mcp-surface.mdx`.
 - `docs/reference/` — generated MCP/CLI/SDK/OpenAPI (`pnpm run docs:generate`; CI diffs it).
-- GitHub issues/PRs — live work. 3ngram (`work` / `3ngram`) — durable decisions. Do not add a third backlog.
+- GitHub issues/PRs — live work and all planning. An epic, feature or spike is an issue of type `Epic`, `Feature` or `Spike` (features and spikes as sub-issues of their epic); a spike posts its written result on its issue. Repo docs hold documentation and decisions, never planning documents. The same rule applies in `3ngram-platform`.
+- 3ngram (`work` / `3ngram`) — durable decisions. Do not add a third backlog.
 
 ## Layout
 
