@@ -7,14 +7,21 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
-import { createCachingGateway, embeddingKey } from '../src/embedding-cache.mjs'
+import {
+  createCachingGateway,
+  embeddingKey,
+  ServedModelMismatchError,
+} from '../src/embedding-cache.mjs'
 
 const MODEL = 'text-embedding-3-large'
 const DIMS = 4
 const SENTINEL = 'SECRET_MEMORY_TEXT_persimmon_23'
 
-/** Deterministic fake: a text's vector comes from its hash; POISON texts make the batch fail. */
-function fakeInner() {
+/**
+ * Deterministic fake: a text's vector comes from its hash; POISON texts make the
+ * batch fail; `served` is the model the response reports.
+ */
+function fakeInner({ served = MODEL } = {}) {
   const calls = []
   return {
     calls,
@@ -27,7 +34,11 @@ function fakeInner() {
         const h = createHash('sha256').update(t).digest()
         return Array.from({ length: DIMS }, (_, i) => h[i] / 255 + 0.1)
       })
-      return Promise.resolve({ embeddings, usage: { inputTokens: texts.length * 3 }, model: MODEL })
+      return Promise.resolve({
+        embeddings,
+        usage: { inputTokens: texts.length * 3 },
+        model: served,
+      })
     },
     complete: (prompt) => Promise.resolve({ text: `c:${prompt}` }),
     decide: () => Promise.resolve({ answers: {}, model: 'd' }),
@@ -73,6 +84,7 @@ test('a warm run serves every vector from the cache, identical to the cold run',
     live_input_tokens: 0,
     failed_texts: 0,
     entries: 3,
+    served_model: MODEL,
   })
 })
 
@@ -122,6 +134,70 @@ test('a mismatched header or a corrupt line is dropped and refetched, never serv
 
   const other = createCachingGateway(fakeInner(), { file, model: 'other-model', dimensions: DIMS })
   assert.equal(other.stats().loaded, 0, 'another model never reads these vectors')
+})
+
+test('an unterminated or damaged file is rewritten whole, so an append never fuses onto it', async () => {
+  const file = fileIn('tail.jsonl')
+  const seed = open(fakeInner(), file)
+  await seed.prefill(['a', 'b'])
+  seed.save()
+  const body = await readFile(file, 'utf8')
+
+  // A complete last row without its newline: everything loads, the save rewrites.
+  await writeFile(file, body.trimEnd())
+  const first = open(fakeInner(), file)
+  assert.equal(first.stats().loaded, 2)
+  await first.embed(['c'], 'memory.embed')
+  first.save()
+  assert.equal(open(fakeInner(), file).stats().loaded, 3)
+
+  // A truncated last row (an interrupted append): dropped, then rewritten away.
+  const intact = await readFile(file, 'utf8')
+  await writeFile(file, `${intact}${intact.split('\n')[1].slice(0, 20)}`)
+  const second = open(fakeInner(), file)
+  assert.equal(second.stats().loaded, 3)
+  assert.equal(second.stats().dropped_on_load, 1)
+  await second.embed(['d'], 'memory.embed')
+  second.save()
+  const reopened = open(fakeInner(), file)
+  assert.equal(reopened.stats().loaded, 4)
+  assert.equal(reopened.stats().dropped_on_load, 0)
+})
+
+test('a row whose bytes changed but kept their length fails its checksum and is refetched', async () => {
+  const file = fileIn('checksum.jsonl')
+  const seed = open(fakeInner(), file)
+  await seed.prefill(['x'])
+  seed.save()
+  const [header, row] = (await readFile(file, 'utf8')).trimEnd().split('\n')
+  const parsed = JSON.parse(row)
+  const tampered = { ...parsed, v: (parsed.v[0] === 'A' ? 'B' : 'A') + parsed.v.slice(1) }
+  await writeFile(file, `${header}\n${JSON.stringify(tampered)}\n`)
+
+  const inner = fakeInner()
+  const gateway = open(inner, file)
+  assert.equal(gateway.stats().loaded, 0)
+  assert.equal(gateway.stats().dropped_on_load, 1)
+  await gateway.embed(['x'], 'memory.embed')
+  assert.equal(inner.calls.length, 1, 'the damaged vector is refetched, never served')
+})
+
+test('the served model is recorded and reported; a different one aborts instead of mixing', async () => {
+  const file = fileIn('served.jsonl')
+  const cold = open(fakeInner({ served: 'served-x' }), file)
+  await cold.prefill(['p'])
+  assert.equal((await cold.embed(['p'], 'memory.embed')).model, 'served-x')
+  cold.save()
+  assert.match((await readFile(file, 'utf8')).split('\n')[0], /"served_model":"served-x"/)
+
+  const inner = fakeInner({ served: 'served-y' })
+  const warm = open(inner, file)
+  assert.equal(warm.stats().served_model, 'served-x')
+  assert.equal((await warm.embed(['p'], 'memory.embed')).model, 'served-x', 'cached provenance')
+  await assert.rejects(warm.embed(['q'], 'memory.embed'), ServedModelMismatchError)
+  const callsBefore = inner.calls.length
+  await assert.rejects(warm.prefill(['r', 's']), ServedModelMismatchError)
+  assert.equal(inner.calls.length, callsBefore + 1, 'a mismatch is not retried text by text')
 })
 
 test('the cache file holds hashes and vectors, never text', async () => {
