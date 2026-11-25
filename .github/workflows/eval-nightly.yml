@@ -329,9 +329,10 @@ jobs:
       # same 50 in the same artifact. Embeddings come from eval/src/embedding-
       # cache.mjs: restored here, prefilled in batches on a miss (~5M tokens,
       # about $0.67, once per sample), and saved only when this run changed the
-      # file. The key carries the run id with a prefix fallback, because a cache
-      # key cannot be overwritten: a fixed key would restore a stale file as a
-      # hit and never save the refill. The 5q real lane above stays uncached as
+      # file. The key carries the run id and attempt with a prefix fallback,
+      # because a cache key cannot be overwritten: a fixed key (or one shared by
+      # a rerun) would restore a stale file as a hit and never save the refill.
+      # The 5q real lane above stays uncached as
       # the embedding-API canary. The service DB is discarded with the runner.
       - name: Restore LongMemEval sample embedding cache
         id: lme_cache
@@ -340,7 +341,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: eval/.cache/embeddings
-          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}
+          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-
 
       - name: Real-retriever 50q sample (cached embeddings, advisory)
@@ -385,7 +386,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: eval/.cache/embeddings
-          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}
+          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # --- MemoryAgentBench advisory slice (#294, slice 5) ----------------------
       # ADVISORY, NEVER BLOCKING (continue-on-error). The advisory MAB subsets
