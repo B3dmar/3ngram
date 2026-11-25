@@ -8,11 +8,13 @@
 //
 // Integrity: the streamed file is verified by byte size and SHA-256. A re-run
 // reuses a verified cache file (idempotent) instead of re-downloading; pass
-// --force to overwrite. Verification metadata (size + hash) is taken from env
-// so a new upstream release is a config change, not a code change:
+// --force to overwrite. The release is PINNED in code (DEFAULT_SHA256 /
+// DEFAULT_BYTES, measured 2026-11-09 for #449) so the sampled real-retriever
+// lane always scores the file its question ids were drawn from. Env overrides
+// the pin, so a new upstream release is still a config change:
 //   LONGMEMEVAL_S_URL        upstream URL (default: the HuggingFace release)
-//   LONGMEMEVAL_S_SHA256     expected SHA-256 (skips hash check when unset)
-//   LONGMEMEVAL_S_BYTES      expected byte size (skips size check when unset)
+//   LONGMEMEVAL_S_SHA256     expected SHA-256 (default: DEFAULT_SHA256)
+//   LONGMEMEVAL_S_BYTES      expected byte size (default: DEFAULT_BYTES)
 
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
@@ -70,6 +72,10 @@ function envOrUndefined(value) {
 const DEFAULT_URL =
   'https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s'
 
+/** The pinned LongMemEval-S release (#449). The 50q sample records the same hash. */
+export const DEFAULT_SHA256 = '08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894'
+export const DEFAULT_BYTES = 278025796
+
 /** SHA-256 hex digest of a file, streamed (never loads it fully into memory). */
 export async function hashFile(path) {
   const hash = createHash('sha256')
@@ -125,8 +131,8 @@ export async function ensureDataset(options = {}, deps = {}) {
   const cacheDir = deps.cacheDir ?? CACHE_DIR
   const url = options.url ?? envOrUndefined(process.env.LONGMEMEVAL_S_URL) ?? DEFAULT_URL
   const expected = {
-    sha256: options.sha256 ?? envOrUndefined(process.env.LONGMEMEVAL_S_SHA256) ?? '',
-    bytes: options.bytes ?? envOrUndefined(process.env.LONGMEMEVAL_S_BYTES) ?? null,
+    sha256: options.sha256 ?? envOrUndefined(process.env.LONGMEMEVAL_S_SHA256) ?? DEFAULT_SHA256,
+    bytes: options.bytes ?? envOrUndefined(process.env.LONGMEMEVAL_S_BYTES) ?? DEFAULT_BYTES,
   }
   const target = join(cacheDir, DATASET_FILENAME)
 
