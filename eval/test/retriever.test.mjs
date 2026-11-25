@@ -6,7 +6,11 @@
 // (createRealRetrieverFromEnv) is covered separately as a skip-when-absent
 // contract, not as a live integration here.
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { createCachingGateway, ServedModelMismatchError } from '../src/embedding-cache.mjs'
 import { parseFlag } from '../src/lib.mjs'
 import {
   assertKnownRetriever,
@@ -158,6 +162,102 @@ test('createRealRetriever drives remember+search through fakes (no DB/network)',
   assert.equal(retriever.name, 'real')
   assert.equal(ranked[0].session_id, 's1')
   assert.equal(tenants, 1, 'one disposable tenant per question')
+})
+
+test('createRealRetriever prefills exactly the texts it will embed through a caching gateway', async () => {
+  const prefilled = []
+  let saved = 0
+  const gateway = {
+    embed: () => Promise.reject(new Error('not used')),
+    prefill: (texts) => {
+      prefilled.push(...texts)
+      return Promise.resolve()
+    },
+    save: () => {
+      saved++
+    },
+    stats: () => ({ hits: 7 }),
+  }
+  const retriever = createRealRetriever({
+    remember: () => Promise.reject(new Error('not used')),
+    search: () => Promise.reject(new Error('not used')),
+    makeTenant: () => Promise.resolve('t'),
+    gateway,
+    maxContentLength: 20,
+  })
+  const long = { session_id: 'long', turns: [{ role: 'user', content: 'y'.repeat(30) }] }
+  await retriever.prepare([{ question: '  which db?', haystack_sessions: [...SESSIONS, long] }])
+  // The planned chunks (what remember embeds) plus the raw question (what search embeds).
+  const chunks = planSessionMemories([...SESSIONS, long], 20).map((p) => p.content)
+  assert.deepEqual(prefilled, [...chunks, '  which db?'])
+  retriever.finish()
+  assert.equal(saved, 1)
+  assert.deepEqual(retriever.stats(), { hits: 7 })
+})
+
+test('a served-model mismatch swallowed on the write path still aborts the question', async () => {
+  // The reviewed failure: prefill fails transiently for a chunk, the later write
+  // meets a different served model, and core's embed-on-write swallows that
+  // (settled false). The cached query embed must then refuse, not score.
+  const dir = await mkdtemp(join(tmpdir(), 'lme-mismatch-'))
+  try {
+    const file = join(dir, 'cache.jsonl')
+    const vector = [0.1, 0.2, 0.3, 0.4]
+    const reply = (texts, served) =>
+      Promise.resolve({ embeddings: texts.map(() => vector), usage: {}, model: served })
+    const seed = createCachingGateway(
+      { embed: (texts) => reply(texts, 'served-x') },
+      { file, model: 'm', dimensions: 4 },
+    )
+    await seed.prefill(['which db?'])
+    seed.save()
+
+    let calls = 0
+    const flaky = {
+      // Two transient failures (batch, then the per-text retry), then another model.
+      embed: (texts) =>
+        ++calls <= 2 ? Promise.reject(new Error('503')) : reply(texts, 'served-y'),
+    }
+    const gateway = createCachingGateway(flaky, { file, model: 'm', dimensions: 4 })
+    const swallowing = async (_userId, input, _actor, { gateway: g }) => {
+      // Mirrors core: embed-on-write records embed_failed and settles false.
+      const settled = g.embed([input.content], 'memory.embed').then(
+        () => true,
+        () => false,
+      )
+      return { id: `m-${input.content.length}`, embed: { settled } }
+    }
+    const retriever = createRealRetriever({
+      remember: swallowing,
+      search: async (_userId, query, { gateway: g }) => {
+        await g.embed([query], 'search')
+        return []
+      },
+      makeTenant: () => Promise.resolve('t'),
+      gateway,
+      maxContentLength: 2000,
+    })
+    const sessions = [{ session_id: 's1', turns: [{ role: 'user', content: 'chunk text' }] }]
+    await retriever.prepare([{ question: 'which db?', haystack_sessions: sessions }])
+    assert.equal(retriever.stats().failed_texts, 1)
+    await assert.rejects(retriever.rankSessions('which db?', sessions), ServedModelMismatchError)
+    assert.equal(retriever.stats().served_model_mismatch, true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('createRealRetriever without a cache: prepare/finish are no-ops, stats undefined', async () => {
+  const retriever = createRealRetriever({
+    remember: () => Promise.reject(new Error('not used')),
+    search: () => Promise.reject(new Error('not used')),
+    makeTenant: () => Promise.resolve('t'),
+    gateway: { embed: () => Promise.reject(new Error('not used')) },
+    maxContentLength: 20,
+  })
+  await retriever.prepare([{ question: 'q', haystack_sessions: SESSIONS }])
+  retriever.finish()
+  assert.equal(retriever.stats(), undefined)
 })
 
 test('resolveRetriever real skips cleanly when DATABASE_URL absent', async () => {

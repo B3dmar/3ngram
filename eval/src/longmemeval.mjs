@@ -172,11 +172,22 @@ async function runOracle(questions, { k, fixture, retriever }) {
  * in one artifact instead of being matched up across lanes.
  */
 async function scoreQuestions(questions, { fixture, retriever }) {
-  const result = await runOracle(questions, { k, fixture, retriever })
+  let result
+  try {
+    // An embedding cache (#449) prefills in batches first, only for the
+    // questions retrieval scores; a partial run still saves what it fetched,
+    // so a rerun does not pay for it twice.
+    await retriever.prepare?.(retrievalQuestions(questions))
+    result = await runOracle(questions, { k, fixture, retriever })
+  } finally {
+    retriever.finish?.()
+  }
   if (retriever.name === lexicalRetriever.name) return result
+  const cache = retriever.stats?.()
   const baseline = await runOracle(questions, { k, fixture, retriever: lexicalRetriever })
   return {
     ...result,
+    ...(cache === undefined ? {} : { embedding_cache: cache }),
     lexical_baseline: { metrics: baseline.metrics, by_ability: baseline.by_ability },
   }
 }
@@ -192,6 +203,17 @@ function loadSample(value) {
 function refuse(message) {
   process.stderr.write(`${message}\n`)
   process.exit(2)
+}
+
+/**
+ * Refuse a run with nothing to score for retrieval (an abstention-only sample,
+ * an empty fixture): its zero metrics would read like a result. Checked before
+ * the retriever is resolved, so a refused run never touches a DB or gateway.
+ */
+function assertScorable(questions) {
+  if (retrievalQuestions(questions).length === 0) {
+    refuse(`no retrieval-scorable questions: ${questions.length} given, abstention is skipped`)
+  }
 }
 
 const k = Number(flag('k', '5'))
@@ -244,6 +266,7 @@ if (args.includes('--download')) {
       refuse(`--sample ${sampleName}: ${error.message}`)
     }
   }
+  assertScorable(questions)
   const retriever = await resolveOracleRetriever()
   emit({
     ...(await scoreQuestions(questions, { fixture: 'longmemeval-s-500q', retriever })),
@@ -267,7 +290,8 @@ if (args.includes('--download')) {
   emit({ ...result, gateway: mode })
 } else {
   const fixtureName = flag('fixture', 'longmemeval-s-subset')
-  const dataset = loadFixture(fixtureName)
+  const questions = normalizeQuestions(loadFixture(fixtureName))
+  assertScorable(questions)
   const retriever = await resolveOracleRetriever()
-  emit(await scoreQuestions(normalizeQuestions(dataset), { fixture: fixtureName, retriever }))
+  emit(await scoreQuestions(questions, { fixture: fixtureName, retriever }))
 }

@@ -316,6 +316,8 @@ test('--sample refuses a different release or an unknown id with exit 2 (#449)',
     const cases = [
       await writeSample({ dataset: { sha256: 'not-the-scored-release' } }),
       await writeSample({ question_ids: ['q1', 'q_missing'] }),
+      // Abstention only: nothing to score for retrieval, so no zeros either.
+      await writeSample({ question_ids: ['q2_abs'] }),
     ]
     for (const samplePath of cases) {
       assert.throws(
