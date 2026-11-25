@@ -34,6 +34,10 @@
 # fixture is present — reports agreement between the model's picks and the
 # deterministic proxy's picks. Advisory-only, live only when the gateway
 # secret is configured, skipped (green) otherwise (docs/concepts/mcp-surface.mdx).
+# Slice 7 (#449): the REAL retriever on a pinned, stratified 50-question
+# LongMemEval-S sample, with embeddings from a content-addressed cache kept in
+# actions/cache, so a warm night makes no embedding calls and its retrieval
+# metrics are deterministic. Same gate on the gateway secret as slice 3.
 #
 # Each lane writes a per-run JSON metrics file (ids/counts/scores ONLY — never
 # haystack/memory content, hard rule 6) into eval-metrics/, uploaded as a build
@@ -317,6 +321,72 @@ jobs:
               echo 'Upstream LongMemEval-S fetch or integrity check failed; the full 500q lane (#37) was skipped. Advisory only.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # --- Real-retriever 50q sample, cached embeddings (#449, slice 7) ---------
+      # ADVISORY, NEVER BLOCKING (continue-on-error on every step). Scores the
+      # REAL retriever on eval/fixtures/longmemeval-s-sample-50.json over the
+      # dataset the download lane above cached, with the lexical stand-in on the
+      # same 50 in the same artifact. Embeddings come from eval/src/embedding-
+      # cache.mjs: restored here, prefilled in batches on a miss (~5M tokens,
+      # about $0.67, once per sample), and saved only when this run changed the
+      # file. The key carries the run id and attempt with a prefix fallback,
+      # because a cache key cannot be overwritten: a fixed key (or one shared by
+      # a rerun) would restore a stale file as a hit and never save the refill.
+      # The 5q real lane above stays uncached as
+      # the embedding-API canary. The service DB is discarded with the runner.
+      - name: Restore LongMemEval sample embedding cache
+        id: lme_cache
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/embeddings
+          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-
+
+      - name: Real-retriever 50q sample (cached embeddings, advisory)
+        id: real_sample
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+          LONGMEMEVAL_S_URL: ${{ vars.LONGMEMEVAL_S_URL }}
+          LONGMEMEVAL_S_SHA256: ${{ vars.LONGMEMEVAL_S_SHA256 }}
+          LONGMEMEVAL_S_BYTES: ${{ vars.LONGMEMEVAL_S_BYTES }}
+          EVAL_EMBED_CACHE: eval/.cache/embeddings/longmemeval-s-sample-50.jsonl
+        run: |
+          app_url="postgres://app_user:app_user@localhost:5432/threengram_test"
+          mkdir -p eval-metrics
+          before=$(sha256sum "$EVAL_EMBED_CACHE" 2>/dev/null || echo none)
+          status=0
+          sample=$(DATABASE_URL="$app_url" node eval/src/longmemeval.mjs --download --sample longmemeval-s-sample-50 --retriever real --json) || status=$?
+          after=$(sha256sum "$EVAL_EMBED_CACHE" 2>/dev/null || echo none)
+          # Save even after a failed run: whatever the prefill fetched is paid for.
+          if [ "$before" != "$after" ] && [ "$after" != none ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$status" -eq 0 ]; then
+            printf '%s\n' "$sample" > eval-metrics/real-retriever-sample.json
+            {
+              echo
+              echo '### real-retriever 50q sample (cached embeddings, #449)'
+              echo
+              echo '```json'
+              printf '%s\n' "$sample"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Save LongMemEval sample embedding cache
+        if: steps.real_pre.outputs.enabled == 'true' && steps.real_sample.outputs.changed == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/embeddings
+          key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # --- MemoryAgentBench advisory slice (#294, slice 5) ----------------------
       # ADVISORY, NEVER BLOCKING (continue-on-error). The advisory MAB subsets
