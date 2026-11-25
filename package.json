@@ -26,6 +26,6 @@
     "@biomejs/biome": "2.6.8",
     "@changesets/cli": "3.0.3",
     "jose": "6.2.17",
-    "turbo": "2.11.11"
+    "turbo": "2.11.12"
   }
 }
