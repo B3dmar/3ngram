@@ -172,11 +172,22 @@ async function runOracle(questions, { k, fixture, retriever }) {
  * in one artifact instead of being matched up across lanes.
  */
 async function scoreQuestions(questions, { fixture, retriever }) {
-  const result = await runOracle(questions, { k, fixture, retriever })
+  let result
+  try {
+    // An embedding cache (#449) prefills in batches first, only for the
+    // questions retrieval scores; a partial run still saves what it fetched,
+    // so a rerun does not pay for it twice.
+    await retriever.prepare?.(retrievalQuestions(questions))
+    result = await runOracle(questions, { k, fixture, retriever })
+  } finally {
+    retriever.finish?.()
+  }
   if (retriever.name === lexicalRetriever.name) return result
+  const cache = retriever.stats?.()
   const baseline = await runOracle(questions, { k, fixture, retriever: lexicalRetriever })
   return {
     ...result,
+    ...(cache === undefined ? {} : { embedding_cache: cache }),
     lexical_baseline: { metrics: baseline.metrics, by_ability: baseline.by_ability },
   }
 }

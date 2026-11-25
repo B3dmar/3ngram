@@ -160,6 +160,50 @@ test('createRealRetriever drives remember+search through fakes (no DB/network)',
   assert.equal(tenants, 1, 'one disposable tenant per question')
 })
 
+test('createRealRetriever prefills exactly the texts it will embed through a caching gateway', async () => {
+  const prefilled = []
+  let saved = 0
+  const gateway = {
+    embed: () => Promise.reject(new Error('not used')),
+    prefill: (texts) => {
+      prefilled.push(...texts)
+      return Promise.resolve()
+    },
+    save: () => {
+      saved++
+    },
+    stats: () => ({ hits: 7 }),
+  }
+  const retriever = createRealRetriever({
+    remember: () => Promise.reject(new Error('not used')),
+    search: () => Promise.reject(new Error('not used')),
+    makeTenant: () => Promise.resolve('t'),
+    gateway,
+    maxContentLength: 20,
+  })
+  const long = { session_id: 'long', turns: [{ role: 'user', content: 'y'.repeat(30) }] }
+  await retriever.prepare([{ question: '  which db?', haystack_sessions: [...SESSIONS, long] }])
+  // The planned chunks (what remember embeds) plus the raw question (what search embeds).
+  const chunks = planSessionMemories([...SESSIONS, long], 20).map((p) => p.content)
+  assert.deepEqual(prefilled, [...chunks, '  which db?'])
+  retriever.finish()
+  assert.equal(saved, 1)
+  assert.deepEqual(retriever.stats(), { hits: 7 })
+})
+
+test('createRealRetriever without a cache: prepare/finish are no-ops, stats undefined', async () => {
+  const retriever = createRealRetriever({
+    remember: () => Promise.reject(new Error('not used')),
+    search: () => Promise.reject(new Error('not used')),
+    makeTenant: () => Promise.resolve('t'),
+    gateway: { embed: () => Promise.reject(new Error('not used')) },
+    maxContentLength: 20,
+  })
+  await retriever.prepare([{ question: 'q', haystack_sessions: SESSIONS }])
+  retriever.finish()
+  assert.equal(retriever.stats(), undefined)
+})
+
 test('resolveRetriever real skips cleanly when DATABASE_URL absent', async () => {
   const { retriever, skipReason } = await resolveRetriever('real', { LLM_GATEWAY_API_KEY: 'k' })
   assert.equal(retriever, null)

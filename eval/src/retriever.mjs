@@ -33,6 +33,7 @@
 // pre-tenant admin helper) — it holds no business logic and never touches a
 // pool directly.
 import { randomUUID } from 'node:crypto'
+import { createCachingGateway } from './embedding-cache.mjs'
 import { rankSessions as rankSessionsLexical, sessionText } from './lib.mjs'
 
 /** The default offline retriever name; the opt-in real path is 'real'. */
@@ -180,8 +181,35 @@ export function createRealRetriever({
   maxContentLength,
   actorKind = 'system',
 }) {
+  const caching = typeof gateway.prefill === 'function'
   return {
     name: 'real',
+    /**
+     * With a caching gateway (embedding-cache.mjs), embed every text the run
+     * will write or search in batches up front, so the per-memory embeds that
+     * follow are cache hits. The texts are exactly what core.remember embeds
+     * (its schema trims; planned chunks are already trimmed) and the raw
+     * question core.search embeds. A plain gateway makes this a no-op.
+     */
+    async prepare(questions) {
+      if (!caching) return
+      const texts = []
+      for (const q of questions) {
+        for (const { content } of planSessionMemories(q.haystack_sessions, maxContentLength)) {
+          texts.push(content)
+        }
+        texts.push(q.question)
+      }
+      await gateway.prefill(texts)
+    },
+    /** Persist what this run added to the cache (no-op without one). */
+    finish() {
+      if (caching) gateway.save()
+    },
+    /** Cache counts only, never text; undefined without a cache. */
+    stats() {
+      return caching ? gateway.stats() : undefined
+    },
     async rankSessions(question, sessions) {
       const userId = await makeTenant()
       const plan = planSessionMemories(sessions, maxContentLength)
@@ -244,17 +272,30 @@ export async function createRealRetrieverFromEnv(env = process.env) {
   if (!env.LLM_GATEWAY_API_KEY) {
     return { retriever: null, skipReason: 'LLM_GATEWAY_API_KEY not set' }
   }
-  const [{ remember, search }, { insertUser }, { createOpenAIGateway }, { MAX_CONTENT_LENGTH }] =
-    await Promise.all([
-      import('@3ngram/core'),
-      import('@3ngram/db'),
-      import('@3ngram/llm'),
-      import('@3ngram/schema'),
-    ])
+  const [
+    { remember, search },
+    { insertUser },
+    { createOpenAIGateway, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL },
+    { MAX_CONTENT_LENGTH },
+  ] = await Promise.all([
+    import('@3ngram/core'),
+    import('@3ngram/db'),
+    import('@3ngram/llm'),
+    import('@3ngram/schema'),
+  ])
   // `||` (not `??`): CI exports the URL from an optional secret, so an unset
   // secret arrives as '' — treat empty string as unset, fall back to OpenAI.
   const baseUrl = env.LLM_GATEWAY_URL || 'https://api.openai.com/v1'
-  const gateway = createOpenAIGateway({ baseUrl, apiKey: env.LLM_GATEWAY_API_KEY })
+  const live = createOpenAIGateway({ baseUrl, apiKey: env.LLM_GATEWAY_API_KEY })
+  // EVAL_EMBED_CACHE (a file path) opts into the embedding cache (#449); unset
+  // or '' keeps every embed live, as the 5q canary lane wants.
+  const gateway = env.EVAL_EMBED_CACHE
+    ? createCachingGateway(live, {
+        file: env.EVAL_EMBED_CACHE,
+        model: EMBEDDING_MODEL,
+        dimensions: EMBEDDING_DIMENSIONS,
+      })
+    : live
   const makeTenant = async () => {
     const user = await insertUser(`eval-lme-${randomUUID()}@eval.local`, 'x')
     return user.id
