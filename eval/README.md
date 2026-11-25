@@ -35,8 +35,11 @@ Slice 1 (shipped): a LongMemEval-S-shaped subset (`fixtures/longmemeval-s-subset
 Opt-in slices (never in the default path):
 
 - `--retriever real` (or `EVAL_RETRIEVER=real`) — the **real Phase-1B retriever** (see below).
-- `--download` — streams the full 500q LongMemEval-S haystack into a gitignored cache (large + upstream license; not committed).
+- `--download` — streams the full 500q LongMemEval-S haystack into a gitignored cache (large + upstream license; not committed). The release is pinned in `src/download.mjs` (sha256 + bytes); `LONGMEMEVAL_S_*` env overrides it.
+- `--download --sample <fixture>` — scores only the question ids a sample fixture lists (see below).
 - `--judge` — model-judged answer-synthesis slice (needs an API key; never a silent network dependency).
+
+Every oracle run reports `by_ability` (LongMemEval's retrieval abilities, each row with its own `n`) and names its `retriever`. Retrieval skips the abstention (`_abs`) questions, as LongMemEval's own protocol does: they have no ground-truth answer location. The output counts them in `abstention_skipped` beside `retrieval_scored`; abstention is an answer-level ability for the judge. A real-retriever run also carries `lexical_baseline`: the stand-in scored on the same questions.
 
 ### Real-retriever mode (`--retriever real`)
 
@@ -60,6 +63,38 @@ Real mode requires the built workspace (`pnpm build`) plus a DB and an embedding
 
 Remaining work: measure live-slice stability ≥4 weeks before any blocking consideration.
 
+### Real-retriever sample (`--sample`, cached embeddings, #449)
+
+The 5q subset says little about the real retriever: each question has 2 or 3 sessions, so
+recall@5 is 1.0 by construction. The sample lane scores it on real LongMemEval-S questions:
+
+```bash
+EVAL_EMBED_CACHE=eval/.cache/embeddings/longmemeval-s-sample-50.jsonl \
+  node eval/src/longmemeval.mjs --download --sample longmemeval-s-sample-50 --retriever real --json
+```
+
+- **Sample.** `fixtures/longmemeval-s-sample-50.json` lists 50 question ids, stratified by
+  type (12 multi-session, 12 temporal, 8 knowledge-update, 7, 6 and 5 single-session) with 5
+  abstention questions, so retrieval scores 45 and the judge can score all 50. It records
+  the dataset sha256 it was drawn from; a different
+  release, or an id the dataset lacks, exits 2. Ids only: no upstream text is committed.
+  Regenerate with `node eval/scripts/gen-longmemeval-sample.mjs` (deterministic, seed 449);
+  that changes what the lane scores, so say so in the PR.
+- **Embedding cache.** `EVAL_EMBED_CACHE` wraps the gateway in `src/embedding-cache.mjs`,
+  keyed by sha256 of model, dimensions and exact text. Before seeding, the retriever
+  prefills every chunk and question of the 45 scored questions in batches of 256 (about 50
+  requests and 5M tokens cold, about $0.67); the per-memory embeds that follow are hits,
+  and a miss still calls the live gateway. Vectors are served after a float32 round trip,
+  so cold and warm runs score identical vectors. Rows carry a checksum; a damaged or
+  unterminated file is rewritten whole. The header records the model the gateway served,
+  and a different served model aborts the run rather than mixing vectors; a new gateway
+  needs a fresh cache. The file holds hashes and vectors only. `embedding_cache` in the
+  output reports hits, misses, live calls, tokens and the served model.
+- **Nightly.** Slice 7 of `eval-nightly.yml` restores the cache with `actions/cache`,
+  writes `eval-metrics/real-retriever-sample.json`, and saves the cache only when the run
+  changed it. A warm night makes no embedding calls. The cache is branch-scoped: a cache
+  saved on `staging` is not visible to `main` runs.
+
 ### Live lanes in `eval-nightly.yml`
 
 Three nightly lanes call a live model gateway: the model-judged slice (`--judge`), the
@@ -72,11 +107,13 @@ else is required:
 | `LLM_GATEWAY_API_KEY` | secret | all three lanes skip |
 | `LLM_GATEWAY_URL` | secret | `https://api.openai.com/v1` |
 | `LLM_TOOL_SELECTION_MODEL` | variable | `gpt-4o-mini` for tool selection |
+| `LONGMEMEVAL_S_URL` / `_SHA256` / `_BYTES` | variables | the release pinned in `src/download.mjs` |
 
 The workflow does not pass `LLM_JUDGE_MODEL`, so the judge always uses its
 `gpt-4o-mini` default. Per night the lanes make one chat call per tool or capability scenario, two per
 LongMemEval subset question, and one embedding call per haystack session and question
-(`text-embedding-3-large`, 1536 dimensions).
+(`text-embedding-3-large`, 1536 dimensions). The real-retriever block also runs the 50q
+sample lane, which makes no embedding calls once its cache is warm.
 
 ### MemoryAgentBench subsets (`src/memoryagentbench.mjs`)
 
