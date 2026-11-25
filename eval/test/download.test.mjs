@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import {
   CACHE_DIR,
   DATASET_FILENAME,
+  DEFAULT_BYTES,
   ensureDataset,
   hashFile,
   verifyFile,
@@ -119,10 +120,12 @@ test('surfaces a non-ok HTTP status', async () => {
   }
 })
 
-test('empty-string env vars fall back to defaults (GH unset vars.*)', async () => {
+test('empty-string env vars fall back to the pinned defaults (GH unset vars.*)', async () => {
   // GitHub Actions exports an unset `vars.*` as '' (not unset). Without
   // normalization, `??` keeps '' so the URL becomes fetch('') and the empty
-  // bytes string forces a phantom size mismatch. Assert the defaults hold.
+  // bytes string forces a phantom size mismatch. Assert the defaults hold: the
+  // HuggingFace URL, and the PINNED release (#449), which this small payload is
+  // not, so the download is refused rather than silently scored.
   const localDir = await mkdtemp(join(tmpdir(), 'lme-env-'))
   const saved = {
     url: process.env.LONGMEMEVAL_S_URL,
@@ -138,11 +141,11 @@ test('empty-string env vars fall back to defaults (GH unset vars.*)', async () =
       seenUrl = u
       return fakeFetch(PAYLOAD)()
     }
-    // No pinned integrity (all env empty) -> download succeeds, no phantom
-    // size mismatch, and the documented HuggingFace default URL is used.
-    const res = await ensureDataset({}, { fetch: fetchImpl, cacheDir: localDir })
-    assert.equal(res.cached, false)
-    assert.equal(res.bytes, BYTES)
+    // All env empty -> the documented default URL and the pinned size apply.
+    await assert.rejects(
+      ensureDataset({}, { fetch: fetchImpl, cacheDir: localDir }),
+      new RegExp(`integrity check failed \\(size mismatch: ${BYTES} != ${DEFAULT_BYTES}\\)`),
+    )
     assert.match(seenUrl, /huggingface\.co\/datasets\/xiaowu0162\/longmemeval/)
   } finally {
     for (const [k, v] of [
@@ -216,11 +219,19 @@ const OFFICIAL_DATASET = JSON.stringify([
   },
 ])
 
-test('--download lane runs the oracle and emits content-free metrics (#37/#172)', async () => {
-  // Hermetic, no network: seed the verified cache so ensureDataset reuses it
-  // (idempotent path) instead of fetching upstream. The lane in eval-nightly.yml
-  // is identical apart from doing the initial fetch. A pre-existing real cache is
-  // saved and restored so a developer's downloaded 500q dataset is never lost.
+// The cache is pinned to the real release, so the hermetic lane tests pin the
+// seeded dataset through the env override instead (never a network fetch).
+const OFFICIAL_ENV = {
+  ...process.env,
+  LONGMEMEVAL_S_SHA256: createHash('sha256').update(OFFICIAL_DATASET).digest('hex'),
+  LONGMEMEVAL_S_BYTES: String(Buffer.byteLength(OFFICIAL_DATASET)),
+}
+
+/**
+ * Seed the verified cache with OFFICIAL_DATASET, run `fn`, then restore a
+ * pre-existing real cache so a developer's downloaded 500q dataset is never lost.
+ */
+async function withSeededCache(fn) {
   const cachedFile = join(CACHE_DIR, DATASET_FILENAME)
   const previousCache = await readFile(cachedFile).catch((error) => {
     if (error?.code === 'ENOENT') return undefined
@@ -229,7 +240,22 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
   try {
     await mkdir(CACHE_DIR, { recursive: true })
     await writeFile(cachedFile, OFFICIAL_DATASET)
-    const out = execFileSync('node', [cli, '--download', '--json'], { encoding: 'utf8' })
+    await fn()
+  } finally {
+    await rm(cachedFile, { force: true })
+    if (previousCache !== undefined) await writeFile(cachedFile, previousCache)
+  }
+}
+
+test('--download lane runs the oracle and emits content-free metrics (#37/#172)', async () => {
+  // Hermetic, no network: seed the verified cache so ensureDataset reuses it
+  // (idempotent path) instead of fetching upstream. The lane in eval-nightly.yml
+  // is identical apart from doing the initial fetch.
+  await withSeededCache(() => {
+    const out = execFileSync('node', [cli, '--download', '--json'], {
+      encoding: 'utf8',
+      env: OFFICIAL_ENV,
+    })
     const result = JSON.parse(out.trim())
 
     assert.equal(result.source, 'download', 'lane must tag its provenance')
@@ -255,8 +281,63 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
       'metrics JSON must never contain haystack/memory content',
     )
     assert.equal(out.includes('wombat'), false)
-  } finally {
-    await rm(cachedFile, { force: true })
-    if (previousCache !== undefined) await writeFile(cachedFile, previousCache)
+  })
+})
+
+/** Write a sample file for OFFICIAL_DATASET to a temp dir; never into eval/fixtures. */
+async function writeSample(overrides = {}) {
+  const sample = {
+    dataset: { name: 'longmemeval_s', sha256: OFFICIAL_ENV.LONGMEMEVAL_S_SHA256 },
+    question_ids: ['q1'],
+    ...overrides,
   }
+  const path = join(dir, `sample-${Math.random().toString(36).slice(2)}.json`)
+  await writeFile(path, JSON.stringify(sample))
+  return path
+}
+
+test('--download --sample scores only the sampled ids, content-free (#449)', async () => {
+  await withSeededCache(async () => {
+    const samplePath = await writeSample()
+    const out = execFileSync('node', [cli, '--download', '--sample', samplePath, '--json'], {
+      encoding: 'utf8',
+      env: OFFICIAL_ENV,
+    })
+    const result = JSON.parse(out.trim())
+    assert.equal(result.sample, samplePath)
+    assert.equal(result.questions, 1)
+    assert.equal(result.metrics.session_recall_at_5, 1)
+    assert.equal(out.includes(CONTENT_SENTINEL), false)
+  })
+})
+
+test('--sample refuses a different release or an unknown id with exit 2 (#449)', async () => {
+  await withSeededCache(async () => {
+    const cases = [
+      await writeSample({ dataset: { sha256: 'not-the-scored-release' } }),
+      await writeSample({ question_ids: ['q1', 'q_missing'] }),
+    ]
+    for (const samplePath of cases) {
+      assert.throws(
+        () =>
+          execFileSync('node', [cli, '--download', '--sample', samplePath, '--json'], {
+            encoding: 'utf8',
+            env: OFFICIAL_ENV,
+            stdio: 'pipe',
+          }),
+        (error) => error.status === 2 && error.stdout === '',
+      )
+    }
+  })
+})
+
+test('--sample without --download exits 2 before any scoring (#449)', () => {
+  assert.throws(
+    () =>
+      execFileSync('node', [cli, '--sample', 'longmemeval-s-sample-50'], {
+        encoding: 'utf8',
+        stdio: 'pipe',
+      }),
+    (error) => error.status === 2 && /needs --download/.test(error.stderr),
+  )
 })

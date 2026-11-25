@@ -24,6 +24,9 @@
 //                gitignored cache (download.mjs) and run the oracle over it.
 //                The dataset is large + upstream-licensed and is NEVER
 //                committed (root .gitignore: eval/.cache/).
+//   --sample   : with --download only. Score just the question ids a sample
+//                fixture lists (sample.mjs, #449); the sample's recorded
+//                dataset sha256 must match the verified download, else exit 2.
 //   --judge    : model-judged answer-synthesis slice (judge.mjs). Offline/PR-CI
 //                uses a deterministic fake gateway; the nightly lane uses a live
 //                gateway ONLY when LLM_GATEWAY_API_KEY is set (skip-when-absent).
@@ -32,6 +35,7 @@
 //   node eval/src/longmemeval.mjs [--fixture longmemeval-s-subset] [--k 5] [--json]
 //   node eval/src/longmemeval.mjs --retriever real [--fixture …] [--k 5] [--json]
 //   node eval/src/longmemeval.mjs --download [--force] [--k 5] [--json]
+//   node eval/src/longmemeval.mjs --download --sample longmemeval-s-sample-50 [--retriever real]
 //   node eval/src/longmemeval.mjs --judge [--fixture …] [--k 5] [--json]
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -49,6 +53,7 @@ import {
   isAbstention,
   normalizeQuestions,
   parseFlag,
+  parsePathFlag,
   scoreRanked,
 } from './lib.mjs'
 import {
@@ -57,6 +62,7 @@ import {
   resolveRetriever,
   resolveRetrieverName,
 } from './retriever.mjs'
+import { applySample } from './sample.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, '../fixtures')
@@ -175,8 +181,30 @@ async function scoreQuestions(questions, { fixture, retriever }) {
   }
 }
 
+/** A sample is a fixture name, or a path to a `.json` sample file (tests use a temp file). */
+function loadSample(value) {
+  if (!value.endsWith('.json')) return loadFixture(value)
+  if (!existsSync(value)) refuse(`sample not found: ${value}`)
+  return JSON.parse(readFileSync(value, 'utf8'))
+}
+
+/** Exit 2 with a clear reason: a lane that cannot score its questions scores nothing. */
+function refuse(message) {
+  process.stderr.write(`${message}\n`)
+  process.exit(2)
+}
+
 const k = Number(flag('k', '5'))
 const retrieverName = resolveRetrieverName(flag('retriever', undefined))
+let sampleName
+try {
+  sampleName = parsePathFlag(args, 'sample')
+} catch (error) {
+  refuse(error.message)
+}
+if (sampleName !== undefined && !args.includes('--download')) {
+  refuse('--sample needs --download: a sample lists ids from the pinned upstream file')
+}
 
 /**
  * Resolve the oracle retriever. The real retriever may SKIP (DB/secret absent):
@@ -208,10 +236,18 @@ if (args.includes('--download')) {
   process.stderr.write(
     `dataset ${cached ? 'cached' : 'downloaded'} (${bytes} bytes${sha256 ? `, sha256 ${sha256}` : ''}) from ${url}\n`,
   )
-  const questions = normalizeQuestions(JSON.parse(readFileSync(path, 'utf8')))
+  let questions = normalizeQuestions(JSON.parse(readFileSync(path, 'utf8')))
+  if (sampleName !== undefined) {
+    try {
+      questions = applySample(questions, loadSample(sampleName), sha256)
+    } catch (error) {
+      refuse(`--sample ${sampleName}: ${error.message}`)
+    }
+  }
   const retriever = await resolveOracleRetriever()
   emit({
     ...(await scoreQuestions(questions, { fixture: 'longmemeval-s-500q', retriever })),
+    ...(sampleName === undefined ? {} : { sample: sampleName }),
     source: 'download',
   })
 } else if (args.includes('--judge')) {
