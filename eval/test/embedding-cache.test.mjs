@@ -85,6 +85,7 @@ test('a warm run serves every vector from the cache, identical to the cold run',
     failed_texts: 0,
     entries: 3,
     served_model: MODEL,
+    served_model_mismatch: false,
   })
 })
 
@@ -195,9 +196,17 @@ test('the served model is recorded and reported; a different one aborts instead 
   assert.equal(warm.stats().served_model, 'served-x')
   assert.equal((await warm.embed(['p'], 'memory.embed')).model, 'served-x', 'cached provenance')
   await assert.rejects(warm.embed(['q'], 'memory.embed'), ServedModelMismatchError)
+  // Sticky: once seen, even a cache hit refuses, and no further live call is made.
   const callsBefore = inner.calls.length
+  await assert.rejects(warm.embed(['p'], 'memory.embed'), ServedModelMismatchError)
   await assert.rejects(warm.prefill(['r', 's']), ServedModelMismatchError)
-  assert.equal(inner.calls.length, callsBefore + 1, 'a mismatch is not retried text by text')
+  assert.equal(inner.calls.length, callsBefore)
+  assert.equal(warm.stats().served_model_mismatch, true)
+
+  // A first mismatch during prefill is not retried text by text.
+  const fresh = fakeInner({ served: 'served-y' })
+  await assert.rejects(open(fresh, file).prefill(['r', 's']), ServedModelMismatchError)
+  assert.equal(fresh.calls.length, 1)
 })
 
 test('the cache file holds hashes and vectors, never text', async () => {

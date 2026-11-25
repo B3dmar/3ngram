@@ -128,6 +128,11 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
   const header = { version: CACHE_VERSION, model, dimensions }
   const loadedFile = load(file, header, vectors)
   let { appendable, servedModel } = loadedFile
+  // Sticky: once a served-model mismatch is seen, every later embed() rethrows
+  // it. core's embed-on-write swallows a write-time error (embed_failed), but the
+  // query embed that follows every question's writes is not swallowed, so the
+  // run aborts at that question instead of finishing with a missing vector.
+  let mismatch
   const added = []
   const counts = { hits: 0, misses: 0, live_calls: 0, live_input_tokens: 0, failed_texts: 0 }
   const keyOf = (text) => embeddingKey(model, dimensions, text)
@@ -138,7 +143,8 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
     counts.live_input_tokens += result.usage?.inputTokens ?? 0
     const served = result.model || model
     if (servedModel !== undefined && served !== servedModel) {
-      throw new ServedModelMismatchError(servedModel, served)
+      mismatch = new ServedModelMismatchError(servedModel, served)
+      throw mismatch
     }
     if (result.embeddings?.length !== texts.length) {
       throw new Error(`embedding row count ${result.embeddings?.length} != ${texts.length}`)
@@ -157,6 +163,7 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
 
   return {
     async embed(texts, operation) {
+      if (mismatch) throw mismatch
       const misses = [...new Set(texts.filter((text) => !vectors.has(keyOf(text))))]
       counts.hits += texts.length - misses.length
       counts.misses += misses.length
@@ -172,6 +179,7 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
     decide: (...args) => inner.decide(...args),
 
     async prefill(texts) {
+      if (mismatch) throw mismatch
       const todo = [...new Set(texts)].filter(
         (text) => text.trim().length > 0 && !vectors.has(keyOf(text)),
       )
@@ -219,6 +227,7 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
         ...counts,
         entries: vectors.size,
         served_model: servedModel ?? null,
+        served_model_mismatch: mismatch !== undefined,
       }
     },
   }
