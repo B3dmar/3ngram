@@ -199,6 +199,21 @@ const OFFICIAL_DATASET = JSON.stringify([
     ],
     answer_session_ids: ['s_gold'],
   },
+  // Abstention: LongMemEval's retrieval protocol skips it. Its question matches
+  // s_gold but its listed session is s_noise, so scoring it would pull MRR to
+  // 0.75; the lane must report it as skipped instead.
+  {
+    question_id: 'q2_abs',
+    question_type: 'multi-session',
+    question: 'what about the quokka launch party',
+    answer: 'not mentioned',
+    haystack_session_ids: ['s_gold', 's_noise'],
+    haystack_sessions: [
+      [{ role: 'user', content: `the quokka project ${CONTENT_SENTINEL} shipped` }],
+      [{ role: 'user', content: 'unrelated wombat chatter' }],
+    ],
+    answer_session_ids: ['s_noise'],
+  },
 ])
 
 test('--download lane runs the oracle and emits content-free metrics (#37/#172)', async () => {
@@ -219,9 +234,18 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
 
     assert.equal(result.source, 'download', 'lane must tag its provenance')
     assert.equal(result.fixture, 'longmemeval-s-500q')
-    assert.equal(result.questions, 1)
+    assert.equal(result.retriever, 'lexical')
+    assert.equal(result.questions, 2)
+    assert.equal(result.retrieval_scored, 1)
+    assert.equal(result.abstention_skipped, 1)
     assert.equal(result.metrics.session_recall_at_5, 1)
-    assert.equal(result.metrics.session_mrr, 1)
+    assert.equal(result.metrics.session_mrr, 1, 'the abstention question is not scored')
+    assert.deepEqual(result.by_question_type, { 'single-session-user': 1 })
+    // Per-ability rows carry their own n; a lexical run has no baseline block.
+    assert.deepEqual(result.by_ability, {
+      'information-extraction': { n: 1, session_recall_at_5: 1, session_mrr: 1 },
+    })
+    assert.equal(result.lexical_baseline, undefined)
 
     // Hard rule 6: the uploaded artifact carries ids/counts/scores ONLY. No
     // haystack/memory content may appear anywhere in the serialized metrics.

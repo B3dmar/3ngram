@@ -2,7 +2,15 @@
 // Offline unit tests for the shared ranker/normalizer (#37).
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { normalizeQuestions, parseFlag, rankSessions, scoreQuestion } from '../src/lib.mjs'
+import {
+  ABILITIES,
+  abilityOf,
+  isAbstention,
+  normalizeQuestions,
+  parseFlag,
+  rankSessions,
+  scoreQuestion,
+} from '../src/lib.mjs'
 
 const SESSIONS = [
   { session_id: 's1', turns: [{ role: 'user', content: 'I picked PostgreSQL for the project.' }] },
@@ -78,4 +86,28 @@ test('normalizeQuestions passes through the subset shape', () => {
     questions: [{ question: 'x', answer_session_ids: ['s1'], haystack_sessions: SESSIONS }],
   })
   assert.equal(q.haystack_sessions[0].session_id, 's1')
+})
+
+test('abilityOf maps question types to the five LongMemEval abilities', () => {
+  const cases = [
+    ['single-session-user', 'information-extraction'],
+    ['single-session-assistant', 'information-extraction'],
+    ['single-session-preference', 'information-extraction'],
+    ['multi-session', 'multi-session-reasoning'],
+    ['temporal-reasoning', 'temporal-reasoning'],
+    ['knowledge-update', 'knowledge-update'],
+  ]
+  for (const [question_type, ability] of cases) {
+    assert.equal(abilityOf({ question_id: 'q1', question_type }), ability)
+    assert.ok(ABILITIES.includes(ability))
+  }
+})
+
+test('abilityOf: an _abs id is abstention whatever its type; unknown types pass through', () => {
+  assert.equal(isAbstention('gpt4_1a2b3c4d_abs'), true)
+  assert.equal(isAbstention('gpt4_1a2b3c4d'), false)
+  assert.equal(isAbstention(undefined), false)
+  assert.equal(abilityOf({ question_id: 'q_abs', question_type: 'multi-session' }), 'abstention')
+  assert.equal(abilityOf({ question_id: 'q', question_type: 'brand-new-type' }), 'brand-new-type')
+  assert.equal(abilityOf({}), 'unknown')
 })
