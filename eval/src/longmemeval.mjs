@@ -43,7 +43,14 @@ import {
   GATEWAY_API_KEY_ENV,
   runJudge,
 } from './judge.mjs'
-import { ABILITIES, abilityOf, normalizeQuestions, parseFlag, scoreRanked } from './lib.mjs'
+import {
+  ABILITIES,
+  abilityOf,
+  isAbstention,
+  normalizeQuestions,
+  parseFlag,
+  scoreRanked,
+} from './lib.mjs'
 import {
   assertKnownRetriever,
   lexicalRetriever,
@@ -95,18 +102,29 @@ function abilityRows(perAbility, k) {
 }
 
 /**
+ * The questions retrieval is scored on. LongMemEval's own retrieval protocol
+ * always skips the abstention (`_abs`) questions: they ask about events that
+ * never happened, so they have no ground-truth answer location (upstream
+ * README, "Memory Retrieval"). Abstention is an answer-level ability, for the
+ * judge; it is counted in `abstention_skipped`, never scored as retrieval.
+ */
+function retrievalQuestions(questions) {
+  return questions.filter((q) => !isAbstention(q.question_id))
+}
+
+/**
  * Retrieval-oracle: recall@k / MRR over gold session labels, scored through the
  * injected `retriever` (lexical default, or the real Phase-1B retriever) over
- * already-normalized questions. The lexical retriever reproduces the pre-swap
- * ranking exactly, so the default metrics are unchanged; `retriever` and
- * `by_ability` are additive fields.
+ * already-normalized questions, abstention skipped. The lexical retriever
+ * reproduces the pre-swap ranking exactly.
  */
 async function runOracle(questions, { k, fixture, retriever }) {
+  const scored = retrievalQuestions(questions)
   let recallHits = 0
   let mrrSum = 0
   const perType = {}
   const perAbility = {}
-  for (const q of questions) {
+  for (const q of scored) {
     const ranked = await retriever.rankSessions(q.question, q.haystack_sessions)
     const { hit, rr } = scoreRanked(ranked, q.answer_session_ids, k)
     if (hit) recallHits++
@@ -121,13 +139,15 @@ async function runOracle(questions, { k, fixture, retriever }) {
     if (hit) ability.hits++
     ability.rr += rr
   }
-  const n = questions.length || 1
+  const n = scored.length || 1
   return {
     harness: 'longmemeval-advisory',
     tier: 'advisory',
     fixture,
     k,
     questions: questions.length,
+    retrieval_scored: scored.length,
+    abstention_skipped: questions.length - scored.length,
     retriever: retriever.name,
     metrics: {
       [`session_recall_at_${k}`]: +(recallHits / n).toFixed(4),
