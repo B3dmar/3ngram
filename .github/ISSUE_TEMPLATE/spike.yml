@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        A spike is a timeboxed validation that ends in a written result (`docs/spikes/`).
+        A spike is a timeboxed validation that ends in a written result, posted on this issue.
   - type: textarea
     id: question
     attributes:
@@ -25,7 +25,7 @@ body:
     id: outcome
     attributes:
       label: Expected outcome
-      description: What a usable result looks like and where it will be written.
+      description: What a usable result looks like. The result is posted on this issue.
     validations:
       required: true
   - type: input

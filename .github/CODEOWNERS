@@ -2,12 +2,11 @@
 # Syntax: https://docs.github.com/articles/about-code-owners
 # Later matches take precedence over earlier ones.
 #
-# Single-maintainer project (see MAINTAINERS.md): the maintainer owns the repo
-# by default, with the security-, license-, release-, and CI-sensitive paths
-# called out explicitly so review routing is unambiguous.
-
-# Default owner for everything.
-*                           @sebastianebg
+# Single-maintainer project (see MAINTAINERS.md). There is deliberately no
+# default `*` owner: a path listed here is one the maintainer reviews and
+# merges personally, and agent tooling refuses to merge a PR that touches it.
+# Everything else merges through the normal gate (required checks plus an
+# independent review of the head commit). Add a path here to reserve it.
 
 # Licensing & legal surface.
 /LICENSE                    @sebastianebg
@@ -25,10 +24,14 @@
 /.github/workflows/         @sebastianebg
 /scripts/                   @sebastianebg
 /renovate.json              @sebastianebg
-/.changeset/                @sebastianebg
+/.github/actions/           @sebastianebg
+/.changeset/config.json     @sebastianebg
+/.gitleaks.toml             @sebastianebg
 
-# Release-sensitive manifests.
-/package.json               @sebastianebg
-/pnpm-lock.yaml             @sebastianebg
+# Install trust settings (lifecycle scripts, overrides, registry).
+/.npmrc                     @sebastianebg
 /pnpm-workspace.yaml        @sebastianebg
-/turbo.json                 @sebastianebg
+
+# Commands that run in agent sessions.
+/.claude/settings.json      @sebastianebg
+/.claude/hooks/             @sebastianebg
