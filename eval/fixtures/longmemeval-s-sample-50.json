@@ -1,5 +1,5 @@
 {
-  "description": "Pinned, stratified LongMemEval-S sample scored by the real-retriever nightly lane (#449). Question ids only; the upstream dataset is never committed. Regenerate with eval/scripts/gen-longmemeval-sample.mjs.",
+  "description": "Pinned, stratified LongMemEval-S sample for scoring the real retriever on real questions (#449): longmemeval.mjs --download --sample. Question ids only; the upstream dataset is never committed. Regenerate with eval/scripts/gen-longmemeval-sample.mjs.",
   "dataset": {
     "name": "longmemeval_s",
     "sha256": "08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894",

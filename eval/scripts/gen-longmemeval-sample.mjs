@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Generator for eval/fixtures/longmemeval-s-sample-50.json (#449): the pinned,
-// stratified LongMemEval-S sample the real-retriever nightly lane scores.
+// stratified LongMemEval-S sample for scoring the real retriever on real questions.
 //
 // It reads the verified, pinned upstream file through download.mjs (the
 // gitignored cache, fetched when absent) and writes question IDS ONLY: no
@@ -25,7 +25,7 @@ export const DEFAULT_SEED = 449
 export function buildSampleFixture(instances, { sha256, bytes, seed }) {
   return {
     description:
-      'Pinned, stratified LongMemEval-S sample scored by the real-retriever nightly lane (#449). Question ids only; the upstream dataset is never committed. Regenerate with eval/scripts/gen-longmemeval-sample.mjs.',
+      'Pinned, stratified LongMemEval-S sample for scoring the real retriever on real questions (#449): longmemeval.mjs --download --sample. Question ids only; the upstream dataset is never committed. Regenerate with eval/scripts/gen-longmemeval-sample.mjs.',
     dataset: { name: 'longmemeval_s', sha256, bytes },
     seed,
     quotas: SAMPLE_QUOTAS,

@@ -80,6 +80,13 @@ test('applySample keeps the sample order and refuses any mismatch', () => {
     () => applySample(questions, { ...sample, question_ids: ['a', 'a'] }, 'abc'),
     /twice/,
   )
+  // Fail closed: no ids must never become a zero-question run that reports zeros.
+  for (const question_ids of [undefined, null, [], 'a']) {
+    assert.throws(
+      () => applySample(questions, { ...sample, question_ids }, 'abc'),
+      /lists no question ids/,
+    )
+  }
 })
 
 test('the committed sample is pinned to the download release and holds ids only', () => {

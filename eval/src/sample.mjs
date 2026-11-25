@@ -100,7 +100,10 @@ export function applySample(questions, sample, datasetSha256) {
       `sample was drawn from dataset sha256 ${pinned ?? '(none)'}; the scored dataset is ${datasetSha256 || '(unverified)'}`,
     )
   }
-  const ids = sample.question_ids ?? []
+  const ids = sample.question_ids
+  // Fail closed: a sample with no ids would score zero questions and report
+  // zeros, which reads like a result rather than a broken input.
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error('sample lists no question ids')
   if (new Set(ids).size !== ids.length) throw new Error('sample lists a question id twice')
   const byId = new Map(questions.map((q) => [q.question_id, q]))
   const missing = ids.filter((id) => !byId.has(id))
