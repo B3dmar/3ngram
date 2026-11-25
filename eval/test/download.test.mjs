@@ -219,9 +219,15 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
 
     assert.equal(result.source, 'download', 'lane must tag its provenance')
     assert.equal(result.fixture, 'longmemeval-s-500q')
+    assert.equal(result.retriever, 'lexical')
     assert.equal(result.questions, 1)
     assert.equal(result.metrics.session_recall_at_5, 1)
     assert.equal(result.metrics.session_mrr, 1)
+    // Per-ability rows carry their own n; a lexical run has no baseline block.
+    assert.deepEqual(result.by_ability, {
+      'information-extraction': { n: 1, session_recall_at_5: 1, session_mrr: 1 },
+    })
+    assert.equal(result.lexical_baseline, undefined)
 
     // Hard rule 6: the uploaded artifact carries ids/counts/scores ONLY. No
     // haystack/memory content may appear anywhere in the serialized metrics.

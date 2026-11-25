@@ -43,7 +43,7 @@ import {
   GATEWAY_API_KEY_ENV,
   runJudge,
 } from './judge.mjs'
-import { normalizeQuestions, parseFlag, scoreRanked } from './lib.mjs'
+import { ABILITIES, abilityOf, normalizeQuestions, parseFlag, scoreRanked } from './lib.mjs'
 import {
   assertKnownRetriever,
   lexicalRetriever,
@@ -73,16 +73,39 @@ function loadFixture(name) {
 }
 
 /**
- * Retrieval-oracle: recall@k / MRR over gold session labels, scored through the
- * injected `retriever` (lexical default, or the real Phase-1B retriever). The
- * lexical retriever reproduces the pre-swap ranking exactly, so the default
- * output is byte-identical to the prior harness (regression guard).
+ * Per-ability rows in LongMemEval's report order, each with its own `n`: a
+ * 50-question sample has 5 to 15 questions per ability, so one hit moves a row
+ * by several points and the count must travel with the rate.
  */
-async function runOracle(dataset, { k, fixture, retriever }) {
-  const questions = normalizeQuestions(dataset)
+function abilityRows(perAbility, k) {
+  const order = [...ABILITIES, ...Object.keys(perAbility).filter((a) => !ABILITIES.includes(a))]
+  return Object.fromEntries(
+    order
+      .filter((ability) => perAbility[ability])
+      .map((ability) => {
+        const { n, hits, rr } = perAbility[ability]
+        const row = {
+          n,
+          [`session_recall_at_${k}`]: +(hits / n).toFixed(4),
+          session_mrr: +(rr / n).toFixed(4),
+        }
+        return [ability, row]
+      }),
+  )
+}
+
+/**
+ * Retrieval-oracle: recall@k / MRR over gold session labels, scored through the
+ * injected `retriever` (lexical default, or the real Phase-1B retriever) over
+ * already-normalized questions. The lexical retriever reproduces the pre-swap
+ * ranking exactly, so the default metrics are unchanged; `retriever` and
+ * `by_ability` are additive fields.
+ */
+async function runOracle(questions, { k, fixture, retriever }) {
   let recallHits = 0
   let mrrSum = 0
   const perType = {}
+  const perAbility = {}
   for (const q of questions) {
     const ranked = await retriever.rankSessions(q.question, q.haystack_sessions)
     const { hit, rr } = scoreRanked(ranked, q.answer_session_ids, k)
@@ -91,6 +114,12 @@ async function runOracle(dataset, { k, fixture, retriever }) {
     perType[q.question_type] ??= { n: 0, hits: 0 }
     perType[q.question_type].n++
     if (hit) perType[q.question_type].hits++
+    const abilityKey = abilityOf(q)
+    perAbility[abilityKey] ??= { n: 0, hits: 0, rr: 0 }
+    const ability = perAbility[abilityKey]
+    ability.n++
+    if (hit) ability.hits++
+    ability.rr += rr
   }
   const n = questions.length || 1
   return {
@@ -99,6 +128,7 @@ async function runOracle(dataset, { k, fixture, retriever }) {
     fixture,
     k,
     questions: questions.length,
+    retriever: retriever.name,
     metrics: {
       [`session_recall_at_${k}`]: +(recallHits / n).toFixed(4),
       session_mrr: +(mrrSum / n).toFixed(4),
@@ -106,6 +136,22 @@ async function runOracle(dataset, { k, fixture, retriever }) {
     by_question_type: Object.fromEntries(
       Object.entries(perType).map(([t, v]) => [t, +(v.hits / v.n).toFixed(4)]),
     ),
+    by_ability: abilityRows(perAbility, k),
+  }
+}
+
+/**
+ * Score with the resolved retriever. A real-retriever run also scores the
+ * lexical stand-in on the SAME questions, so the two numbers sit side by side
+ * in one artifact instead of being matched up across lanes.
+ */
+async function scoreQuestions(questions, { fixture, retriever }) {
+  const result = await runOracle(questions, { k, fixture, retriever })
+  if (retriever.name === lexicalRetriever.name) return result
+  const baseline = await runOracle(questions, { k, fixture, retriever: lexicalRetriever })
+  return {
+    ...result,
+    lexical_baseline: { metrics: baseline.metrics, by_ability: baseline.by_ability },
   }
 }
 
@@ -142,10 +188,10 @@ if (args.includes('--download')) {
   process.stderr.write(
     `dataset ${cached ? 'cached' : 'downloaded'} (${bytes} bytes${sha256 ? `, sha256 ${sha256}` : ''}) from ${url}\n`,
   )
-  const dataset = JSON.parse(readFileSync(path, 'utf8'))
+  const questions = normalizeQuestions(JSON.parse(readFileSync(path, 'utf8')))
   const retriever = await resolveOracleRetriever()
   emit({
-    ...(await runOracle(dataset, { k, fixture: 'longmemeval-s-500q', retriever })),
+    ...(await scoreQuestions(questions, { fixture: 'longmemeval-s-500q', retriever })),
     source: 'download',
   })
 } else if (args.includes('--judge')) {
@@ -167,5 +213,5 @@ if (args.includes('--download')) {
   const fixtureName = flag('fixture', 'longmemeval-s-subset')
   const dataset = loadFixture(fixtureName)
   const retriever = await resolveOracleRetriever()
-  emit(await runOracle(dataset, { k, fixture: fixtureName, retriever }))
+  emit(await scoreQuestions(normalizeQuestions(dataset), { fixture: fixtureName, retriever }))
 }

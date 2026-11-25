@@ -83,6 +83,38 @@ export function sessionText(session) {
   return session.turns.map((t) => t.content).join(' ')
 }
 
+/** LongMemEval's five abilities (arXiv 2410.10813), in report order. */
+export const ABILITIES = Object.freeze([
+  'information-extraction',
+  'multi-session-reasoning',
+  'temporal-reasoning',
+  'knowledge-update',
+  'abstention',
+])
+
+const TYPE_ABILITY = Object.freeze({
+  'single-session-user': 'information-extraction',
+  'single-session-assistant': 'information-extraction',
+  'single-session-preference': 'information-extraction',
+  'multi-session': 'multi-session-reasoning',
+  'temporal-reasoning': 'temporal-reasoning',
+  'knowledge-update': 'knowledge-update',
+})
+
+/** Upstream marks an abstention question with an `_abs` id suffix, whatever its type. */
+export function isAbstention(questionId) {
+  return typeof questionId === 'string' && questionId.endsWith('_abs')
+}
+
+/**
+ * The LongMemEval ability a question tests. An unknown type is reported as
+ * itself rather than dropped, so a new upstream type shows up in the report.
+ */
+export function abilityOf(question) {
+  if (isAbstention(question.question_id)) return 'abstention'
+  return TYPE_ABILITY[question.question_type] ?? question.question_type ?? 'unknown'
+}
+
 /**
  * Normalize the two accepted dataset shapes into a single question shape:
  *  1. This repo's subset fixture: { questions: [{ ..., haystack_sessions:
