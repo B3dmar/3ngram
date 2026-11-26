@@ -117,6 +117,9 @@ function load(file, header, vectors) {
 
 const BACKOFF_BASE_MS = 2_000
 const BACKOFF_CAP_MS = 60_000
+// A sanity bound on a provider's Retry-After only: an absurd header must not
+// stall the run, but a real cooldown is waited out in full (#517).
+const RETRY_AFTER_MAX_MS = 10 * 60_000
 const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
@@ -130,20 +133,24 @@ export function isRetryable(error) {
   return error instanceof TypeError && error.message === 'fetch failed'
 }
 
-/** The wait before retry `attempt` (0-based): the provider's Retry-After if given, else doubling from 2 s; capped at 60 s. */
+/**
+ * The wait before retry `attempt` (0-based): the provider's Retry-After in full
+ * when given (bounded at 10 min), else doubling from 2 s and capped at 60 s.
+ */
 export function backoffMs(error, attempt) {
   const asked = error?.retryAfterMs
-  const wait = typeof asked === 'number' ? asked : BACKOFF_BASE_MS * 2 ** attempt
-  return Math.min(wait, BACKOFF_CAP_MS)
+  if (typeof asked === 'number') return Math.min(asked, RETRY_AFTER_MAX_MS)
+  return Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_CAP_MS)
 }
 
 /**
  * Wrap `inner` (a Gateway) with the cache at `file`. `prefill(texts)` embeds
  * every uncached text in batches of `batchSize`. A batch that fails retryably
- * is retried up to `retries` times with backoff; only then, or on any other
- * failure, it is retried one text per call, and a text that still fails is
- * counted, not cached (the write path then calls live, fails again and records
- * `embed_failed`). Each batch is saved as soon as it is paid for, so a run
+ * is retried up to `retries` times with backoff; if it still fails, its texts
+ * are counted as failed rather than sent one per call into the same rate limit.
+ * Any other failure (one bad text sinks the batch) is retried one text per
+ * call, and a text that still fails is counted, not cached (the write path
+ * then calls live, fails again and records `embed_failed`). Each batch is saved as soon as it is paid for, so a run
  * killed later keeps it. A served-model mismatch is never retried: it aborts
  * the run. `save()` persists what this run added; `stats()` returns counts and
  * the served model only.
@@ -258,6 +265,10 @@ export function createCachingGateway(
           await fetchBatch(batch)
         } catch (error) {
           if (error instanceof ServedModelMismatchError) throw error
+          if (isRetryable(error)) {
+            counts.failed_texts += batch.length
+            continue
+          }
           for (const text of batch) {
             try {
               await fetchLive([text], PREFILL_OPERATION)

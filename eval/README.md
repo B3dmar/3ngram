@@ -91,8 +91,9 @@ EVAL_EMBED_CACHE=eval/.cache/embeddings/longmemeval-s-sample-50.jsonl \
   requests and 5M tokens cold, about $0.67); the per-memory embeds that follow are hits,
   and a miss still calls the live gateway. A batch that hits a rate limit, a server error,
   a timeout or a network failure is retried whole up to 4 times, waiting the provider's
-  `Retry-After` or 2, 4, 8, 16 s (capped at 60 s); only then is it retried one text per
-  call. Each batch is written to the file as soon as it is paid for, so a run killed later
+  `Retry-After` in full (bounded at 10 min) or else 2, 4, 8, 16 s; if it still fails, its
+  texts are counted as failed rather than sent one per call into the same limit. Any
+  other failure is retried one text per call. Each batch is written to the file as soon as it is paid for, so a run killed later
   keeps it. `batch_retries` counts the waits. Vectors are served after a float32 round trip,
   so cold and warm runs score identical vectors. Rows carry a checksum; a damaged or
   unterminated file is rewritten whole. The header records the model the gateway served,

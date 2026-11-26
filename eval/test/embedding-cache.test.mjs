@@ -264,21 +264,41 @@ test('a rate-limited batch waits and retries whole; a cold sample-sized fill sta
   assert.equal(open(fakeInner(), file).stats().loaded, 188)
 })
 
-test('a batch still rate limited after its retries falls back to one text per call (#517)', async () => {
+test('a batch still rate limited after its retries is counted, never sent one text per call (#517)', async () => {
   const inner = fakeInner()
   const embed = inner.embed
   inner.embed = (texts, operation) =>
-    texts.length > 1 ? Promise.reject(rateLimited()) : embed(texts, operation)
+    texts[0] === 'a' ? Promise.reject(rateLimited()) : embed(texts, operation)
   const waits = []
   const gateway = open(inner, fileIn('persistent.jsonl'), {
     batchSize: 3,
     retries: 2,
     sleep: (ms) => waits.push(ms),
   })
-  await gateway.prefill(['a', 'b', 'c'])
+  await gateway.prefill(['a', 'b', 'c', 'd'])
   assert.deepEqual(waits, [2_000, 4_000], 'doubling backoff')
-  assert.equal(gateway.stats().live_calls, 3 + 3, '1 try + 2 retries, then 3 single-text calls')
-  assert.equal(gateway.stats().entries, 3)
+  assert.equal(gateway.stats().live_calls, 3 + 1, '1 try + 2 retries, then the next batch')
+  assert.equal(gateway.stats().failed_texts, 3, 'the limited batch is counted, not split')
+  assert.equal(gateway.stats().entries, 1)
+})
+
+test('a long Retry-After is waited out in full, not cut to the backoff cap (#517)', async () => {
+  const inner = fakeInner()
+  const embed = inner.embed
+  let limitedOnce = false
+  inner.embed = (texts, operation) => {
+    if (!limitedOnce) {
+      limitedOnce = true
+      return Promise.reject(rateLimited(300_000))
+    }
+    return embed(texts, operation)
+  }
+  const waits = []
+  const gateway = open(inner, fileIn('cooldown.jsonl'), { sleep: (ms) => waits.push(ms) })
+  await gateway.prefill(['x', 'y'])
+  assert.deepEqual(waits, [300_000])
+  assert.equal(gateway.stats().live_calls, 2)
+  assert.equal(gateway.stats().entries, 2)
 })
 
 test('only rate limits, server errors, timeouts and network failures are retried (#517)', () => {
@@ -289,6 +309,7 @@ test('only rate limits, server errors, timeouts and network failures are retried
   assert.equal(isRetryable(new TypeError('fetch failed')), true)
   assert.equal(isRetryable(new TypeError('x is undefined')), false, 'a code bug is not waited out')
   assert.equal(isRetryable(new Error('embedding row count 1 != 2')), false)
-  assert.equal(backoffMs({ retryAfterMs: 120_000 }, 0), 60_000, 'capped at 60 s')
-  assert.equal(backoffMs({}, 10), 60_000)
+  assert.equal(backoffMs({ retryAfterMs: 300_000 }, 0), 300_000, "the provider's wait, in full")
+  assert.equal(backoffMs({ retryAfterMs: 86_400_000 }, 0), 600_000, 'an absurd header is bounded')
+  assert.equal(backoffMs({}, 10), 60_000, 'the default backoff is capped at 60 s')
 })
