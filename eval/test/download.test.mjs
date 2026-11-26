@@ -221,17 +221,18 @@ const OFFICIAL_DATASET = JSON.stringify([
 
 // The cache is pinned to the real release, so the hermetic lane tests pin the
 // seeded dataset through the env override instead (never a network fetch).
-const OFFICIAL_ENV = {
+const envFor = (dataset) => ({
   ...process.env,
-  LONGMEMEVAL_S_SHA256: createHash('sha256').update(OFFICIAL_DATASET).digest('hex'),
-  LONGMEMEVAL_S_BYTES: String(Buffer.byteLength(OFFICIAL_DATASET)),
-}
+  LONGMEMEVAL_S_SHA256: createHash('sha256').update(dataset).digest('hex'),
+  LONGMEMEVAL_S_BYTES: String(Buffer.byteLength(dataset)),
+})
+const OFFICIAL_ENV = envFor(OFFICIAL_DATASET)
 
 /**
  * Seed the verified cache with OFFICIAL_DATASET, run `fn`, then restore a
  * pre-existing real cache so a developer's downloaded 500q dataset is never lost.
  */
-async function withSeededCache(fn) {
+async function withSeededCache(fn, dataset = OFFICIAL_DATASET) {
   const cachedFile = join(CACHE_DIR, DATASET_FILENAME)
   const previousCache = await readFile(cachedFile).catch((error) => {
     if (error?.code === 'ENOENT') return undefined
@@ -239,7 +240,7 @@ async function withSeededCache(fn) {
   })
   try {
     await mkdir(CACHE_DIR, { recursive: true })
-    await writeFile(cachedFile, OFFICIAL_DATASET)
+    await writeFile(cachedFile, dataset)
     await fn()
   } finally {
     await rm(cachedFile, { force: true })
@@ -264,12 +265,22 @@ test('--download lane runs the oracle and emits content-free metrics (#37/#172)'
     assert.equal(result.questions, 2)
     assert.equal(result.retrieval_scored, 1)
     assert.equal(result.abstention_skipped, 1)
+    assert.equal(result.protocol, 'answer-ids', 'the default protocol is named')
+    assert.equal(result.no_target_skipped, undefined)
     assert.equal(result.metrics.session_recall_at_5, 1)
     assert.equal(result.metrics.session_mrr, 1, 'the abstention question is not scored')
     assert.deepEqual(result.by_question_type, { 'single-session-user': 1 })
     // Per-ability rows carry their own n; a lexical run has no baseline block.
     assert.deepEqual(result.by_ability, {
-      'information-extraction': { n: 1, session_recall_at_5: 1, session_mrr: 1 },
+      'information-extraction': {
+        n: 1,
+        session_recall_at_5: 1,
+        session_mrr: 1,
+        session_recall_all_at_5: 1,
+        session_ndcg_any_at_5: 1,
+        session_recall_all_at_10: 1,
+        session_ndcg_any_at_10: 1,
+      },
     })
     assert.equal(result.lexical_baseline, undefined)
 
@@ -341,5 +352,91 @@ test('--sample without --download exits 2 before any scoring (#449)', () => {
         stdio: 'pipe',
       }),
     (error) => error.status === 2 && /needs --download/.test(error.stderr),
+  )
+})
+
+// Upstream-shaped ids and has_answer flags (#516): u1's second listed session
+// is flagged only on an assistant turn, so it is not upstream gold; u2's only
+// evidence is an assistant turn, so upstream skips the question.
+const UPSTREAM_SHAPED = JSON.stringify([
+  {
+    question_id: 'u1',
+    question_type: 'single-session-user',
+    question: 'what about the quokka project',
+    haystack_session_ids: ['answer_u1_1', 's_noise', 'answer_u1_2'],
+    haystack_sessions: [
+      [{ role: 'user', content: `the quokka project ${CONTENT_SENTINEL}`, has_answer: true }],
+      [{ role: 'user', content: 'unrelated wombat chatter', has_answer: false }],
+      [
+        { role: 'user', content: 'quokka', has_answer: false },
+        { role: 'assistant', content: 'noted', has_answer: true },
+      ],
+    ],
+    answer_session_ids: ['answer_u1_1', 'answer_u1_2'],
+  },
+  {
+    question_id: 'u2',
+    question_type: 'single-session-assistant',
+    question: 'what did you say about the quokka',
+    haystack_session_ids: ['answer_u2_1', 's_noise'],
+    haystack_sessions: [
+      [
+        { role: 'user', content: 'tell me', has_answer: false },
+        { role: 'assistant', content: 'the quokka note', has_answer: true },
+      ],
+      [{ role: 'user', content: 'unrelated wombat chatter', has_answer: false }],
+    ],
+    answer_session_ids: ['answer_u2_1'],
+  },
+  {
+    question_id: 'u3_abs',
+    question_type: 'multi-session',
+    question: 'what about the quokka party',
+    haystack_session_ids: ['s_noise'],
+    haystack_sessions: [[{ role: 'user', content: 'wombat', has_answer: false }]],
+    answer_session_ids: [],
+  },
+])
+
+test('--protocol upstream applies its gold and skip rules and counts the skips (#516)', async () => {
+  await withSeededCache(() => {
+    const run = (protocol) =>
+      execFileSync('node', [cli, '--download', '--protocol', protocol, '--json'], {
+        encoding: 'utf8',
+        env: envFor(UPSTREAM_SHAPED),
+      })
+    const out = run('upstream')
+    const upstream = JSON.parse(out.trim())
+    assert.equal(upstream.protocol, 'upstream')
+    assert.equal(upstream.questions, 3)
+    assert.equal(upstream.retrieval_scored, 1)
+    assert.equal(upstream.abstention_skipped, 1)
+    assert.equal(upstream.no_target_skipped, 1, 'u2 has no flagged user turn')
+    assert.equal(upstream.metrics.session_recall_all_at_5, 1)
+    assert.equal(out.includes(CONTENT_SENTINEL), false)
+
+    const answerIds = JSON.parse(run('answer-ids').trim())
+    assert.equal(answerIds.protocol, 'answer-ids')
+    assert.equal(answerIds.retrieval_scored, 2, 'answer-ids scores u2 too')
+    assert.equal(answerIds.no_target_skipped, undefined)
+  }, UPSTREAM_SHAPED)
+})
+
+test('--protocol refuses an unknown name, nothing to score, or no gold (#516)', async () => {
+  const refused = (args, env, pattern) =>
+    assert.throws(
+      () =>
+        execFileSync('node', [cli, ...args, '--json'], { encoding: 'utf8', env, stdio: 'pipe' }),
+      (error) => error.status === 2 && error.stdout === '' && pattern.test(error.stderr),
+    )
+  refused(['--protocol', 'bogus'], process.env, /unknown --protocol 'bogus'/)
+  // Bare, or followed by another flag: refused, not scored under the default.
+  refused(['--protocol'], process.env, /unknown --protocol ''/)
+  refused(['--protocol='], process.env, /unknown --protocol ''/)
+  // The synthetic subset flags user turns but has no upstream "answer" ids.
+  refused(['--protocol', 'upstream'], process.env, /have no gold session/)
+  // The seeded file has no has_answer flags: upstream skips every question.
+  await withSeededCache(() =>
+    refused(['--download', '--protocol', 'upstream'], OFFICIAL_ENV, /no retrieval-scorable/),
   )
 })

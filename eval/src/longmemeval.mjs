@@ -31,6 +31,10 @@
 //                uses a deterministic fake gateway; the nightly lane uses a live
 //                gateway ONLY when LLM_GATEWAY_API_KEY is set (skip-when-absent).
 //
+// --protocol picks the gold and skip rules retrieval is scored under
+// (retrieval-metrics.mjs, #516): `answer-ids` (default) or `upstream`,
+// LongMemEval's own. The output names it in `protocol`.
+//
 // Usage:
 //   node eval/src/longmemeval.mjs [--fixture longmemeval-s-subset] [--k 5] [--json]
 //   node eval/src/longmemeval.mjs --retriever real [--fixture …] [--k 5] [--json]
@@ -56,6 +60,7 @@ import {
   parsePathFlag,
   scoreRanked,
 } from './lib.mjs'
+import { PROTOCOLS, upstreamMetrics } from './retrieval-metrics.mjs'
 import {
   assertKnownRetriever,
   lexicalRetriever,
@@ -85,6 +90,26 @@ function loadFixture(name) {
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
+/** A running total of one question set's scores; `sums` holds upstream's metrics. */
+function tally(into, { hit, rr, extra }) {
+  into.n++
+  if (hit) into.hits++
+  into.rr += rr
+  for (const [key, value] of Object.entries(extra)) into.sums[key] = (into.sums[key] ?? 0) + value
+}
+
+const newTally = () => ({ n: 0, hits: 0, rr: 0, sums: {} })
+const rate = (sum, n) => +(sum / (n || 1)).toFixed(4)
+
+/** Mean of every metric in a tally: today's any-recall and MRR first, then upstream's. */
+function rates({ n, hits, rr, sums }, k) {
+  return {
+    [`session_recall_at_${k}`]: rate(hits, n),
+    session_mrr: rate(rr, n),
+    ...Object.fromEntries(Object.entries(sums).map(([key, sum]) => [key, rate(sum, n)])),
+  }
+}
+
 /**
  * Per-ability rows in LongMemEval's report order, each with its own `n`: a
  * 50-question sample has 5 to 15 questions per ability, so one hit moves a row
@@ -95,15 +120,7 @@ function abilityRows(perAbility, k) {
   return Object.fromEntries(
     order
       .filter((ability) => perAbility[ability])
-      .map((ability) => {
-        const { n, hits, rr } = perAbility[ability]
-        const row = {
-          n,
-          [`session_recall_at_${k}`]: +(hits / n).toFixed(4),
-          session_mrr: +(rr / n).toFixed(4),
-        }
-        return [ability, row]
-      }),
+      .map((ability) => [ability, { n: perAbility[ability].n, ...rates(perAbility[ability], k) }]),
   )
 }
 
@@ -112,53 +129,56 @@ function abilityRows(perAbility, k) {
  * always skips the abstention (`_abs`) questions: they ask about events that
  * never happened, so they have no ground-truth answer location (upstream
  * README, "Memory Retrieval"). Abstention is an answer-level ability, for the
- * judge; it is counted in `abstention_skipped`, never scored as retrieval.
+ * judge; it is counted in `abstention_skipped`, never scored as retrieval. The
+ * upstream protocol also skips a question with no flagged user turn
+ * (`no_target_skipped`).
  */
 function retrievalQuestions(questions) {
-  return questions.filter((q) => !isAbstention(q.question_id))
+  return questions.filter((q) => !isAbstention(q.question_id) && protocol.scores(q))
 }
 
 /**
- * Retrieval-oracle: recall@k / MRR over gold session labels, scored through the
+ * Retrieval-oracle: any-recall@k and MRR, plus upstream's recall_all and
+ * ndcg_any at 5 and 10, over the protocol's gold sessions. Scored through the
  * injected `retriever` (lexical default, or the real Phase-1B retriever) over
- * already-normalized questions, abstention skipped. The lexical retriever
- * reproduces the pre-swap ranking exactly.
+ * already-normalized questions. Every metric reads the same ranking, so the
+ * extra ones cost no retrieval or embedding call.
  */
 async function runOracle(questions, { k, fixture, retriever }) {
   const scored = retrievalQuestions(questions)
-  let recallHits = 0
-  let mrrSum = 0
+  const total = newTally()
   const perType = {}
   const perAbility = {}
   for (const q of scored) {
     const ranked = await retriever.rankSessions(q.question, q.haystack_sessions)
-    const { hit, rr } = scoreRanked(ranked, q.answer_session_ids, k)
-    if (hit) recallHits++
-    mrrSum += rr
+    const gold = protocol.gold(q)
+    const { hit, rr } = scoreRanked(ranked, gold, k)
+    const rankedIds = ranked.map((r) => r.session_id)
+    const corpus = q.haystack_sessions.map((s) => s.session_id)
+    const score = { hit, rr, extra: upstreamMetrics(rankedIds, gold, corpus) }
+    tally(total, score)
     perType[q.question_type] ??= { n: 0, hits: 0 }
     perType[q.question_type].n++
     if (hit) perType[q.question_type].hits++
-    const abilityKey = abilityOf(q)
-    perAbility[abilityKey] ??= { n: 0, hits: 0, rr: 0 }
-    const ability = perAbility[abilityKey]
-    ability.n++
-    if (hit) ability.hits++
-    ability.rr += rr
+    const ability = abilityOf(q)
+    perAbility[ability] ??= newTally()
+    tally(perAbility[ability], score)
   }
-  const n = scored.length || 1
+  const abstention = questions.filter((q) => isAbstention(q.question_id)).length
   return {
     harness: 'longmemeval-advisory',
     tier: 'advisory',
     fixture,
     k,
+    protocol: protocolName,
     questions: questions.length,
     retrieval_scored: scored.length,
-    abstention_skipped: questions.length - scored.length,
+    abstention_skipped: abstention,
+    ...(protocolName === 'upstream'
+      ? { no_target_skipped: questions.length - abstention - scored.length }
+      : {}),
     retriever: retriever.name,
-    metrics: {
-      [`session_recall_at_${k}`]: +(recallHits / n).toFixed(4),
-      session_mrr: +(mrrSum / n).toFixed(4),
-    },
+    metrics: rates(total, k),
     by_question_type: Object.fromEntries(
       Object.entries(perType).map(([t, v]) => [t, +(v.hits / v.n).toFixed(4)]),
     ),
@@ -211,12 +231,32 @@ function refuse(message) {
  * the retriever is resolved, so a refused run never touches a DB or gateway.
  */
 function assertScorable(questions) {
-  if (retrievalQuestions(questions).length === 0) {
-    refuse(`no retrieval-scorable questions: ${questions.length} given, abstention is skipped`)
+  const scored = retrievalQuestions(questions)
+  if (scored.length === 0) {
+    refuse(
+      `no retrieval-scorable questions under --protocol ${protocolName}: ${questions.length} given, abstention is skipped`,
+    )
+  }
+  // Upstream's gold rule reads "answer" in the session id. A file without
+  // upstream's ids scores every question against an empty gold set, where
+  // recall_all is a vacuous 1; refuse instead of reporting that.
+  const goldless = scored.filter((q) => protocol.gold(q).length === 0).length
+  if (goldless > 0) {
+    refuse(
+      `--protocol ${protocolName}: ${goldless} of ${scored.length} questions have no gold session`,
+    )
   }
 }
 
 const k = Number(flag('k', '5'))
+// A bare --protocol (or one followed by another flag) reads as '' and is
+// refused, never scored under the default it did not name (as with #122).
+const protocolGiven = args.some((a) => a === '--protocol' || a.startsWith('--protocol='))
+const protocolName = protocolGiven ? flag('protocol', '') : 'answer-ids'
+const protocol = Object.hasOwn(PROTOCOLS, protocolName) ? PROTOCOLS[protocolName] : undefined
+if (protocol === undefined) {
+  refuse(`unknown --protocol '${protocolName}': expected ${Object.keys(PROTOCOLS).join(' or ')}`)
+}
 const retrieverName = resolveRetrieverName(flag('retriever', undefined))
 let sampleName
 try {
