@@ -38,6 +38,8 @@
 # LongMemEval-S sample, with embeddings from a content-addressed cache kept in
 # actions/cache, so a warm night makes no embedding calls and its retrieval
 # metrics are deterministic. Same gate on the gateway secret as slice 3.
+# Slice 8 (#517): the same, on every question LongMemEval's own protocol scores
+# (419 of 500), with its own cache and per-question gold ranks.
 #
 # Each lane writes a per-run JSON metrics file (ids/counts/scores ONLY — never
 # haystack/memory content, hard rule 6) into eval-metrics/, uploaded as a build
@@ -396,6 +398,71 @@ jobs:
         with:
           path: eval/.cache/embeddings
           key: lme-emb-v1-${{ hashFiles('eval/fixtures/longmemeval-s-sample-50.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # --- Real-retriever full set, cached embeddings (#517, slice 8) ----------
+      # ADVISORY, NEVER BLOCKING (continue-on-error on every step). Scores the
+      # REAL retriever on every question LongMemEval's own protocol scores (419
+      # of the pinned 500, --protocol upstream, #516), the lexical stand-in
+      # beside it, and writes each question's gold ranks (ids and numbers only).
+      # Its own cache file and key, in its own folder so the sample's directory
+      # cache never carries it: the cold fill is about 42M tokens (about $5.50)
+      # once, and a warm night makes no embedding calls. NIGHTLY on purpose:
+      # GitHub evicts a cache entry not read for 7 days, and this restore is the
+      # read that keeps it. The step timeout is generous until a measured staging
+      # run sizes it (#517).
+      - name: Restore LongMemEval full-set embedding cache
+        id: lme_full_cache
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/embeddings-full
+          key: lme-emb-full-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: lme-emb-full-v1-
+
+      - name: Hash LongMemEval full-set embedding cache
+        id: lme_full_before
+        if: steps.real_pre.outputs.enabled == 'true'
+        env:
+          BEFORE: ${{ hashFiles('eval/.cache/embeddings-full/longmemeval-s-full.jsonl') }}
+        run: echo "hash=$BEFORE" >> "$GITHUB_OUTPUT"
+
+      - name: Real-retriever full set (cached embeddings, advisory)
+        id: real_full
+        if: steps.real_pre.outputs.enabled == 'true'
+        continue-on-error: true
+        timeout-minutes: 120
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+          LONGMEMEVAL_S_URL: ${{ vars.LONGMEMEVAL_S_URL }}
+          LONGMEMEVAL_S_SHA256: ${{ vars.LONGMEMEVAL_S_SHA256 }}
+          LONGMEMEVAL_S_BYTES: ${{ vars.LONGMEMEVAL_S_BYTES }}
+          EVAL_EMBED_CACHE: eval/.cache/embeddings-full/longmemeval-s-full.jsonl
+        run: |
+          app_url="postgres://app_user:app_user@localhost:5432/threengram_test"
+          mkdir -p eval-metrics
+          full=$(DATABASE_URL="$app_url" node eval/src/longmemeval.mjs --download --protocol upstream --retriever real --ranks-out eval-metrics/real-retriever-full-ranks.jsonl --json)
+          printf '%s\n' "$full" > eval-metrics/real-retriever-full.json
+          {
+            echo
+            echo '### real-retriever full set (upstream protocol, cached embeddings, #517)'
+            echo
+            echo '```json'
+            printf '%s\n' "$full"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save LongMemEval full-set embedding cache
+        if: >-
+          steps.real_pre.outputs.enabled == 'true' &&
+          hashFiles('eval/.cache/embeddings-full/longmemeval-s-full.jsonl') != '' &&
+          hashFiles('eval/.cache/embeddings-full/longmemeval-s-full.jsonl') != steps.lme_full_before.outputs.hash
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/embeddings-full
+          key: lme-emb-full-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       # --- MemoryAgentBench advisory slice (#294, slice 5) ----------------------
       # ADVISORY, NEVER BLOCKING (continue-on-error). The advisory MAB subsets
