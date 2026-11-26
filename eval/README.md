@@ -41,6 +41,11 @@ Opt-in slices (never in the default path):
 
 Every oracle run reports `by_ability` (LongMemEval's retrieval abilities, each row with its own `n`) and names its `retriever`. Retrieval skips the abstention (`_abs`) questions, as LongMemEval's own protocol does: they have no ground-truth answer location. The output counts them in `abstention_skipped` beside `retrieval_scored`; abstention is an answer-level ability for the judge. A real-retriever run also carries `lexical_baseline`: the stand-in scored on the same questions.
 
+Beside any-recall (`session_recall_at_k`: some gold session in the top k) and MRR, every run reports LongMemEval's own session-level metrics, ported from upstream's `eval_utils.py` (`src/retrieval-metrics.mjs`, #516): `session_recall_all_at_5`/`_10` (every gold session in the top k) and `session_ndcg_any_at_5`/`_10` (binary gain, upstream's DCG). They read the same ranking, so they cost no extra retrieval or embedding call. `--protocol` picks the gold and skip rules, and the output names it in `protocol`:
+
+- `answer-ids` (default): gold is `answer_session_ids`; only abstention is skipped. It keeps every lane's question set and any-recall/MRR unchanged, and still scores the `single-session-assistant` questions, whose evidence our write path stores.
+- `upstream`: LongMemEval's own rules, for any number compared with a published one. Gold is a session whose id contains `answer` and that has a user turn flagged `has_answer`; a question with no flagged user turn is skipped and counted in `no_target_skipped`. On the pinned file it scores 419 of the 470 non-abstention questions. A file without upstream's ids is refused rather than scored against empty gold. `fixtures/upstream-retrieval-parity.json` pins the port to values upstream's Python produced.
+
 ### Real-retriever mode (`--retriever real`)
 
 `pnpm --filter @3ngram/eval run advisory:real` (or `node src/longmemeval.mjs --retriever real`) swaps the lexical stand-in for the **product retrieval path** (`retriever.mjs`):

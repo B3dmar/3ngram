@@ -1,0 +1,221 @@
+{
+  "source": "Expected values computed by upstream LongMemEval (xiaowu0162/LongMemEval at 9e0b455): src/retrieval/eval_utils.py evaluate_retrieval, with the session-level gold rule (process_item_flat_index) and no-target skip (main) of src/retrieval/run_retrieval.py. Synthetic ids and has_answer flags only, no dataset content (#516).",
+  "cases": [
+    {
+      "name": "single gold at rank 1",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["answer_a", "d1", "d2", "d3", "d4"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 1, "recall_all": 1, "ndcg_any": 1 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 1 }
+      }
+    },
+    {
+      "name": "single gold at rank 2 weighs as rank 1",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["d1", "answer_a", "d2", "d3", "d4"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 1, "recall_all": 1, "ndcg_any": 1 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 1 }
+      }
+    },
+    {
+      "name": "single gold at rank 3",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["d1", "d2", "answer_a", "d3", "d4"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 }
+      }
+    },
+    {
+      "name": "multi-gold, one below k 5",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_b", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_c", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d5", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d6", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d7", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d8", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": [
+        "answer_a",
+        "d1",
+        "answer_b",
+        "d2",
+        "d3",
+        "d4",
+        "answer_c",
+        "d5",
+        "d6",
+        "d7",
+        "d8"
+      ],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a", "answer_b", "answer_c"],
+        "at_5": { "recall_any": 1, "recall_all": 0, "ndcg_any": 0.6199062332840657 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.7552983647632414 }
+      }
+    },
+    {
+      "name": "gold below k 10",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d5", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d6", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d7", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d8", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d9", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d10", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d11", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "answer_a"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 0, "recall_all": 0, "ndcg_any": 0 },
+        "at_10": { "recall_any": 0, "recall_all": 0, "ndcg_any": 0 }
+      }
+    },
+    {
+      "name": "more gold than k",
+      "haystack_sessions": [
+        { "session_id": "answer_1", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_2", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_3", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_4", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_5", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "answer_6", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d3", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d4", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": [
+        "answer_1",
+        "answer_2",
+        "answer_3",
+        "answer_4",
+        "answer_5",
+        "answer_6",
+        "d1",
+        "d2",
+        "d3",
+        "d4"
+      ],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_1", "answer_2", "answer_3", "answer_4", "answer_5", "answer_6"],
+        "at_5": { "recall_any": 1, "recall_all": 0, "ndcg_any": 1 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 1 }
+      }
+    },
+    {
+      "name": "answer session flagged only on an assistant turn is not gold",
+      "haystack_sessions": [
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        {
+          "session_id": "answer_b",
+          "turns": [
+            { "role": "user", "has_answer": false },
+            { "role": "assistant", "has_answer": true }
+          ]
+        },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["answer_b", "d1", "answer_a", "d2"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 }
+      }
+    },
+    {
+      "name": "no flagged user turn is skipped",
+      "haystack_sessions": [
+        {
+          "session_id": "answer_a",
+          "turns": [
+            { "role": "user", "has_answer": false },
+            { "role": "assistant", "has_answer": true }
+          ]
+        },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["answer_a", "d1"],
+      "expected": { "scored": false }
+    },
+    {
+      "name": "duplicate distractor takes two ranks",
+      "haystack_sessions": [
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "d1", "turns": [{ "role": "user", "has_answer": false }] },
+        { "session_id": "answer_a", "turns": [{ "role": "user", "has_answer": true }] },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["d1", "d1", "answer_a", "d2"],
+      "expected": {
+        "scored": true,
+        "gold": ["answer_a"],
+        "at_5": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 },
+        "at_10": { "recall_any": 1, "recall_all": 1, "ndcg_any": 0.6309297535714575 }
+      }
+    },
+    {
+      "name": "flag outside an answer session leaves gold empty",
+      "haystack_sessions": [
+        {
+          "session_id": "d1",
+          "turns": [
+            { "role": "user", "has_answer": true },
+            { "role": "assistant", "has_answer": false }
+          ]
+        },
+        { "session_id": "d2", "turns": [{ "role": "user", "has_answer": false }] }
+      ],
+      "ranked": ["d1", "d2"],
+      "expected": {
+        "scored": true,
+        "gold": [],
+        "at_5": { "recall_any": 0, "recall_all": 1, "ndcg_any": 0 },
+        "at_10": { "recall_any": 0, "recall_all": 1, "ndcg_any": 0 }
+      }
+    }
+  ]
+}
