@@ -1037,7 +1037,7 @@ its row here even when its name and kind are unchanged.
 | `FAKE_EMBEDDING_MODEL` | const | `84f1a240df95` |
 | `FakeGatewayOptions` | interface | `4217a858298b` |
 | `Gateway` | interface | `3a4f683e4a8a` |
-| `GatewayRequestError` | class | `82ab00ddbdb8` |
+| `GatewayRequestError` | class | `3592d9dd27db` |
 | `InvalidCompletionResponseError` | class | `55a9078e7a67` |
 | `InvalidDecideError` | class | `2127b9756f7e` |
 | `InvalidEmbeddingResponseError` | class | `623ecdfc5a4f` |
