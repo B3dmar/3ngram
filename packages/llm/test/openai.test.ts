@@ -10,6 +10,7 @@ import {
   GatewayRequestError,
   InvalidEmbeddingResponseError,
   NotImplementedError,
+  parseRetryAfter,
 } from '../src/openai.js'
 import { EMBEDDING_DIMENSIONS } from '../src/types.js'
 
@@ -139,6 +140,37 @@ describe('createOpenAIGateway embed() HTTP failure', () => {
     expect((err as GatewayRequestError).status).toBe(400)
     // Message names the status only — never the response body or request text.
     expect((err as Error).message).toBe('gateway embed failed with status 400')
+    expect((err as GatewayRequestError).retryAfterMs).toBeUndefined()
+  })
+
+  it('carries a 429 Retry-After as retryAfterMs so a caller can wait it out', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('slow down', { status: 429, headers: { 'retry-after': '7' } }),
+        ),
+      ),
+    )
+    const err = await createOpenAIGateway(CONFIG)
+      .embed(['x'], 'memory_embed')
+      .catch((e: unknown) => e)
+    expect((err as GatewayRequestError).status).toBe(429)
+    expect((err as GatewayRequestError).retryAfterMs).toBe(7000)
+  })
+})
+
+describe('parseRetryAfter', () => {
+  const now = Date.parse('2026-11-26T12:00:00Z')
+  it('reads delta-seconds and HTTP dates, and nothing else', () => {
+    expect(parseRetryAfter('2', now)).toBe(2000)
+    expect(parseRetryAfter('0.5', now)).toBe(500)
+    expect(parseRetryAfter('Thu, 26 Nov 2026 12:00:03 GMT', now)).toBe(3000)
+    expect(parseRetryAfter('Thu, 26 Nov 2026 11:59:00 GMT', now)).toBe(0)
+    expect(parseRetryAfter(null, now)).toBeUndefined()
+    expect(parseRetryAfter('', now)).toBeUndefined()
+    expect(parseRetryAfter('-1', now)).toBeUndefined()
+    expect(parseRetryAfter('soon', now)).toBeUndefined()
   })
 })
 

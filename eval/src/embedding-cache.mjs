@@ -115,15 +115,43 @@ function load(file, header, vectors) {
   return { loaded: vectors.size, dropped, appendable, servedModel: parsed.served_model }
 }
 
+const BACKOFF_BASE_MS = 2_000
+const BACKOFF_CAP_MS = 60_000
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * A batch failure worth waiting out (#517): a rate limit or server error, or a
+ * timeout or network failure with no HTTP status. A 400 or a malformed
+ * response is not: it fails the same way again.
+ */
+export function isRetryable(error) {
+  if (typeof error?.status === 'number') return error.status === 429 || error.status >= 500
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return true
+  return error instanceof TypeError && error.message === 'fetch failed'
+}
+
+/** The wait before retry `attempt` (0-based): the provider's Retry-After if given, else doubling from 2 s; capped at 60 s. */
+export function backoffMs(error, attempt) {
+  const asked = error?.retryAfterMs
+  const wait = typeof asked === 'number' ? asked : BACKOFF_BASE_MS * 2 ** attempt
+  return Math.min(wait, BACKOFF_CAP_MS)
+}
+
 /**
  * Wrap `inner` (a Gateway) with the cache at `file`. `prefill(texts)` embeds
- * every uncached text in batches of `batchSize`; a failed batch is retried one
- * text per call, and a text that still fails is counted, not cached (the write
- * path then calls live, fails again and records `embed_failed`). A served-model
- * mismatch is never retried: it aborts the run. `save()` persists what this run
- * added; `stats()` returns counts and the served model only.
+ * every uncached text in batches of `batchSize`. A batch that fails retryably
+ * is retried up to `retries` times with backoff; only then, or on any other
+ * failure, it is retried one text per call, and a text that still fails is
+ * counted, not cached (the write path then calls live, fails again and records
+ * `embed_failed`). Each batch is saved as soon as it is paid for, so a run
+ * killed later keeps it. A served-model mismatch is never retried: it aborts
+ * the run. `save()` persists what this run added; `stats()` returns counts and
+ * the served model only.
  */
-export function createCachingGateway(inner, { file, model, dimensions, batchSize = 256 }) {
+export function createCachingGateway(
+  inner,
+  { file, model, dimensions, batchSize = 256, retries = 4, sleep = sleepMs },
+) {
   const vectors = new Map()
   const header = { version: CACHE_VERSION, model, dimensions }
   const loadedFile = load(file, header, vectors)
@@ -134,7 +162,14 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
   // run aborts at that question instead of finishing with a missing vector.
   let mismatch
   const added = []
-  const counts = { hits: 0, misses: 0, live_calls: 0, live_input_tokens: 0, failed_texts: 0 }
+  const counts = {
+    hits: 0,
+    misses: 0,
+    live_calls: 0,
+    live_input_tokens: 0,
+    batch_retries: 0,
+    failed_texts: 0,
+  }
   const keyOf = (text) => embeddingKey(model, dimensions, text)
 
   async function fetchLive(texts, operation) {
@@ -159,6 +194,40 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
       if (!vectors.has(key)) added.push(key)
       vectors.set(key, f32s[i])
     })
+  }
+
+  /** One batch, retried with backoff while it fails retryably. */
+  async function fetchBatch(batch) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetchLive(batch, PREFILL_OPERATION)
+      } catch (error) {
+        if (error instanceof ServedModelMismatchError) throw error
+        if (attempt >= retries || !isRetryable(error)) throw error
+        counts.batch_retries++
+        await sleep(backoffMs(error, attempt))
+      }
+    }
+  }
+
+  /** Persist what this run added: append to a sound file, else rewrite it atomically. */
+  function save() {
+    if (vectors.size === 0 || (added.length === 0 && appendable)) return
+    mkdirSync(dirname(file), { recursive: true })
+    if (appendable) {
+      appendFileSync(file, added.map((key) => encodeLine(key, vectors.get(key))).join(''))
+    } else {
+      // New, mismatched, damaged or unterminated file: rewrite it whole, atomically.
+      const rows = [...vectors.keys()].map((key) => encodeLine(key, vectors.get(key)))
+      const tmp = `${file}.tmp-${process.pid}`
+      writeFileSync(
+        tmp,
+        `${JSON.stringify({ ...header, served_model: servedModel })}\n${rows.join('')}`,
+      )
+      renameSync(tmp, file)
+      appendable = true
+    }
+    added.length = 0
   }
 
   return {
@@ -186,7 +255,7 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
       for (let i = 0; i < todo.length; i += batchSize) {
         const batch = todo.slice(i, i + batchSize)
         try {
-          await fetchLive(batch, PREFILL_OPERATION)
+          await fetchBatch(batch)
         } catch (error) {
           if (error instanceof ServedModelMismatchError) throw error
           for (const text of batch) {
@@ -198,27 +267,11 @@ export function createCachingGateway(inner, { file, model, dimensions, batchSize
             }
           }
         }
+        save()
       }
     },
 
-    save() {
-      if (vectors.size === 0 || (added.length === 0 && appendable)) return
-      mkdirSync(dirname(file), { recursive: true })
-      if (appendable) {
-        appendFileSync(file, added.map((key) => encodeLine(key, vectors.get(key))).join(''))
-      } else {
-        // New, mismatched, damaged or unterminated file: rewrite it whole, atomically.
-        const rows = [...vectors.keys()].map((key) => encodeLine(key, vectors.get(key)))
-        const tmp = `${file}.tmp-${process.pid}`
-        writeFileSync(
-          tmp,
-          `${JSON.stringify({ ...header, served_model: servedModel })}\n${rows.join('')}`,
-        )
-        renameSync(tmp, file)
-        appendable = true
-      }
-      added.length = 0
-    },
+    save,
 
     stats() {
       return {

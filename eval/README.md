@@ -89,7 +89,11 @@ EVAL_EMBED_CACHE=eval/.cache/embeddings/longmemeval-s-sample-50.jsonl \
   keyed by sha256 of model, dimensions and exact text. Before seeding, the retriever
   prefills every chunk and question of the 45 scored questions in batches of 256 (about 50
   requests and 5M tokens cold, about $0.67); the per-memory embeds that follow are hits,
-  and a miss still calls the live gateway. Vectors are served after a float32 round trip,
+  and a miss still calls the live gateway. A batch that hits a rate limit, a server error,
+  a timeout or a network failure is retried whole up to 4 times, waiting the provider's
+  `Retry-After` or 2, 4, 8, 16 s (capped at 60 s); only then is it retried one text per
+  call. Each batch is written to the file as soon as it is paid for, so a run killed later
+  keeps it. `batch_retries` counts the waits. Vectors are served after a float32 round trip,
   so cold and warm runs score identical vectors. Rows carry a checksum; a damaged or
   unterminated file is rewritten whole. The header records the model the gateway served,
   and a different served model aborts the run rather than mixing vectors; a new gateway
@@ -97,7 +101,8 @@ EVAL_EMBED_CACHE=eval/.cache/embeddings/longmemeval-s-sample-50.jsonl \
   output reports hits, misses, live calls, tokens and the served model.
 - **Nightly.** Slice 7 of `eval-nightly.yml` restores the cache with `actions/cache`,
   writes `eval-metrics/real-retriever-sample.json`, and saves the cache only when the run
-  changed it. A warm night makes no embedding calls. The cache is branch-scoped: a cache
+  changed it, judged by `hashFiles` against a hash taken before the run, so a failed or
+  timed-out run still saves what it paid for. A warm night makes no embedding calls. The cache is branch-scoped: a cache
   saved on `staging` is not visible to `main` runs.
 
 ### Live lanes in `eval-nightly.yml`

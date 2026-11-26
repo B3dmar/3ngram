@@ -97,11 +97,29 @@ export class InvalidCompletionResponseError extends Error {
  */
 export class GatewayRequestError extends Error {
   readonly status: number
-  constructor(operation: string, status: number) {
+  /**
+   * How long the provider asked the caller to wait (`Retry-After`), in ms, when
+   * it said; `undefined` otherwise. A header value, never the response body.
+   */
+  readonly retryAfterMs: number | undefined
+  constructor(operation: string, status: number, retryAfterMs?: number) {
     super(`gateway ${operation} failed with status ${status}`)
     this.name = 'GatewayRequestError'
     this.status = status
+    this.retryAfterMs = retryAfterMs
   }
+}
+
+/**
+ * A `Retry-After` header as milliseconds: delta-seconds or an HTTP date (RFC
+ * 9110 §10.2.3). `undefined` when absent or unparseable; a past date is 0.
+ */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined
+  const at = Date.parse(value)
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now)
 }
 
 /**
@@ -175,7 +193,11 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
     if (!response.ok) {
       // Drain the body so the socket can be reused; discard it (never logged).
       await response.text().catch(() => undefined)
-      throw new GatewayRequestError('embed', response.status)
+      throw new GatewayRequestError(
+        'embed',
+        response.status,
+        parseRetryAfter(response.headers.get('retry-after')),
+      )
     }
     const payload = (await response.json()) as EmbeddingResponse
     const rows = payload.data ?? []
@@ -258,7 +280,11 @@ export function createOpenAIGateway(config: OpenAIGatewayConfig): Gateway {
       if (!response.ok) {
         // Drain so the socket can be reused; discard it (never logged).
         await response.text().catch(() => undefined)
-        throw new GatewayRequestError('complete', response.status)
+        throw new GatewayRequestError(
+          'complete',
+          response.status,
+          parseRetryAfter(response.headers.get('retry-after')),
+        )
       }
       const payload = (await response.json()) as CompletionResponse
       const text = payload.choices?.[0]?.message?.content

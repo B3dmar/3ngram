@@ -8,8 +8,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import {
+  backoffMs,
   createCachingGateway,
   embeddingKey,
+  isRetryable,
   ServedModelMismatchError,
 } from '../src/embedding-cache.mjs'
 
@@ -82,6 +84,7 @@ test('a warm run serves every vector from the cache, identical to the cold run',
     misses: 0,
     live_calls: 0,
     live_input_tokens: 0,
+    batch_retries: 0,
     failed_texts: 0,
     entries: 3,
     served_model: MODEL,
@@ -223,4 +226,69 @@ test('complete and decide pass through to the wrapped gateway', async () => {
   const gateway = open(fakeInner(), fileIn('pass.jsonl'))
   assert.deepEqual(await gateway.complete('hi', 'op'), { text: 'c:hi' })
   assert.equal((await gateway.decide({}, 'op')).model, 'd')
+})
+
+/** A rate-limit failure as the gateway raises it (GatewayRequestError shape). */
+const rateLimited = (retryAfterMs) =>
+  Object.assign(new Error('gateway embed failed with status 429'), { status: 429, retryAfterMs })
+
+test('a rate-limited batch waits and retries whole; a cold sample-sized fill stays near 47 calls (#517)', async () => {
+  // 47 batches, as the 50q sample's cold fill had; 5 of them are rate limited once.
+  const inner = fakeInner()
+  const embed = inner.embed
+  const limited = new Set([3, 11, 20, 31, 44])
+  let call = 0
+  inner.embed = (texts, operation) => {
+    call++
+    if (limited.has(call)) {
+      limited.delete(call)
+      inner.calls.push({ texts: [...texts], operation })
+      return Promise.reject(rateLimited(call === 3 ? 7_000 : undefined))
+    }
+    return embed(texts, operation)
+  }
+  const waits = []
+  const file = fileIn('ratelimit.jsonl')
+  const gateway = open(inner, file, { batchSize: 4, sleep: (ms) => waits.push(ms) })
+  await gateway.prefill(Array.from({ length: 47 * 4 }, (_, i) => `text ${i}`))
+
+  const stats = gateway.stats()
+  assert.equal(stats.live_calls, 52, '47 batches plus 5 retries, no text-by-text fallback')
+  assert.ok(stats.live_calls <= 60)
+  assert.equal(stats.batch_retries, 5)
+  assert.equal(stats.failed_texts, 0)
+  assert.equal(stats.entries, 188)
+  assert.equal(waits[0], 7_000, "the provider's Retry-After is honoured")
+  assert.deepEqual(waits.slice(1), [2_000, 2_000, 2_000, 2_000], 'else backoff from 2 s')
+  // Saved as paid: a run killed after prefill keeps every vector.
+  assert.equal(open(fakeInner(), file).stats().loaded, 188)
+})
+
+test('a batch still rate limited after its retries falls back to one text per call (#517)', async () => {
+  const inner = fakeInner()
+  const embed = inner.embed
+  inner.embed = (texts, operation) =>
+    texts.length > 1 ? Promise.reject(rateLimited()) : embed(texts, operation)
+  const waits = []
+  const gateway = open(inner, fileIn('persistent.jsonl'), {
+    batchSize: 3,
+    retries: 2,
+    sleep: (ms) => waits.push(ms),
+  })
+  await gateway.prefill(['a', 'b', 'c'])
+  assert.deepEqual(waits, [2_000, 4_000], 'doubling backoff')
+  assert.equal(gateway.stats().live_calls, 3 + 3, '1 try + 2 retries, then 3 single-text calls')
+  assert.equal(gateway.stats().entries, 3)
+})
+
+test('only rate limits, server errors, timeouts and network failures are retried (#517)', () => {
+  assert.equal(isRetryable({ status: 429 }), true)
+  assert.equal(isRetryable({ status: 503 }), true)
+  assert.equal(isRetryable({ status: 400 }), false, 'bad input fails again')
+  assert.equal(isRetryable({ name: 'AbortError' }), true)
+  assert.equal(isRetryable(new TypeError('fetch failed')), true)
+  assert.equal(isRetryable(new TypeError('x is undefined')), false, 'a code bug is not waited out')
+  assert.equal(isRetryable(new Error('embedding row count 1 != 2')), false)
+  assert.equal(backoffMs({ retryAfterMs: 120_000 }, 0), 60_000, 'capped at 60 s')
+  assert.equal(backoffMs({}, 10), 60_000)
 })
