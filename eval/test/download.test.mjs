@@ -429,7 +429,10 @@ test('--protocol refuses an unknown name, nothing to score, or no gold (#516)', 
         execFileSync('node', [cli, ...args, '--json'], { encoding: 'utf8', env, stdio: 'pipe' }),
       (error) => error.status === 2 && error.stdout === '' && pattern.test(error.stderr),
     )
-  refused(['--protocol', 'bogus'], process.env, /unknown --protocol bogus/)
+  refused(['--protocol', 'bogus'], process.env, /unknown --protocol 'bogus'/)
+  // Bare, or followed by another flag: refused, not scored under the default.
+  refused(['--protocol'], process.env, /unknown --protocol ''/)
+  refused(['--protocol='], process.env, /unknown --protocol ''/)
   // The synthetic subset flags user turns but has no upstream "answer" ids.
   refused(['--protocol', 'upstream'], process.env, /have no gold session/)
   // The seeded file has no has_answer flags: upstream skips every question.

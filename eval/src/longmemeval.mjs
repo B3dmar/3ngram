@@ -249,10 +249,13 @@ function assertScorable(questions) {
 }
 
 const k = Number(flag('k', '5'))
-const protocolName = flag('protocol', 'answer-ids')
+// A bare --protocol (or one followed by another flag) reads as '' and is
+// refused, never scored under the default it did not name (as with #122).
+const protocolGiven = args.some((a) => a === '--protocol' || a.startsWith('--protocol='))
+const protocolName = protocolGiven ? flag('protocol', '') : 'answer-ids'
 const protocol = Object.hasOwn(PROTOCOLS, protocolName) ? PROTOCOLS[protocolName] : undefined
 if (protocol === undefined) {
-  refuse(`unknown --protocol ${protocolName}: expected ${Object.keys(PROTOCOLS).join(' or ')}`)
+  refuse(`unknown --protocol '${protocolName}': expected ${Object.keys(PROTOCOLS).join(' or ')}`)
 }
 const retrieverName = resolveRetrieverName(flag('retriever', undefined))
 let sampleName
