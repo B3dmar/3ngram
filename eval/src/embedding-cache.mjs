@@ -33,7 +33,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
-  writeSync,
+  writeFileSync,
 } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -134,9 +134,13 @@ export function* bufferLines(bytes) {
   }
 }
 
-/** Encode and write rows to `fd` one at a time, so no file-sized string is ever built. */
+/**
+ * Encode and write rows to `fd` one at a time, so no file-sized string is ever
+ * built. writeFileSync on an fd writes all of each row, where writeSync may
+ * stop short and leave a truncated row behind.
+ */
 function writeRows(fd, keys, vectors) {
-  for (const key of keys) writeSync(fd, encodeLine(key, vectors.get(key)))
+  for (const key of keys) writeFileSync(fd, encodeLine(key, vectors.get(key)))
 }
 
 const BACKOFF_BASE_MS = 2_000
@@ -257,7 +261,7 @@ export function createCachingGateway(
       const tmp = `${file}.tmp-${process.pid}`
       const fd = openSync(tmp, 'w')
       try {
-        writeSync(fd, `${JSON.stringify({ ...header, served_model: servedModel })}\n`)
+        writeFileSync(fd, `${JSON.stringify({ ...header, served_model: servedModel })}\n`)
         writeRows(fd, vectors.keys(), vectors)
       } finally {
         closeSync(fd)
