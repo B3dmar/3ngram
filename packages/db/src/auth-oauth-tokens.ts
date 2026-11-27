@@ -95,6 +95,12 @@ export interface NewOauthToken {
   clientId: string
   scope: string
   expiresAt: Date
+  /**
+   * The login that authorized this grant for the token's user, when it is a
+   * different account (issue #506); taken from the exchanged code. Ignored by
+   * rotation, which always carries the predecessor's actor forward.
+   */
+  actorUserId?: string | null | undefined
 }
 
 /** Live client ids, newest grant/rotation first with a stable id tiebreak. */
@@ -219,12 +225,15 @@ export async function rotateOauthRefreshToken(
           isNull(oauthTokens.revokedAt),
         ),
       )
-      .returning({ id: oauthTokens.id })
+      .returning({ id: oauthTokens.id, actorUserId: oauthTokens.actorUserId })
     const predecessor = revoked[0]
     if (predecessor === undefined) return false
+    // The successor pair inherits the predecessor's actor (issue #506), so a
+    // refresh can neither drop nor change who authorized the grant.
+    const actorUserId = predecessor.actorUserId
     await tx.insert(oauthTokens).values([
-      { ...access, userId },
-      { ...refresh, userId, rotatedFrom: predecessor.id },
+      { ...access, userId, actorUserId },
+      { ...refresh, userId, actorUserId, rotatedFrom: predecessor.id },
     ])
     return true
   })

@@ -63,6 +63,7 @@ export {
   consumeOauthCode,
   insertOauthCode,
   type NewOauthCode,
+  oauthCodeActor,
 } from './auth-oauth-codes.js'
 // --- auth (OAuth resource server) — appended block;
 // issuance + one-time refresh rotation over the same table ---

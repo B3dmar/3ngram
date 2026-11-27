@@ -28,6 +28,7 @@ import {
   insertOauthCode,
   insertOauthTokenPair,
   type NewOauthToken,
+  oauthCodeActor,
   resolveOauthToken,
   rotateOauthRefreshToken,
 } from '@3ngram/db'
@@ -395,7 +396,8 @@ export function createOAuthServerProvider(
 
     async exchangeAuthorizationCode(client, code, codeVerifier, redirectUri, resource) {
       assertResourceMatches(resource, config.resource)
-      const consumed = await consumeOauthCode(sha256Hex(code))
+      const codeHash = sha256Hex(code)
+      const consumed = await consumeOauthCode(codeHash)
       if (consumed === undefined) throw new OAuthGrantError('invalid_grant') // unknown/expired/replayed
       // The code is burned; every check below fails closed with no retry.
       if (consumed.clientId !== client.client_id) throw new OAuthGrantError('invalid_grant')
@@ -421,6 +423,13 @@ export function createOAuthServerProvider(
         throw new OAuthGrantError('invalid_grant')
       }
       const pair = await buildTokenPair(consumed.userId, client, consumed.scope, config)
+      // The login that authorized the code, when it acted for another account
+      // (issue #506): every token of the pair records it, and refresh rotation
+      // carries it forward. NULL for a login's own grant. A consumed code that is
+      // gone by now (its acting login was hard-deleted, cascading to the code)
+      // fails closed: an unattributed pair is never issued in its place.
+      const actorUserId = await oauthCodeActor(consumed.userId, codeHash)
+      if (actorUserId === undefined) throw new OAuthGrantError('invalid_grant')
       // insertOauthTokenPair serializes against account deletion (account-lifecycle
       // lock) and returns false when the user is a deletion tombstone — refuse to
       // mint on a deleted account (resurrection race). The code is
@@ -428,8 +437,8 @@ export function createOAuthServerProvider(
       const { maxActiveMcpClients } = await resolveResourceLimits(resolveLimits, consumed.userId)
       const issued = await insertOauthTokenPair(
         consumed.userId,
-        pair.accessRow,
-        pair.refreshRow,
+        { ...pair.accessRow, actorUserId },
+        pair.refreshRow === undefined ? undefined : { ...pair.refreshRow, actorUserId },
         maxActiveMcpClients,
       )
       if (!issued) throw new OAuthGrantError('invalid_grant')

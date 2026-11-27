@@ -13,6 +13,7 @@ import type { OAuthJwk, OAuthVerifyConfig } from '../src/auth/oauth.js'
 
 const consumeOauthCode = vi.fn()
 const insertOauthCode = vi.fn()
+const oauthCodeActor = vi.fn()
 const insertOauthTokenPair = vi.fn()
 const rotateOauthRefreshToken = vi.fn()
 const resolveOauthToken = vi.fn()
@@ -20,6 +21,7 @@ const getClientByClientId = vi.fn()
 const registerClient = vi.fn()
 vi.mock('@3ngram/db', () => ({
   consumeOauthCode,
+  oauthCodeActor,
   insertOauthCode,
   insertOauthTokenPair,
   rotateOauthRefreshToken,
@@ -75,6 +77,8 @@ beforeEach(() => {
   // Default: issuance succeeds (user is live). The account-lifecycle guard
   // (insertOauthTokenPair -> boolean) is exercised explicitly where it matters.
   insertOauthTokenPair.mockResolvedValue(true)
+  // Default: the consumed code still exists and the login authorized itself.
+  oauthCodeActor.mockResolvedValue(null)
 })
 
 function provider(resolveLimits?: Parameters<typeof createOAuthServerProvider>[1]) {
@@ -245,6 +249,36 @@ describe('exchangeAuthorizationCode (consume-then-verify)', () => {
     ]
     expect(access.kind).toBe('access')
     expect(refresh).toBeUndefined()
+  })
+
+  it("stamps the code's actor on both tokens of the pair (issue #506)", async () => {
+    consumeOauthCode.mockResolvedValue(consumed)
+    const ACTOR = '22222222-2222-2222-2222-222222222222'
+    oauthCodeActor.mockResolvedValue(ACTOR)
+
+    await provider().exchangeAuthorizationCode(CLIENT, 'the-code', VERIFIER)
+
+    // Read for the burned code, under the code's own tenant.
+    expect(oauthCodeActor).toHaveBeenCalledExactlyOnceWith(USER_ID, sha256('the-code'))
+    const [userId, access, refresh] = insertOauthTokenPair.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+      Record<string, unknown> | undefined,
+    ]
+    expect(userId).toBe(USER_ID)
+    expect(access.actorUserId).toBe(ACTOR)
+    expect(refresh?.actorUserId).toBe(ACTOR)
+  })
+
+  it('refuses the exchange when the consumed code is gone before its actor is read', async () => {
+    // Hard-deleting the acting login cascades to the codes it minted.
+    consumeOauthCode.mockResolvedValue(consumed)
+    oauthCodeActor.mockResolvedValue(undefined)
+
+    await expect(
+      provider().exchangeAuthorizationCode(CLIENT, 'the-code', VERIFIER),
+    ).rejects.toMatchObject({ code: 'invalid_grant' })
+    expect(insertOauthTokenPair).not.toHaveBeenCalled()
   })
 
   it('validates and forwards the active-client cap on authorization-code issuance', async () => {
