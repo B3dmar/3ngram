@@ -50,14 +50,65 @@ name: eval-nightly
 on:
   schedule:
     - cron: '17 6 * * *' # 06:17 UTC daily — off the top of the hour to dodge runner contention
-  workflow_dispatch: {}
+  workflow_dispatch:
+    # qa_action `nightly` runs the nightly lanes. submit, collect or cleanup
+    # runs only the paid, manual LongMemEval QA job below (#535); the other
+    # inputs feed that job.
+    inputs:
+      qa_action:
+        description: 'nightly runs the nightly lanes; submit, collect or cleanup runs LongMemEval QA (#535) only'
+        type: choice
+        options: [nightly, submit, collect, cleanup]
+        default: nightly
+      qa_run:
+        description: 'QA run name (a-z, 0-9, -); its state travels between dispatches'
+        type: string
+        default: ''
+      qa_reader:
+        description: 'Reader model (submit)'
+        type: string
+        default: gpt-4o-2024-08-06
+      qa_judge:
+        description: 'Judge model (submit)'
+        type: string
+        default: gpt-4o-2024-08-06
+      qa_reading:
+        description: 'Reader prompt (submit): direct, or step by step (the paper''s Chain-of-Note)'
+        type: choice
+        options: [direct, cot]
+        default: direct
+      qa_dataset:
+        description: 'Dataset (submit): oracle (evidence sessions only) or s'
+        type: choice
+        options: [oracle, s]
+        default: oracle
+      qa_limit:
+        description: 'Questions to score (submit); empty for all 500'
+        type: string
+        default: ''
+      qa_usd_in:
+        description: 'Input price, USD per 1M tokens at Batch rates (submit; reader and judge)'
+        type: string
+        default: '1.25'
+      qa_usd_out:
+        description: 'Output price, USD per 1M tokens at Batch rates (submit; reader and judge)'
+        type: string
+        default: '5'
+      qa_max_usd:
+        description: 'Cost cap in USD for the whole run (submit)'
+        type: string
+        default: '10'
 
 permissions:
   contents: read
   issues: write # open/update the advisory regression issue
 
+# The nightly lanes share one group. A LongMemEval QA dispatch gets a group per
+# QA run instead, so one collector works on a run at a time (#538) and QA never
+# waits behind the nightly. A newer pending dispatch in a group replaces an
+# older pending one; a running one is never cancelled.
 concurrency:
-  group: eval-nightly
+  group: ${{ contains(fromJSON('["submit","collect","cleanup"]'), inputs.qa_action) && format('eval-qa-{0}', inputs.qa_run) || 'eval-nightly' }}
   cancel-in-progress: false
 
 env:
@@ -65,6 +116,8 @@ env:
 
 jobs:
   longmemeval-advisory:
+    # The nightly lanes: the schedule, or a dispatch with qa_action nightly.
+    if: ${{ !contains(fromJSON('["submit","collect","cleanup"]'), inputs.qa_action) }}
     runs-on: ubuntu-latest
     env:
       # Owner/migration connection to the throwaway Postgres service (below).
@@ -539,3 +592,99 @@ jobs:
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "Advisory eval green again. Run: ${RUN_URL}"
           fi
+
+  # --- LongMemEval QA accuracy through OpenAI Batch (#535) --------------------
+  # MANUAL ONLY, ADVISORY, NEVER ON THE SCHEDULE (it is paid). Dispatch with
+  # qa_action: `submit` starts the reader batch under the qa_max_usd cap,
+  # `collect` advances the run (repeat until it reports "done"), `cleanup`
+  # cancels and deletes everything of the run. The state file holds ids,
+  # models, prices and counts only, and travels between dispatches in
+  # actions/cache (one entry per dispatch, restored by the qa_run prefix). The
+  # workflow-level concurrency group is per QA run, so one collector works on
+  # a run at a time (#538). Batch files hold dataset text and model answers
+  # and never leave OpenAI (hard rule 6): only the content-free metrics JSON
+  # is uploaded. Dispatch every step of a run from the same branch: a cache is
+  # visible only to its own branch and the default branch.
+  longmemeval-qa:
+    if: ${{ contains(fromJSON('["submit","collect","cleanup"]'), inputs.qa_action) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the QA run name
+        env:
+          RUN: ${{ inputs.qa_run }}
+        run: |
+          if [[ ! "$RUN" =~ ^[a-z0-9-]{1,40}$ ]]; then
+            echo "qa_run must be 1-40 characters of a-z, 0-9 and -"
+            exit 1
+          fi
+
+      - name: Restore the QA run state
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/qa-state
+          key: lme-qa-state-${{ inputs.qa_run }}.${{ github.run_id }}-${{ github.run_attempt }}
+          # A run name has no '.', so this prefix never matches a longer name's state.
+          restore-keys: lme-qa-state-${{ inputs.qa_run }}.
+
+      - name: LongMemEval QA ${{ inputs.qa_action }}
+        env:
+          LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
+          RUN: ${{ inputs.qa_run }}
+          ACTION: ${{ inputs.qa_action }}
+          READER: ${{ inputs.qa_reader }}
+          JUDGE: ${{ inputs.qa_judge }}
+          READING: ${{ inputs.qa_reading }}
+          DATASET: ${{ inputs.qa_dataset }}
+          LIMIT: ${{ inputs.qa_limit }}
+          USD_IN: ${{ inputs.qa_usd_in }}
+          USD_OUT: ${{ inputs.qa_usd_out }}
+          MAX_USD: ${{ inputs.qa_max_usd }}
+        run: |
+          mkdir -p eval/.cache/qa-state eval-metrics
+          state=eval/.cache/qa-state/run.json
+          case "$ACTION" in
+            submit)
+              args=(submit --state "$state" --dataset "$DATASET" --reader "$READER" --judge "$JUDGE"
+                --usd-in "$USD_IN" --usd-out "$USD_OUT" --max-usd "$MAX_USD")
+              if [ "$READING" = cot ]; then args+=(--cot); fi
+              if [ -n "$LIMIT" ]; then args+=(--limit "$LIMIT"); fi
+              ;;
+            collect) args=(collect --state "$state" --out eval-metrics/qa-metrics.json) ;;
+            cleanup) args=(cleanup --state "$state") ;;
+          esac
+          # The CLI prints ids, statuses and counts only.
+          summary=$(node eval/src/qa-batch.mjs "${args[@]}")
+          printf '### LongMemEval QA %s (run %s)\n\n```json\n%s\n```\n' "$ACTION" "$RUN" "$summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f eval-metrics/qa-metrics.json ]; then
+            printf '```json\n%s\n```\n' "$(cat eval-metrics/qa-metrics.json)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Saved even after a failed step: the state records what was paid for.
+      - name: Save the QA run state
+        if: always() && hashFiles('eval/.cache/qa-state/run.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: eval/.cache/qa-state
+          key: lme-qa-state-${{ inputs.qa_run }}.${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload the QA metrics
+        if: hashFiles('eval-metrics/qa-metrics.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lme-qa-metrics-${{ inputs.qa_run }}-${{ github.run_id }}
+          path: eval-metrics/qa-metrics.json
+          retention-days: 90
