@@ -65,7 +65,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
-    "@sentry/node": "10.76.0",
+    "@sentry/node": "10.78.0",
     "pino": "10.4.0",
     "zod": "4.6.7"
   },
