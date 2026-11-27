@@ -66,6 +66,7 @@ test('requests are /v1/chat/completions lines with upstream settings', () => {
     },
   )
   assert.equal(readerRequest(entry, { model: 'm' }).body.max_tokens, READER_MAX_TOKENS.direct)
+  assert.equal(READER_MAX_TOKENS.direct, 800, 'upstream caps direct answers at 800 too')
   assert.equal(judgeRequest(entry, hypothesis, { model: 'm' }).body.max_tokens, JUDGE_MAX_TOKENS)
 })
 
@@ -128,4 +129,14 @@ test('accuracies round as numpy does: half to even on the scaled value', () => {
   assert.equal(round4(5 / 96), 0.0521)
   assert.equal(round4(6 / 7), 0.8571)
   assert.equal(round4(1), 1)
+})
+
+test('a slice missing a type or abstention reports null for it, never NaN (--limit)', () => {
+  const one = [parity.cases[0].entry]
+  const scores = qaScores(one, new Map([[one[0].question_id, true]]), { judge: UPSTREAM_JUDGE })
+  assert.equal(scores.overall_accuracy, 1)
+  assert.equal(scores.task_averaged_accuracy, null, 'five types are empty')
+  assert.deepEqual(scores.abstention, { n: 0, accuracy: null })
+  assert.deepEqual(scores.by_type['knowledge-update'], { n: 0, accuracy: null })
+  assert.equal(JSON.stringify(scores).includes('NaN'), false)
 })
