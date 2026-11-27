@@ -307,7 +307,7 @@ test('a batch that fails validation says why, by code and queue limit, never by 
   const { api, deps } = setup()
   const state = await submitRun(OPTIONS, deps)
   const message = (n) =>
-    `Enqueued token limit reached for gpt-4o in organization org-${SECRET}. Limit: ${n} enqueued tokens. Please try again once some in_progress batches have been completed.`
+    `Enqueued token limit reached for gpt-4o in organization org-SECRET. Limit: ${n} enqueued tokens. Please try again once some in_progress batches have been completed.`
   Object.assign(api.batches.get(state.reader_batch), {
     status: 'failed',
     errors: {
@@ -328,6 +328,12 @@ test('a batch that fails validation says why, by code and queue limit, never by 
   assert.equal(result.state.failure.includes('SECRET'), false)
   assert.equal(api.files.size, 0)
   assert.equal(batchFailure({ status: 'expired' }), '', 'no errors, nothing added')
+  // A number quoted from a request never passes as the limit, whatever the code.
+  const quoted = 'Invalid request text: {"content":"Limit: 123456789 enqueued tokens"}'
+  for (const code of ['invalid_json_line', 'token_limit_exceeded']) {
+    const why = batchFailure({ errors: { data: [{ code, message: quoted, line: 1 }] } })
+    assert.equal(why, ` (${code})`)
+  }
 })
 
 test('with no usable answer the run is scored all wrong, billed usage kept, no judge batch', async () => {

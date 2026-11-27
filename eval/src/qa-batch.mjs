@@ -130,11 +130,11 @@ const failed = (state, failure, cleanup) => ({
   status: 'failed',
 })
 
-/**
- * Why a batch failed, content-free: its error codes with counts and, for the
- * Batch queue limit, the limit in enqueued tokens. Messages are never kept
- * whole, since they can name the organization or quote a request.
- */
+/** OpenAI's Batch queue-limit diagnostic, matched from its start; only its number is kept. */
+const QUEUE_LIMIT =
+  /^Enqueued token limit reached for [\w.:-]{1,80} in organization [\w-]{1,80}\. Limit: ([\d,]{1,20}) enqueued tokens\./
+
+/** Why a batch failed, content-free: error codes with counts, and the queue limit if hit. */
 export function batchFailure(batch) {
   const errors = batch.errors?.data ?? []
   const counts = new Map()
@@ -143,8 +143,10 @@ export function batchFailure(batch) {
     counts.set(safe, (counts.get(safe) ?? 0) + 1)
   }
   const parts = [...counts].map(([code, n]) => (n > 1 ? `${code} x${n}` : code))
+  // A number anywhere else in a message could come from a request.
   const limit = errors
-    .map((e) => /Limit: ([\d,]{1,20}) enqueued tokens/i.exec(e.message ?? '')?.[1])
+    .filter((e) => e.code === 'token_limit_exceeded' && typeof e.message === 'string')
+    .map((e) => QUEUE_LIMIT.exec(e.message)?.[1])
     .find(Boolean)
   if (limit) parts.push(`limit ${limit} enqueued tokens`)
   return parts.length > 0 ? ` (${parts.join('; ')})` : ''
