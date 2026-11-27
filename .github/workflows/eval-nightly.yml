@@ -668,6 +668,7 @@ jobs:
           esac
           # The CLI prints ids, statuses and counts only.
           summary=$(node eval/src/qa-batch.mjs "${args[@]}")
+          echo "$summary"
           printf '### LongMemEval QA %s (run %s)\n\n```json\n%s\n```\n' "$ACTION" "$RUN" "$summary" >> "$GITHUB_STEP_SUMMARY"
           if [ -f eval-metrics/qa-metrics.json ]; then
             printf '```json\n%s\n```\n' "$(cat eval-metrics/qa-metrics.json)" >> "$GITHUB_STEP_SUMMARY"
