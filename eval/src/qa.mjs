@@ -10,6 +10,8 @@
 //   src/evaluation/print_qa_metrics.py overall, task-averaged, abstention
 // fixtures/qa-parity.json pins the prompts to strings upstream's code built.
 
+import { ContentFreeError } from './content-free-error.mjs'
+
 /**
  * Upstream's effective reader max_tokens: 800 in both modes. run_generation.py
  * means `500 if not args.cot else 800`, but `--cot` arrives as the string
@@ -168,26 +170,40 @@ export const readerRequest = (entry, { model, cot = false }) =>
 export const judgeRequest = (entry, hypothesis, { model }) =>
   chatRequest(entry.question_id, model, judgePrompt(entry, hypothesis), JUDGE_MAX_TOKENS)
 
-/** A Batch output file as custom_id -> { content, usage } or { error }. */
+/** One Batch output line as JSON; a bad line throws a content-free error, never a quote of it. */
+function parseLine(line) {
+  try {
+    return JSON.parse(line)
+  } catch {
+    throw new ContentFreeError('batch output: a line is not valid JSON')
+  }
+}
+
+/**
+ * A Batch output file as custom_id -> { content, usage } or { error, usage }.
+ * Usage is kept whenever the response reports it, a refusal included: it was
+ * billed even when the answer is unusable.
+ */
 export function parseBatchOutput(jsonl) {
   const results = new Map()
   for (const line of jsonl.split('\n')) {
     if (line.trim() === '') continue
-    const row = JSON.parse(line)
+    const row = parseLine(line)
+    const reported = row.response?.body?.usage
+    const withUsage = (result) => (reported === undefined ? result : { ...result, usage: reported })
     const choice = row.response?.body?.choices?.[0]
     const content = choice?.message?.content
     if (row.error || row.response?.status_code !== 200 || choice === undefined) {
-      results.set(row.custom_id, {
-        error: row.error?.code ?? row.response?.status_code ?? 'no choice',
-      })
+      const error = row.error?.code ?? row.response?.status_code ?? 'no choice'
+      results.set(row.custom_id, withUsage({ error }))
     } else if (typeof content !== 'string') {
       // A refusal or a tool call answers with null content: one wrong question, not a failed file.
-      results.set(row.custom_id, { error: choice.message?.refusal ? 'refusal' : 'no content' })
+      results.set(
+        row.custom_id,
+        withUsage({ error: choice.message?.refusal ? 'refusal' : 'no content' }),
+      )
     } else {
-      results.set(row.custom_id, {
-        content: choice.message.content.trim(),
-        usage: row.response.body.usage,
-      })
+      results.set(row.custom_id, withUsage({ content: content.trim() }))
     }
   }
   return results
