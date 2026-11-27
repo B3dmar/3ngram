@@ -33,6 +33,7 @@
 // pre-tenant admin helper) — it holds no business logic and never touches a
 // pool directly.
 import { randomUUID } from 'node:crypto'
+import { bm25Retriever } from './bm25.mjs'
 import { createCachingGateway } from './embedding-cache.mjs'
 import { rankSessions as rankSessionsLexical, sessionText } from './lib.mjs'
 
@@ -40,7 +41,7 @@ import { rankSessions as rankSessionsLexical, sessionText } from './lib.mjs'
 export const DEFAULT_RETRIEVER = 'lexical'
 
 /** The only retriever names the advisory harness accepts. */
-export const KNOWN_RETRIEVERS = Object.freeze(['lexical', 'real'])
+export const KNOWN_RETRIEVERS = Object.freeze(['lexical', 'bm25', 'real'])
 
 /** Resolve the retriever name from a CLI flag value / env, defaulting to lexical. */
 export function resolveRetrieverName(flagValue, env = process.env) {
@@ -48,7 +49,7 @@ export function resolveRetrieverName(flagValue, env = process.env) {
 }
 
 /**
- * Throw a clear error for any retriever name that is not lexical or real. An
+ * Throw a clear error for any retriever name that is not a known one. An
  * unknown value must NEVER silently fall back to lexical: that is the same
  * silent metric misattribution the equals-form fix closes (issue #122).
  */
@@ -311,12 +312,14 @@ export async function createRealRetrieverFromEnv(env = process.env) {
 }
 
 /**
- * Resolve a retriever by name. 'lexical' is always available (offline default).
- * 'real' wires from env and may return a skip (DB/secret absent) the caller
- * surfaces as a clean exit-0 skip.
+ * Resolve a retriever by name. 'lexical' (the offline default) and 'bm25'
+ * (LongMemEval's published baseline, bm25.mjs) are always available. 'real'
+ * wires from env and may return a skip (DB/secret absent) the caller surfaces
+ * as a clean exit-0 skip.
  */
 export async function resolveRetriever(name, env = process.env) {
   assertKnownRetriever(name)
   if (name === 'real') return createRealRetrieverFromEnv(env)
+  if (name === 'bm25') return { retriever: bm25Retriever, skipReason: null }
   return { retriever: lexicalRetriever, skipReason: null }
 }

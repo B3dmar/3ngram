@@ -464,3 +464,36 @@ test("--ranks-out writes each scored question's gold ranks, ids and numbers only
     (error) => error.status === 2 && /--ranks-out needs a path/.test(error.stderr),
   )
 })
+
+test('--protocol paper scores every question, empty gold included, as the paper averaged (#516 follow-up)', async () => {
+  await withSeededCache(() => {
+    const out = execFileSync('node', [cli, '--download', '--protocol', 'paper', '--json'], {
+      encoding: 'utf8',
+      env: envFor(UPSTREAM_SHAPED),
+    })
+    const paper = JSON.parse(out.trim())
+    assert.equal(paper.protocol, 'paper')
+    assert.equal(paper.retrieval_scored, 3, 'abstention and no-target questions are scored')
+    assert.equal(paper.abstention_skipped, 0)
+    assert.equal(paper.empty_gold, 2, 'u2 and u3_abs have no upstream gold')
+    assert.equal(paper.no_target_skipped, undefined)
+    // Empty gold counts recall_all 1 and NDCG 0, so recall_all stays 1 and NDCG is 1/3.
+    assert.equal(paper.metrics.session_recall_all_at_5, 1)
+    assert.equal(paper.metrics.session_ndcg_any_at_5, 0.3333)
+    assert.equal(out.includes(CONTENT_SENTINEL), false)
+  }, UPSTREAM_SHAPED)
+})
+
+test('--retriever bm25 runs offline over user turns and needs no baseline (#516 follow-up)', async () => {
+  await withSeededCache(() => {
+    const result = JSON.parse(
+      execFileSync('node', [cli, '--download', '--retriever', 'bm25', '--json'], {
+        encoding: 'utf8',
+        env: OFFICIAL_ENV,
+      }).trim(),
+    )
+    assert.equal(result.retriever, 'bm25')
+    assert.equal(result.metrics.session_recall_at_5, 1)
+    assert.equal(result.lexical_baseline, undefined, 'only the real retriever carries a baseline')
+  })
+})

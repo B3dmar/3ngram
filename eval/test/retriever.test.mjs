@@ -66,7 +66,10 @@ test('equals-form and space-form --retriever both resolve to real (#122)', () =>
 })
 
 test('assertKnownRetriever throws clearly on an unknown value', () => {
-  assert.throws(() => assertKnownRetriever('reel'), /unknown retriever: "reel".*lexical, real/s)
+  assert.throws(
+    () => assertKnownRetriever('reel'),
+    /unknown retriever: "reel".*lexical, bm25, real/s,
+  )
   assert.throws(() => assertKnownRetriever(''), /unknown retriever/)
   // the two known names never throw
   assert.doesNotThrow(() => assertKnownRetriever('lexical'))
