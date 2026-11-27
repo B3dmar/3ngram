@@ -93,9 +93,19 @@ export function hasUserTarget(question) {
 /**
  * The gold and skip rules the oracle can score under. `answer-ids` is the
  * default: gold is the dataset's `answer_session_ids` and nothing beyond
- * abstention is skipped. `upstream` is LongMemEval's own protocol.
+ * abstention is skipped. `upstream` is LongMemEval's released code: upstream
+ * gold, abstention and no-target questions skipped. `paper` is how the paper's
+ * published retrieval tables were averaged: upstream gold over EVERY question,
+ * so a question with no gold counts recall_all 1 and NDCG 0. It reproduces
+ * Table 9's BM25 row exactly on LongMemEval-M, where `upstream` does not.
  */
 export const PROTOCOLS = Object.freeze({
   'answer-ids': Object.freeze({ gold: (q) => q.answer_session_ids, scores: () => true }),
   upstream: Object.freeze({ gold: upstreamGold, scores: hasUserTarget }),
+  paper: Object.freeze({
+    gold: upstreamGold,
+    scores: () => true,
+    scoresAbstention: true,
+    allowsEmptyGold: true,
+  }),
 })

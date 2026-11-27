@@ -32,8 +32,12 @@
 //                gateway ONLY when LLM_GATEWAY_API_KEY is set (skip-when-absent).
 //
 // --protocol picks the gold and skip rules retrieval is scored under
-// (retrieval-metrics.mjs, #516): `answer-ids` (default) or `upstream`,
-// LongMemEval's own. The output names it in `protocol`.
+// (retrieval-metrics.mjs, #516): `answer-ids` (default), `upstream` (the
+// released code's averaging) or `paper` (every question, as the paper's
+// tables were averaged). The output names it in `protocol`.
+//
+// --retriever bm25 is LongMemEval's own BM25 baseline (bm25.mjs): offline,
+// over the sessions' user turns.
 //
 // Usage:
 //   node eval/src/longmemeval.mjs [--fixture longmemeval-s-subset] [--k 5] [--json]
@@ -64,7 +68,7 @@ import {
   parsePathFlag,
   scoreRanked,
 } from './lib.mjs'
-import { PROTOCOLS, upstreamMetrics } from './retrieval-metrics.mjs'
+import { hasUserTarget, PROTOCOLS, upstreamMetrics } from './retrieval-metrics.mjs'
 import {
   assertKnownRetriever,
   lexicalRetriever,
@@ -138,7 +142,9 @@ function abilityRows(perAbility, k) {
  * (`no_target_skipped`).
  */
 function retrievalQuestions(questions) {
-  return questions.filter((q) => !isAbstention(q.question_id) && protocol.scores(q))
+  return questions.filter(
+    (q) => (protocol.scoresAbstention || !isAbstention(q.question_id)) && protocol.scores(q),
+  )
 }
 
 /**
@@ -189,7 +195,12 @@ async function runOracle(questions, { k, fixture, retriever, ranks }) {
     perAbility[ability] ??= newTally()
     tally(perAbility[ability], score)
   }
-  const abstention = questions.filter((q) => isAbstention(q.question_id)).length
+  const abstention = protocol.scoresAbstention
+    ? 0
+    : questions.filter((q) => isAbstention(q.question_id)).length
+  const emptyGold = protocol.allowsEmptyGold
+    ? { empty_gold: scored.filter((q) => protocol.gold(q).length === 0).length }
+    : {}
   return {
     harness: 'longmemeval-advisory',
     tier: 'advisory',
@@ -202,6 +213,7 @@ async function runOracle(questions, { k, fixture, retriever, ranks }) {
     ...(protocolName === 'upstream'
       ? { no_target_skipped: questions.length - abstention - scored.length }
       : {}),
+    ...emptyGold,
     retriever: retriever.name,
     metrics: rates(total, k),
     by_question_type: Object.fromEntries(
@@ -232,7 +244,8 @@ async function scoreQuestions(questions, { fixture, retriever }) {
     mkdirSync(dirname(ranksOut), { recursive: true })
     writeFileSync(ranksOut, ranks.map((row) => `${JSON.stringify(row)}\n`).join(''))
   }
-  if (retriever.name === lexicalRetriever.name) return result
+  // Only the real retriever needs the stand-in beside it; offline ones are baselines themselves.
+  if (retriever.name !== 'real') return result
   const cache = retriever.stats?.()
   const baseline = await runOracle(questions, { k, fixture, retriever: lexicalRetriever })
   return {
@@ -270,7 +283,12 @@ function assertScorable(questions) {
   // Upstream's gold rule reads "answer" in the session id. A file without
   // upstream's ids scores every question against an empty gold set, where
   // recall_all is a vacuous 1; refuse instead of reporting that.
-  const goldless = scored.filter((q) => protocol.gold(q).length === 0).length
+  // `paper` allows empty gold only where upstream has none too: a question with
+  // no flagged user turn. Empty gold beside a flagged turn means the ids are
+  // not upstream's, and every such question would score a vacuous recall_all 1.
+  const goldless = scored.filter(
+    (q) => protocol.gold(q).length === 0 && (!protocol.allowsEmptyGold || hasUserTarget(q)),
+  ).length
   if (goldless > 0) {
     refuse(
       `--protocol ${protocolName}: ${goldless} of ${scored.length} questions have no gold session`,
@@ -323,7 +341,7 @@ async function resolveOracleRetriever() {
     )
     process.exit(0)
   }
-  process.stderr.write('retriever: real (db-backed)\n')
+  process.stderr.write(`retriever: ${retriever.name}\n`)
   return retriever
 }
 

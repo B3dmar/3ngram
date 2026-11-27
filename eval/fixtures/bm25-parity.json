@@ -1,0 +1,41 @@
+{
+  "source": "Scores computed by rank_bm25 0.2.2 BM25Okapi (k1 1.5, b 0.75, epsilon 0.25) with LongMemEval's split(\" \") tokenizer, the setup behind the paper's BM25 baseline. Synthetic text.",
+  "cases": [
+    {
+      "name": "repeated query token, shared words",
+      "docs": ["the cat sat on the mat", "the dog sat", "a bird flew over the house today"],
+      "query": "the cat cat sat",
+      "scores": [1.095408126386852, 0.13756267003053713, 0.048429597531298677]
+    },
+    {
+      "name": "a word in most documents gets the epsilon idf floor",
+      "docs": ["apple pie", "apple tart", "apple juice", "pear cake"],
+      "query": "apple cake",
+      "scores": [0.14121631006453395, 0.14121631006453395, 0.14121631006453395, 0.8472978603872037]
+    },
+    {
+      "name": "double spaces make empty tokens, as split(\" \") does",
+      "docs": ["a  b c", "b  c d", "c d e"],
+      "query": "b  e",
+      "scores": [-0.19668190320985693, -0.19668190320985693, 0.5563447387550394]
+    },
+    {
+      "name": "case and punctuation are part of the token",
+      "docs": ["Paris, France", "paris france", "Paris is big"],
+      "query": "Paris, paris",
+      "scores": [0.545920513948387, 0.545920513948387, 0.0]
+    },
+    {
+      "name": "a query token absent from the corpus scores nothing",
+      "docs": ["one two", "three four"],
+      "query": "five two",
+      "scores": [0.0, 0.0]
+    },
+    {
+      "name": "documents of very different lengths",
+      "docs": ["x", "x y z x y z x y z x y z", "y z"],
+      "query": "x z",
+      "scores": [-0.19954125928359012, -0.3610075079618309, -0.17494028211164064]
+    }
+  ]
+}
