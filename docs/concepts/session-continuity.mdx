@@ -271,7 +271,7 @@ agent_sessions (
   activation_epoch     int not null,         -- incremented on startup/resume/resurrect/erasure; closer fence, not SessionEnd
   triage_status        text not null,        -- idle | pending | completed | expired | overflowed (terminal)
   triage_attempt_id    uuid null,
-  triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline. NULL = unknown (pre-guard rows) = finalize
+  triage_armed_at      timestamptz null,     -- when the current attempt was armed; the age guard on the `pending` decline and the re-arm cooldown. NULL = unknown (pre-guard rows) = finalize; a defensive complete clears it (#461)
   triage_attempt_log   jsonb not null default '[]', -- the INTERACTIVE nudge history (issue #203): one {attemptId, armedAt, finalizedAt?, outcome?} per armed attempt, bounded (oldest dropped); closer claims are not logged. Ids, instants and outcome words only
   triage_attempt_count int not null default 0, -- true total ever armed, so a trimmed log is detectable
   last_triaged_event_ids jsonb not null default '[]', -- event ids ACCOUNTED FOR by triage: all ids visible at the last complete/expire, and the ids visible when the current attempt began — never a since-attempt-begin slice
@@ -661,8 +661,11 @@ Three implementation decisions this section left open:
   run closer-eligible — instead of being absorbed as if a debrief had covered
   it. The complete that releases an armed attempt whose debrief fetch failed
   carries the same flag; finalizing a `pending` attempt, whose debrief *was*
-  shown, does not. The field is optional and the body strict, so a server older
-  than it answers 400 and the hook falls back to the ordinary complete.
+  shown, does not. A defensive complete also clears `triage_armed_at`, so a
+  nudge nobody saw starts no re-arm cooldown
+  ([issue #461](https://github.com/B3dmar/3ngram/issues/461)). The field is
+  optional and the body strict, so a server older than it answers 400 and the
+  hook falls back to the ordinary complete.
 - **No `turnCount` hint is sent.** Neither harness carries a turn count in the
   Stop payload, and the transcript is not a stable interface. The debounce is a
   disjunction and its other two arms are server-side facts, so the condition
@@ -859,7 +862,12 @@ debrief after nearly every turn, including the turn right after a debrief. `begi
 therefore declines `cooldown` while the run's last armed attempt is younger than
 `SESSION_TRIAGE_REARM_COOLDOWN_MINUTES` (default **30**; `0` switches it off). The
 age is read from `triage_armed_at`, which outlives the attempt, so a `completed`
-row a write flipped back to `idle` is covered too. The decline consumes nothing:
+row a write flipped back to `idle` is covered too. The one exception is an
+attempt the hook released unshown: its defensive complete clears the stamp
+([issue #461](https://github.com/B3dmar/3ngram/issues/461)), because a failed
+debrief fetch must not silence the run for the whole window. That is exact, not
+an approximation: `begin` arms only once the previous stamp is outside the
+window, so the run is back where that stamp left it. The decline consumes nothing:
 the signal stays outside `last_triaged_event_ids`, the first Stop past the window
 arms on it, and the closer still selects the row if the session ends first. A run
 that never armed has no cooldown, so the first nudge of a session is unchanged.
@@ -1193,7 +1201,7 @@ there would `409` every resume of a live session instead of refreshing its lease
 | `POST` | `/api/v1/agent-sessions/close` | set `closed_at` by natural key; no epoch (shipped) |
 | `POST` | `/api/v1/agent-sessions/heartbeat` | `last_seen_at` by natural key; optional bounded `last_message_excerpt` (shipped) |
 | `POST` | `/api/v1/agent-sessions/triage/begin` | evaluate the entry rule + debounce; arm a pending attempt or decline with a reason (shipped) |
-| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id; `defensive` lands `expired` and keeps the begin watermark (shipped) |
+| `POST` | `/api/v1/agent-sessions/triage/complete` | absorb writes, stamp cumulative watermark, fenced on the attempt id; `defensive` lands `expired`, keeps the begin watermark and clears the arm stamp (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/events` | typed provenance read (shipped) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}` | the bookkeeping-row read: identity, lifecycle, epoch, triage status, `briefed_memories` — never the excerpt or the watermark ids. The briefing is the CURRENT activation's snapshot (a reopening startup restamps it), so a recall reader over a reopened run scopes the run's events by `briefing_delivered_at` (shipped, issue #203) |
 | `GET` | `/api/v1/agent-sessions/{sessionRunId}/triage-attempts` | the run's interactive nudge history: armed/finalized instants and outcomes off the bounded `triage_attempt_log`, with the true `count` and a `truncated` flag (shipped, issue #203) |
