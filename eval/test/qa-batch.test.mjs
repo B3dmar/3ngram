@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // LongMemEval QA through the Batch API (#535), against a fake Batch API: no
-// network, no model. Submit, poll, judge, score; the state saved after every
-// paid step; retries that adopt instead of paying twice; files deleted only
-// once the state lets them go; ids-only state; content-free errors.
+// network, no model. Submit, poll, judge, score; run-id naming so a lost
+// response, a failed save or a later page never loses or duplicates a paid
+// object; cleanup by run id; ids-only state; content-free errors.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { ContentFreeError } from '../src/content-free-error.mjs'
 import { createBatchClient } from '../src/openai-batch.mjs'
 import { parseBatchOutput } from '../src/qa.mjs'
-import { collectRun, costBound, submitOptions, submitRun, sweep } from '../src/qa-batch.mjs'
+import {
+  cleanupRun,
+  collectRun,
+  costBound,
+  submitOptions,
+  submitRun,
+  sweep,
+} from '../src/qa-batch.mjs'
 
 const { cases } = JSON.parse(
   readFileSync(new URL('../fixtures/qa-parity.json', import.meta.url), 'utf8'),
@@ -22,42 +29,71 @@ const OPTIONS = {
   judge: 'gpt-4o-2024-08-06',
   prices: PRICES,
   maxUsd: 5,
+  runId: 'run1',
 }
 const SECRET = 'SECRET answer text'
 
-/** An in-memory Batch API: files, batches, a hook to finish a batch, and failure switches. */
+/** One page of a cursor listing, newest first, as the API pages it. */
+function page(items, search, size) {
+  const after = new URLSearchParams(search).get('after')
+  const start = after ? items.findIndex((item) => item.id === after) + 1 : 0
+  const data = items.slice(start, start + size)
+  return { data, has_more: start + size < items.length }
+}
+
+/** An in-memory Batch API with named files, tagged batches, paging and failure switches. */
 function fakeOpenAI() {
   const files = new Map()
   const batches = new Map()
-  const api = { files, batches, gets: 0, createMode: 'ok', nonJsonGet: false }
+  const api = { files, batches, gets: 0, uploads: 0, creates: 0, pageSize: 100 }
+  Object.assign(api, { uploadMode: 'ok', createMode: 'ok', nonJsonGet: false, hang: false })
   let next = 0
   const reply = (status, body) => new Response(JSON.stringify(body), { status })
+  const newest = (map) => [...map.values()].reverse()
   api.fetch = async (url, init) => {
+    if (api.hang) {
+      return new Promise((_, reject) =>
+        init.signal.addEventListener('abort', () => reject(init.signal.reason)),
+      )
+    }
     const { pathname, search } = new URL(url)
     const path = pathname.replace(/^\/v1/, '')
     const id = path.split('/')[2]
     if (init.method === 'POST' && path === '/files') {
-      const fileId = `file-${++next}`
-      files.set(fileId, await init.body.get('file').text())
-      return reply(200, { id: fileId })
+      api.uploads++
+      const file = init.body.get('file')
+      const record = { id: `file-${++next}`, filename: file.name, text: await file.text() }
+      files.set(record.id, record)
+      // 'lost': the file is stored, but the response never reaches the caller.
+      return api.uploadMode === 'lost'
+        ? reply(502, { error: SECRET })
+        : reply(200, { id: record.id })
+    }
+    if (init.method === 'GET' && path === '/files') {
+      const listed = newest(files).map(({ id: fileId, filename }) => ({ id: fileId, filename }))
+      return reply(200, page(listed, search, api.pageSize))
     }
     if (init.method === 'POST' && path === '/batches') {
-      const input = JSON.parse(init.body).input_file_id
+      const { input_file_id, metadata } = JSON.parse(init.body)
       if (api.createMode === 'fail') return reply(500, { error: SECRET })
-      const batch = { id: `batch-${++next}`, status: 'in_progress', input_file_id: input }
+      api.creates++
+      const batch = { id: `batch-${++next}`, status: 'in_progress', input_file_id, metadata }
       batches.set(batch.id, batch)
-      // 'lost': the batch exists, but its response never reaches the caller.
       return api.createMode === 'lost' ? reply(502, { error: SECRET }) : reply(200, batch)
     }
-    if (init.method === 'GET' && path === '/batches' && search === '?limit=100') {
-      return reply(200, { data: [...batches.values()].reverse() })
+    if (init.method === 'GET' && path === '/batches') {
+      return reply(200, page(newest(batches), search, api.pageSize))
+    }
+    if (init.method === 'POST' && path.endsWith('/cancel') && batches.has(id)) {
+      batches.get(id).status = 'cancelled'
+      return reply(200, batches.get(id))
     }
     if (init.method === 'GET' && batches.has(id)) {
       api.gets++
       return api.nonJsonGet ? new Response(`not json ${SECRET}`) : reply(200, batches.get(id))
     }
     if (init.method === 'GET' && path.endsWith('/content') && files.has(id)) {
-      return new Response(files.get(id))
+      return new Response(files.get(id).text)
     }
     if (init.method === 'DELETE')
       return files.delete(id) ? reply(200, { deleted: true }) : reply(404, {})
@@ -68,7 +104,7 @@ function fakeOpenAI() {
     const batch = batches.get(batchId)
     const lines = files
       .get(batch.input_file_id)
-      .trim()
+      .text.trim()
       .split('\n')
       .map((l) => JSON.parse(l))
     const out = lines.map((line) => {
@@ -83,9 +119,9 @@ function fakeOpenAI() {
         error: null,
       })
     })
-    const outputId = `file-${++next}`
-    files.set(outputId, out.join('\n'))
-    Object.assign(batch, { status: 'completed', output_file_id: outputId })
+    const output = { id: `file-${++next}`, filename: 'batch_output.jsonl', text: out.join('\n') }
+    files.set(output.id, output)
+    Object.assign(batch, { status: 'completed', output_file_id: output.id })
   }
   return api
 }
@@ -95,7 +131,7 @@ function store(failAt) {
   const saves = []
   return {
     saves,
-    last: () => saves.at(-1),
+    last: () => saves.filter(Boolean).at(-1),
     save: (state) => {
       if (saves.length + 1 === failAt) {
         saves.push(null)
@@ -106,12 +142,13 @@ function store(failAt) {
   }
 }
 
-function setup({ failAt } = {}) {
+function setup({ failAt, timeoutMs } = {}) {
   const api = fakeOpenAI()
   const client = createBatchClient({
     baseUrl: 'https://api.test/v1/',
     apiKey: 'k',
     fetch: api.fetch,
+    timeoutMs,
   })
   const disk = store(failAt)
   return { api, disk, deps: { client, loadEntries, parse: parseBatchOutput, save: disk.save } }
@@ -127,10 +164,20 @@ test('a run submits the reader, then the judge, then scores; every batch file is
   const { api, disk, deps } = setup()
   let state = await submitRun(OPTIONS, deps)
   assert.deepEqual(
-    disk.saves.map((s) => s.stage),
-    ['reader-prepare', 'reader-start', 'reader'],
+    disk.saves.map((s) => [s.stage, Boolean(s.reader_input_file), Boolean(s.reader_batch)]),
+    [
+      ['reader-start', false, false],
+      ['reader-start', true, false],
+      ['reader', true, true],
+    ],
     'saved before the upload, after it, and after the batch exists',
   )
+  assert.equal(api.files.get(state.reader_input_file).filename, 'lme-qa-run1-reader.jsonl')
+  assert.deepEqual(api.batches.get(state.reader_batch).metadata, {
+    harness: 'longmemeval-qa',
+    run_id: 'run1',
+    stage: 'reader',
+  })
   assert.equal((await step(state, deps)).status, 'pending', 'still running')
 
   api.complete(state.reader_batch, (line) => `answer for ${line.custom_id}`)
@@ -164,36 +211,72 @@ test('an unwritable state file stops the run before anything is uploaded', async
   assert.equal(api.files.size, 0)
 })
 
-test('a save that fails after an upload deletes the upload, so nothing paid is untracked', async () => {
-  const { api, deps } = setup({ failAt: 2 })
-  await assert.rejects(submitRun(OPTIONS, deps), /the step it records was undone/)
-  assert.equal(api.files.size, 0)
-  assert.equal(api.batches.size, 0)
-})
-
-test('a batch whose create response was lost is adopted on retry, never created twice', async () => {
-  const { api, disk, deps } = setup()
-  api.createMode = 'lost'
-  await assert.rejects(submitRun(OPTIONS, deps), /failed with status 502/)
+test('a save that fails after the upload: the resume adopts the named upload, no second one', async () => {
+  const { api, disk, deps } = setup({ failAt: 2 })
+  await assert.rejects(
+    submitRun(OPTIONS, deps),
+    /resume run run1 with collect, or remove it with cleanup/,
+  )
   const saved = disk.last()
-  assert.equal(saved.stage, 'reader-start', 'the upload is on record')
-  api.createMode = 'ok'
+  assert.equal(saved.stage, 'reader-start')
+  assert.equal(saved.reader_input_file, undefined, 'the id never reached the state')
   const result = await collectRun(saved, deps)
   assert.equal(result.status, 'started')
-  assert.equal(api.batches.size, 1, 'the existing batch was adopted')
-  assert.equal(result.state.reader_batch, [...api.batches.keys()][0])
+  assert.equal(api.uploads, 1, 'adopted by name, not uploaded again')
+  assert.equal(api.creates, 1)
 })
 
-test('a judge batch that fails to start leaves the run resumable from its saved upload', async () => {
+test('a lost upload response: the resume finds the upload by name', async () => {
+  const { api, disk, deps } = setup()
+  api.uploadMode = 'lost'
+  await assert.rejects(submitRun(OPTIONS, deps), /POST \/files failed with status 502/)
+  api.uploadMode = 'ok'
+  const result = await collectRun(disk.last(), deps)
+  assert.equal(result.status, 'started')
+  assert.equal(api.uploads, 1)
+  assert.equal(result.state.reader_input_file, [...api.files.keys()][0])
+})
+
+test('a lost create response: the resume adopts the tagged batch, found on a later page', async () => {
+  const { api, disk, deps } = setup()
+  api.pageSize = 1
+  api.createMode = 'lost'
+  await assert.rejects(submitRun(OPTIONS, deps), /failed with status 502/)
+  // An unrelated, newer batch puts ours on page two.
+  api.batches.set('batch-other', { id: 'batch-other', status: 'in_progress', metadata: {} })
+  api.createMode = 'ok'
+  const result = await collectRun(disk.last(), deps)
+  assert.equal(result.status, 'started')
+  assert.equal(api.creates, 1, 'adopted, never created twice')
+  assert.equal(api.batches.get(result.state.reader_batch).metadata.run_id, 'run1')
+})
+
+test('an interrupted judge start resumes from the saved reader output', async () => {
   const { api, disk, deps } = setup()
   const state = await submitRun(OPTIONS, deps)
   api.complete(state.reader_batch, () => 'an answer')
-  api.createMode = 'fail'
-  await assert.rejects(collectRun(state, deps), /POST \/batches failed with status 500/)
+  api.uploadMode = 'lost'
+  await assert.rejects(collectRun(state, deps), /POST \/files failed with status 502/)
   const saved = disk.last()
   assert.equal(saved.stage, 'judge-start')
-  api.createMode = 'ok'
-  assert.equal((await step(saved, deps)).status, 'started')
+  api.uploadMode = 'ok'
+  const result = await step(saved, deps)
+  assert.equal(result.status, 'judging')
+  assert.equal(api.uploads, 2, 'reader and judge, each once')
+  const left = [...api.files.values()].map((f) => f.filename)
+  assert.deepEqual(left, ['lme-qa-run1-judge.jsonl'], 'reader files deleted once the judge exists')
+})
+
+test('cleanup cancels the run and deletes everything named or attached to it', async () => {
+  const { api, deps } = setup()
+  const state = await submitRun(OPTIONS, deps)
+  api.uploadMode = 'lost'
+  const unrelated = { id: 'file-keep', filename: 'other.jsonl', text: '' }
+  api.files.set(unrelated.id, unrelated)
+  const cleaned = await cleanupRun(state, deps)
+  assert.equal(cleaned.stage, 'cleaned')
+  assert.equal(api.batches.get(state.reader_batch).status, 'cancelled')
+  assert.deepEqual([...api.files.keys()], ['file-keep'], 'only the unrelated file is left')
 })
 
 test('a judge budget refusal ends the run as failed and lets the reader files go', async () => {
@@ -215,9 +298,8 @@ test('a batch that ends failed or expired marks the run failed and deletes its f
   assert.match(result.state.failure, /reader batch .* ended expired/)
   assert.equal(api.files.size, 0)
   assert.equal((await step(result.state, deps)).status, 'failed', 'failed stays failed')
-  // Deleting a file that is already gone counts as done, so a repeat sweep converges.
   const again = await sweep(deps.client, { pending_deletes: ['file-gone'] })
-  assert.deepEqual(again.pending_deletes, [])
+  assert.deepEqual(again.pending_deletes, [], 'a file already gone counts as deleted')
 })
 
 test('with no usable answer the run is scored all wrong, billed usage kept, no judge batch', async () => {
@@ -242,7 +324,7 @@ test('the cost bound counts UTF-8 bytes plus framing, unrounded, and refuses bef
   assert.equal(costBound([request], { usdIn: 1, usdOut: 1 }), (266 * 3 + 32 + 10) / 1e6)
 })
 
-test('submit options accept --name=value as well as --name value', () => {
+test('submit options accept --name=value, and judge prices come as a pair', () => {
   const base = ['submit', '--reader', 'r', '--judge', 'j', '--usd-in', '1', '--usd-out', '2']
   const options = submitOptions([
     ...base,
@@ -254,13 +336,14 @@ test('submit options accept --name=value as well as --name value', () => {
   assert.equal(options.limit, 1, 'a smoke run stays a smoke run')
   assert.equal(options.maxUsd, 3)
   assert.deepEqual(options.judgePrices, { usdIn: 4, usdOut: 5 })
+  assert.throws(() => submitOptions([...base, '--max-usd=3', '--judge-usd-out=5']), /go together/)
   assert.throws(
     () => submitOptions([...base, '--max-usd', '3', '--limit=0']),
     /--limit needs a positive/,
   )
 })
 
-test('errors never quote content: API bodies, non-JSON replies and bad output lines', async () => {
+test('errors never quote content, and a stalled call times out', async () => {
   const { api, deps } = setup()
   const state = await submitRun(OPTIONS, deps)
   api.nonJsonGet = true
@@ -279,5 +362,8 @@ test('errors never quote content: API bodies, non-JSON replies and bad output li
   for (const error of [notJson, missing, badLine]) {
     assert.equal(error.message.includes('SECRET'), false)
   }
+  const slow = setup({ timeoutMs: 20 })
+  slow.api.hang = true
+  await assert.rejects(slow.deps.client.get('batch-1'), /GET \/batches: TimeoutError/)
   assert.throws(() => createBatchClient({ apiKey: '' }), /API key is required/)
 })

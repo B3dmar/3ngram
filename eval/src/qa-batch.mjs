@@ -7,21 +7,26 @@
 //        --usd-in <per 1M> --usd-out <per 1M> --max-usd <cap>
 //        [--judge-usd-in <per 1M> --judge-usd-out <per 1M>]  (default: the reader's)
 //   node eval/src/qa-batch.mjs collect --state <file> [--out <metrics.json>]
+//   node eval/src/qa-batch.mjs cleanup --state <file>
 //
-// `collect` is safe to repeat. While a batch runs it reports the status and
-// exits 0. The state is saved after every upload and every batch creation (a
-// save that fails undoes the upload it would record), and a retry adopts a
-// batch an earlier attempt created for the same input file instead of paying
-// twice, so any failure can be retried. Arguments and the state file's
-// location are checked before anything is paid for. A finished run keeps its
-// metrics in the state and returns them again. Batch files hold dataset text
-// and model answers (hard rule 6): they are never printed, and once the state
-// no longer needs them they are queued in `pending_deletes` and deleted right
-// after the state is saved; a deletion that fails stays queued.
+// Every run has a run id. Each upload is named lme-qa-<run id>-<stage>.jsonl
+// and each batch carries { run_id, stage } in its metadata, so anything the
+// run created can be found by listing, every page, even when the response that
+// carried its id was lost. The state is saved at `<stage>-start` before a
+// stage uploads anything, after the upload, and after the batch exists; a
+// resume adopts the named upload and the tagged batch before creating either,
+// so nothing is paid for twice. `collect` is safe to repeat: it reports
+// `pending` while a batch runs, starts the judge after the reader, scores
+// after the judge, and a finished run returns its metrics again. Batch files
+// hold dataset text and model answers (hard rule 6): they are never printed;
+// once the state no longer needs them they are queued in `pending_deletes` and
+// deleted after the state is saved. `cleanup` cancels the run's running
+// batches and deletes every file it can find for the run id.
 //
 // ADVISORY ONLY: never a gate. Needs LLM_GATEWAY_API_KEY (and optionally
 // LLM_GATEWAY_URL); without it, it refuses rather than skipping, since a run
 // is always started on purpose.
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { ContentFreeError } from './content-free-error.mjs'
@@ -74,48 +79,62 @@ function usageOf(results) {
 }
 
 const errorCount = (results) => [...results.values()].filter((r) => r.error !== undefined).length
-const batchFiles = (batch, inputFileId) =>
-  [inputFileId, batch.output_file_id, batch.error_file_id].filter(Boolean)
+const uniqueIds = (ids) => [...new Set(ids.filter(Boolean))]
+const uploadName = (state, stage) => `lme-qa-${state.run_id}-${stage}.jsonl`
+const readerFiles = (state) =>
+  uniqueIds([state.reader_input_file, state.reader_output_file, state.reader_error_file])
 
-/** Save the state; if that fails, undo the side effect it would have recorded, then stop. */
-async function persist(save, state, undo) {
+/** Save the state; a failure leaves an earlier save on disk, which a resume or cleanup can use. */
+async function persist(save, state) {
   try {
     await save(state)
   } catch {
-    if (undo) await undo().catch(() => undefined)
-    throw new ContentFreeError('the state file could not be saved; the step it records was undone')
+    throw new ContentFreeError(
+      `the state file could not be saved; resume run ${state.run_id} with collect, or remove it with cleanup`,
+    )
   }
   return state
 }
 
-/** Create (or adopt) the batch for a stage's saved input file, then save its id. */
-async function createStage(client, save, state, stage) {
-  const inputFileId = state[`${stage}_input_file`]
+/**
+ * Upload a stage's input (or adopt the run's earlier upload of it), save its
+ * id, then create the stage's batch (or adopt the one already tagged for it)
+ * and save that id. The caller has saved `<stage>-start` already.
+ */
+async function startStage({ client, save }, state, stage, buildRequests) {
+  let started = state
+  if (!started[`${stage}_input_file`]) {
+    const [earlier, ...extra] = await client.filesNamed(uploadName(state, stage))
+    const inputFileId =
+      earlier?.id ?? (await client.upload(await buildRequests(), uploadName(state, stage)))
+    const pending = uniqueIds([...(state.pending_deletes ?? []), ...extra.map((f) => f.id)])
+    started = await persist(save, {
+      ...state,
+      [`${stage}_input_file`]: inputFileId,
+      pending_deletes: pending,
+    })
+  }
+  const [tagged] = await client.batchesTagged({ run_id: state.run_id, stage })
   const batch =
-    (await client.findByInput(inputFileId)) ??
-    (await client.create(inputFileId, { harness: 'longmemeval-qa', stage }))
-  // No undo: the `-start` state already holds the input file, so a retry adopts this batch.
-  return persist(save, { ...state, stage, [`${stage}_batch`]: batch.id })
-}
-
-/** Upload a stage's requests, save the file id, then create its batch. */
-async function startStage(client, save, state, requests, stage) {
-  const inputFileId = await client.upload(requests)
-  const starting = { ...state, stage: `${stage}-start`, [`${stage}_input_file`]: inputFileId }
-  await persist(save, starting, () => client.remove(inputFileId))
-  return createStage(client, save, starting, stage)
+    tagged ??
+    (await client.create(started[`${stage}_input_file`], {
+      harness: 'longmemeval-qa',
+      run_id: state.run_id,
+      stage,
+    }))
+  return persist(save, { ...started, stage, [`${stage}_batch`]: batch.id })
 }
 
 const failed = (state, failure, cleanup) => ({
-  state: { ...state, stage: 'failed', failure, pending_deletes: cleanup },
+  state: { ...state, stage: 'failed', failure, pending_deletes: uniqueIds(cleanup) },
   status: 'failed',
 })
 
 /** A finished batch's results, errors first so an output line wins. Reads only, deletes nothing. */
-async function readResults(client, batch, parse) {
+async function readResults(client, outputFileId, errorFileId, parse) {
   const read = async (fileId) => (fileId ? parse(await client.content(fileId)) : new Map())
-  const errors = await read(batch.error_file_id)
-  const output = await read(batch.output_file_id)
+  const errors = await read(errorFileId)
+  const output = await read(outputFileId)
   return new Map([...errors, ...output])
 }
 
@@ -132,25 +151,34 @@ export async function sweep(client, state) {
   return { ...state, pending_deletes: left }
 }
 
+/** The run's questions, from the pinned dataset. */
+async function chosenEntries(state, { loadEntries }) {
+  const { entries } = await loadEntries({ dataset: state.dataset, sha256: state.sha256 })
+  const wanted = new Set(state.question_ids)
+  return entries.filter((e) => wanted.has(e.question_id))
+}
+
+const readerRequests = (chosen, state) =>
+  chosen.map((entry) => readerRequest(entry, { model: state.reader, cot: state.reading === 'cot' }))
+
 /** Submit the reader batch, saving the state before and after each paid step. */
-export async function submitRun(options, { client, loadEntries, save }) {
+export async function submitRun(options, deps) {
   if (!options.reader || !options.judge) {
     throw new ContentFreeError('--reader and --judge name the models')
   }
-  const { dataset, sha256, entries } = await loadEntries(options)
+  const { dataset, sha256, entries } = await deps.loadEntries(options)
   const chosen = options.limit ? entries.slice(0, options.limit) : entries
-  const requests = chosen.map((entry) =>
-    readerRequest(entry, { model: options.reader, cot: options.cot }),
-  )
+  const plan = { reader: options.reader, reading: options.cot ? 'cot' : 'direct' }
+  const requests = readerRequests(chosen, plan)
   const bound = guard(requests, options.prices, options.maxUsd, 'reader')
-  const prepared = {
-    stage: 'reader-prepare',
+  const starting = {
+    stage: 'reader-start',
+    run_id: options.runId ?? randomUUID(),
     dataset,
     sha256,
     question_ids: chosen.map((e) => e.question_id),
-    reader: options.reader,
+    ...plan,
     judge: options.judge,
-    reading: options.cot ? 'cot' : 'direct',
     prices: options.prices,
     judge_prices: options.judgePrices ?? options.prices,
     max_usd: options.maxUsd,
@@ -158,8 +186,8 @@ export async function submitRun(options, { client, loadEntries, save }) {
     pending_deletes: [],
   }
   // Saved before anything is uploaded: an unwritable state file stops the run unpaid.
-  await persist(save, prepared)
-  return startStage(client, save, prepared, requests, 'reader')
+  await persist(deps.save, starting)
+  return startStage(deps, starting, 'reader', async () => requests)
 }
 
 /** Score the run: a question without an answer or a verdict counts as wrong, never as skipped. */
@@ -172,6 +200,7 @@ function finish(state, chosen, verdicts, cleanup) {
   const metrics = {
     harness: 'longmemeval-qa',
     tier: 'advisory',
+    run_id: state.run_id,
     dataset: state.dataset,
     sha256: state.sha256,
     reader: state.reader,
@@ -184,58 +213,99 @@ function finish(state, chosen, verdicts, cleanup) {
     cost_usd: +costUsd.toFixed(4),
     batches: { reader: state.reader_batch, judge: state.judge_batch ?? null },
   }
-  const done = { ...state, stage: 'done', metrics, pending_deletes: cleanup }
+  const done = { ...state, stage: 'done', metrics, pending_deletes: uniqueIds(cleanup) }
   return { state: done, status: 'done', metrics }
 }
 
+/** The judge requests for every answered question. */
+function judgeRequests(chosen, answers, state) {
+  return chosen
+    .filter((e) => answers.get(e.question_id)?.content !== undefined)
+    .map((e) => judgeRequest(e, answers.get(e.question_id).content, { model: state.judge }))
+}
+
+/** Start the judge from a saved `judge-start`; the reader files go once the judge batch exists. */
+async function startJudge(deps, starting, requests) {
+  const judging = await startStage(deps, starting, 'judge', requests)
+  const queued = {
+    ...judging,
+    pending_deletes: uniqueIds([...judging.pending_deletes, ...readerFiles(judging)]),
+  }
+  return { state: queued, status: 'judging' }
+}
+
 /** The reader batch is done: start the judge batch, or score now if nothing was answered. */
-async function afterReader(state, chosen, answers, cleanup, { client, save }) {
-  const answered = chosen.filter((e) => answers.get(e.question_id)?.content !== undefined)
-  const readerUsage = usageOf(answers)
+async function afterReader(state, batch, deps) {
+  const results = await readResults(
+    deps.client,
+    batch.output_file_id,
+    batch.error_file_id,
+    deps.parse,
+  )
+  const chosen = await chosenEntries(state, deps)
+  const requests = judgeRequests(chosen, results, state)
   const read = {
     ...state,
-    reader_usage: readerUsage,
-    reader_errors: chosen.length - answered.length,
+    reader_output_file: batch.output_file_id ?? null,
+    reader_error_file: batch.error_file_id ?? null,
+    reader_usage: usageOf(results),
+    reader_errors: chosen.length - requests.length,
   }
-  if (answered.length === 0) return finish(read, chosen, new Map(), cleanup)
-  const requests = answered.map((e) =>
-    judgeRequest(e, answers.get(e.question_id).content, { model: state.judge }),
-  )
+  if (requests.length === 0) {
+    return finish(read, chosen, new Map(), [...(read.pending_deletes ?? []), ...readerFiles(read)])
+  }
   // The judge's budget is what the reader actually spent, not its loose bound.
-  const left = state.max_usd - usd(readerUsage, state.prices)
+  const left = state.max_usd - usd(read.reader_usage, state.prices)
   let bound
   try {
     bound = guard(requests, state.judge_prices, left, 'judge')
   } catch (error) {
     if (!(error instanceof ContentFreeError)) throw error
-    return failed(read, error.message, cleanup) // ends the run and lets the reader files go
+    return failed(read, error.message, [...(read.pending_deletes ?? []), ...readerFiles(read)])
   }
-  // The judge input carries the answers, so the reader files can go once it is saved.
-  const prepared = { ...read, judge_cost_bound_usd: bound, pending_deletes: cleanup }
-  const judging = await startStage(client, save, prepared, requests, 'judge')
-  return { state: judging, status: 'judging' }
+  const starting = await persist(deps.save, {
+    ...read,
+    stage: 'judge-start',
+    judge_cost_bound_usd: bound,
+  })
+  return startJudge(deps, starting, async () => requests)
+}
+
+/** Resume an interrupted start: adopt or redo its upload and batch from saved ids only. */
+async function resumeStart(state, deps) {
+  const chosen = await chosenEntries(state, deps)
+  if (state.stage === 'reader-start') {
+    const reader = await startStage(deps, state, 'reader', async () =>
+      readerRequests(chosen, state),
+    )
+    return { state: reader, status: 'started' }
+  }
+  const rebuild = async () => {
+    const answers = await readResults(
+      deps.client,
+      state.reader_output_file,
+      state.reader_error_file,
+      deps.parse,
+    )
+    return judgeRequests(chosen, answers, state)
+  }
+  return startJudge(deps, state, rebuild)
 }
 
 /**
  * Advance a run one step. Returns { state, status, metrics? }: `pending` while
- * a batch runs, `started` once an interrupted start is completed, `judging`
- * once the judge batch exists, `done` with the metrics, or `failed` with the
- * batch's files queued for deletion.
+ * a batch runs, `started` once an interrupted reader start is completed,
+ * `judging` once the judge batch exists, `done` with the metrics, or `failed`
+ * with the batch's files queued for deletion.
  */
 export async function collectRun(state, deps) {
-  const { client, loadEntries, save, parse = parseBatchOutput } = deps
+  const { client, parse = parseBatchOutput } = deps
+  const full = { ...deps, parse }
   if (state.stage === 'done') return { state, status: 'done', metrics: state.metrics }
-  if (state.stage === 'failed') return { state, status: 'failed' }
-  if (state.stage === 'reader-prepare') {
-    throw new ContentFreeError('submit stopped before uploading; nothing to collect')
-  }
-  if (state.stage.endsWith('-start')) {
-    const stage = state.stage.replace('-start', '')
-    return { state: await createStage(client, save, state, stage), status: 'started' }
-  }
+  if (state.stage === 'failed' || state.stage === 'cleaned') return { state, status: state.stage }
+  if (state.stage.endsWith('-start')) return resumeStart(state, full)
   const reading = state.stage === 'reader'
   const batchId = reading ? state.reader_batch : state.judge_batch
-  const inputFileId = reading ? state.reader_input_file : state.judge_input_file
   const batch = await client.get(batchId)
   if (!FINAL_STATUSES.includes(batch.status)) {
     return {
@@ -245,16 +315,44 @@ export async function collectRun(state, deps) {
       request_counts: batch.request_counts,
     }
   }
-  const cleanup = [...(state.pending_deletes ?? []), ...batchFiles(batch, inputFileId)]
+  const inputFileId = reading ? state.reader_input_file : state.judge_input_file
+  const batchFiles = [inputFileId, batch.output_file_id, batch.error_file_id]
+  const cleanup = [...(state.pending_deletes ?? []), ...batchFiles]
   if (batch.status !== 'completed') {
-    return failed(state, `${state.stage} batch ${batchId} ended ${batch.status}`, cleanup)
+    const leftover = reading ? cleanup : [...cleanup, ...readerFiles(state)]
+    return failed(state, `${state.stage} batch ${batchId} ended ${batch.status}`, leftover)
   }
-  const results = await readResults(client, batch, parse)
-  const { entries } = await loadEntries({ dataset: state.dataset, sha256: state.sha256 })
-  const wanted = new Set(state.question_ids)
-  const chosen = entries.filter((e) => wanted.has(e.question_id))
-  if (reading) return afterReader(state, chosen, results, cleanup, deps)
-  return finish(state, chosen, results, cleanup)
+  if (reading) return afterReader(state, batch, full)
+  const verdicts = await readResults(client, batch.output_file_id, batch.error_file_id, parse)
+  return finish(state, await chosenEntries(state, full), verdicts, [
+    ...cleanup,
+    ...readerFiles(state),
+  ])
+}
+
+/**
+ * Remove everything the run created: cancel its running batches, then queue
+ * and delete every file named for the run or attached to its batches. A
+ * cancelled batch can still write files while it winds down; run it again.
+ */
+export async function cleanupRun(state, { client }) {
+  const batches = await client.batchesTagged({ run_id: state.run_id })
+  for (const batch of batches) {
+    if (!FINAL_STATUSES.includes(batch.status) && batch.status !== 'cancelling') {
+      await client.cancel(batch.id).catch(() => undefined)
+    }
+  }
+  const named = await client.filesNamed(`lme-qa-${state.run_id}-`)
+  const attached = batches.flatMap((b) => [b.input_file_id, b.output_file_id, b.error_file_id])
+  const queued = uniqueIds([
+    ...(state.pending_deletes ?? []),
+    ...named.map((f) => f.id),
+    ...attached,
+    ...readerFiles(state),
+    state.judge_input_file,
+  ])
+  const stage = state.stage === 'done' ? 'done' : 'cleaned'
+  return sweep(client, { ...state, stage, pending_deletes: queued })
 }
 
 /** The pinned dataset as raw upstream entries, refused if its hash moved since submit. */
@@ -279,6 +377,9 @@ function positive(args, name) {
 
 /** The submit options, both `--name value` and `--name=value` accepted. */
 export function submitOptions(args) {
+  if (has(args, 'judge-usd-in') !== has(args, 'judge-usd-out')) {
+    throw new ContentFreeError('--judge-usd-in and --judge-usd-out go together')
+  }
   return {
     dataset: parseFlag(args, 'dataset', 'oracle'),
     reader: parseFlag(args, 'reader', ''),
@@ -300,9 +401,9 @@ function writeState(path, state) {
   renameSync(tmp, path)
 }
 
-async function main(args) {
+/** Parse and check every argument before anything is paid for. */
+function parseArgs(args) {
   const [command] = args
-  // Every argument is checked before anything is paid for.
   let statePath
   let outPath
   try {
@@ -311,15 +412,20 @@ async function main(args) {
   } catch (error) {
     throw new ContentFreeError(error.message) // "--out needs a path": our own words
   }
-  if (!statePath || !['submit', 'collect'].includes(command)) {
+  if (!statePath || !['submit', 'collect', 'cleanup'].includes(command)) {
     throw new ContentFreeError(
-      'usage: qa-batch.mjs submit|collect --state <file> (see the file header)',
+      'usage: qa-batch.mjs submit|collect|cleanup --state <file> (see the file header)',
     )
   }
-  const options = command === 'submit' ? submitOptions(args) : undefined
   if (command === 'submit' && existsSync(statePath)) {
     throw new ContentFreeError('the state file already exists: a new run needs a new one')
   }
+  const options = command === 'submit' ? submitOptions(args) : undefined
+  return { command, statePath, outPath, options }
+}
+
+async function main(args) {
+  const { command, statePath, outPath, options } = parseArgs(args)
   const client = createBatchClient({
     baseUrl: process.env.LLM_GATEWAY_URL,
     apiKey: process.env.LLM_GATEWAY_API_KEY,
@@ -328,14 +434,19 @@ async function main(args) {
   const deps = { client, loadEntries: loadPinned, save }
   if (command === 'submit') {
     const state = await submitRun(options, deps)
-    return {
-      status: 'submitted',
-      reader_batch: state.reader_batch,
-      cost_bound_usd: state.reader_cost_bound_usd,
-    }
+    return { status: 'submitted', run_id: state.run_id, reader_batch: state.reader_batch }
   }
   const loaded = JSON.parse(readFileSync(statePath, 'utf8'))
   save(loaded) // the state file is writable before any paid step
+  if (command === 'cleanup') {
+    const cleaned = await cleanupRun(loaded, deps)
+    save(cleaned)
+    return {
+      status: cleaned.stage,
+      run_id: cleaned.run_id,
+      pending_deletes: cleaned.pending_deletes.length,
+    }
+  }
   const result = await collectRun(loaded, deps)
   // Metrics are written before the state moves on, so a failed write can be collected again.
   if (result.metrics && outPath)
