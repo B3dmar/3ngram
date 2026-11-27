@@ -435,6 +435,8 @@ test('--protocol refuses an unknown name, nothing to score, or no gold (#516)', 
   refused(['--protocol='], process.env, /unknown --protocol ''/)
   // The synthetic subset flags user turns but has no upstream "answer" ids.
   refused(['--protocol', 'upstream'], process.env, /have no gold session/)
+  // `paper` allows empty gold only without a flagged user turn, so the same file is refused.
+  refused(['--protocol', 'paper'], process.env, /have no gold session/)
   // The seeded file has no has_answer flags: upstream skips every question.
   await withSeededCache(() =>
     refused(['--download', '--protocol', 'upstream'], OFFICIAL_ENV, /no retrieval-scorable/),

@@ -68,7 +68,7 @@ import {
   parsePathFlag,
   scoreRanked,
 } from './lib.mjs'
-import { PROTOCOLS, upstreamMetrics } from './retrieval-metrics.mjs'
+import { hasUserTarget, PROTOCOLS, upstreamMetrics } from './retrieval-metrics.mjs'
 import {
   assertKnownRetriever,
   lexicalRetriever,
@@ -283,8 +283,13 @@ function assertScorable(questions) {
   // Upstream's gold rule reads "answer" in the session id. A file without
   // upstream's ids scores every question against an empty gold set, where
   // recall_all is a vacuous 1; refuse instead of reporting that.
-  const goldless = scored.filter((q) => protocol.gold(q).length === 0).length
-  if (goldless > 0 && !protocol.allowsEmptyGold) {
+  // `paper` allows empty gold only where upstream has none too: a question with
+  // no flagged user turn. Empty gold beside a flagged turn means the ids are
+  // not upstream's, and every such question would score a vacuous recall_all 1.
+  const goldless = scored.filter(
+    (q) => protocol.gold(q).length === 0 && (!protocol.allowsEmptyGold || hasUserTarget(q)),
+  ).length
+  if (goldless > 0) {
     refuse(
       `--protocol ${protocolName}: ${goldless} of ${scored.length} questions have no gold session`,
     )
