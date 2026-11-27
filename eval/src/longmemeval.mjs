@@ -24,6 +24,10 @@
 //                gitignored cache (download.mjs) and run the oracle over it.
 //                The dataset is large + upstream-licensed and is NEVER
 //                committed (root .gitignore: eval/.cache/).
+//   --dataset  : with --download: `s` (default, the pinned LongMemEval-S) or
+//                `m` (the pinned LongMemEval-M, about 500 sessions per
+//                question, the set the paper's retrieval tables use). The
+//                file is read one question at a time (readJsonArray).
 //   --sample   : with --download only. Score just the question ids a sample
 //                fixture lists (sample.mjs, #449); the sample's recorded
 //                dataset sha256 must match the verified download, else exit 2.
@@ -52,7 +56,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureDataset } from './download.mjs'
+import { DATASET_VARIANTS, ensureDataset, readJsonArray } from './download.mjs'
 import {
   createFakeJudgeGateway,
   createGatewayFromEnv,
@@ -318,6 +322,15 @@ try {
 } catch (error) {
   refuse(error.message)
 }
+// A bare --dataset reads as '' and is refused, never scored as the default (#122).
+const datasetGiven = args.some((a) => a === '--dataset' || a.startsWith('--dataset='))
+const datasetName = datasetGiven ? flag('dataset', '') : 's'
+if (!DATASET_VARIANTS.includes(datasetName)) {
+  refuse(`unknown --dataset '${datasetName}': expected ${DATASET_VARIANTS.join(' or ')}`)
+}
+if (datasetName !== 's' && !args.includes('--download')) {
+  refuse('--dataset needs --download: it names a pinned upstream file')
+}
 if (sampleName !== undefined && !args.includes('--download')) {
   refuse('--sample needs --download: a sample lists ids from the pinned upstream file')
 }
@@ -348,11 +361,12 @@ async function resolveOracleRetriever() {
 if (args.includes('--download')) {
   const { path, cached, bytes, sha256, url } = await ensureDataset({
     force: args.includes('--force'),
+    variant: datasetName,
   })
   process.stderr.write(
     `dataset ${cached ? 'cached' : 'downloaded'} (${bytes} bytes${sha256 ? `, sha256 ${sha256}` : ''}) from ${url}\n`,
   )
-  let questions = normalizeQuestions(JSON.parse(readFileSync(path, 'utf8')))
+  let questions = normalizeQuestions([...readJsonArray(path)])
   if (sampleName !== undefined) {
     try {
       questions = applySample(questions, loadSample(sampleName), sha256)
@@ -363,7 +377,7 @@ if (args.includes('--download')) {
   assertScorable(questions)
   const retriever = await resolveOracleRetriever()
   emit({
-    ...(await scoreQuestions(questions, { fixture: 'longmemeval-s-500q', retriever })),
+    ...(await scoreQuestions(questions, { fixture: `longmemeval-${datasetName}-500q`, retriever })),
     ...(sampleName === undefined ? {} : { sample: sampleName }),
     source: 'download',
   })

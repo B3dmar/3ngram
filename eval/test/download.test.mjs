@@ -18,6 +18,7 @@ import {
   DEFAULT_BYTES,
   ensureDataset,
   hashFile,
+  readJsonArray,
   verifyFile,
 } from '../src/download.mjs'
 
@@ -498,4 +499,54 @@ test('--retriever bm25 runs offline over user turns and needs no baseline (#516 
     assert.equal(result.metrics.session_recall_at_5, 1)
     assert.equal(result.lexical_baseline, undefined, 'only the real retriever carries a baseline')
   })
+})
+
+test('readJsonArray yields each element across chunk boundaries, strings and escapes intact (#516 follow-up)', async () => {
+  const elements = [
+    { question_id: 'q1', text: 'braces } { and ] [ inside a string' },
+    { question_id: 'q2', text: 'escaped \\" quote and a \\\\ backslash', nested: [{ a: [1, 2] }] },
+    { question_id: 'q3', text: 'multi-byte: æøå 日本語 🦘' },
+  ]
+  const path = join(dir, 'array.json')
+  await writeFile(path, `[\n ${elements.map((e) => JSON.stringify(e)).join(',\n ')}\n]\n`)
+  for (const chunkSize of [1, 3, 7, 64, 1 << 16]) {
+    assert.deepEqual([...readJsonArray(path, chunkSize)], elements, `chunk size ${chunkSize}`)
+  }
+})
+
+test('--dataset accepts s or m with --download, and refuses anything else (#516 follow-up)', () => {
+  const refused = (args, pattern) =>
+    assert.throws(
+      () => execFileSync('node', [cli, ...args], { encoding: 'utf8', stdio: 'pipe' }),
+      (error) => error.status === 2 && error.stdout === '' && pattern.test(error.stderr),
+    )
+  refused(['--dataset', 'xl', '--download'], /unknown --dataset 'xl'/)
+  refused(['--dataset', 'm'], /--dataset needs --download/)
+  // Bare, or followed by another flag: refused, not read as the default -S.
+  refused(['--download', '--dataset'], /unknown --dataset ''/)
+  refused(['--dataset', '--download'], /unknown --dataset ''/)
+})
+
+test('readJsonArray throws on a malformed array instead of yielding fewer elements (#516 follow-up)', async () => {
+  const cases = [
+    ['[{"id":1},{"id":2', /truncated element/],
+    ['[{"id":1},', /truncated array/],
+    ['', /truncated array/],
+    ['[{"id":1} {"id":2}]', /unexpected byte 0x7b/],
+    ['[{"id":1},null,{"id":2}]', /unexpected byte 0x6e: only an array of objects/],
+    ['[{"id":1},]', /unexpected byte 0x5d/],
+    ['x[{"id":1}]', /unexpected byte 0x78/],
+    ['[{"id":1}] trailing', /content after the array/],
+    ['[{"id":}]', /JSON|Unexpected/],
+  ]
+  for (const [body, pattern] of cases) {
+    const path = join(dir, 'bad.json')
+    await writeFile(path, body)
+    for (const chunkSize of [1, 4, 1 << 16]) {
+      assert.throws(() => [...readJsonArray(path, chunkSize)], pattern, `${body} @ ${chunkSize}`)
+    }
+  }
+  const empty = join(dir, 'empty-array.json')
+  await writeFile(empty, ' [ ] \n')
+  assert.deepEqual([...readJsonArray(empty)], [])
 })
