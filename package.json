@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/B3dmar/3ngram.git"
   },
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.28.13",
   "engines": {
     "node": "^22.13 || ^24 || >=26"
   },
