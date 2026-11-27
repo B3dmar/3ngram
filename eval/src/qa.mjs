@@ -10,8 +10,12 @@
 //   src/evaluation/print_qa_metrics.py overall, task-averaged, abstention
 // fixtures/qa-parity.json pins the prompts to strings upstream's code built.
 
-/** gen_length in run_generation.py: 500 reading directly, 800 step by step. */
-export const READER_MAX_TOKENS = Object.freeze({ direct: 500, cot: 800 })
+/**
+ * Upstream's effective reader max_tokens: 800 in both modes. run_generation.py
+ * means `500 if not args.cot else 800`, but `--cot` arrives as the string
+ * "true" or "false", both truthy, so it is always 800 (#535 review).
+ */
+export const READER_MAX_TOKENS = Object.freeze({ direct: 800, cot: 800 })
 export const JUDGE_MAX_TOKENS = 10
 /** The judge upstream's print_qa_metrics.py requires; only its scores compare with the paper. */
 export const UPSTREAM_JUDGE = 'gpt-4o-2024-08-06'

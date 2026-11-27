@@ -66,6 +66,7 @@ test('requests are /v1/chat/completions lines with upstream settings', () => {
     },
   )
   assert.equal(readerRequest(entry, { model: 'm' }).body.max_tokens, READER_MAX_TOKENS.direct)
+  assert.equal(READER_MAX_TOKENS.direct, 800, 'upstream caps direct answers at 800 too')
   assert.equal(judgeRequest(entry, hypothesis, { model: 'm' }).body.max_tokens, JUDGE_MAX_TOKENS)
 })
 
