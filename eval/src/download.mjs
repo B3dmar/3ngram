@@ -108,17 +108,22 @@ const CLOSE_BRACE = 0x7d
 const CLOSE_BRACKET = 0x5d
 const QUOTE = 0x22
 const BACKSLASH = 0x5c
+const COMMA = 0x2c
+const WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0d])
 
 /**
  * The elements of a top-level JSON array of objects, parsed one at a time from
  * the file's bytes. The -M file is longer than the longest string V8 allows,
  * so it is never read whole. Scanning bytes is safe in UTF-8: a quote or
- * backslash byte never occurs inside a multi-byte character.
+ * backslash byte never occurs inside a multi-byte character. The outer array
+ * is checked strictly (separators, object elements only, nothing after it, no
+ * truncation) and JSON.parse checks each element, so a malformed file throws
+ * instead of yielding fewer questions.
  */
 export function* readJsonArray(path, chunkSize = 1 << 24) {
   const fd = openSync(path, 'r')
   const buffer = Buffer.alloc(chunkSize)
-  const state = { depth: 0, inString: false, escaped: false, parts: [] }
+  const state = { outer: 'start', depth: 0, inString: false, escaped: false, parts: [], offset: 0 }
   try {
     for (let n = readSync(fd, buffer, 0, chunkSize, null); n > 0; ) {
       yield* scanChunk(buffer.subarray(0, n), state)
@@ -127,28 +132,56 @@ export function* readJsonArray(path, chunkSize = 1 << 24) {
   } finally {
     closeSync(fd)
   }
+  if (state.outer !== 'end') {
+    throw malformed(state, state.depth > 0 ? 'truncated element' : 'truncated array')
+  }
+}
+
+function malformed(state, what) {
+  return new Error(`readJsonArray: ${what} at byte ${state.offset}`)
+}
+
+/** One byte between elements, against the outer array's grammar. True when an element starts. */
+function outerByte(byte, state) {
+  if (WHITESPACE.has(byte)) return false
+  const { outer } = state
+  if (outer === 'start' && byte === OPEN_BRACKET) state.outer = 'first'
+  else if ((outer === 'first' || outer === 'after') && byte === CLOSE_BRACKET) state.outer = 'end'
+  else if (outer === 'after' && byte === COMMA) state.outer = 'next'
+  else if ((outer === 'first' || outer === 'next') && byte === OPEN_BRACE) return true
+  else if (outer === 'end') throw malformed(state, 'content after the array')
+  else
+    throw malformed(
+      state,
+      `unexpected byte 0x${byte.toString(16)}: only an array of objects is read`,
+    )
+  return false
 }
 
 /** Scan one chunk, yielding every element that closes in it; an open element carries over. */
 function* scanChunk(chunk, state) {
   let start = state.parts.length > 0 ? 0 : -1
-  for (let i = 0; i < chunk.length; i++) {
+  for (let i = 0; i < chunk.length; i++, state.offset++) {
     const byte = chunk[i]
-    if (state.inString) {
+    if (state.depth === 0) {
+      if (outerByte(byte, state)) {
+        state.depth = 1
+        start = i
+      }
+    } else if (state.inString) {
       if (state.escaped) state.escaped = false
       else if (byte === BACKSLASH) state.escaped = true
       else if (byte === QUOTE) state.inString = false
     } else if (byte === QUOTE) {
       state.inString = true
     } else if (byte === OPEN_BRACE || byte === OPEN_BRACKET) {
-      if (++state.depth === 2) start = i
-    } else if (byte === CLOSE_BRACE || byte === CLOSE_BRACKET) {
-      if (--state.depth === 1) {
-        state.parts.push(Buffer.from(chunk.subarray(start, i + 1)))
-        yield JSON.parse(Buffer.concat(state.parts).toString('utf8'))
-        state.parts = []
-        start = -1
-      }
+      state.depth++
+    } else if ((byte === CLOSE_BRACE || byte === CLOSE_BRACKET) && --state.depth === 0) {
+      state.parts.push(Buffer.from(chunk.subarray(start, i + 1)))
+      yield JSON.parse(Buffer.concat(state.parts).toString('utf8'))
+      state.parts = []
+      start = -1
+      state.outer = 'after'
     }
   }
   if (start !== -1) state.parts.push(Buffer.from(chunk.subarray(start)))

@@ -523,3 +523,27 @@ test('--dataset accepts s or m with --download, and refuses anything else (#516 
   refused(['--dataset', 'xl', '--download'], /unknown --dataset 'xl'/)
   refused(['--dataset', 'm'], /--dataset needs --download/)
 })
+
+test('readJsonArray throws on a malformed array instead of yielding fewer elements (#516 follow-up)', async () => {
+  const cases = [
+    ['[{"id":1},{"id":2', /truncated element/],
+    ['[{"id":1},', /truncated array/],
+    ['', /truncated array/],
+    ['[{"id":1} {"id":2}]', /unexpected byte 0x7b/],
+    ['[{"id":1},null,{"id":2}]', /unexpected byte 0x6e: only an array of objects/],
+    ['[{"id":1},]', /unexpected byte 0x5d/],
+    ['x[{"id":1}]', /unexpected byte 0x78/],
+    ['[{"id":1}] trailing', /content after the array/],
+    ['[{"id":}]', /JSON|Unexpected/],
+  ]
+  for (const [body, pattern] of cases) {
+    const path = join(dir, 'bad.json')
+    await writeFile(path, body)
+    for (const chunkSize of [1, 4, 1 << 16]) {
+      assert.throws(() => [...readJsonArray(path, chunkSize)], pattern, `${body} @ ${chunkSize}`)
+    }
+  }
+  const empty = join(dir, 'empty-array.json')
+  await writeFile(empty, ' [ ] \n')
+  assert.deepEqual([...readJsonArray(empty)], [])
+})
