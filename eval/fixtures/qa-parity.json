@@ -1,0 +1,222 @@
+{
+  "source": "Prompts built by upstream LongMemEval (xiaowu0162/LongMemEval at 9e0b455): run_generation.py prepare_prompt (orig-session, top 50, JSON history, direct and step-by-step) and evaluate_qa.py get_anscheck_prompt. Synthetic entries only, no dataset content (#535).",
+  "cases": [
+    {
+      "entry": {
+        "question_id": "q-escapes",
+        "question_type": "single-session-user",
+        "question": "Synthetic question q-escapes?",
+        "answer": "A quoted \"answer\"",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/20 (Sat) 09:00"],
+        "haystack_session_ids": ["s0"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "tab\there, quote \" backslash \\ newline\nend",
+              "has_answer": true
+            },
+            {
+              "role": "assistant",
+              "content": "DEL  and control \u0001"
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-escapes",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"tab\\there, quote \\\" backslash \\\\ newline\\nend\"}, {\"role\": \"assistant\", \"content\": \"DEL \\u007f and control \\u0001\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-escapes?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"tab\\there, quote \\\" backslash \\\\ newline\\nend\"}, {\"role\": \"assistant\", \"content\": \"DEL \\u007f and control \\u0001\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-escapes?\nAnswer (step by step):",
+      "judge": "I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. \n\nQuestion: Synthetic question q-escapes?\n\nCorrect Answer: A quoted \"answer\"\n\nModel Response: Model says: q-escapes\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-unicode",
+        "question_type": "multi-session",
+        "question": "Synthetic question q-unicode?",
+        "answer": "Kaffe på café",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/21 (Sun) 09:00", "2023/05/20 (Sat) 09:00"],
+        "haystack_session_ids": ["s0", "s1"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "æøå, 日本語 and a kangaroo 🦘",
+              "has_answer": true
+            }
+          ],
+          [
+            {
+              "role": "assistant",
+              "content": "é"
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-unicode",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"assistant\", \"content\": \"\\u00e9\"}]\n\n### Session 2:\nSession Date: 2023/05/21 (Sun) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"\\u00e6\\u00f8\\u00e5, \\u65e5\\u672c\\u8a9e and a kangaroo \\ud83e\\udd98\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-unicode?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"assistant\", \"content\": \"\\u00e9\"}]\n\n### Session 2:\nSession Date: 2023/05/21 (Sun) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"\\u00e6\\u00f8\\u00e5, \\u65e5\\u672c\\u8a9e and a kangaroo \\ud83e\\udd98\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-unicode?\nAnswer (step by step):",
+      "judge": "I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. \n\nQuestion: Synthetic question q-unicode?\n\nCorrect Answer: Kaffe på café\n\nModel Response: Model says: q-unicode\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-order",
+        "question_type": "temporal-reasoning",
+        "question": "Synthetic question q-order?",
+        "answer": "3 days",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": [
+          "2023/05/22 (Mon) 09:00",
+          "2023/05/20 (Sat) 09:00",
+          "2023/05/21 (Sun) 09:00"
+        ],
+        "haystack_session_ids": ["s0", "s1", "s2"],
+        "haystack_sessions": [
+          [
+            {
+              "content": "content first",
+              "role": "user",
+              "has_answer": false
+            }
+          ],
+          [
+            {
+              "role": "user",
+              "content": "second",
+              "has_answer": true
+            }
+          ],
+          [
+            {
+              "role": "user",
+              "content": "third"
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-order",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"second\"}]\n\n### Session 2:\nSession Date: 2023/05/21 (Sun) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"third\"}]\n\n### Session 3:\nSession Date: 2023/05/22 (Mon) 09:00\nSession Content:\n\n[{\"content\": \"content first\", \"role\": \"user\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-order?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/20 (Sat) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"second\"}]\n\n### Session 2:\nSession Date: 2023/05/21 (Sun) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"third\"}]\n\n### Session 3:\nSession Date: 2023/05/22 (Mon) 09:00\nSession Content:\n\n[{\"content\": \"content first\", \"role\": \"user\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-order?\nAnswer (step by step):",
+      "judge": "I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. In addition, do not penalize off-by-one errors for the number of days. If the question asks for the number of days/weeks/months, etc., and the model makes off-by-one errors (e.g., predicting 19 days when the answer is 18), the model's response is still correct. \n\nQuestion: Synthetic question q-order?\n\nCorrect Answer: 3 days\n\nModel Response: Model says: q-order\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-update",
+        "question_type": "knowledge-update",
+        "question": "Synthetic question q-update?",
+        "answer": "Blue now",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/18 (Thu) 09:00", "2023/05/19 (Fri) 09:00"],
+        "haystack_session_ids": ["s0", "s1"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "red",
+              "has_answer": false
+            },
+            {
+              "role": "assistant",
+              "content": "ok"
+            }
+          ],
+          [
+            {
+              "role": "user",
+              "content": "blue now",
+              "has_answer": true
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-update",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"red\"}, {\"role\": \"assistant\", \"content\": \"ok\"}]\n\n### Session 2:\nSession Date: 2023/05/19 (Fri) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"blue now\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-update?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"red\"}, {\"role\": \"assistant\", \"content\": \"ok\"}]\n\n### Session 2:\nSession Date: 2023/05/19 (Fri) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"blue now\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-update?\nAnswer (step by step):",
+      "judge": "I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response contains some previous information along with an updated answer, the response should be considered as correct as long as the updated answer is the required answer.\n\nQuestion: Synthetic question q-update?\n\nCorrect Answer: Blue now\n\nModel Response: Model says: q-update\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-pref",
+        "question_type": "single-session-preference",
+        "question": "Synthetic question q-pref?",
+        "answer": "The user would prefer quiet places",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/18 (Thu) 09:00"],
+        "haystack_session_ids": ["s0"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "I like quiet cafes",
+              "has_answer": true
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-pref",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"I like quiet cafes\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-pref?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"I like quiet cafes\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-pref?\nAnswer (step by step):",
+      "judge": "I will give you a question, a rubric for desired personalized response, and a response from a model. Please answer yes if the response satisfies the desired response. Otherwise, answer no. The model does not need to reflect all the points in the rubric. The response is correct as long as it recalls and utilizes the user's personal information correctly.\n\nQuestion: Synthetic question q-pref?\n\nRubric: The user would prefer quiet places\n\nModel Response: Model says: q-pref\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-assist",
+        "question_type": "single-session-assistant",
+        "question": "Synthetic question q-assist?",
+        "answer": 7,
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/18 (Thu) 09:00"],
+        "haystack_session_ids": ["s0"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "how many?"
+            },
+            {
+              "role": "assistant",
+              "content": "There are 7",
+              "has_answer": true
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-assist",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"how many?\"}, {\"role\": \"assistant\", \"content\": \"There are 7\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-assist?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"how many?\"}, {\"role\": \"assistant\", \"content\": \"There are 7\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-assist?\nAnswer (step by step):",
+      "judge": "I will give you a question, a correct answer, and a response from a model. Please answer yes if the response contains the correct answer. Otherwise, answer no. If the response is equivalent to the correct answer or contains all the intermediate steps to get the correct answer, you should also answer yes. If the response only contains a subset of the information required by the answer, answer no. \n\nQuestion: Synthetic question q-assist?\n\nCorrect Answer: 7\n\nModel Response: Model says: q-assist\n\nIs the model response correct? Answer yes or no only."
+    },
+    {
+      "entry": {
+        "question_id": "q-none_abs",
+        "question_type": "multi-session",
+        "question": "Synthetic question q-none_abs?",
+        "answer": "You did not mention a dog",
+        "question_date": "2023/05/30 (Tue) 10:00",
+        "haystack_dates": ["2023/05/18 (Thu) 09:00"],
+        "haystack_session_ids": ["s0"],
+        "haystack_sessions": [
+          [
+            {
+              "role": "user",
+              "content": "I have a cat",
+              "has_answer": false
+            }
+          ]
+        ],
+        "answer_session_ids": ["s0"]
+      },
+      "hypothesis": "Model says: q-none_abs",
+      "direct": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"I have a cat\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-none_abs?\nAnswer:",
+      "cot": "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n\n### Session 1:\nSession Date: 2023/05/18 (Thu) 09:00\nSession Content:\n\n[{\"role\": \"user\", \"content\": \"I have a cat\"}]\n\n\nCurrent Date: 2023/05/30 (Tue) 10:00\nQuestion: Synthetic question q-none_abs?\nAnswer (step by step):",
+      "judge": "I will give you an unanswerable question, an explanation, and a response from a model. Please answer yes if the model correctly identifies the question as unanswerable. The model could say that the information is incomplete, or some other information is given but the asked information is not.\n\nQuestion: Synthetic question q-none_abs?\n\nExplanation: You did not mention a dog\n\nModel Response: Model says: q-none_abs\n\nDoes the model correctly identify the question as unanswerable? Answer yes or no only."
+    }
+  ]
+}

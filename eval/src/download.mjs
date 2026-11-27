@@ -89,6 +89,18 @@ export const LONGMEMEVAL_M = Object.freeze({
   filename: 'longmemeval_m.json',
 })
 
+/**
+ * The pinned LongMemEval oracle release: each question's evidence sessions
+ * only, the input of the paper's oracle QA results (#535). `--dataset oracle`;
+ * LONGMEMEVAL_ORACLE_URL / _SHA256 / _BYTES override it.
+ */
+export const LONGMEMEVAL_ORACLE = Object.freeze({
+  url: 'https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_oracle',
+  sha256: '821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c',
+  bytes: 15388478,
+  filename: 'longmemeval_oracle.json',
+})
+
 /** The dataset variants `--dataset` accepts: the pinned release and its env prefix. */
 const VARIANTS = Object.freeze({
   s: {
@@ -99,6 +111,7 @@ const VARIANTS = Object.freeze({
     env: 'LONGMEMEVAL_S',
   },
   m: { ...LONGMEMEVAL_M, env: 'LONGMEMEVAL_M' },
+  oracle: { ...LONGMEMEVAL_ORACLE, env: 'LONGMEMEVAL_ORACLE' },
 })
 export const DATASET_VARIANTS = Object.freeze(Object.keys(VARIANTS))
 
