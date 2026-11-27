@@ -59,6 +59,8 @@ node eval/src/longmemeval.mjs --download --dataset m --retriever bm25 --protocol
 
 Upstream's released code gives the same gold ranks on 498 of 500 -M questions; the other two differ only below rank 200, on ties numpy orders differently.
 
+**QA accuracy (#535, in progress).** `src/qa.mjs` ports upstream's reader prompt (`run_generation.py`, `orig-session` with JSON history, direct and step-by-step) and judge prompts (`evaluate_qa.py`) byte for byte, builds OpenAI Batch `/v1/chat/completions` request lines with upstream's settings (temperature 0; 500, 800 and 10 max tokens), parses Batch output files and scores as `print_qa_metrics.py` does (overall, task-averaged and abstention accuracy, per type). `--dataset oracle` pins `longmemeval_oracle` (each question's evidence sessions only), the input of the paper's oracle results. On all 500 oracle questions the 1,500 reader and judge prompts equal the ones upstream's own functions build; `fixtures/qa-parity.json` pins seven synthetic cases built by upstream's code. The Batch submit and collect steps follow.
+
 ### Real-retriever mode (`--retriever real`)
 
 `pnpm --filter @3ngram/eval run advisory:real` (or `node src/longmemeval.mjs --retriever real`) swaps the lexical stand-in for the **product retrieval path** (`retriever.mjs`):
