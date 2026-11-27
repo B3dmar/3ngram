@@ -656,6 +656,11 @@ jobs:
         run: |
           mkdir -p eval/.cache/qa-state eval-metrics
           state=eval/.cache/qa-state/run.json
+          if [ "$ACTION" != submit ] && [ ! -f "$state" ]; then
+            echo "No saved state for QA run $RUN on this branch (the cache may have been evicted)."
+            echo "Its latest state is the lme-qa-state-$RUN-<run id> artifact: download it and run collect or cleanup locally (eval/README.md)."
+            exit 1
+          fi
           case "$ACTION" in
             submit)
               args=(submit --state "$state" --dataset "$DATASET" --reader "$READER" --judge "$JUDGE"
@@ -681,6 +686,17 @@ jobs:
         with:
           path: eval/.cache/qa-state
           key: lme-qa-state-${{ inputs.qa_run }}.${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A cache entry can be evicted after seven idle days or under storage
+      # pressure; the artifact keeps the state (ids, models, prices, counts
+      # only) for 90 days, so a run can always be resumed or cleaned up.
+      - name: Upload the QA run state
+        if: always() && hashFiles('eval/.cache/qa-state/run.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lme-qa-state-${{ inputs.qa_run }}-${{ github.run_id }}
+          path: eval/.cache/qa-state/run.json
+          retention-days: 90
 
       - name: Upload the QA metrics
         if: hashFiles('eval-metrics/qa-metrics.json') != ''
