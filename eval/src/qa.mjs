@@ -218,6 +218,8 @@ const UPSTREAM_TYPES = Object.freeze([
   'knowledge-update',
 ])
 const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
+/** A group's rounded accuracy, or null when it is empty (a --limit slice), never NaN. */
+const accuracy = (hits) => (hits.length === 0 ? null : round4(mean(hits)))
 /**
  * numpy's round(x, 4), which print_qa_metrics.py gets by calling round() on
  * numpy floats: scale by 10^4, round half to even, scale back. toFixed rounds
@@ -254,13 +256,16 @@ export function qaScores(entries, labels, { judge }) {
     judge,
     upstream_judge: judge === UPSTREAM_JUDGE,
     judged: all.length,
-    overall_accuracy: round4(mean(all)),
-    task_averaged_accuracy: round4(mean(Object.values(byType).map(mean))),
-    abstention: { n: abstention.length, accuracy: round4(mean(abstention)) },
+    overall_accuracy: accuracy(all),
+    // Upstream averages all six types; with one missing that average does not exist.
+    task_averaged_accuracy: Object.values(byType).every((hits) => hits.length > 0)
+      ? round4(mean(Object.values(byType).map(mean)))
+      : null,
+    abstention: { n: abstention.length, accuracy: accuracy(abstention) },
     by_type: Object.fromEntries(
       Object.entries(byType).map(([type, hits]) => [
         type,
-        { n: hits.length, accuracy: round4(mean(hits)) },
+        { n: hits.length, accuracy: accuracy(hits) },
       ]),
     ),
   }
