@@ -4,8 +4,10 @@
 //
 // SQL ONLY (hard rule 5): business policy — the read-vs-write scope split,
 // bounded defaults, the not_implemented ACCEPT path — lives in packages/core.
-// Every query runs inside withTenant(): RLS scopes rows to the caller
-// (facts-read.ts precedent), so no query references user_id.
+// Every query runs inside withTenant() AND carries an explicit caller-bound
+// user_id predicate (issue #147): the repo's two-layer tenant isolation, as in
+// proposals-apply.ts and fact-proposals.ts, so isolation never rests on RLS
+// alone (a dropped policy, a BYPASSRLS role, a query outside withTenant()).
 //
 // APPEND-AND-SUPERSEDE (docs/concepts/memory-model.mdx) on proposals: the consolidation_proposals row
 // is NOT memory data, but it is grant-protected like one — the runtime role has
@@ -84,12 +86,18 @@ export interface ProposalsQuery {
  */
 export async function listProposals(
   tx: TenantTx,
+  userId: string,
   query: ProposalsQuery = {},
 ): Promise<ProposalRow[]> {
+  const mine = eq(consolidationProposals.userId, userId)
   const ordered = tx
     .select(PROPOSAL_COLUMNS)
     .from(consolidationProposals)
-    .where(query.status === undefined ? undefined : eq(consolidationProposals.status, query.status))
+    .where(
+      query.status === undefined
+        ? mine
+        : and(mine, eq(consolidationProposals.status, query.status)),
+    )
     .orderBy(desc(consolidationProposals.createdAt), desc(consolidationProposals.id))
   const rows = await (query.limit === undefined ? ordered : ordered.limit(query.limit))
   return rows
@@ -103,12 +111,20 @@ export async function listProposals(
  * silent no-op. `decidedAt` uses the DB clock (sql`now()`, the commitments.ts
  * resolvedAt precedent) so the stamp matches the row's own transaction time.
  */
-export async function rejectProposal(tx: TenantTx, proposalId: string): Promise<ProposalRow> {
+export async function rejectProposal(
+  tx: TenantTx,
+  userId: string,
+  proposalId: string,
+): Promise<ProposalRow> {
   const [row] = await tx
     .update(consolidationProposals)
     .set({ status: 'rejected', decidedAt: sql`now()` })
     .where(
-      and(eq(consolidationProposals.id, proposalId), eq(consolidationProposals.status, 'proposed')),
+      and(
+        eq(consolidationProposals.userId, userId),
+        eq(consolidationProposals.id, proposalId),
+        eq(consolidationProposals.status, 'proposed'),
+      ),
     )
     .returning(PROPOSAL_COLUMNS)
   if (row === undefined) throw new ProposalNotFoundError(proposalId)
@@ -116,10 +132,14 @@ export async function rejectProposal(tx: TenantTx, proposalId: string): Promise<
 }
 
 /** Count proposals by status for the tenant (used by describe_environment if needed). */
-export async function countProposalsByStatus(tx: TenantTx): Promise<Record<string, number>> {
+export async function countProposalsByStatus(
+  tx: TenantTx,
+  userId: string,
+): Promise<Record<string, number>> {
   const rows = await tx
     .select({ key: consolidationProposals.status, n: count() })
     .from(consolidationProposals)
+    .where(eq(consolidationProposals.userId, userId))
     .groupBy(consolidationProposals.status)
   return Object.fromEntries(rows.map((r) => [r.key, r.n]))
 }

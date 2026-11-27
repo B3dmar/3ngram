@@ -20,6 +20,7 @@ import {
   rejectFactProposal,
 } from '../src/fact-proposals.js'
 import { applyFactProposal } from '../src/fact-proposals-apply.js'
+import { countProposalsByStatus, listProposals, rejectProposal } from '../src/proposals-read.js'
 
 /** Collapse the template's whitespace so assertions read as one line. */
 const normalize = (sql: string) => sql.replaceAll(/\s+/g, ' ').trim()
@@ -177,6 +178,29 @@ describe('tenant binding is two-layer (explicit user_id, not RLS alone)', () => 
         },
       ]),
     )
+    expect(params).toContain(USER)
+  })
+
+  // The edge-consolidation proposal reads (issue #147) follow the same rule.
+  it('listProposals filters on the caller user_id, with and without a status', async () => {
+    for (const query of [{}, { status: 'proposed' }]) {
+      const { sql, params } = await emitted((tx) => listProposals(tx, USER, query))
+      expect(sql).toContain('from "consolidation_proposals"')
+      expect(sql).toContain('"user_id" =')
+      expect(params).toContain(USER)
+    }
+  })
+
+  it('rejectProposal pins user_id in addition to id and status', async () => {
+    const { sql, params } = await emitted((tx) => rejectProposal(tx, USER, PROPOSAL))
+    expect(sql).toContain('update "consolidation_proposals"')
+    expect(sql).toContain('"user_id" =')
+    expect(params).toEqual(expect.arrayContaining([USER, PROPOSAL, 'proposed']))
+  })
+
+  it('countProposalsByStatus counts only the caller rows', async () => {
+    const { sql, params } = await emitted((tx) => countProposalsByStatus(tx, USER))
+    expect(sql).toContain('"user_id" =')
     expect(params).toContain(USER)
   })
 })

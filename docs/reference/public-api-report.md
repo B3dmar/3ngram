@@ -830,7 +830,7 @@ its row here even when its name and kind are unchanged.
 | `countFactProposals` | function | `c7bbe5bd4f0e` |
 | `countMemories` | function | `c61756cb455f` |
 | `countProposals` | function | `7c68fb735bcd` |
-| `countProposalsByStatus` | function | `83536379eed5` |
+| `countProposalsByStatus` | function | `0f90826616be` |
 | `countResolutionProposals` | function | `732fbcf08ef4` |
 | `countRetentionProposals` | function | `6b94c49d527f` |
 | `countUserMemories` | function | `b2994986cdcd` |
@@ -904,7 +904,7 @@ its row here even when its name and kind are unchanged.
 | `listGarbageCollectableClients` | function | `a1e35c46687b` |
 | `listMemories` | function | `ed8866dcdc75` |
 | `listMemoryFacets` | function | `0511d249e150` |
-| `listProposals` | function | `ca00070826cc` |
+| `listProposals` | function | `859315c29464` |
 | `listProposalsAfter` | function | `6d212688eabe` |
 | `listResolutionProposalsAfter` | function | `935db4d96a7e` |
 | `listRetentionProposalsAfter` | function | `fb69f9c0a43b` |
@@ -944,7 +944,7 @@ its row here even when its name and kind are unchanged.
 | `recordEmbedFailure` | function | `cf6208524a42` |
 | `registerClient` | function | `5c675b95f6b1` |
 | `rejectFactProposal` | function | `61e4ee4e59dd` |
-| `rejectProposal` | function | `84cffbf7a592` |
+| `rejectProposal` | function | `34f953517dc9` |
 | `releaseReservation` | function | `6c31f8a910fe` |
 | `renameScope` | function | `995856195877` |
 | `reopenResolutionProposal` | function | `82c1e6078797` |
