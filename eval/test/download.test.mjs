@@ -440,3 +440,27 @@ test('--protocol refuses an unknown name, nothing to score, or no gold (#516)', 
     refused(['--download', '--protocol', 'upstream'], OFFICIAL_ENV, /no retrieval-scorable/),
   )
 })
+
+test("--ranks-out writes each scored question's gold ranks, ids and numbers only (#517)", async () => {
+  const ranksPath = join(dir, 'ranks.jsonl')
+  await withSeededCache(() => {
+    execFileSync('node', [cli, '--download', '--ranks-out', ranksPath, '--json'], {
+      encoding: 'utf8',
+      env: OFFICIAL_ENV,
+    })
+  })
+  const body = await readFile(ranksPath, 'utf8')
+  assert.deepEqual(
+    body
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+    [{ question_id: 'q1', ability: 'information-extraction', sessions: 2, gold_ranks: [1] }],
+    'one row per scored question; the abstention question is not scored',
+  )
+  assert.equal(body.includes(CONTENT_SENTINEL), false)
+  assert.throws(
+    () => execFileSync('node', [cli, '--ranks-out', '--json'], { encoding: 'utf8', stdio: 'pipe' }),
+    (error) => error.status === 2 && /--ranks-out needs a path/.test(error.stderr),
+  )
+})

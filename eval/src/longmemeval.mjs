@@ -41,7 +41,11 @@
 //   node eval/src/longmemeval.mjs --download [--force] [--k 5] [--json]
 //   node eval/src/longmemeval.mjs --download --sample longmemeval-s-sample-50 [--retriever real]
 //   node eval/src/longmemeval.mjs --judge [--fixture …] [--k 5] [--json]
-import { existsSync, readFileSync } from 'node:fs'
+//
+// --ranks-out <path> also writes one JSON line per scored question with its
+// gold sessions' ranks (ids and numbers only, never text; #517), so a miss can
+// be traced to the questions that caused it.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureDataset } from './download.mjs'
@@ -144,7 +148,27 @@ function retrievalQuestions(questions) {
  * already-normalized questions. Every metric reads the same ranking, so the
  * extra ones cost no retrieval or embedding call.
  */
-async function runOracle(questions, { k, fixture, retriever }) {
+/**
+ * One question's gold-session ranks, 1-based and ascending; null for a gold
+ * session the ranking lacks. Ids and numbers only, never text (hard rule 6).
+ */
+function goldRanks(q, gold, rankedIds) {
+  const position = new Map()
+  rankedIds.forEach((id, i) => {
+    if (!position.has(id)) position.set(id, i + 1)
+  })
+  const ranks = gold.map((id) => position.get(id) ?? null)
+  return {
+    question_id: q.question_id,
+    ability: abilityOf(q),
+    sessions: rankedIds.length,
+    gold_ranks: ranks.sort(
+      (a, b) => (a ?? Number.POSITIVE_INFINITY) - (b ?? Number.POSITIVE_INFINITY),
+    ),
+  }
+}
+
+async function runOracle(questions, { k, fixture, retriever, ranks }) {
   const scored = retrievalQuestions(questions)
   const total = newTally()
   const perType = {}
@@ -156,6 +180,7 @@ async function runOracle(questions, { k, fixture, retriever }) {
     const rankedIds = ranked.map((r) => r.session_id)
     const corpus = q.haystack_sessions.map((s) => s.session_id)
     const score = { hit, rr, extra: upstreamMetrics(rankedIds, gold, corpus) }
+    ranks?.push(goldRanks(q, gold, rankedIds))
     tally(total, score)
     perType[q.question_type] ??= { n: 0, hits: 0 }
     perType[q.question_type].n++
@@ -193,14 +218,19 @@ async function runOracle(questions, { k, fixture, retriever }) {
  */
 async function scoreQuestions(questions, { fixture, retriever }) {
   let result
+  const ranks = ranksOut === undefined ? undefined : []
   try {
     // An embedding cache (#449) prefills in batches first, only for the
     // questions retrieval scores; a partial run still saves what it fetched,
     // so a rerun does not pay for it twice.
     await retriever.prepare?.(retrievalQuestions(questions))
-    result = await runOracle(questions, { k, fixture, retriever })
+    result = await runOracle(questions, { k, fixture, retriever, ranks })
   } finally {
     retriever.finish?.()
+  }
+  if (ranks !== undefined) {
+    mkdirSync(dirname(ranksOut), { recursive: true })
+    writeFileSync(ranksOut, ranks.map((row) => `${JSON.stringify(row)}\n`).join(''))
   }
   if (retriever.name === lexicalRetriever.name) return result
   const cache = retriever.stats?.()
@@ -261,6 +291,12 @@ const retrieverName = resolveRetrieverName(flag('retriever', undefined))
 let sampleName
 try {
   sampleName = parsePathFlag(args, 'sample')
+} catch (error) {
+  refuse(error.message)
+}
+let ranksOut
+try {
+  ranksOut = parsePathFlag(args, 'ranks-out')
 } catch (error) {
   refuse(error.message)
 }

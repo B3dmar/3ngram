@@ -27,9 +27,10 @@
 // holds hashes and vectors only, never text (hard rule 6).
 import { createHash } from 'node:crypto'
 import {
-  appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -90,8 +91,11 @@ function decodeLine(line, dimensions) {
 function load(file, header, vectors) {
   const none = { loaded: 0, dropped: 0, appendable: false, servedModel: undefined }
   if (!existsSync(file)) return none
-  const body = readFileSync(file, 'utf8')
-  const [first, ...lines] = body.split('\n')
+  // A Buffer read one line at a time, never one string: the full-set file
+  // (~900 MB) is longer than the longest string V8 allows (~512 MiB) (#517).
+  const bytes = readFileSync(file)
+  const lines = bufferLines(bytes)
+  const first = lines.next().value
   let parsed
   try {
     parsed = JSON.parse(first)
@@ -103,16 +107,40 @@ function load(file, header, vectors) {
     parsed?.model === header.model &&
     parsed?.dimensions === header.dimensions &&
     typeof parsed?.served_model === 'string'
-  if (!matches) return { ...none, dropped: lines.filter((l) => l !== '').length }
   let dropped = 0
+  if (!matches) {
+    for (const line of lines) if (line !== '') dropped++
+    return { ...none, dropped }
+  }
   for (const line of lines) {
     if (line === '') continue
     const row = decodeLine(line, header.dimensions)
     if (row) vectors.set(row.key, row.f32)
     else dropped++
   }
-  const appendable = dropped === 0 && body.endsWith('\n')
+  const appendable = dropped === 0 && bytes.at(-1) === NEWLINE
   return { loaded: vectors.size, dropped, appendable, servedModel: parsed.served_model }
+}
+
+const NEWLINE = 0x0a
+
+/** The lines of a Buffer as strings, one at a time (a final unterminated line included). */
+export function* bufferLines(bytes) {
+  for (let start = 0; start < bytes.length; ) {
+    const newline = bytes.indexOf(NEWLINE, start)
+    const end = newline === -1 ? bytes.length : newline
+    yield bytes.toString('utf8', start, end)
+    start = end + 1
+  }
+}
+
+/**
+ * Encode and write rows to `fd` one at a time, so no file-sized string is ever
+ * built. writeFileSync on an fd writes all of each row, where writeSync may
+ * stop short and leave a truncated row behind.
+ */
+function writeRows(fd, keys, vectors) {
+  for (const key of keys) writeFileSync(fd, encodeLine(key, vectors.get(key)))
 }
 
 const BACKOFF_BASE_MS = 2_000
@@ -222,15 +250,22 @@ export function createCachingGateway(
     if (vectors.size === 0 || (added.length === 0 && appendable)) return
     mkdirSync(dirname(file), { recursive: true })
     if (appendable) {
-      appendFileSync(file, added.map((key) => encodeLine(key, vectors.get(key))).join(''))
+      const fd = openSync(file, 'a')
+      try {
+        writeRows(fd, added, vectors)
+      } finally {
+        closeSync(fd)
+      }
     } else {
       // New, mismatched, damaged or unterminated file: rewrite it whole, atomically.
-      const rows = [...vectors.keys()].map((key) => encodeLine(key, vectors.get(key)))
       const tmp = `${file}.tmp-${process.pid}`
-      writeFileSync(
-        tmp,
-        `${JSON.stringify({ ...header, served_model: servedModel })}\n${rows.join('')}`,
-      )
+      const fd = openSync(tmp, 'w')
+      try {
+        writeFileSync(fd, `${JSON.stringify({ ...header, served_model: servedModel })}\n`)
+        writeRows(fd, vectors.keys(), vectors)
+      } finally {
+        closeSync(fd)
+      }
       renameSync(tmp, file)
       appendable = true
     }

@@ -313,3 +313,10 @@ test('only rate limits, server errors, timeouts and network failures are retried
   assert.equal(backoffMs({ retryAfterMs: 86_400_000 }, 0), 600_000, 'an absurd header is bounded')
   assert.equal(backoffMs({}, 10), 60_000, 'the default backoff is capped at 60 s')
 })
+
+test('bufferLines splits a Buffer into lines without one file-sized string (#517)', async () => {
+  const { bufferLines } = await import('../src/embedding-cache.mjs')
+  assert.deepEqual([...bufferLines(Buffer.from('a\nbb\n\nccc'))], ['a', 'bb', '', 'ccc'])
+  assert.deepEqual([...bufferLines(Buffer.from('a\n'))], ['a'])
+  assert.deepEqual([...bufferLines(Buffer.alloc(0))], [])
+})

@@ -105,6 +105,16 @@ EVAL_EMBED_CACHE=eval/.cache/embeddings/longmemeval-s-sample-50.jsonl \
   changed it, judged by `hashFiles` against a hash taken before the run, so a failed or
   timed-out run still saves what it paid for. A warm night makes no embedding calls. The cache is branch-scoped: a cache
   saved on `staging` is not visible to `main` runs.
+- **Full set (#517).** Slice 8 scores the real retriever on every question LongMemEval's
+  own protocol scores (`--download --protocol upstream`: 419 of the pinned 500), the
+  lexical stand-in beside it, into `eval-metrics/real-retriever-full.json`. It keeps its
+  own cache (`eval/.cache/embeddings-full/`, key `lme-emb-full-v1-`): about 110k vectors
+  and 900 MB, so the cache file is read as a Buffer line by line, never as one string
+  (V8 caps a string near 512 MiB). The cold fill is about 42M tokens (about $5.50) once
+  per branch; it runs nightly so the restore keeps the entry inside GitHub's 7-day
+  eviction window. `--ranks-out eval-metrics/real-retriever-full-ranks.jsonl` writes one
+  line per scored question: `question_id`, `ability`, `sessions` and the sorted
+  `gold_ranks` (ids and numbers only), so a miss can be traced to its questions.
 
 ### Live lanes in `eval-nightly.yml`
 
