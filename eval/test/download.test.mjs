@@ -522,6 +522,9 @@ test('--dataset accepts s or m with --download, and refuses anything else (#516 
     )
   refused(['--dataset', 'xl', '--download'], /unknown --dataset 'xl'/)
   refused(['--dataset', 'm'], /--dataset needs --download/)
+  // Bare, or followed by another flag: refused, not read as the default -S.
+  refused(['--download', '--dataset'], /unknown --dataset ''/)
+  refused(['--dataset', '--download'], /unknown --dataset ''/)
 })
 
 test('readJsonArray throws on a malformed array instead of yielding fewer elements (#516 follow-up)', async () => {

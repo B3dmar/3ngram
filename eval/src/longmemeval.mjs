@@ -322,7 +322,9 @@ try {
 } catch (error) {
   refuse(error.message)
 }
-const datasetName = flag('dataset', 's')
+// A bare --dataset reads as '' and is refused, never scored as the default (#122).
+const datasetGiven = args.some((a) => a === '--dataset' || a.startsWith('--dataset='))
+const datasetName = datasetGiven ? flag('dataset', '') : 's'
 if (!DATASET_VARIANTS.includes(datasetName)) {
   refuse(`unknown --dataset '${datasetName}': expected ${DATASET_VARIANTS.join(' or ')}`)
 }
