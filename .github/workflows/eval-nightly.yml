@@ -405,11 +405,12 @@ jobs:
       # of the pinned 500, --protocol upstream, #516), the lexical stand-in
       # beside it, and writes each question's gold ranks (ids and numbers only).
       # Its own cache file and key, in its own folder so the sample's directory
-      # cache never carries it: the cold fill is about 42M tokens (about $5.50)
-      # once, and a warm night makes no embedding calls. NIGHTLY on purpose:
-      # GitHub evicts a cache entry not read for 7 days, and this restore is the
-      # read that keeps it. The step timeout is generous until a measured staging
-      # run sizes it (#517).
+      # cache never carries it. Measured on staging (#517): the cold fill took
+      # 53m55s (34.5M tokens, about $4.49, 699 calls of which 345 rate-limit
+      # retries; run 45968146768) and a warm night 19m01s with no embedding calls
+      # (run 45976293865). NIGHTLY on purpose: GitHub evicts a cache entry not
+      # read for 7 days, and this restore is the read that keeps it. The step
+      # timeout is about 1.7x the cold fill, room for heavier rate limiting.
       - name: Restore LongMemEval full-set embedding cache
         id: lme_full_cache
         if: steps.real_pre.outputs.enabled == 'true'
@@ -431,7 +432,7 @@ jobs:
         id: real_full
         if: steps.real_pre.outputs.enabled == 'true'
         continue-on-error: true
-        timeout-minutes: 120
+        timeout-minutes: 90
         env:
           LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
           LLM_GATEWAY_URL: ${{ secrets.LLM_GATEWAY_URL }}
