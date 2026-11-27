@@ -59,7 +59,16 @@ node eval/src/longmemeval.mjs --download --dataset m --retriever bm25 --protocol
 
 Upstream's released code gives the same gold ranks on 498 of 500 -M questions; the other two differ only below rank 200, on ties numpy orders differently.
 
-**QA accuracy (#535, in progress).** `src/qa.mjs` ports upstream's reader prompt (`run_generation.py`, `orig-session` with JSON history, direct and step-by-step) and judge prompts (`evaluate_qa.py`) byte for byte, builds OpenAI Batch `/v1/chat/completions` request lines with upstream's settings (temperature 0; 500, 800 and 10 max tokens), parses Batch output files and scores as `print_qa_metrics.py` does (overall, task-averaged and abstention accuracy, per type). `--dataset oracle` pins `longmemeval_oracle` (each question's evidence sessions only), the input of the paper's oracle results. On all 500 oracle questions the 1,500 reader and judge prompts equal the ones upstream's own functions build; `fixtures/qa-parity.json` pins seven synthetic cases built by upstream's code. The Batch submit and collect steps follow.
+**QA accuracy (#535, in progress).** `src/qa.mjs` ports upstream's reader prompt (`run_generation.py`, `orig-session` with JSON history, direct and step-by-step) and judge prompts (`evaluate_qa.py`) byte for byte, builds OpenAI Batch `/v1/chat/completions` request lines with upstream's settings (temperature 0; 500, 800 and 10 max tokens), parses Batch output files and scores as `print_qa_metrics.py` does (overall, task-averaged and abstention accuracy, per type). `--dataset oracle` pins `longmemeval_oracle` (each question's evidence sessions only), the input of the paper's oracle results. On all 500 oracle questions the 1,500 reader and judge prompts equal the ones upstream's own functions build; `fixtures/qa-parity.json` pins seven synthetic cases built by upstream's code. `src/qa-batch.mjs` runs it through the OpenAI Batch API as two batches, the reader then the judge, with a state file of ids, models, prices and counts only, so it can travel between CI jobs:
+
+```bash
+node eval/src/qa-batch.mjs submit --state run.json --dataset oracle \
+  --reader gpt-4o-2024-08-06 --judge gpt-4o-2024-08-06 \
+  --usd-in 1.25 --usd-out 5 --max-usd 25 [--cot] [--limit 10]
+node eval/src/qa-batch.mjs collect --state run.json --out qa-metrics.json   # repeat until "done"
+```
+
+`submit` refuses a run whose cost bound (request characters plus `max_tokens`, at the given Batch prices per million tokens) exceeds `--max-usd`; the judge gets what the reader actually left. `collect` reports `pending` while a batch runs, submits the judge batch once the reader's completes, and writes the metrics (overall, task-averaged and abstention accuracy, per type, token usage and cost) once the judge's completes. A question with no answer or no verdict counts as wrong. Batch files hold dataset text and model answers, so they are never printed and are deleted at OpenAI as soon as they are read (hard rule 6). It needs `LLM_GATEWAY_API_KEY` and refuses without it.
 
 ### Real-retriever mode (`--retriever real`)
 
