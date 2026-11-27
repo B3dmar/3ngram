@@ -336,7 +336,9 @@ export type TriageEntryDecision = { arm: true } | { arm: false; reason: TriageDe
  *
  * Every ARM above that follows an earlier armed attempt first passes the
  * re-arm cooldown: within `rearmCooldownMs` of `triage_armed_at` it declines
- * `cooldown` and leaves the signal untriaged for a later Stop.
+ * `cooldown` and leaves the signal untriaged for a later Stop. An attempt the
+ * hook released unshown (a defensive complete) clears the stamp and starts no
+ * cooldown (issue #461).
  *
  * `expired` BEHAVES LIKE `completed` FOR ENTRY, and that is the nag-loop rule,
  * not an oversight: "*a zero-write continuation must not re-inject on every later
@@ -406,8 +408,9 @@ export function evaluateTriageEntry(input: {
   elapsedMs: number
   /**
    * Age of the run's most recent armed attempt: the outstanding one on a
-   * `pending` row, the last finished one otherwise (`triage_armed_at` is never
-   * cleared). `undefined` when the run has never armed.
+   * `pending` row, the last finished one otherwise (`triage_armed_at` outlives
+   * the attempt). `undefined` when the run has never armed, or when a defensive
+   * complete released its last attempt unshown (issue #461).
    */
   attemptAgeMs?: number | undefined
   /** The caller's `stop_hook_active`. A finalize-only delivery is exempt from the age guard. */
@@ -719,6 +722,18 @@ export interface CompleteTriageOptions {
  * where an ordinary one stamps the visible set; both are terminal, so the two
  * shapes differ only in what the row records. The fence is unchanged, so a repeat or stale defensive
  * complete is the same 409.
+ *
+ * A DEFENSIVE COMPLETE ALSO CLEARS `triage_armed_at` (issue #461). The re-arm
+ * cooldown reads that stamp, and a nudge nobody saw must not start it: otherwise
+ * a failed debrief fetch silences the run for the whole window. With app
+ * clocks in step, clearing changes nothing else: `begin` arms only when the
+ * previous stamp is already past the window, so that stamp would give no
+ * cooldown either. The one difference is a previous stamp dated a whole window
+ * or more in the FUTURE (a badly skewed arming clock), which the entry rule
+ * already ignores; kept, it would re-enter the window as time passes, while
+ * cleared it cannot. That errs toward the nudge, as the skew rule does. The
+ * attempt keeps its `armedAt` in the log, and the outcome leaves `pending`, so
+ * the age guard never reads the cleared stamp.
  */
 export async function completeSessionTriage(
   tx: TenantTx,
@@ -756,6 +771,8 @@ export async function completeSessionTriage(
     .set({
       triageStatus,
       lastTriagedEventIds: watermark,
+      // An unshown nudge does not start the re-arm cooldown (issue #461).
+      ...(defensive ? { triageArmedAt: null } : {}),
       // Stamp the outcome onto the attempt's log entry (issue #203). Safe under
       // the same fence as the status: the row lock has held since
       // lockTriageRow, so `row.triageAttemptLog` is the array this replaces.

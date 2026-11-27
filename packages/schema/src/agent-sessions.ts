@@ -133,7 +133,10 @@ export const agentSessionRowSchema = z
     activationEpoch: z.number().int().positive(),
     triageStatus: agentSessionTriageStatusSchema,
     triageAttemptId: z.uuid().nullable(),
-    /** When the current attempt was armed. NULL before the first arm. */
+    /**
+     * When the current attempt was armed. NULL before the first arm, and after
+     * a defensive complete released an attempt unshown (issue #461).
+     */
     triageArmedAt: z.date().nullable(),
     lastTriagedEventIds: z.array(z.uuid()).max(MAX_SESSION_EVENT_IDS),
     briefedMemories: z.array(briefedMemorySchema).max(MAX_BRIEFED_MEMORIES),
@@ -360,7 +363,7 @@ export type AgentSessionTriageBeginInput = z.infer<typeof agentSessionTriageBegi
  * | `pending`       | an attempt is already outstanding; `attemptId` names it               |
  * | `pending-fresh` | an attempt is outstanding but too YOUNG to finalize; no `attemptId`   |
  * | `no-signal`     | `completed`/`expired` with no untriaged provenance event to re-arm on |
- * | `cooldown`      | eligible, but the run's last nudge armed less than the cooldown ago   |
+ * | `cooldown`      | eligible, but the run's last shown nudge armed under the cooldown ago |
  * | `debounce`      | eligible, but the session has no substance yet                        |
  * | `overflowed`    | this call FOUND the run past the ceiling and stamped it terminal      |
  *
@@ -440,7 +443,8 @@ export type AgentSessionTriageBeginResponse = z.infer<typeof agentSessionTriageB
  * outcome is then `expired` whatever was written since begin, and the watermark
  * stays at the begin stamp, so a write that committed between begin and this
  * call stays untriaged and closer-eligible instead of being claimed as covered
- * by a debrief nobody saw (issue #189). Optional and additive: omitted is
+ * by a debrief nobody saw (issue #189). It also clears `triage_armed_at`, so the
+ * unshown nudge starts no re-arm cooldown (issue #461). Optional and additive: omitted is
  * today's complete. Strict like the rest of the body, so a server older than the
  * field 400s it — the hook sends it only when true and falls back on a 400.
  */

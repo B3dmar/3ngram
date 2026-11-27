@@ -649,6 +649,27 @@ describe('the re-arm cooldown against a real row', () => {
       await begin(uid, { attemptId: attempt(2), now: at(COOLDOWN_MS), thresholds: cooled }),
     ).toMatchObject({ armed: true, attemptId: attempt(2) })
   })
+
+  it('starts no cooldown from a nudge the hook released unshown (issue #461)', async () => {
+    // The hook armed, then its debrief fetch failed: it sends the defensive complete.
+    const first = await begin(uid, { thresholds: cooled })
+    await completeDefensive(uid, first.attemptId)
+    const released = await rawRow(runId)
+    expect(released.triage_status).toBe('expired')
+    expect(released.triage_armed_at).toBeNull()
+    // The nudge history still records the attempt and when it was armed.
+    expect(released.triage_attempt_log).toEqual([
+      expect.objectContaining({ attemptId: first.attemptId, armedAt: NOW.toISOString() }),
+    ])
+
+    // A write-bearing Stop inside what would have been the window arms.
+    await write(uid, runId)
+    expect(
+      await begin(uid, { attemptId: attempt(2), now: at(77_000), thresholds: cooled }),
+    ).toMatchObject({ armed: true, attemptId: attempt(2) })
+    // That attempt is stamped, so once shown it starts the cooldown as before.
+    expect((await rawRow(runId)).triage_armed_at).toEqual(at(77_000))
+  })
 })
 
 describe('defensive finalize: no debrief shown, nothing claimed as covered (issue #189)', () => {

@@ -503,8 +503,14 @@ describe('SESSION_TRIAGE_REARM_COOLDOWN_MINUTES (the re-arm cooldown)', () => {
 
   it('accepts an explicit 0 and rejects values outside 0..1440', () => {
     expect(read('0')).toBe(0)
+    expect(read('1440')).toBe(1440)
     expect(() => read('1441')).toThrow()
     expect(() => read('-1')).toThrow()
+  })
+
+  it('rejects non-integer and non-numeric values', () => {
+    expect(() => read('1.5')).toThrow()
+    expect(() => read('thirty')).toThrow()
   })
 })
 

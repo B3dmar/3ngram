@@ -217,6 +217,14 @@ describe('the entry rule (triage_status x signal)', () => {
       expect(entry({ triageStatus: 'idle', untriagedEvent: true })).toEqual({ arm: true })
     })
 
+    it('wins over the debounce on an idle row with no substance', () => {
+      // Both decline; the reason names the cooldown, which is checked first.
+      expect(entry({ triageStatus: 'idle', attemptAgeMs: 60_000 })).toEqual({
+        arm: false,
+        reason: 'cooldown',
+      })
+    })
+
     it('reads a small negative age as inside the window', () => {
       // Clock skew: "armed in the future" defers the nudge, the safe direction.
       expect(
@@ -675,6 +683,17 @@ describe('completeSessionTriage', () => {
       closerFailureCount: 0,
       closerNextAttemptAt: null,
     })
+  })
+
+  it('a defensive complete clears the arm stamp; the ordinary one above leaves it', async () => {
+    // Issue #461: a nudge nobody saw must not start the re-arm cooldown.
+    eventPages = [page(['e1'])]
+    const { tx, updates } = makeTx([
+      row({ triageStatus: 'pending', triageAttemptId: ATTEMPT, triageArmedAt: NOW }),
+    ])
+
+    await completeSessionTriage(tx, USER, KEY, { attemptId: ATTEMPT, now: NOW, defensive: true })
+    expect(updates[0]?.values).toMatchObject({ triageStatus: 'expired', triageArmedAt: null })
   })
 
   it("stamps finalizedAt and the outcome onto THIS attempt's log entry, leaving others alone", async () => {

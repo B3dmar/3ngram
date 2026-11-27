@@ -47,12 +47,18 @@ export const agentSessions = pgTable(
     activationEpoch: integer('activation_epoch').notNull().default(1),
     triageStatus: text('triage_status').notNull().default('idle'),
     triageAttemptId: uuid('triage_attempt_id'),
-    // WHEN the current attempt was armed. NULL means "no attempt has ever been
-    // armed on this row", and also covers every row that predates this column —
-    // both read as "age unknown", which the age guard treats as today's
-    // behavior (see evaluateTriageEntry in session-triage.ts). It is stamped by
-    // armAttempt and never cleared: a terminal status already says the attempt
-    // is over, so clearing would only cost a write and lose the last arm time.
+    // WHEN the current attempt was armed. Stamped by armAttempt. NULL means
+    // one of three things:
+    // - no attempt has ever been armed on this row;
+    // - the row predates this column (on a `pending` row that reads as "age
+    //   unknown", which the age guard treats as the pre-guard behavior; see
+    //   evaluateTriageEntry in session-triage.ts);
+    // - a defensive complete released the last attempt unshown (issue #461).
+    // Only that last case clears it, and it always leaves `pending`, so the
+    // age guard never reads the cleared stamp; the re-arm cooldown sees no
+    // stamp. Otherwise the stamp outlives the attempt: a terminal status
+    // already says the attempt is over, and the cooldown reads the last arm
+    // time. Each attempt's arm time stays in triage_attempt_log.
     triageArmedAt: timestamp('triage_armed_at', { withTimezone: true }),
     // THE INTERACTIVE NUDGE HISTORY (issue #203). Appended by `armAttempt`,
     // finalized in place by `completeSessionTriage`; the closer's claims are
