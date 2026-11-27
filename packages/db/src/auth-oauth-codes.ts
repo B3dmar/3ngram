@@ -91,19 +91,25 @@ export async function consumeOauthCode(codeHash: string): Promise<ConsumedOauthC
 
 /**
  * The login that authorized a code for `userId` (issue #506), read after the
- * code was consumed so the token pair it is exchanged for can carry it. NULL
- * when the login authorized itself, and when no such code exists for the
- * tenant. Tenant-scoped with an explicit user_id predicate (two-layer
- * isolation): `consumeOauthCode` runs pre-tenant through a SECURITY DEFINER
- * resolver whose result row has no actor, and changing that function's return
- * type would mean dropping and re-granting it.
+ * code was consumed so the token pair it is exchanged for can carry it: NULL
+ * when the login authorized itself, and UNDEFINED when the tenant has no such
+ * code. A consumed code can vanish before this read (hard-deleting the acting
+ * login cascades to the codes it minted), and the caller must then refuse the
+ * exchange rather than issue an unattributed pair. Tenant-scoped with an
+ * explicit user_id predicate (two-layer isolation): `consumeOauthCode` runs
+ * pre-tenant through a SECURITY DEFINER resolver whose result row has no
+ * actor, and changing that function's return type would mean dropping and
+ * re-granting it.
  */
-export async function oauthCodeActor(userId: string, codeHash: string): Promise<string | null> {
+export async function oauthCodeActor(
+  userId: string,
+  codeHash: string,
+): Promise<string | null | undefined> {
   return withTenant(userId, async (tx) => {
     const [row] = await tx
       .select({ actorUserId: oauthCodes.actorUserId })
       .from(oauthCodes)
       .where(and(eq(oauthCodes.userId, userId), eq(oauthCodes.codeHash, codeHash)))
-    return row?.actorUserId ?? null
+    return row === undefined ? undefined : row.actorUserId
   })
 }

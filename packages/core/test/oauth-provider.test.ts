@@ -77,6 +77,8 @@ beforeEach(() => {
   // Default: issuance succeeds (user is live). The account-lifecycle guard
   // (insertOauthTokenPair -> boolean) is exercised explicitly where it matters.
   insertOauthTokenPair.mockResolvedValue(true)
+  // Default: the consumed code still exists and the login authorized itself.
+  oauthCodeActor.mockResolvedValue(null)
 })
 
 function provider(resolveLimits?: Parameters<typeof createOAuthServerProvider>[1]) {
@@ -266,6 +268,17 @@ describe('exchangeAuthorizationCode (consume-then-verify)', () => {
     expect(userId).toBe(USER_ID)
     expect(access.actorUserId).toBe(ACTOR)
     expect(refresh?.actorUserId).toBe(ACTOR)
+  })
+
+  it('refuses the exchange when the consumed code is gone before its actor is read', async () => {
+    // Hard-deleting the acting login cascades to the codes it minted.
+    consumeOauthCode.mockResolvedValue(consumed)
+    oauthCodeActor.mockResolvedValue(undefined)
+
+    await expect(
+      provider().exchangeAuthorizationCode(CLIENT, 'the-code', VERIFIER),
+    ).rejects.toMatchObject({ code: 'invalid_grant' })
+    expect(insertOauthTokenPair).not.toHaveBeenCalled()
   })
 
   it('validates and forwards the active-client cap on authorization-code issuance', async () => {

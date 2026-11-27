@@ -425,8 +425,11 @@ export function createOAuthServerProvider(
       const pair = await buildTokenPair(consumed.userId, client, consumed.scope, config)
       // The login that authorized the code, when it acted for another account
       // (issue #506): every token of the pair records it, and refresh rotation
-      // carries it forward. NULL for a login's own grant.
+      // carries it forward. NULL for a login's own grant. A consumed code that is
+      // gone by now (its acting login was hard-deleted, cascading to the code)
+      // fails closed: an unattributed pair is never issued in its place.
       const actorUserId = await oauthCodeActor(consumed.userId, codeHash)
+      if (actorUserId === undefined) throw new OAuthGrantError('invalid_grant')
       // insertOauthTokenPair serializes against account deletion (account-lifecycle
       // lock) and returns false when the user is a deletion tombstone — refuse to
       // mint on a deleted account (resurrection race). The code is

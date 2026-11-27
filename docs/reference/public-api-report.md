@@ -921,7 +921,7 @@ its row here even when its name and kind are unchanged.
 | `moveMemory` | function | `4a4ea0fdfcc4` |
 | `newerNeighbours` | function | `304c82c3bb72` |
 | `oauthClients` | const | `afb1565e898e` |
-| `oauthCodeActor` | function | `347c241dbe82` |
+| `oauthCodeActor` | function | `6f4beb91d4e3` |
 | `oauthCodes` | const | `92aa9f128ea9` |
 | `oauthTokens` | const | `46581e12bcf4` |
 | `openCommitments` | function | `975f07cab2e4` |

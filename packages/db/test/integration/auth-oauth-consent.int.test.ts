@@ -234,8 +234,8 @@ describe('the acting login travels with the grant (issue #506)', () => {
     expect((await consumeOauthCode(code))?.userId).toBe(userB)
     const actor = await oauthCodeActor(userB, code)
     expect(actor).toBe(userA)
-    // Another tenant cannot read B's code, so it learns no actor.
-    expect(await oauthCodeActor(userA, code)).toBeNull()
+    // Another tenant cannot see B's code at all: no row, so no actor either.
+    expect(await oauthCodeActor(userA, code)).toBeUndefined()
 
     const refresh = token('refresh', client, actor)
     expect(await insertOauthTokenPair(userB, token('access', client, actor), refresh)).toBe(true)
@@ -270,5 +270,18 @@ describe('the acting login travels with the grant (issue #506)', () => {
     await expect(seedCode(userB, client, randomUUID())).rejects.toSatisfy((e: Error) =>
       /foreign key/.test(String((e as { cause?: unknown }).cause ?? e)),
     )
+  })
+
+  it('reports a consumed code that vanished with its actor as missing, not actorless', async () => {
+    const client = await seedClient('vanishing-actor-client')
+    extraClientIds.push(client)
+    const actor = await seedUser(`oauth-actor-${randomUUID()}@test.local`)
+    const code = await seedCode(userB, client, actor)
+    expect((await consumeOauthCode(code))?.userId).toBe(userB)
+    // Hard-deleting the acting login cascades to the codes it minted.
+    await ownerPool.query('DELETE FROM users WHERE id = $1', [actor])
+    // Undefined (no code), never null (a code with no actor): the exchange
+    // refuses rather than issue an unattributed pair.
+    expect(await oauthCodeActor(userB, code)).toBeUndefined()
   })
 })
