@@ -186,7 +186,7 @@ describe('listAllProposals', () => {
     expect(all).toEqual({ proposals: [edgeRow], factProposals: [factRow] })
     // Per-source, not a shared budget: a burst of one kind cannot starve the
     // other out of the reviewer's window.
-    expect(listProposals).toHaveBeenCalledWith('tx', { limit: 25 })
+    expect(listProposals).toHaveBeenCalledWith('tx', USER, { limit: 25 })
     expect(listFactProposals).toHaveBeenCalledWith('tx', USER, { limit: 25 })
   })
 
@@ -196,7 +196,7 @@ describe('listAllProposals', () => {
     listFactProposals.mockResolvedValue([])
 
     await listAllProposals(USER, { status: 'proposed', limit: 10 })
-    expect(listProposals).toHaveBeenCalledWith('tx', { status: 'proposed', limit: 10 })
+    expect(listProposals).toHaveBeenCalledWith('tx', USER, { status: 'proposed', limit: 10 })
     expect(listFactProposals).toHaveBeenCalledWith('tx', USER, { status: 'proposed', limit: 10 })
 
     reset()
@@ -205,7 +205,7 @@ describe('listAllProposals', () => {
     await listAllProposals(USER, { status: undefined, limit: 10 })
     // No undefined `status` key: the db helper lists every status when the
     // filter is absent, and an explicit undefined would not be the same thing.
-    expect(listProposals).toHaveBeenCalledWith('tx', { limit: 10 })
+    expect(listProposals).toHaveBeenCalledWith('tx', USER, { limit: 10 })
   })
 
   it('accepts a resolution proposal: claim first, then resolve the commitment as the reviewer (#229)', async () => {

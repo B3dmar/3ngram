@@ -73,7 +73,7 @@ export function listProposals(
     query.status === undefined
       ? { limit: query.limit }
       : { status: query.status, limit: query.limit }
-  return withTenant(userId, (tx) => listProposalsDb(tx, dbQuery))
+  return withTenant(userId, (tx) => listProposalsDb(tx, userId, dbQuery))
 }
 
 /**
@@ -81,7 +81,7 @@ export function listProposals(
  * Already-decided or missing -> ProposalNotFoundError. Runs under withTenant/RLS.
  */
 export function rejectProposal(userId: string, proposalId: string): Promise<ProposalRecord> {
-  return withTenant(userId, (tx) => rejectProposalDb(tx, proposalId))
+  return withTenant(userId, (tx) => rejectProposalDb(tx, userId, proposalId))
 }
 
 /**
@@ -138,7 +138,7 @@ export function listAllProposals(userId: string, query: ProposalsListQuery): Pro
       ? { limit: query.limit }
       : { status: query.status, limit: query.limit }
   return withTenant(userId, async (tx) => ({
-    proposals: await listProposalsDb(tx, dbQuery),
+    proposals: await listProposalsDb(tx, userId, dbQuery),
     factProposals: await listFactProposalsDb(tx, userId, dbQuery),
   }))
 }
@@ -244,7 +244,7 @@ export function rejectProposalAnyKind(
   return decideAnyKind<DecidedProposal>(
     async () => ({
       kind: 'edge',
-      proposal: await withTenant(userId, (tx) => rejectProposalDb(tx, proposalId)),
+      proposal: await withTenant(userId, (tx) => rejectProposalDb(tx, userId, proposalId)),
     }),
     async () => ({
       kind: 'fact',

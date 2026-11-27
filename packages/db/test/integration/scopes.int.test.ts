@@ -286,37 +286,57 @@ describe('review_proposals list/reject (runtime role)', () => {
     const openId = await seedProposal(userA, 'proposed')
     await seedProposal(userA, 'rejected')
 
-    const all = await withTenant(userA, (tx) => listProposals(tx, { limit: 50 }))
+    const all = await withTenant(userA, (tx) => listProposals(tx, userA, { limit: 50 }))
     expect(all.length).toBe(2)
 
     const onlyOpen = await withTenant(userA, (tx) =>
-      listProposals(tx, { status: 'proposed', limit: 50 }),
+      listProposals(tx, userA, { status: 'proposed', limit: 50 }),
     )
     expect(onlyOpen.map((p) => p.id)).toEqual([openId])
 
-    const rejected = await withTenant(userA, (tx) => rejectProposal(tx, openId))
+    const rejected = await withTenant(userA, (tx) => rejectProposal(tx, userA, openId))
     expect(rejected.status).toBe('rejected')
     expect(rejected.decidedAt).not.toBeNull()
 
     // The row STILL EXISTS (reject is an UPDATE; append-only grant forbids DELETE).
-    const after = await withTenant(userA, (tx) => listProposals(tx, { limit: 50 }))
+    const after = await withTenant(userA, (tx) => listProposals(tx, userA, { limit: 50 }))
     expect(after.find((p) => p.id === openId)?.status).toBe('rejected')
-    const counts = await withTenant(userA, (tx) => countProposalsByStatus(tx))
+    const counts = await withTenant(userA, (tx) => countProposalsByStatus(tx, userA))
     expect(counts.rejected).toBe(2)
   })
 
   it('rejecting an already-decided proposal raises ProposalNotFoundError', async () => {
     const id = await seedProposal(userA, 'rejected')
-    await expect(withTenant(userA, (tx) => rejectProposal(tx, id))).rejects.toBeInstanceOf(
+    await expect(withTenant(userA, (tx) => rejectProposal(tx, userA, id))).rejects.toBeInstanceOf(
       ProposalNotFoundError,
     )
   })
 
   it('enforces tenant isolation: B cannot list or reject A proposals', async () => {
     const id = await seedProposal(userA, 'proposed')
-    expect(await withTenant(userB, (tx) => listProposals(tx, { limit: 50 }))).toEqual([])
-    await expect(withTenant(userB, (tx) => rejectProposal(tx, id))).rejects.toBeInstanceOf(
+    expect(await withTenant(userB, (tx) => listProposals(tx, userB, { limit: 50 }))).toEqual([])
+    await expect(withTenant(userB, (tx) => rejectProposal(tx, userB, id))).rejects.toBeInstanceOf(
       ProposalNotFoundError,
     )
+  })
+
+  it('binds every read to the caller, not only RLS (issue #147)', async () => {
+    // Inside B's withTenant, RLS ADMITS B's rows, so only the explicit
+    // user_id predicate can keep them out of a read issued for A. The B-bound
+    // call is the positive control: the row is there to be found.
+    const bId = await seedProposal(userB, 'proposed')
+    const asB = <T>(fn: (tx: TenantTx) => Promise<T>) => withTenant(userB, fn)
+
+    expect((await asB((tx) => listProposals(tx, userB, { limit: 50 }))).map((p) => p.id)).toEqual([
+      bId,
+    ])
+    expect(await asB((tx) => listProposals(tx, userA, { limit: 50 }))).toEqual([])
+    expect(await asB((tx) => countProposalsByStatus(tx, userB))).toEqual({ proposed: 1 })
+    expect(await asB((tx) => countProposalsByStatus(tx, userA))).toEqual({})
+    await expect(asB((tx) => rejectProposal(tx, userA, bId))).rejects.toBeInstanceOf(
+      ProposalNotFoundError,
+    )
+    // The refused reject changed nothing.
+    expect((await asB((tx) => listProposals(tx, userB, { limit: 50 })))[0]?.status).toBe('proposed')
   })
 })
