@@ -14,8 +14,8 @@ import {
   registerClient,
   revokeClientForUser,
 } from '../../src/auth-oauth-clients.js'
-import { consumeOauthCode, insertOauthCode } from '../../src/auth-oauth-codes.js'
-import { insertOauthTokenPair } from '../../src/auth-oauth-tokens.js'
+import { consumeOauthCode, insertOauthCode, oauthCodeActor } from '../../src/auth-oauth-codes.js'
+import { insertOauthTokenPair, rotateOauthRefreshToken } from '../../src/auth-oauth-tokens.js'
 import { closeDb } from '../../src/client.js'
 import { closePools, ownerPool, seedUser } from './helpers.js'
 
@@ -85,7 +85,7 @@ async function expiredGrant(userId: string, clientId: string): Promise<void> {
 }
 
 /** Seed a live, unused PKCE code for (userId, clientId); returns its raw hash. */
-async function seedCode(userId: string, clientId: string): Promise<string> {
+async function seedCode(userId: string, clientId: string, actorUserId?: string): Promise<string> {
   const codeHash = `code-${randomUUID()}`
   await insertOauthCode(userId, {
     codeHash,
@@ -95,6 +95,7 @@ async function seedCode(userId: string, clientId: string): Promise<string> {
     codeChallenge: 'challenge',
     scope: 'memory:read',
     expiresAt: hour(),
+    ...(actorUserId === undefined ? {} : { actorUserId }),
   })
   return codeHash
 }
@@ -205,5 +206,69 @@ describe('auth-oauth consent (runtime role, real withTenant + RLS)', () => {
     const bGrant = await consumeOauthCode(bCode)
     expect(bGrant?.userId).toBe(userB)
     expect(bGrant?.clientId).toBe(client)
+  })
+})
+
+describe('the acting login travels with the grant (issue #506)', () => {
+  const token = (kind: 'access' | 'refresh', clientId: string, actorUserId?: string | null) => ({
+    tokenHash: `${kind}-${randomUUID()}`,
+    kind,
+    clientId,
+    scope: 'memory:read',
+    expiresAt: hour(),
+    ...(actorUserId === undefined ? {} : { actorUserId }),
+  })
+  const familyActors = async (tenant: string, clientId: string) =>
+    (
+      await ownerPool.query(
+        'SELECT actor_user_id FROM oauth_tokens WHERE user_id = $1 AND client_id = $2',
+        [tenant, clientId],
+      )
+    ).rows.map((r) => r.actor_user_id)
+
+  it('copies the actor from the code to the pair and through refresh rotation', async () => {
+    const client = await seedClient('actor-client')
+    extraClientIds.push(client)
+    // Login A authorized the code for account B.
+    const code = await seedCode(userB, client, userA)
+    expect((await consumeOauthCode(code))?.userId).toBe(userB)
+    const actor = await oauthCodeActor(userB, code)
+    expect(actor).toBe(userA)
+    // Another tenant cannot read B's code, so it learns no actor.
+    expect(await oauthCodeActor(userA, code)).toBeNull()
+
+    const refresh = token('refresh', client, actor)
+    expect(await insertOauthTokenPair(userB, token('access', client, actor), refresh)).toBe(true)
+    // The successor pair inherits the actor even when the caller passes none.
+    expect(
+      await rotateOauthRefreshToken(
+        userB,
+        refresh.tokenHash,
+        token('access', client, null),
+        token('refresh', client, null),
+      ),
+    ).toBe(true)
+
+    const actors = await familyActors(userB, client)
+    expect(actors).toHaveLength(4)
+    expect(new Set(actors)).toEqual(new Set([userA]))
+  })
+
+  it('leaves a login authorizing itself with no actor', async () => {
+    const client = await seedClient('self-client')
+    extraClientIds.push(client)
+    const code = await seedCode(userA, client)
+    await consumeOauthCode(code)
+    expect(await oauthCodeActor(userA, code)).toBeNull()
+    await grant(userA, client)
+    expect(new Set(await familyActors(userA, client))).toEqual(new Set([null]))
+  })
+
+  it('refuses an actor that is not an existing login', async () => {
+    const client = await seedClient('ghost-actor-client')
+    extraClientIds.push(client)
+    await expect(seedCode(userB, client, randomUUID())).rejects.toSatisfy((e: Error) =>
+      /foreign key/.test(String((e as { cause?: unknown }).cause ?? e)),
+    )
   })
 })

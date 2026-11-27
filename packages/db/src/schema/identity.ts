@@ -150,6 +150,11 @@ export const oauthCodes = pgTable(
     scope: text('scope').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     usedAt: timestamp('used_at', { withTimezone: true }),
+    // The login that authorized this code for `user_id` when the two differ
+    // (an act-as authorization through the Extension seam, issue #506). NULL
+    // when the login authorized itself, which is every code self-host mints.
+    // Copied onto the token pair the code is exchanged for.
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('oauth_codes_expires_idx').on(t.expiresAt), tenantPolicy()],
@@ -221,6 +226,12 @@ export const oauthTokens = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     rotatedFrom: uuid('rotated_from'),
+    // The login that authorized this grant for `user_id` when the two differ
+    // (issue #506): copied from the exchanged code, then from the rotated
+    // predecessor on every refresh, so a whole token family names its actor.
+    // NULL for a login's own grant. Deleting that login deletes the grants it
+    // made for other accounts (cascade), as deleting `user_id` does.
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

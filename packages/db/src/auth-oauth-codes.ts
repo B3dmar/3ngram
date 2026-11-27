@@ -17,7 +17,7 @@
 //
 // Only the SHA-256 hash of the code ever reaches this layer (hard rule 6;
 // mirrors the oauth_tokens token_hash pattern) — core mints and hashes.
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { getAdminDb, withTenant } from './client.js'
 import { guardCredentialIssuance } from './credential-guard.js'
 import { oauthCodes } from './schema/identity.js'
@@ -32,6 +32,11 @@ export interface NewOauthCode {
   codeChallenge: string
   scope: string
   expiresAt: Date
+  /**
+   * The login that authorized this code for `userId`, when it is a different
+   * account (issue #506). Omit for a login authorizing itself.
+   */
+  actorUserId?: string | undefined
 }
 
 /** The grant an atomically consumed (now burned) code resolves to. */
@@ -82,4 +87,23 @@ export async function consumeOauthCode(codeHash: string): Promise<ConsumedOauthC
     codeChallenge: row.code_challenge,
     scope: row.scope,
   }
+}
+
+/**
+ * The login that authorized a code for `userId` (issue #506), read after the
+ * code was consumed so the token pair it is exchanged for can carry it. NULL
+ * when the login authorized itself, and when no such code exists for the
+ * tenant. Tenant-scoped with an explicit user_id predicate (two-layer
+ * isolation): `consumeOauthCode` runs pre-tenant through a SECURITY DEFINER
+ * resolver whose result row has no actor, and changing that function's return
+ * type would mean dropping and re-granting it.
+ */
+export async function oauthCodeActor(userId: string, codeHash: string): Promise<string | null> {
+  return withTenant(userId, async (tx) => {
+    const [row] = await tx
+      .select({ actorUserId: oauthCodes.actorUserId })
+      .from(oauthCodes)
+      .where(and(eq(oauthCodes.userId, userId), eq(oauthCodes.codeHash, codeHash)))
+    return row?.actorUserId ?? null
+  })
 }
