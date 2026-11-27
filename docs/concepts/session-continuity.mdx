@@ -865,9 +865,12 @@ age is read from `triage_armed_at`, which outlives the attempt, so a `completed`
 row a write flipped back to `idle` is covered too. The one exception is an
 attempt the hook released unshown: its defensive complete clears the stamp
 ([issue #461](https://github.com/B3dmar/3ngram/issues/461)), because a failed
-debrief fetch must not silence the run for the whole window. That is exact, not
-an approximation: `begin` arms only once the previous stamp is outside the
-window, so the run is back where that stamp left it. The decline consumes nothing:
+debrief fetch must not silence the run for the whole window. With app clocks in
+step that changes nothing else: `begin` arms only once the previous stamp is
+outside the window, so that stamp would give no cooldown either. The exception
+is a previous stamp dated a whole window or more in the future, which the skew
+rule below already ignores; cleared, it can no longer drift back into the
+window. The decline consumes nothing:
 the signal stays outside `last_triaged_event_ids`, the first Stop past the window
 arms on it, and the closer still selects the row if the session ends first. A run
 that never armed has no cooldown, so the first nudge of a session is unchanged.

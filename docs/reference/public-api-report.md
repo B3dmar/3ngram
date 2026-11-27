@@ -432,7 +432,7 @@ its row here even when its name and kind are unchanged.
 | `deleteScope` | function | `8e460c0839b0` |
 | `deleteWindowCounter` | function | `13cc4dd10203` |
 | `describeEnvironment` | function | `4ba1439f061f` |
-| `evaluateTriageEntry` | function | `2be888e4a0dd` |
+| `evaluateTriageEntry` | function | `9820c9193c90` |
 | `expiryCutoff` | function | `66a0347310b8` |
 | `exportUserData` | function | `8b186867c06b` |
 | `forgetAllTenants` | function | `f40d741129a6` |
@@ -847,7 +847,7 @@ its row here even when its name and kind are unchanged.
 | `emailVerificationTokens` | const | `eaa46d69b1ce` |
 | `eraseAccountData` | function | `f7260a1bd429` |
 | `evalRuns` | const | `1f1bdc3ebc7f` |
-| `evaluateTriageEntry` | function | `2be888e4a0dd` |
+| `evaluateTriageEntry` | function | `9820c9193c90` |
 | `expireStaleExcerpts` | function | `2e164396d2b9` |
 | `factProposals` | const | `5984725be2b2` |
 | `facts` | const | `31ef661a29f7` |

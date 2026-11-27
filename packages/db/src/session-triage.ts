@@ -725,12 +725,15 @@ export interface CompleteTriageOptions {
  *
  * A DEFENSIVE COMPLETE ALSO CLEARS `triage_armed_at` (issue #461). The re-arm
  * cooldown reads that stamp, and a nudge nobody saw must not start it: otherwise
- * a failed debrief fetch silences the run for the whole window. Clearing is
- * exact rather than approximate because `begin` arms only when the previous
- * stamp is already outside the window, so the cooldown after a defensive
- * complete is the one the previous stamp would give: none. The attempt keeps
- * its `armedAt` in the log, and the outcome leaves `pending`, so the age guard
- * never reads the cleared stamp.
+ * a failed debrief fetch silences the run for the whole window. With app
+ * clocks in step, clearing changes nothing else: `begin` arms only when the
+ * previous stamp is already past the window, so that stamp would give no
+ * cooldown either. The one difference is a previous stamp dated a whole window
+ * or more in the FUTURE (a badly skewed arming clock), which the entry rule
+ * already ignores; kept, it would re-enter the window as time passes, while
+ * cleared it cannot. That errs toward the nudge, as the skew rule does. The
+ * attempt keeps its `armedAt` in the log, and the outcome leaves `pending`, so
+ * the age guard never reads the cleared stamp.
  */
 export async function completeSessionTriage(
   tx: TenantTx,
