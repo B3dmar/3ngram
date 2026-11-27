@@ -17,7 +17,7 @@ export function createBatchClient({ baseUrl, apiKey, fetch: fetchImpl = globalTh
   if (!apiKey) throw new ContentFreeError('an API key is required (LLM_GATEWAY_API_KEY)')
   const root = (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
 
-  async function call(method, path, { body, json } = {}) {
+  async function call(method, path, { body, json, absentOk = false } = {}) {
     const headers = { authorization: `Bearer ${apiKey}` }
     if (json !== undefined) headers['content-type'] = 'application/json'
     const response = await fetchImpl(`${root}${path}`, {
@@ -25,6 +25,7 @@ export function createBatchClient({ baseUrl, apiKey, fetch: fetchImpl = globalTh
       headers,
       body: json === undefined ? body : JSON.stringify(json),
     })
+    if (absentOk && response.status === 404) return response
     if (!response.ok) {
       await response.text().catch(() => undefined) // drained, never logged
       throw new ContentFreeError(
@@ -69,8 +70,18 @@ export function createBatchClient({ baseUrl, apiKey, fetch: fetchImpl = globalTh
     async content(fileId) {
       return (await call('GET', `/files/${fileId}/content`)).text()
     },
+    /** Delete a file; one already gone (404) counts as deleted, so a retried sweep converges. */
     async remove(fileId) {
-      await call('DELETE', `/files/${fileId}`)
+      await call('DELETE', `/files/${fileId}`, { absentOk: true })
+    },
+    /**
+     * The batch an earlier attempt already created for this input file, or null:
+     * a create whose response was lost must be adopted, not paid for twice.
+     */
+    async findByInput(inputFileId) {
+      const path = '/batches?limit=100'
+      const page = await json(await call('GET', path), 'GET', path)
+      return (page.data ?? []).find((batch) => batch.input_file_id === inputFileId) ?? null
     },
   }
 }
