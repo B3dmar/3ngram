@@ -15,6 +15,8 @@ import {
   READER_MAX_TOKENS,
   readerPrompt,
   readerRequest,
+  round4,
+  UPSTREAM_JUDGE,
 } from '../src/qa.mjs'
 
 const parity = JSON.parse(
@@ -82,7 +84,22 @@ test('a Batch output file parses into answers and errors by custom_id', () => {
     response: null,
     error: { code: 'rate_limited' },
   })
-  const results = parseBatchOutput(`${ok('q1', '  Yes.  ')}\n${ok('q2', 'no')}\n${failed}\n`)
+  const refused = JSON.stringify({
+    custom_id: 'q4',
+    response: {
+      status_code: 200,
+      body: { choices: [{ message: { content: null, refusal: 'I cannot help' } }] },
+    },
+    error: null,
+  })
+  const results = parseBatchOutput(
+    `${ok('q1', '  Yes.  ')}\n${ok('q2', 'no')}\n${failed}\n${refused}\n`,
+  )
+  assert.deepEqual(
+    results.get('q4'),
+    { error: 'refusal' },
+    'null content is one error, not a crash',
+  )
   assert.deepEqual(results.get('q1'), { content: 'Yes.', usage: { prompt_tokens: 9 } })
   assert.deepEqual(results.get('q3'), { error: 'rate_limited' })
   assert.equal(judgeLabel(results.get('q1').content), true, '"yes" anywhere, any case')
@@ -94,11 +111,21 @@ test('scores as print_qa_metrics.py: overall, task-averaged, abstention in its o
   const labels = new Map(
     entries.map((e) => [e.question_id, e.question_type !== 'temporal-reasoning']),
   )
-  const scores = qaScores(entries, labels)
+  const scores = qaScores(entries, labels, { judge: UPSTREAM_JUDGE })
+  assert.equal(scores.upstream_judge, true)
+  assert.equal(qaScores(entries, labels, { judge: 'gpt-6-luna' }).upstream_judge, false)
+  assert.throws(() => qaScores(entries, labels, {}), /needs the judge model/)
   assert.equal(scores.judged, 7)
   assert.equal(scores.overall_accuracy, +(6 / 7).toFixed(4))
   assert.deepEqual(scores.by_type['multi-session'], { n: 2, accuracy: 1 })
   assert.deepEqual(scores.abstention, { n: 1, accuracy: 1 })
   // Six types, temporal-reasoning at 0: the task average is 5/6.
   assert.equal(scores.task_averaged_accuracy, +(5 / 6).toFixed(4))
+})
+
+test('accuracies round as numpy does: half to even on the scaled value', () => {
+  assert.equal(round4(3 / 96), 0.0312, 'an exact tie goes to the even digit')
+  assert.equal(round4(5 / 96), 0.0521)
+  assert.equal(round4(6 / 7), 0.8571)
+  assert.equal(round4(1), 1)
 })

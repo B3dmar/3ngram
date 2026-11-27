@@ -13,6 +13,8 @@
 /** gen_length in run_generation.py: 500 reading directly, 800 step by step. */
 export const READER_MAX_TOKENS = Object.freeze({ direct: 500, cot: 800 })
 export const JUDGE_MAX_TOKENS = 10
+/** The judge upstream's print_qa_metrics.py requires; only its scores compare with the paper. */
+export const UPSTREAM_JUDGE = 'gpt-4o-2024-08-06'
 /** run_generation.py's context budget for gpt-4o: 128000 - gen_length - 1000. */
 const MODEL_MAX_LENGTH = 128000
 
@@ -169,10 +171,14 @@ export function parseBatchOutput(jsonl) {
     if (line.trim() === '') continue
     const row = JSON.parse(line)
     const choice = row.response?.body?.choices?.[0]
+    const content = choice?.message?.content
     if (row.error || row.response?.status_code !== 200 || choice === undefined) {
       results.set(row.custom_id, {
         error: row.error?.code ?? row.response?.status_code ?? 'no choice',
       })
+    } else if (typeof content !== 'string') {
+      // A refusal or a tool call answers with null content: one wrong question, not a failed file.
+      results.set(row.custom_id, { error: choice.message?.refusal ? 'refusal' : 'no content' })
     } else {
       results.set(row.custom_id, {
         content: choice.message.content.trim(),
@@ -192,14 +198,29 @@ const UPSTREAM_TYPES = Object.freeze([
   'knowledge-update',
 ])
 const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
-const round4 = (value) => +value.toFixed(4)
+/**
+ * numpy's round(x, 4), which print_qa_metrics.py gets by calling round() on
+ * numpy floats: scale by 10^4, round half to even, scale back. toFixed rounds
+ * an exact tie up instead (3/96 -> 0.0313, where upstream prints 0.0312).
+ */
+export function round4(value) {
+  const scaled = value * 1e4
+  const floor = Math.floor(scaled)
+  const diff = scaled - floor
+  const even = diff > 0.5 || (diff === 0.5 && floor % 2 !== 0) ? floor + 1 : floor
+  return even / 1e4
+}
 
 /**
  * Upstream's QA metrics (print_qa_metrics.py) from `labels`, question_id ->
  * boolean: overall accuracy, the mean of the six per-type accuracies, and
  * abstention accuracy. An abstention question also counts in its own type.
+ * The judge always travels with the scores, and `upstream_judge` says whether
+ * they compare with the paper's: upstream refuses any other judge, while a
+ * current judge is a deliberate choice for our own numbers (#535).
  */
-export function qaScores(entries, labels) {
+export function qaScores(entries, labels, { judge }) {
+  if (!judge) throw new Error('qaScores needs the judge model the labels came from')
   const byType = Object.fromEntries(UPSTREAM_TYPES.map((type) => [type, []]))
   const abstention = []
   for (const entry of entries) {
@@ -210,6 +231,8 @@ export function qaScores(entries, labels) {
   }
   const all = Object.values(byType).flat()
   return {
+    judge,
+    upstream_judge: judge === UPSTREAM_JUDGE,
     judged: all.length,
     overall_accuracy: round4(mean(all)),
     task_averaged_accuracy: round4(mean(Object.values(byType).map(mean))),
