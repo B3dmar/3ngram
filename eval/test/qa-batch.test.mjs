@@ -10,6 +10,7 @@ import { ContentFreeError } from '../src/content-free-error.mjs'
 import { createBatchClient } from '../src/openai-batch.mjs'
 import { parseBatchOutput } from '../src/qa.mjs'
 import {
+  batchFailure,
   cleanupRun,
   collectRun,
   costBound,
@@ -300,6 +301,33 @@ test('a batch that ends failed or expired marks the run failed and deletes its f
   assert.equal((await step(result.state, deps)).status, 'failed', 'failed stays failed')
   const again = await sweep(deps.client, { pending_deletes: ['file-gone'] })
   assert.deepEqual(again.pending_deletes, [], 'a file already gone counts as deleted')
+})
+
+test('a batch that fails validation says why, by code and queue limit, never by message', async () => {
+  const { api, deps } = setup()
+  const state = await submitRun(OPTIONS, deps)
+  const message = (n) =>
+    `Enqueued token limit reached for gpt-4o in organization org-${SECRET}. Limit: ${n} enqueued tokens. Please try again once some in_progress batches have been completed.`
+  Object.assign(api.batches.get(state.reader_batch), {
+    status: 'failed',
+    errors: {
+      object: 'list',
+      data: [
+        { code: 'token_limit_exceeded', message: message('90,000'), line: null },
+        { code: 'token_limit_exceeded', message: message('90,000'), line: null },
+        { code: `bad ${SECRET}`, message: SECRET, line: 3 },
+      ],
+    },
+  })
+  const result = await step(state, deps)
+  assert.equal(result.status, 'failed')
+  assert.match(
+    result.state.failure,
+    /^reader batch \S+ ended failed \(token_limit_exceeded x2; other; limit 90,000 enqueued tokens\)$/,
+  )
+  assert.equal(result.state.failure.includes('SECRET'), false)
+  assert.equal(api.files.size, 0)
+  assert.equal(batchFailure({ status: 'expired' }), '', 'no errors, nothing added')
 })
 
 test('with no usable answer the run is scored all wrong, billed usage kept, no judge batch', async () => {

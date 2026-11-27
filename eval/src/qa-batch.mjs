@@ -130,6 +130,26 @@ const failed = (state, failure, cleanup) => ({
   status: 'failed',
 })
 
+/**
+ * Why a batch failed, content-free: its error codes with counts and, for the
+ * Batch queue limit, the limit in enqueued tokens. Messages are never kept
+ * whole, since they can name the organization or quote a request.
+ */
+export function batchFailure(batch) {
+  const errors = batch.errors?.data ?? []
+  const counts = new Map()
+  for (const { code } of errors) {
+    const safe = typeof code === 'string' && /^[a-z0-9_.-]{1,64}$/.test(code) ? code : 'other'
+    counts.set(safe, (counts.get(safe) ?? 0) + 1)
+  }
+  const parts = [...counts].map(([code, n]) => (n > 1 ? `${code} x${n}` : code))
+  const limit = errors
+    .map((e) => /Limit: ([\d,]{1,20}) enqueued tokens/i.exec(e.message ?? '')?.[1])
+    .find(Boolean)
+  if (limit) parts.push(`limit ${limit} enqueued tokens`)
+  return parts.length > 0 ? ` (${parts.join('; ')})` : ''
+}
+
 /** A finished batch's results, errors first so an output line wins. Reads only, deletes nothing. */
 async function readResults(client, outputFileId, errorFileId, parse) {
   const read = async (fileId) => (fileId ? parse(await client.content(fileId)) : new Map())
@@ -320,7 +340,8 @@ export async function collectRun(state, deps) {
   const cleanup = [...(state.pending_deletes ?? []), ...batchFiles]
   if (batch.status !== 'completed') {
     const leftover = reading ? cleanup : [...cleanup, ...readerFiles(state)]
-    return failed(state, `${state.stage} batch ${batchId} ended ${batch.status}`, leftover)
+    const why = batchFailure(batch)
+    return failed(state, `${state.stage} batch ${batchId} ended ${batch.status}${why}`, leftover)
   }
   if (reading) return afterReader(state, batch, full)
   const verdicts = await readResults(client, batch.output_file_id, batch.error_file_id, parse)
