@@ -18,6 +18,7 @@ import {
   DEFAULT_BYTES,
   ensureDataset,
   hashFile,
+  readJsonArray,
   verifyFile,
 } from '../src/download.mjs'
 
@@ -498,4 +499,27 @@ test('--retriever bm25 runs offline over user turns and needs no baseline (#516 
     assert.equal(result.metrics.session_recall_at_5, 1)
     assert.equal(result.lexical_baseline, undefined, 'only the real retriever carries a baseline')
   })
+})
+
+test('readJsonArray yields each element across chunk boundaries, strings and escapes intact (#516 follow-up)', async () => {
+  const elements = [
+    { question_id: 'q1', text: 'braces } { and ] [ inside a string' },
+    { question_id: 'q2', text: 'escaped \\" quote and a \\\\ backslash', nested: [{ a: [1, 2] }] },
+    { question_id: 'q3', text: 'multi-byte: æøå 日本語 🦘' },
+  ]
+  const path = join(dir, 'array.json')
+  await writeFile(path, `[\n ${elements.map((e) => JSON.stringify(e)).join(',\n ')}\n]\n`)
+  for (const chunkSize of [1, 3, 7, 64, 1 << 16]) {
+    assert.deepEqual([...readJsonArray(path, chunkSize)], elements, `chunk size ${chunkSize}`)
+  }
+})
+
+test('--dataset accepts s or m with --download, and refuses anything else (#516 follow-up)', () => {
+  const refused = (args, pattern) =>
+    assert.throws(
+      () => execFileSync('node', [cli, ...args], { encoding: 'utf8', stdio: 'pipe' }),
+      (error) => error.status === 2 && error.stdout === '' && pattern.test(error.stderr),
+    )
+  refused(['--dataset', 'xl', '--download'], /unknown --dataset 'xl'/)
+  refused(['--dataset', 'm'], /--dataset needs --download/)
 })

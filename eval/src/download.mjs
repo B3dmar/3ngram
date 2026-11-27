@@ -17,7 +17,7 @@
 //   LONGMEMEVAL_S_BYTES      expected byte size (default: DEFAULT_BYTES)
 
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { closeSync, createWriteStream, openSync, readSync } from 'node:fs'
 import { mkdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -76,6 +76,84 @@ const DEFAULT_URL =
 export const DEFAULT_SHA256 = '08d8dad4be43ee2049a22ff5674eb86725d0ce5ff434cde2627e5e8e7e117894'
 export const DEFAULT_BYTES = 278025796
 
+/**
+ * The pinned LongMemEval-M release: about 500 sessions per question, the set
+ * the paper's retrieval tables use. 2.7 GB, so it is read with readJsonArray,
+ * never as one string. `--dataset m`; LONGMEMEVAL_M_URL / _SHA256 / _BYTES
+ * override it as the S variables do.
+ */
+export const LONGMEMEVAL_M = Object.freeze({
+  url: 'https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_m',
+  sha256: 'fb5413e3b077c62927daab794836991a2fcfa61ceacab57dc679fb02daaff2d9',
+  bytes: 2745274681,
+  filename: 'longmemeval_m.json',
+})
+
+/** The dataset variants `--dataset` accepts: the pinned release and its env prefix. */
+const VARIANTS = Object.freeze({
+  s: {
+    url: DEFAULT_URL,
+    sha256: DEFAULT_SHA256,
+    bytes: DEFAULT_BYTES,
+    filename: DATASET_FILENAME,
+    env: 'LONGMEMEVAL_S',
+  },
+  m: { ...LONGMEMEVAL_M, env: 'LONGMEMEVAL_M' },
+})
+export const DATASET_VARIANTS = Object.freeze(Object.keys(VARIANTS))
+
+const OPEN_BRACE = 0x7b
+const OPEN_BRACKET = 0x5b
+const CLOSE_BRACE = 0x7d
+const CLOSE_BRACKET = 0x5d
+const QUOTE = 0x22
+const BACKSLASH = 0x5c
+
+/**
+ * The elements of a top-level JSON array of objects, parsed one at a time from
+ * the file's bytes. The -M file is longer than the longest string V8 allows,
+ * so it is never read whole. Scanning bytes is safe in UTF-8: a quote or
+ * backslash byte never occurs inside a multi-byte character.
+ */
+export function* readJsonArray(path, chunkSize = 1 << 24) {
+  const fd = openSync(path, 'r')
+  const buffer = Buffer.alloc(chunkSize)
+  const state = { depth: 0, inString: false, escaped: false, parts: [] }
+  try {
+    for (let n = readSync(fd, buffer, 0, chunkSize, null); n > 0; ) {
+      yield* scanChunk(buffer.subarray(0, n), state)
+      n = readSync(fd, buffer, 0, chunkSize, null)
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** Scan one chunk, yielding every element that closes in it; an open element carries over. */
+function* scanChunk(chunk, state) {
+  let start = state.parts.length > 0 ? 0 : -1
+  for (let i = 0; i < chunk.length; i++) {
+    const byte = chunk[i]
+    if (state.inString) {
+      if (state.escaped) state.escaped = false
+      else if (byte === BACKSLASH) state.escaped = true
+      else if (byte === QUOTE) state.inString = false
+    } else if (byte === QUOTE) {
+      state.inString = true
+    } else if (byte === OPEN_BRACE || byte === OPEN_BRACKET) {
+      if (++state.depth === 2) start = i
+    } else if (byte === CLOSE_BRACE || byte === CLOSE_BRACKET) {
+      if (--state.depth === 1) {
+        state.parts.push(Buffer.from(chunk.subarray(start, i + 1)))
+        yield JSON.parse(Buffer.concat(state.parts).toString('utf8'))
+        state.parts = []
+        start = -1
+      }
+    }
+  }
+  if (start !== -1) state.parts.push(Buffer.from(chunk.subarray(start)))
+}
+
 /** SHA-256 hex digest of a file, streamed (never loads it fully into memory). */
 export async function hashFile(path) {
   const hash = createHash('sha256')
@@ -129,12 +207,15 @@ export async function verifyFile(path, expected = {}) {
 export async function ensureDataset(options = {}, deps = {}) {
   const fetchImpl = deps.fetch ?? globalThis.fetch
   const cacheDir = deps.cacheDir ?? CACHE_DIR
-  const url = options.url ?? envOrUndefined(process.env.LONGMEMEVAL_S_URL) ?? DEFAULT_URL
+  const variant = VARIANTS[options.variant ?? 's']
+  if (!variant) throw new Error(`unknown dataset: ${options.variant} (known: ${DATASET_VARIANTS})`)
+  const fromEnv = (suffix) => envOrUndefined(process.env[`${variant.env}_${suffix}`])
+  const url = options.url ?? fromEnv('URL') ?? variant.url
   const expected = {
-    sha256: options.sha256 ?? envOrUndefined(process.env.LONGMEMEVAL_S_SHA256) ?? DEFAULT_SHA256,
-    bytes: options.bytes ?? envOrUndefined(process.env.LONGMEMEVAL_S_BYTES) ?? DEFAULT_BYTES,
+    sha256: options.sha256 ?? fromEnv('SHA256') ?? variant.sha256,
+    bytes: options.bytes ?? fromEnv('BYTES') ?? variant.bytes,
   }
-  const target = join(cacheDir, DATASET_FILENAME)
+  const target = join(cacheDir, variant.filename)
 
   if (!options.force) {
     const cached = await verifyFile(target, expected)

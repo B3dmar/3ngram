@@ -49,6 +49,16 @@ Beside any-recall (`session_recall_at_k`: some gold session in the top k) and MR
 
 `--retriever bm25` is LongMemEval's own BM25 baseline (`src/bm25.mjs`): a port of `rank_bm25` 0.2.2 `BM25Okapi` with its defaults, over each session's user turns joined by spaces and tokenised by `split(" ")`, exactly as upstream's `run_retrieval.py` calls it. It is offline and deterministic. `fixtures/bm25-parity.json` pins its scores to values `rank_bm25` produced, bit for bit. On the pinned -S file it matches upstream's own BM25 on every question's gold ranks (500 of 500): under `upstream`, recall_all@5 0.7351, NDCG@5 0.7671, recall_all@10 0.8234, NDCG@10 0.7922. Ties rank the later haystack position first, where upstream's numpy argsort is unstable; on -S that changes no gold rank.
 
+**Reproducing a published number.** The paper publishes retrieval numbers only for LongMemEval-M (about 500 sessions per question); for -S it reports QA accuracy only. `--download --dataset m` fetches the pinned -M release (2.7 GB, `src/download.mjs`) and reads it one question at a time (`readJsonArray`), since the file is longer than the longest string V8 allows; a run needs about 3.2 GB of memory and takes about 20 s. With the paper's averaging it reproduces Table 9's session-level BM25 row (key = value) to three decimals:
+
+```bash
+node eval/src/longmemeval.mjs --download --dataset m --retriever bm25 --protocol paper --json
+# 500 scored, empty_gold 72: recall_all@5 0.634  ndcg@5 0.5164  recall_all@10 0.710  ndcg@10 0.5395
+# paper, Table 9:              R@5 0.634          NDCG@5 0.516   R@10 0.710          NDCG@10 0.540
+```
+
+Upstream's released code gives the same gold ranks on 498 of 500 -M questions; the other two differ only below rank 200, on ties numpy orders differently.
+
 ### Real-retriever mode (`--retriever real`)
 
 `pnpm --filter @3ngram/eval run advisory:real` (or `node src/longmemeval.mjs --retriever real`) swaps the lexical stand-in for the **product retrieval path** (`retriever.mjs`):
