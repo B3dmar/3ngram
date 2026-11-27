@@ -358,7 +358,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # changeset publish inspects existing tags to avoid re-tagging
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       # No registry-url here: setup-node's registry-url writes an .npmrc line
       # expanding ${NODE_AUTH_TOKEN}, which breaks config parsing when the
       # env var is absent — and OIDC needs no token config at all.
