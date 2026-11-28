@@ -8,12 +8,14 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { ContentFreeError } from '../src/content-free-error.mjs'
 import { createBatchClient } from '../src/openai-batch.mjs'
-import { parseBatchOutput } from '../src/qa.mjs'
+import { parseBatchOutput, readerRequest } from '../src/qa.mjs'
 import {
   batchFailure,
   cleanupRun,
   collectRun,
   costBound,
+  enqueuedTokens,
+  splitParts,
   submitOptions,
   submitRun,
   sweep,
@@ -173,11 +175,11 @@ test('a run submits the reader, then the judge, then scores; every batch file is
     ],
     'saved before the upload, after it, and after the batch exists',
   )
-  assert.equal(api.files.get(state.reader_input_file).filename, 'lme-qa-run1-reader.jsonl')
+  assert.equal(api.files.get(state.reader_input_file).filename, 'lme-qa-run1-reader-1.jsonl')
   assert.deepEqual(api.batches.get(state.reader_batch).metadata, {
     harness: 'longmemeval-qa',
     run_id: 'run1',
-    stage: 'reader',
+    stage: 'reader-1',
   })
   assert.equal((await step(state, deps)).status, 'pending', 'still running')
 
@@ -204,6 +206,111 @@ test('a run submits the reader, then the judge, then scores; every batch file is
   const gets = api.gets
   assert.deepEqual((await step(result.state, deps)).metrics, metrics)
   assert.equal(api.gets, gets)
+})
+
+/** A part budget that splits the fixture's reader requests into several parts. */
+function smallParts() {
+  const requests = entries.map((e) => readerRequest(e, { model: OPTIONS.reader, cot: false }))
+  const partTokens = Math.max(...requests.map(enqueuedTokens))
+  return { partTokens, parts: splitParts(requests, partTokens) }
+}
+
+/** Batches of the run still running or queued at the fake API. */
+const running = (api) => [...api.batches.values()].filter((b) => b.status === 'in_progress')
+
+test('the reader runs in parts, one batch at a time, under the queue budget', async () => {
+  const { api, deps } = setup()
+  const { partTokens, parts } = smallParts()
+  assert.ok(parts.length > 1, 'the fixture splits')
+  let state = await submitRun({ ...OPTIONS, partTokens }, deps)
+  assert.deepEqual(state.reader_parts, parts)
+  for (let k = 1; k <= parts.length; k++) {
+    assert.equal(running(api).length, 1, 'never two reader batches at once')
+    const batch = api.batches.get(state.reader_batch)
+    assert.equal(batch.metadata.stage, `reader-${k}`)
+    assert.equal(api.files.get(batch.input_file_id).filename, `lme-qa-run1-reader-${k}.jsonl`)
+    assert.equal(
+      api.files.get(batch.input_file_id).text.trim().split('\n').length,
+      parts[k - 1][1] - parts[k - 1][0],
+    )
+    api.complete(state.reader_batch, (line) => `answer for ${line.custom_id}`)
+    const result = await step(state, deps)
+    assert.equal(result.status, k < parts.length ? 'started' : 'judging')
+    state = result.state
+  }
+  api.complete(state.judge_batch, (line) => (line.custom_id === 'q-order' ? 'No.' : 'Yes'))
+  const { status, metrics } = await step(state, deps)
+  assert.equal(status, 'done')
+  assert.equal(metrics.overall_accuracy, +(6 / 7).toFixed(4), 'the same score as one part')
+  assert.equal(metrics.batches.reader.length, parts.length)
+  assert.deepEqual(metrics.usage.reader, { prompt_tokens: 700, completion_tokens: 35 })
+  assert.equal(api.files.size, 0, 'every part file deleted')
+})
+
+test('the token estimate counts bytes over three, framing and max_tokens; a lone large request is its own part', () => {
+  const request = (bytes) => ({
+    body: { messages: [{ content: 'a'.repeat(bytes) }], max_tokens: 10 },
+  })
+  assert.equal(enqueuedTokens(request(300)), 100 + 32 + 10)
+  const sizes = [request(300), request(3000), request(300), request(300)]
+  assert.deepEqual(splitParts(sizes, 300), [
+    [0, 1],
+    [1, 2],
+    [2, 4],
+  ])
+  assert.deepEqual(splitParts([], 300), [])
+})
+
+test('a lost upload while starting the next part: the resume adopts it, no second one', async () => {
+  const { api, disk, deps } = setup()
+  const { partTokens } = smallParts()
+  const state = await submitRun({ ...OPTIONS, partTokens }, deps)
+  api.complete(state.reader_batch, () => 'an answer')
+  api.uploadMode = 'lost'
+  await assert.rejects(collectRun(state, deps), /POST \/files failed with status 502/)
+  const saved = disk.last()
+  assert.equal(saved.stage, 'reader-start')
+  assert.equal(saved.reader_part, 1)
+  assert.equal(saved.reader_results.length, 1, 'the finished part is kept')
+  api.uploadMode = 'ok'
+  const result = await step(saved, deps)
+  assert.equal(result.status, 'started')
+  assert.equal(api.uploads, 2, 'part 1 and part 2, each once')
+  assert.equal(api.batches.get(result.state.reader_batch).metadata.stage, 'reader-2')
+})
+
+test('a later part that fails ends the run and deletes every part file', async () => {
+  const { api, deps } = setup()
+  const { partTokens } = smallParts()
+  let state = await submitRun({ ...OPTIONS, partTokens }, deps)
+  api.complete(state.reader_batch, () => 'an answer')
+  state = (await step(state, deps)).state
+  api.batches.get(state.reader_batch).status = 'expired'
+  const result = await step(state, deps)
+  assert.equal(result.status, 'failed')
+  assert.match(result.state.failure, /^reader-2 batch \S+ ended expired$/)
+  assert.equal(api.files.size, 0)
+})
+
+test('a run started before reader parts is refused before any call, and cleanup still removes it', async () => {
+  const { api, deps } = setup()
+  const state = await submitRun(OPTIONS, deps)
+  // The earlier runner's shape: one batch tagged `reader`, no part fields.
+  const batch = api.batches.get(state.reader_batch)
+  batch.metadata.stage = 'reader'
+  const { reader_parts, reader_part, reader_results, ...legacy } = state
+  for (const stage of ['reader-start', 'reader', 'judge-start', 'judge']) {
+    const before = { gets: api.gets, uploads: api.uploads, creates: api.creates }
+    await assert.rejects(
+      collectRun({ ...legacy, stage }, deps),
+      /run run1 was started before reader parts: remove it with cleanup and submit again/,
+    )
+    assert.deepEqual({ gets: api.gets, uploads: api.uploads, creates: api.creates }, before)
+  }
+  const cleaned = await cleanupRun(legacy, deps)
+  assert.equal(cleaned.stage, 'cleaned')
+  assert.equal(batch.status, 'cancelled')
+  assert.equal(api.files.size, 0)
 })
 
 test('an unwritable state file stops the run before anything is uploaded', async () => {
@@ -296,7 +403,7 @@ test('a batch that ends failed or expired marks the run failed and deletes its f
   api.batches.get(state.reader_batch).status = 'expired'
   const result = await step(state, deps)
   assert.equal(result.status, 'failed')
-  assert.match(result.state.failure, /reader batch .* ended expired/)
+  assert.match(result.state.failure, /reader-1 batch .* ended expired/)
   assert.equal(api.files.size, 0)
   assert.equal((await step(result.state, deps)).status, 'failed', 'failed stays failed')
   const again = await sweep(deps.client, { pending_deletes: ['file-gone'] })
@@ -323,7 +430,7 @@ test('a batch that fails validation says why, by code and queue limit, never by 
   assert.equal(result.status, 'failed')
   assert.match(
     result.state.failure,
-    /^reader batch \S+ ended failed \(token_limit_exceeded x2; other; limit 90,000 enqueued tokens\)$/,
+    /^reader-1 batch \S+ ended failed \(token_limit_exceeded x2; other; limit 90,000 enqueued tokens\)$/,
   )
   assert.equal(result.state.failure.includes('SECRET'), false)
   assert.equal(api.files.size, 0)

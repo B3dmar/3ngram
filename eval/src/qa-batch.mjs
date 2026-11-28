@@ -1,22 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
-// LongMemEval QA runs through the OpenAI Batch API (#535), as two batches:
-// the reader answers every question, then the judge grades every answer.
+// LongMemEval QA runs through the OpenAI Batch API (#535): the reader answers
+// every question, then the judge grades every answer. The reader runs as one
+// or more parts, one batch at a time, each under OpenAI's Batch queue limit
+// on enqueued tokens per model (1,350,000 for gpt-4o at usage tier 2).
 //
 //   node eval/src/qa-batch.mjs submit --state <file> --reader <model> --judge <model>
-//        [--cot] [--dataset oracle|s] [--limit <n>]
+//        [--cot] [--dataset oracle|s] [--limit <n>] [--part-tokens <n>]
 //        --usd-in <per 1M> --usd-out <per 1M> --max-usd <cap>
 //        [--judge-usd-in <per 1M> --judge-usd-out <per 1M>]  (default: the reader's)
 //   node eval/src/qa-batch.mjs collect --state <file> [--out <metrics.json>]
 //   node eval/src/qa-batch.mjs cleanup --state <file>
 //
 // Every run has a run id. Each upload is named lme-qa-<run id>-<stage>.jsonl
-// and each batch carries { run_id, stage } in its metadata, so anything the
+// (stage reader-<k> or judge) and each batch carries { run_id, stage } in its metadata, so anything the
 // run created can be found by listing, every page, even when the response that
 // carried its id was lost. The state is saved at `<stage>-start` before a
 // stage uploads anything, after the upload, and after the batch exists; a
 // resume adopts the named upload and the tagged batch before creating either,
 // so nothing is paid for twice. `collect` is safe to repeat: it reports
-// `pending` while a batch runs, starts the judge after the reader, scores
+// `pending` while a batch runs, starts the next reader part after each one,
+// the judge after the last, scores
 // after the judge, and a finished run returns its metrics again. Batch files
 // hold dataset text and model answers (hard rule 6): they are never printed;
 // once the state no longer needs them they are queued in `pending_deletes` and
@@ -54,6 +57,38 @@ export function costBound(requests, { usdIn, usdOut }) {
   return (inTokens * usdIn + outTokens * usdOut) / 1e6
 }
 
+/** Estimated enqueued tokens one reader part may hold: under 1,350,000 with room to spare. */
+const PART_TOKENS = 1_200_000
+
+/**
+ * A request's enqueued tokens, estimated high: English prompts run about four
+ * UTF-8 bytes per token, three are assumed, and max_tokens is counted too. A
+ * part over the real limit fails free at validation, naming the limit.
+ */
+export function enqueuedTokens({ body }) {
+  let bytes = 0
+  for (const message of body.messages) bytes += Buffer.byteLength(message.content, 'utf8')
+  return Math.ceil(bytes / 3) + FRAMING_TOKENS + body.max_tokens
+}
+
+/** Split requests, in order, into [from, to) parts of at most `budget` estimated tokens. */
+export function splitParts(requests, budget) {
+  const parts = []
+  let from = 0
+  let tokens = 0
+  requests.forEach((request, i) => {
+    const n = enqueuedTokens(request)
+    if (i > from && tokens + n > budget) {
+      parts.push([from, i])
+      from = i
+      tokens = 0
+    }
+    tokens += n
+  })
+  if (requests.length > from) parts.push([from, requests.length])
+  return parts
+}
+
 /** Refuse before anything is uploaded; the unrounded bound is what is compared. */
 function guard(requests, prices, maxUsd, label) {
   const bound = costBound(requests, prices)
@@ -81,8 +116,13 @@ function usageOf(results) {
 const errorCount = (results) => [...results.values()].filter((r) => r.error !== undefined).length
 const uniqueIds = (ids) => [...new Set(ids.filter(Boolean))]
 const uploadName = (state, stage) => `lme-qa-${state.run_id}-${stage}.jsonl`
+/** The current reader part's input and every finished part's output and error files. */
 const readerFiles = (state) =>
-  uniqueIds([state.reader_input_file, state.reader_output_file, state.reader_error_file])
+  uniqueIds([
+    state.reader_input_file,
+    ...(state.reader_results ?? []).flatMap((r) => [r.output_file, r.error_file]),
+  ])
+const partName = (state) => `reader-${state.reader_part + 1}`
 
 /** Save the state; a failure leaves an earlier save on disk, which a resume or cleanup can use. */
 async function persist(save, state) {
@@ -99,30 +139,31 @@ async function persist(save, state) {
 /**
  * Upload a stage's input (or adopt the run's earlier upload of it), save its
  * id, then create the stage's batch (or adopt the one already tagged for it)
- * and save that id. The caller has saved `<stage>-start` already.
+ * and save that id. `key` is `reader` or `judge`, `name` the upload's and
+ * batch's stage (`reader-<k>` or `judge`). The caller saved `<key>-start`.
  */
-async function startStage({ client, save }, state, stage, buildRequests) {
+async function startStage({ client, save }, state, key, name, buildRequests) {
   let started = state
-  if (!started[`${stage}_input_file`]) {
-    const [earlier, ...extra] = await client.filesNamed(uploadName(state, stage))
+  if (!started[`${key}_input_file`]) {
+    const [earlier, ...extra] = await client.filesNamed(uploadName(state, name))
     const inputFileId =
-      earlier?.id ?? (await client.upload(await buildRequests(), uploadName(state, stage)))
+      earlier?.id ?? (await client.upload(await buildRequests(), uploadName(state, name)))
     const pending = uniqueIds([...(state.pending_deletes ?? []), ...extra.map((f) => f.id)])
     started = await persist(save, {
       ...state,
-      [`${stage}_input_file`]: inputFileId,
+      [`${key}_input_file`]: inputFileId,
       pending_deletes: pending,
     })
   }
-  const [tagged] = await client.batchesTagged({ run_id: state.run_id, stage })
+  const [tagged] = await client.batchesTagged({ run_id: state.run_id, stage: name })
   const batch =
     tagged ??
-    (await client.create(started[`${stage}_input_file`], {
+    (await client.create(started[`${key}_input_file`], {
       harness: 'longmemeval-qa',
       run_id: state.run_id,
-      stage,
+      stage: name,
     }))
-  return persist(save, { ...started, stage, [`${stage}_batch`]: batch.id })
+  return persist(save, { ...started, stage: key, [`${key}_batch`]: batch.id })
 }
 
 const failed = (state, failure, cleanup) => ({
@@ -183,6 +224,19 @@ async function chosenEntries(state, { loadEntries }) {
 const readerRequests = (chosen, state) =>
   chosen.map((entry) => readerRequest(entry, { model: state.reader, cot: state.reading === 'cot' }))
 
+/** The current part's reader requests, in question_ids order. */
+function partRequests(chosen, state) {
+  const byId = new Map(chosen.map((e) => [e.question_id, e]))
+  const [from, to] = state.reader_parts[state.reader_part]
+  return readerRequests(
+    state.question_ids.slice(from, to).map((id) => byId.get(id)),
+    state,
+  )
+}
+
+/** Start the current reader part from a saved `reader-start`. */
+const startPart = (deps, state, build) => startStage(deps, state, 'reader', partName(state), build)
+
 /** Submit the reader batch, saving the state before and after each paid step. */
 export async function submitRun(options, deps) {
   if (!options.reader || !options.judge) {
@@ -193,6 +247,7 @@ export async function submitRun(options, deps) {
   const plan = { reader: options.reader, reading: options.cot ? 'cot' : 'direct' }
   const requests = readerRequests(chosen, plan)
   const bound = guard(requests, options.prices, options.maxUsd, 'reader')
+  const parts = splitParts(requests, options.partTokens ?? PART_TOKENS)
   const starting = {
     stage: 'reader-start',
     run_id: options.runId ?? randomUUID(),
@@ -205,11 +260,14 @@ export async function submitRun(options, deps) {
     judge_prices: options.judgePrices ?? options.prices,
     max_usd: options.maxUsd,
     reader_cost_bound_usd: bound,
+    reader_parts: parts,
+    reader_part: 0,
+    reader_results: [],
     pending_deletes: [],
   }
   // Saved before anything is uploaded: an unwritable state file stops the run unpaid.
   await persist(deps.save, starting)
-  return startStage(deps, starting, 'reader', async () => requests)
+  return startPart(deps, starting, async () => requests.slice(...parts[0]))
 }
 
 /** Score the run: a question without an answer or a verdict counts as wrong, never as skipped. */
@@ -233,7 +291,7 @@ function finish(state, chosen, verdicts, cleanup) {
     ...qaScores(chosen, labels, { judge: state.judge }),
     usage: { reader: state.reader_usage, judge: judgeUsage },
     cost_usd: +costUsd.toFixed(4),
-    batches: { reader: state.reader_batch, judge: state.judge_batch ?? null },
+    batches: { reader: state.reader_results.map((r) => r.batch), judge: state.judge_batch ?? null },
   }
   const done = { ...state, stage: 'done', metrics, pending_deletes: uniqueIds(cleanup) }
   return { state: done, status: 'done', metrics }
@@ -248,7 +306,7 @@ function judgeRequests(chosen, answers, state) {
 
 /** Start the judge from a saved `judge-start`; the reader files go once the judge batch exists. */
 async function startJudge(deps, starting, requests) {
-  const judging = await startStage(deps, starting, 'judge', requests)
+  const judging = await startStage(deps, starting, 'judge', 'judge', requests)
   const queued = {
     ...judging,
     pending_deletes: uniqueIds([...judging.pending_deletes, ...readerFiles(judging)]),
@@ -256,20 +314,53 @@ async function startJudge(deps, starting, requests) {
   return { state: queued, status: 'judging' }
 }
 
-/** The reader batch is done: start the judge batch, or score now if nothing was answered. */
-async function afterReader(state, batch, deps) {
-  const results = await readResults(
-    deps.client,
-    batch.output_file_id,
-    batch.error_file_id,
-    deps.parse,
-  )
+/** Every finished reader part's answers. */
+async function readAnswers(client, state, parse) {
+  const answers = new Map()
+  for (const { output_file, error_file } of state.reader_results) {
+    for (const [id, result] of await readResults(client, output_file, error_file, parse)) {
+      answers.set(id, result)
+    }
+  }
+  return answers
+}
+
+/** A reader part is done: keep its files, let its input go, then start the next part or the judge. */
+async function afterPart(state, batch, deps) {
+  const results = [
+    ...state.reader_results,
+    {
+      batch: state.reader_batch,
+      output_file: batch.output_file_id ?? null,
+      error_file: batch.error_file_id ?? null,
+    },
+  ]
+  const { reader_input_file: input, reader_batch: _batch, ...rest } = state
+  const read = {
+    ...rest,
+    reader_results: results,
+    pending_deletes: uniqueIds([...(state.pending_deletes ?? []), input]),
+  }
+  if (state.reader_part + 1 === state.reader_parts.length) return afterReader(read, deps)
+  const next = await persist(deps.save, {
+    ...read,
+    stage: 'reader-start',
+    reader_part: state.reader_part + 1,
+  })
+  const chosen = await chosenEntries(next, deps)
+  return {
+    state: await startPart(deps, next, async () => partRequests(chosen, next)),
+    status: 'started',
+  }
+}
+
+/** Every reader part is done: start the judge batch, or score now if nothing was answered. */
+async function afterReader(state, deps) {
+  const results = await readAnswers(deps.client, state, deps.parse)
   const chosen = await chosenEntries(state, deps)
   const requests = judgeRequests(chosen, results, state)
   const read = {
     ...state,
-    reader_output_file: batch.output_file_id ?? null,
-    reader_error_file: batch.error_file_id ?? null,
     reader_usage: usageOf(results),
     reader_errors: chosen.length - requests.length,
   }
@@ -297,26 +388,17 @@ async function afterReader(state, batch, deps) {
 async function resumeStart(state, deps) {
   const chosen = await chosenEntries(state, deps)
   if (state.stage === 'reader-start') {
-    const reader = await startStage(deps, state, 'reader', async () =>
-      readerRequests(chosen, state),
-    )
+    const reader = await startPart(deps, state, async () => partRequests(chosen, state))
     return { state: reader, status: 'started' }
   }
-  const rebuild = async () => {
-    const answers = await readResults(
-      deps.client,
-      state.reader_output_file,
-      state.reader_error_file,
-      deps.parse,
-    )
-    return judgeRequests(chosen, answers, state)
-  }
+  const rebuild = async () =>
+    judgeRequests(chosen, await readAnswers(deps.client, state, deps.parse), state)
   return startJudge(deps, state, rebuild)
 }
 
 /**
  * Advance a run one step. Returns { state, status, metrics? }: `pending` while
- * a batch runs, `started` once an interrupted reader start is completed,
+ * a batch runs, `started` once a reader part's batch exists,
  * `judging` once the judge batch exists, `done` with the metrics, or `failed`
  * with the batch's files queued for deletion.
  */
@@ -325,6 +407,12 @@ export async function collectRun(state, deps) {
   const full = { ...deps, parse }
   if (state.stage === 'done') return { state, status: 'done', metrics: state.metrics }
   if (state.stage === 'failed' || state.stage === 'cleaned') return { state, status: state.stage }
+  if (!Array.isArray(state.reader_parts)) {
+    // Its batch is tagged `reader`, not `reader-<k>`: resuming here could create a second one.
+    throw new ContentFreeError(
+      `run ${state.run_id} was started before reader parts: remove it with cleanup and submit again`,
+    )
+  }
   if (state.stage.endsWith('-start')) return resumeStart(state, full)
   const reading = state.stage === 'reader'
   const batchId = reading ? state.reader_batch : state.judge_batch
@@ -341,11 +429,11 @@ export async function collectRun(state, deps) {
   const batchFiles = [inputFileId, batch.output_file_id, batch.error_file_id]
   const cleanup = [...(state.pending_deletes ?? []), ...batchFiles]
   if (batch.status !== 'completed') {
-    const leftover = reading ? cleanup : [...cleanup, ...readerFiles(state)]
-    const why = batchFailure(batch)
-    return failed(state, `${state.stage} batch ${batchId} ended ${batch.status}${why}`, leftover)
+    const name = reading ? partName(state) : 'judge'
+    const why = `${name} batch ${batchId} ended ${batch.status}${batchFailure(batch)}`
+    return failed(state, why, [...cleanup, ...readerFiles(state)])
   }
-  if (reading) return afterReader(state, batch, full)
+  if (reading) return afterPart(state, batch, full)
   const verdicts = await readResults(client, batch.output_file_id, batch.error_file_id, parse)
   return finish(state, await chosenEntries(state, full), verdicts, [
     ...cleanup,
@@ -409,6 +497,7 @@ export function submitOptions(args) {
     judge: parseFlag(args, 'judge', ''),
     cot: args.includes('--cot'),
     limit: has(args, 'limit') ? positive(args, 'limit') : undefined,
+    partTokens: has(args, 'part-tokens') ? positive(args, 'part-tokens') : undefined,
     prices: { usdIn: positive(args, 'usd-in'), usdOut: positive(args, 'usd-out') },
     judgePrices: has(args, 'judge-usd-in')
       ? { usdIn: positive(args, 'judge-usd-in'), usdOut: positive(args, 'judge-usd-out') }
@@ -457,7 +546,8 @@ async function main(args) {
   const deps = { client, loadEntries: loadPinned, save }
   if (command === 'submit') {
     const state = await submitRun(options, deps)
-    return { status: 'submitted', run_id: state.run_id, reader_batch: state.reader_batch }
+    const parts = state.reader_parts.length
+    return { status: 'submitted', run_id: state.run_id, reader_batch: state.reader_batch, parts }
   }
   const loaded = JSON.parse(readFileSync(statePath, 'utf8'))
   save(loaded) // the state file is writable before any paid step
@@ -478,9 +568,11 @@ async function main(args) {
   const swept = await sweep(client, result.state)
   save(swept)
   if (result.status === 'failed') throw new ContentFreeError(result.state.failure)
+  const { stage, reader_part: part, reader_parts: parts } = swept
   return {
     status: result.status,
     batch_status: result.batch_status,
+    ...(stage === 'reader' && parts ? { part: `${part + 1}/${parts.length}` } : {}),
     pending_deletes: swept.pending_deletes.length,
   }
 }
