@@ -4,14 +4,46 @@
 // with metadata, read and cancel batches, fetch and delete files, and find
 // files by name or batches by metadata across every page of the listings.
 //
-// ADVISORY ONLY. Errors carry the method, endpoint and HTTP status, never a
-// response body: bodies can hold prompts and answers (hard rule 6).
+// ADVISORY ONLY. Errors carry the method, endpoint and HTTP status, and from
+// an error body only its code (or type), the parameter it names and, for the
+// Batch queue limit, the limit: never a message or any other body text, since
+// bodies can hold prompts and answers or name the organization (hard rule 6).
 
 import { ContentFreeError } from './content-free-error.mjs'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 /** A bounded deadline per call; an upload of the full oracle input is about 15 MB. */
 const DEFAULT_TIMEOUT_MS = 120_000
+
+/** An API error code, or `other` when it is not a plain identifier. */
+export const safeCode = (value) =>
+  typeof value === 'string' && /^[a-z0-9_.-]{1,64}$/.test(value) ? value : 'other'
+
+/** OpenAI's Batch queue-limit diagnostic, matched from its start; only its number is kept. */
+const QUEUE_LIMIT =
+  /^Enqueued token limit reached for [\w.:-]{1,80} in organization [\w-]{1,80}\. Limit: ([\d,]{1,20}) enqueued tokens\./
+
+/** The queue limit of a token_limit_exceeded error; a number anywhere else could come from a request. */
+export const queueLimit = (error) =>
+  error?.code === 'token_limit_exceeded' && typeof error.message === 'string'
+    ? QUEUE_LIMIT.exec(error.message)?.[1]
+    : undefined
+
+/** An error response body, content-free: ` (code or type; param p; limit n enqueued tokens)`. */
+export function errorDetail(text) {
+  let error
+  try {
+    error = JSON.parse(text)?.error
+  } catch {
+    return ''
+  }
+  if (!error || typeof error !== 'object') return ''
+  const parts = [safeCode(error.code ?? error.type)]
+  if (error.param != null) parts.push(`param ${safeCode(error.param)}`)
+  const limit = queueLimit(error)
+  if (limit) parts.push(`limit ${limit} enqueued tokens`)
+  return ` (${parts.join('; ')})`
+}
 
 /** Statuses after which a batch changes no more (Batch API reference). */
 export const FINAL_STATUSES = Object.freeze(['completed', 'failed', 'expired', 'cancelled'])
@@ -42,8 +74,10 @@ export function createBatchClient({
     }
     if (absentOk && response.status === 404) return response
     if (!response.ok) {
-      await response.text().catch(() => undefined) // drained, never logged
-      throw new ContentFreeError(`${where(method, path)} failed with status ${response.status}`)
+      const text = await response.text().catch(() => '') // only errorDetail's fields are kept
+      throw new ContentFreeError(
+        `${where(method, path)} failed with status ${response.status}${errorDetail(text)}`,
+      )
     }
     return response
   }

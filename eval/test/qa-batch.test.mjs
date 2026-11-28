@@ -79,6 +79,7 @@ function fakeOpenAI() {
     if (init.method === 'POST' && path === '/batches') {
       const { input_file_id, metadata } = JSON.parse(init.body)
       if (api.createMode === 'fail') return reply(500, { error: SECRET })
+      if (typeof api.createMode === 'object') return reply(400, api.createMode)
       api.creates++
       const batch = { id: `batch-${++next}`, status: 'in_progress', input_file_id, metadata }
       batches.set(batch.id, batch)
@@ -482,6 +483,41 @@ test('submit options accept --name=value, and judge prices come as a pair', () =
     () => submitOptions([...base, '--max-usd', '3', '--limit=0']),
     /--limit needs a positive/,
   )
+})
+
+test('an API error names its code, parameter and queue limit, never its message', async () => {
+  const { api, deps } = setup()
+  const create = (error) => {
+    api.createMode = { error }
+    return deps.client.create('file-1', {}).catch((e) => e)
+  }
+  const limited = await create({
+    message: `Enqueued token limit reached for gpt-4o in organization org-${SECRET.replaceAll(' ', '')}. Limit: 1,350,000 enqueued tokens. Please try again once some in_progress batches have been completed.`,
+    type: 'invalid_request_error',
+    param: null,
+    code: 'token_limit_exceeded',
+  })
+  assert.ok(limited instanceof ContentFreeError)
+  assert.equal(
+    limited.message,
+    'batch API POST /batches failed with status 400 (token_limit_exceeded; limit 1,350,000 enqueued tokens)',
+  )
+  const typed = await create({
+    message: SECRET,
+    type: 'invalid_request_error',
+    param: 'metadata',
+    code: null,
+  })
+  assert.equal(
+    typed.message,
+    'batch API POST /batches failed with status 400 (invalid_request_error; param metadata)',
+  )
+  const odd = await create({ message: SECRET, type: SECRET, param: SECRET, code: `x ${SECRET}` })
+  assert.equal(odd.message, 'batch API POST /batches failed with status 400 (other; param other)')
+  const quoted = await create({ message: 'Limit: 99 enqueued tokens', code: 'invalid_json_line' })
+  assert.equal(quoted.message, 'batch API POST /batches failed with status 400 (invalid_json_line)')
+  for (const error of [limited, typed, odd, quoted])
+    assert.equal(error.message.includes('SECRET'), false)
 })
 
 test('errors never quote content, and a stalled call times out', async () => {
