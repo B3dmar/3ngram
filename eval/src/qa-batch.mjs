@@ -35,7 +35,7 @@ import { pathToFileURL } from 'node:url'
 import { ContentFreeError } from './content-free-error.mjs'
 import { ensureDataset, readJsonArray } from './download.mjs'
 import { parseFlag, parsePathFlag } from './lib.mjs'
-import { createBatchClient, FINAL_STATUSES } from './openai-batch.mjs'
+import { createBatchClient, FINAL_STATUSES, queueLimit, safeCode } from './openai-batch.mjs'
 import { judgeLabel, judgeRequest, parseBatchOutput, qaScores, readerRequest } from './qa.mjs'
 
 /** Chat Completions framing per request (role and priming tokens), set well above the real few. */
@@ -171,24 +171,13 @@ const failed = (state, failure, cleanup) => ({
   status: 'failed',
 })
 
-/** OpenAI's Batch queue-limit diagnostic, matched from its start; only its number is kept. */
-const QUEUE_LIMIT =
-  /^Enqueued token limit reached for [\w.:-]{1,80} in organization [\w-]{1,80}\. Limit: ([\d,]{1,20}) enqueued tokens\./
-
 /** Why a batch failed, content-free: error codes with counts, and the queue limit if hit. */
 export function batchFailure(batch) {
   const errors = batch.errors?.data ?? []
   const counts = new Map()
-  for (const { code } of errors) {
-    const safe = typeof code === 'string' && /^[a-z0-9_.-]{1,64}$/.test(code) ? code : 'other'
-    counts.set(safe, (counts.get(safe) ?? 0) + 1)
-  }
+  for (const { code } of errors) counts.set(safeCode(code), (counts.get(safeCode(code)) ?? 0) + 1)
   const parts = [...counts].map(([code, n]) => (n > 1 ? `${code} x${n}` : code))
-  // A number anywhere else in a message could come from a request.
-  const limit = errors
-    .filter((e) => e.code === 'token_limit_exceeded' && typeof e.message === 'string')
-    .map((e) => QUEUE_LIMIT.exec(e.message)?.[1])
-    .find(Boolean)
+  const limit = errors.map(queueLimit).find(Boolean)
   if (limit) parts.push(`limit ${limit} enqueued tokens`)
   return parts.length > 0 ? ` (${parts.join('; ')})` : ''
 }
