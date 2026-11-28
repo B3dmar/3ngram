@@ -292,6 +292,27 @@ test('a later part that fails ends the run and deletes every part file', async (
   assert.equal(api.files.size, 0)
 })
 
+test('a run started before reader parts is refused before any call, and cleanup still removes it', async () => {
+  const { api, deps } = setup()
+  const state = await submitRun(OPTIONS, deps)
+  // The earlier runner's shape: one batch tagged `reader`, no part fields.
+  const batch = api.batches.get(state.reader_batch)
+  batch.metadata.stage = 'reader'
+  const { reader_parts, reader_part, reader_results, ...legacy } = state
+  for (const stage of ['reader-start', 'reader', 'judge-start', 'judge']) {
+    const before = { gets: api.gets, uploads: api.uploads, creates: api.creates }
+    await assert.rejects(
+      collectRun({ ...legacy, stage }, deps),
+      /run run1 was started before reader parts: remove it with cleanup and submit again/,
+    )
+    assert.deepEqual({ gets: api.gets, uploads: api.uploads, creates: api.creates }, before)
+  }
+  const cleaned = await cleanupRun(legacy, deps)
+  assert.equal(cleaned.stage, 'cleaned')
+  assert.equal(batch.status, 'cancelled')
+  assert.equal(api.files.size, 0)
+})
+
 test('an unwritable state file stops the run before anything is uploaded', async () => {
   const { api, deps } = setup({ failAt: 1 })
   await assert.rejects(submitRun(OPTIONS, deps), /state file could not be saved/)

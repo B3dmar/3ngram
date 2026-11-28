@@ -407,6 +407,12 @@ export async function collectRun(state, deps) {
   const full = { ...deps, parse }
   if (state.stage === 'done') return { state, status: 'done', metrics: state.metrics }
   if (state.stage === 'failed' || state.stage === 'cleaned') return { state, status: state.stage }
+  if (!Array.isArray(state.reader_parts)) {
+    // Its batch is tagged `reader`, not `reader-<k>`: resuming here could create a second one.
+    throw new ContentFreeError(
+      `run ${state.run_id} was started before reader parts: remove it with cleanup and submit again`,
+    )
+  }
   if (state.stage.endsWith('-start')) return resumeStart(state, full)
   const reading = state.stage === 'reader'
   const batchId = reading ? state.reader_batch : state.judge_batch
